@@ -1,6 +1,3 @@
 <resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
     <string name="app_name">"屏幕共享"</string>
-    <string name="persistent_service_notification_channel_name">"常驻服务"</string>
-    <string name="app_running_notification_title">"“<xliff:g id="APP_NAME">%1$s</xliff:g>”正在运行"</string>
-    <string name="app_running_notification_text">"点按即可了解详情。"</string>
 </resources>
