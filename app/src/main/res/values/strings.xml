@@ -1,3 +1,7 @@
 <resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
     <string name="app_name">"屏幕共享"</string>
+    <string name="lss_service_notification_channel_name">"屏幕共享服务"</string>
+    <string name="lss_service_notification_title">"正在共享屏幕…"</string>
+    <string name="lss_service_notification_text">"<xliff:g id="APP_NAME">%1$d</xliff:g> 个连接"</string>
+    <string name="lss_service_stop_notification_action">"停止共享"</string>
 </resources>
