@@ -9,6 +9,10 @@ import androidx.core.os.HandlerCompat;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 
+import lombok.AccessLevel;
+import lombok.NoArgsConstructor;
+
+@NoArgsConstructor(access = AccessLevel.PRIVATE)
 public final class ThreadUtils {
     private static final Object EXECUTOR_LOCK = new Object();
 
