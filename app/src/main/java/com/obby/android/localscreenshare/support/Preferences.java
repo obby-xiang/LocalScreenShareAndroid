@@ -14,7 +14,7 @@ import java.util.UUID;
 public final class Preferences {
     private static final String PREF_FILE_NAME = "preferences";
 
-    private static final String KEY_SHARE_SERVICE_ID = "share_service_id";
+    private static final String KEY_LSS_SERVICE_ID = "lss_service_id";
 
     @NonNull
     private final SharedPreferences mPreferences;
@@ -30,12 +30,12 @@ public final class Preferences {
 
     @SuppressLint("ApplySharedPref")
     @NonNull
-    public String getShareServiceId() {
-        return Optional.ofNullable(mPreferences.getString(KEY_SHARE_SERVICE_ID, null))
+    public String getLssServiceId() {
+        return Optional.ofNullable(mPreferences.getString(KEY_LSS_SERVICE_ID, null))
             .orElseGet(() -> {
-                final String shareServiceId = UUID.randomUUID().toString().replace("-", "");
-                mPreferences.edit().putString(KEY_SHARE_SERVICE_ID, shareServiceId).commit();
-                return shareServiceId;
+                final String serviceId = UUID.randomUUID().toString().replace("-", "");
+                mPreferences.edit().putString(KEY_LSS_SERVICE_ID, serviceId).commit();
+                return serviceId;
             });
     }
 

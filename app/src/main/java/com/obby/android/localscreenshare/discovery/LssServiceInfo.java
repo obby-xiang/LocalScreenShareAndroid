@@ -11,12 +11,12 @@ import lombok.experimental.Accessors;
 @Accessors(prefix = "m")
 @Data
 @Builder(builderClassName = "Builder", toBuilder = true)
-public class ShareServiceInfo implements Comparable<ShareServiceInfo> {
-    private static final Comparator<ShareServiceInfo> COMPARATOR =
-        Comparator.nullsLast(Comparator.comparing(ShareServiceInfo::getHostAddress)
-            .thenComparing(ShareServiceInfo::getPort)
-            .thenComparing(ShareServiceInfo::getName)
-            .thenComparing(ShareServiceInfo::getId));
+public class LssServiceInfo implements Comparable<LssServiceInfo> {
+    private static final Comparator<LssServiceInfo> COMPARATOR =
+        Comparator.nullsLast(Comparator.comparing(LssServiceInfo::getHostAddress)
+            .thenComparing(LssServiceInfo::getPort)
+            .thenComparing(LssServiceInfo::getName)
+            .thenComparing(LssServiceInfo::getId));
 
     @NonNull
     private final String mId;
@@ -30,7 +30,7 @@ public class ShareServiceInfo implements Comparable<ShareServiceInfo> {
     private final int mPort;
 
     @Override
-    public int compareTo(ShareServiceInfo serviceInfo) {
+    public int compareTo(LssServiceInfo serviceInfo) {
         return COMPARATOR.compare(this, serviceInfo);
     }
 }

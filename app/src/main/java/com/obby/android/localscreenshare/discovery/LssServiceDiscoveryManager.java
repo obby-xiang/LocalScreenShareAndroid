@@ -31,14 +31,14 @@ import lombok.Getter;
 import lombok.experimental.Accessors;
 
 @Accessors(prefix = "m")
-public final class ShareServiceDiscoveryManager {
-    private static final String TAG = "ShareServiceDiscoveryManager";
+public final class LssServiceDiscoveryManager {
+    private static final String TAG = "LssServiceDiscoveryManager";
 
     private boolean mIsDiscovering;
 
     @Getter
     @NonNull
-    private List<ShareServiceInfo> mShareServiceInfoList = Collections.emptyList();
+    private List<LssServiceInfo> mServiceInfoList = Collections.emptyList();
 
     @NonNull
     private final NsdManager mNsdManager;
@@ -47,10 +47,10 @@ public final class ShareServiceDiscoveryManager {
     private final Map<String, NsdServiceInfo> mNsdServiceInfoMap = new ConcurrentHashMap<>();
 
     @NonNull
-    private final Map<String, ShareServiceInfo> mShareServiceInfoMap = new ConcurrentHashMap<>();
+    private final Map<String, LssServiceInfo> mServiceInfoMap = new ConcurrentHashMap<>();
 
     @NonNull
-    private final List<ShareServiceDiscoveryListener> mShareDiscoveryListeners = new CopyOnWriteArrayList<>();
+    private final List<LssServiceDiscoveryListener> mServiceDiscoveryListeners = new CopyOnWriteArrayList<>();
 
     @NonNull
     private final Executor mResolveNsdServiceExecutor = Executors.newSingleThreadExecutor();
@@ -117,26 +117,26 @@ public final class ShareServiceDiscoveryManager {
                             return;
                         }
 
-                        final ShareServiceInfo shareServiceInfo = buildShareServiceInfo(serviceInfo);
+                        final LssServiceInfo lssServiceInfo = buildServiceInfo(serviceInfo);
                         Log.i(TAG, String.format("mNsdDiscoveryListener: service resolved, serviceInfo = %s"
-                            + ", shareServiceInfo = %s", serviceInfo, shareServiceInfo));
+                            + ", lssServiceInfo = %s", serviceInfo, lssServiceInfo));
 
                         mNsdServiceInfoMap.put(serviceName, serviceInfo);
 
-                        if (shareServiceInfo == null
-                            || Objects.equals(shareServiceInfo.getId(), Preferences.get().getShareServiceId())) {
-                            mShareServiceInfoMap.remove(serviceName);
+                        if (lssServiceInfo == null
+                            || Objects.equals(lssServiceInfo.getId(), Preferences.get().getLssServiceId())) {
+                            mServiceInfoMap.remove(serviceName);
                         } else {
-                            mShareServiceInfoMap.entrySet()
+                            mServiceInfoMap.entrySet()
                                 .stream()
                                 .filter(element ->
-                                    Objects.equals(element.getValue().getId(), Preferences.get().getShareServiceId()))
+                                    Objects.equals(element.getValue().getId(), Preferences.get().getLssServiceId()))
                                 .map(Map.Entry::getKey)
-                                .forEach(mShareServiceInfoMap::remove);
-                            mShareServiceInfoMap.put(serviceName, shareServiceInfo);
+                                .forEach(mServiceInfoMap::remove);
+                            mServiceInfoMap.put(serviceName, lssServiceInfo);
                         }
 
-                        updateShareServiceInfoList();
+                        updateServiceInfoList();
                     }
                 });
             }
@@ -146,37 +146,37 @@ public final class ShareServiceDiscoveryManager {
                 Log.i(TAG, String.format("mNsdDiscoveryListener: service lost, serviceInfo = %s", serviceInfo));
                 if (!TextUtils.isEmpty(serviceInfo.getServiceName())) {
                     mNsdServiceInfoMap.remove(serviceInfo.getServiceName());
-                    mShareServiceInfoMap.remove(serviceInfo.getServiceName());
-                    updateShareServiceInfoList();
+                    mServiceInfoMap.remove(serviceInfo.getServiceName());
+                    updateServiceInfoList();
                 }
             }
         }, ThreadUtils.getMainThreadExecutor());
 
-    private ShareServiceDiscoveryManager() {
+    private LssServiceDiscoveryManager() {
         mNsdManager = App.get().getSystemService(NsdManager.class);
     }
 
     @NonNull
-    public static ShareServiceDiscoveryManager get() {
+    public static LssServiceDiscoveryManager get() {
         return InstanceHolder.INSTANCE;
     }
 
-    public void discoverServices(@NonNull final ShareServiceDiscoveryListener listener) {
-        if (mShareDiscoveryListeners.contains(listener)) {
+    public void discoverServices(@NonNull final LssServiceDiscoveryListener listener) {
+        if (mServiceDiscoveryListeners.contains(listener)) {
             return;
         }
 
-        mShareDiscoveryListeners.add(listener);
+        mServiceDiscoveryListeners.add(listener);
         if (!mIsDiscovering) {
             mIsDiscovering = true;
             startDiscovery();
         }
     }
 
-    public void stopServiceDiscovery(@NonNull final ShareServiceDiscoveryListener listener) {
-        mShareDiscoveryListeners.remove(listener);
+    public void stopServiceDiscovery(@NonNull final LssServiceDiscoveryListener listener) {
+        mServiceDiscoveryListeners.remove(listener);
 
-        if (mShareDiscoveryListeners.isEmpty() && mIsDiscovering) {
+        if (mServiceDiscoveryListeners.isEmpty() && mIsDiscovering) {
             mIsDiscovering = false;
             stopDiscovery();
         }
@@ -191,27 +191,27 @@ public final class ShareServiceDiscoveryManager {
         Log.i(TAG, "stopDiscovery: stop discovery");
         mNsdManager.stopServiceDiscovery(mNsdDiscoveryListener);
         mNsdServiceInfoMap.clear();
-        mShareServiceInfoMap.clear();
-        updateShareServiceInfoList();
+        mServiceInfoMap.clear();
+        updateServiceInfoList();
     }
 
-    private void updateShareServiceInfoList() {
-        Log.i(TAG, "updateShareServiceInfoList: update share service info list");
+    private void updateServiceInfoList() {
+        Log.i(TAG, "updateServiceInfoList: update service info list");
 
-        final List<ShareServiceInfo> serviceInfoList = new ArrayList<>(mShareServiceInfoMap.values());
+        final List<LssServiceInfo> serviceInfoList = new ArrayList<>(mServiceInfoMap.values());
         Collections.sort(serviceInfoList);
 
-        if (Objects.equals(mShareServiceInfoList, serviceInfoList)) {
-            Log.w(TAG, "updateShareServiceInfoList: share service info list not changed");
+        if (Objects.equals(mServiceInfoList, serviceInfoList)) {
+            Log.w(TAG, "updateServiceInfoList: service info list not changed");
             return;
         }
 
-        mShareServiceInfoList = Collections.unmodifiableList(serviceInfoList);
-        mShareDiscoveryListeners.forEach(element -> element.onServicesChanged(mShareServiceInfoList));
+        mServiceInfoList = Collections.unmodifiableList(serviceInfoList);
+        mServiceDiscoveryListeners.forEach(element -> element.onServicesChanged(mServiceInfoList));
     }
 
     @Nullable
-    private ShareServiceInfo buildShareServiceInfo(@NonNull final NsdServiceInfo serviceInfo) {
+    private LssServiceInfo buildServiceInfo(@NonNull final NsdServiceInfo serviceInfo) {
         final Map<String, byte[]> attributes = serviceInfo.getAttributes();
         final String id = Optional.ofNullable(attributes.get(Constants.NSD_SERVICE_ATTR_ID))
             .map(value -> new String(value, StandardCharsets.UTF_8))
@@ -226,7 +226,7 @@ public final class ShareServiceDiscoveryManager {
             return null;
         }
 
-        return ShareServiceInfo.builder()
+        return LssServiceInfo.builder()
             .id(id)
             .name(name)
             .hostAddress(hostAddress)
@@ -307,6 +307,6 @@ public final class ShareServiceDiscoveryManager {
     }
 
     private static class InstanceHolder {
-        private static final ShareServiceDiscoveryManager INSTANCE = new ShareServiceDiscoveryManager();
+        private static final LssServiceDiscoveryManager INSTANCE = new LssServiceDiscoveryManager();
     }
 }
