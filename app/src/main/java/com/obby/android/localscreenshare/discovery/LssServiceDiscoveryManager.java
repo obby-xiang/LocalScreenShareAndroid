@@ -27,7 +27,6 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 
-import lombok.Getter;
 import lombok.experimental.Accessors;
 
 @Accessors(prefix = "m")
@@ -36,7 +35,6 @@ public final class LssServiceDiscoveryManager {
 
     private boolean mIsDiscovering;
 
-    @Getter
     @NonNull
     private List<LssServiceInfo> mServiceInfoList = Collections.emptyList();
 
@@ -171,6 +169,8 @@ public final class LssServiceDiscoveryManager {
             mIsDiscovering = true;
             startDiscovery();
         }
+
+        listener.onServicesChanged(mServiceInfoList);
     }
 
     public void stopServiceDiscovery(@NonNull final LssServiceDiscoveryListener listener) {

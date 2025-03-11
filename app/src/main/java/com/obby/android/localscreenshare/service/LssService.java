@@ -21,14 +21,12 @@ import androidx.core.content.ContextCompat;
 
 import com.obby.android.localscreenshare.MainActivity;
 import com.obby.android.localscreenshare.R;
+import com.obby.android.localscreenshare.support.Constants;
 
 public class LssService extends Service {
     private static final String NOTIFICATION_CHANNEL_ID = "lss_service";
 
     private static final int NOTIFICATION_ID = 1;
-
-    private static final String ACTION_STOP_SCREEN_SHARING =
-        "com.obby.android.localscreenshare.ACTION_STOP_SCREEN_SHARING";
 
     private final String mTag = "LssService@" + hashCode();
 
@@ -36,7 +34,7 @@ public class LssService extends Service {
     private final BroadcastReceiver mBroadcastReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
-            if (ACTION_STOP_SCREEN_SHARING.equals(intent.getAction())) {
+            if (Constants.ACTION_STOP_LSS_SERVICE.equals(intent.getAction())) {
                 stopSelf();
             }
         }
@@ -48,7 +46,7 @@ public class LssService extends Service {
         Log.i(mTag, "onCreate: service created");
 
         final IntentFilter intentFilter = new IntentFilter();
-        intentFilter.addAction(ACTION_STOP_SCREEN_SHARING);
+        intentFilter.addAction(Constants.ACTION_STOP_LSS_SERVICE);
         ContextCompat.registerReceiver(this, mBroadcastReceiver, intentFilter, ContextCompat.RECEIVER_NOT_EXPORTED);
     }
 
@@ -83,7 +81,7 @@ public class LssService extends Service {
             .setContentIntent(PendingIntent.getActivity(this, 0, new Intent(this, MainActivity.class),
                 PendingIntent.FLAG_UPDATE_CURRENT))
             .addAction(0, getString(R.string.lss_service_stop_notification_action),
-                PendingIntent.getBroadcast(this, 0, new Intent(ACTION_STOP_SCREEN_SHARING),
+                PendingIntent.getBroadcast(this, 0, new Intent(Constants.ACTION_STOP_LSS_SERVICE),
                     PendingIntent.FLAG_UPDATE_CURRENT))
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setSilent(true)
@@ -103,6 +101,6 @@ public class LssService extends Service {
             return START_NOT_STICKY;
         }
 
-        return super.onStartCommand(intent, flags, startId);
+        return START_STICKY;
     }
 }
