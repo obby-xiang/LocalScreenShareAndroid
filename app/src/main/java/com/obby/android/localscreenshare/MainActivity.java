@@ -48,14 +48,15 @@ public class MainActivity extends AppCompatActivity {
                 return;
             }
 
-            Log.i(mTag, String.format("mServiceConnection: service connected, name = %s", name));
+            Log.i(mTag, String.format("mServiceConnection.onServiceConnected: service connected, name = %s", name));
             mServiceMessenger = new Messenger(service);
             registerServiceClient();
         }
 
         @Override
         public void onServiceDisconnected(ComponentName name) {
-            Log.i(mTag, String.format("mServiceConnection: service disconnected, name = %s", name));
+            Log.i(mTag, String.format("mServiceConnection.onServiceDisconnected: service disconnected, name = %s",
+                name));
             mServiceMessenger = null;
         }
     };
@@ -114,7 +115,7 @@ public class MainActivity extends AppCompatActivity {
         }
 
         try {
-            final Message message = Message.obtain(null, Constants.MSG_REGISTER_CLIENT);
+            final Message message = Message.obtain(null, Constants.MSG_REGISTER_SERVICE_CLIENT);
             message.replyTo = mMessenger;
             mServiceMessenger.send(message);
         } catch (RemoteException e) {
@@ -128,7 +129,7 @@ public class MainActivity extends AppCompatActivity {
         }
 
         try {
-            final Message message = Message.obtain(null, Constants.MSG_UNREGISTER_CLIENT);
+            final Message message = Message.obtain(null, Constants.MSG_UNREGISTER_SERVICE_CLIENT);
             message.replyTo = mMessenger;
             mServiceMessenger.send(message);
         } catch (RemoteException e) {

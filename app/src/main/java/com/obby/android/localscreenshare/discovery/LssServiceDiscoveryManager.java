@@ -58,10 +58,10 @@ public final class LssServiceDiscoveryManager {
         new NsdDiscoveryListenerWrapper(new NsdManager.DiscoveryListener() {
             @Override
             public void onStartDiscoveryFailed(String serviceType, int errorCode) {
-                Log.e(TAG, String.format("mNsdDiscoveryListener: start discovery failed, serviceType = %s"
-                    + ", errorCode = %d", serviceType, errorCode));
+                Log.e(TAG, String.format("mNsdDiscoveryListener.onStartDiscoveryFailed: start discovery failed"
+                    + ", serviceType = %s, errorCode = %d", serviceType, errorCode));
                 if (mIsDiscovering) {
-                    Log.i(TAG, "mNsdDiscoveryListener: restart discovery");
+                    Log.i(TAG, "mNsdDiscoveryListener.onStartDiscoveryFailed: restart discovery");
                     stopDiscovery();
                     startDiscovery();
                 }
@@ -69,20 +69,22 @@ public final class LssServiceDiscoveryManager {
 
             @Override
             public void onStopDiscoveryFailed(String serviceType, int errorCode) {
-                Log.e(TAG, String.format("mNsdDiscoveryListener: stop discovery failed, serviceType = %s"
-                    + ", errorCode = %d", serviceType, errorCode));
+                Log.e(TAG, String.format("mNsdDiscoveryListener.onStopDiscoveryFailed: stop discovery failed"
+                    + ", serviceType = %s, errorCode = %d", serviceType, errorCode));
             }
 
             @Override
             public void onDiscoveryStarted(String serviceType) {
-                Log.i(TAG, String.format("mNsdDiscoveryListener: discovery started, serviceType = %s", serviceType));
+                Log.i(TAG, String.format("mNsdDiscoveryListener.onDiscoveryStarted: discovery started"
+                    + ", serviceType = %s", serviceType));
             }
 
             @Override
             public void onDiscoveryStopped(String serviceType) {
-                Log.i(TAG, String.format("mNsdDiscoveryListener: discovery stopped, serviceType = %s", serviceType));
+                Log.i(TAG, String.format("mNsdDiscoveryListener.onDiscoveryStopped: discovery stopped"
+                    + ", serviceType = %s", serviceType));
                 if (mIsDiscovering) {
-                    Log.i(TAG, "mNsdDiscoveryListener: restart discovery");
+                    Log.i(TAG, "mNsdDiscoveryListener.onDiscoveryStopped: restart discovery");
                     stopDiscovery();
                     startDiscovery();
                 }
@@ -90,7 +92,8 @@ public final class LssServiceDiscoveryManager {
 
             @Override
             public void onServiceFound(NsdServiceInfo serviceInfo) {
-                Log.i(TAG, String.format("mNsdDiscoveryListener: service found, serviceInfo = %s", serviceInfo));
+                Log.i(TAG, String.format("mNsdDiscoveryListener.onServiceFound: service found, serviceInfo = %s",
+                    serviceInfo));
 
                 if (TextUtils.isEmpty(serviceInfo.getServiceName())) {
                     return;
@@ -105,8 +108,8 @@ public final class LssServiceDiscoveryManager {
                         if (!mNsdServiceInfoMap.containsKey(serviceName)) {
                             return;
                         }
-                        Log.e(TAG, String.format("mNsdDiscoveryListener: service resolve failed, serviceInfo = %s"
-                            + ", errorCode = %d", serviceInfo, errorCode));
+                        Log.e(TAG, String.format("mNsdDiscoveryListener.onServiceFound: service resolve failed"
+                            + ", serviceInfo = %s, errorCode = %d", serviceInfo, errorCode));
                     }
 
                     @Override
@@ -116,8 +119,8 @@ public final class LssServiceDiscoveryManager {
                         }
 
                         final LssServiceInfo lssServiceInfo = buildServiceInfo(serviceInfo);
-                        Log.i(TAG, String.format("mNsdDiscoveryListener: service resolved, serviceInfo = %s"
-                            + ", lssServiceInfo = %s", serviceInfo, lssServiceInfo));
+                        Log.i(TAG, String.format("mNsdDiscoveryListener.onServiceFound: service resolved"
+                            + ", serviceInfo = %s, lssServiceInfo = %s", serviceInfo, lssServiceInfo));
 
                         mNsdServiceInfoMap.put(serviceName, serviceInfo);
 
@@ -141,7 +144,8 @@ public final class LssServiceDiscoveryManager {
 
             @Override
             public void onServiceLost(NsdServiceInfo serviceInfo) {
-                Log.i(TAG, String.format("mNsdDiscoveryListener: service lost, serviceInfo = %s", serviceInfo));
+                Log.i(TAG, String.format("mNsdDiscoveryListener.onServiceLost: service lost, serviceInfo = %s",
+                    serviceInfo));
                 if (!TextUtils.isEmpty(serviceInfo.getServiceName())) {
                     mNsdServiceInfoMap.remove(serviceInfo.getServiceName());
                     mServiceInfoMap.remove(serviceInfo.getServiceName());

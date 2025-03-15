@@ -15,7 +15,7 @@ public final class Constants {
 
     public static final String EXTRA_MEDIA_PROJECTION_RESULT = "mediaProjectionResult";
 
-    public static final int MSG_REGISTER_CLIENT = 1;
+    public static final int MSG_REGISTER_SERVICE_CLIENT = 1;
 
-    public static final int MSG_UNREGISTER_CLIENT = 2;
+    public static final int MSG_UNREGISTER_SERVICE_CLIENT = 2;
 }
