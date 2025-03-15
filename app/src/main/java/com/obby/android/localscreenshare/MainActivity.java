@@ -1,14 +1,25 @@
 package com.obby.android.localscreenshare;
 
 import android.app.Activity;
+import android.content.ComponentName;
+import android.content.Context;
 import android.content.Intent;
+import android.content.ServiceConnection;
 import android.media.projection.MediaProjectionManager;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.IBinder;
+import android.os.Looper;
+import android.os.Message;
+import android.os.Messenger;
+import android.os.RemoteException;
+import android.util.Log;
 
 import androidx.activity.EdgeToEdge;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.ContextCompat;
 import androidx.core.graphics.Insets;
@@ -19,6 +30,36 @@ import com.obby.android.localscreenshare.service.LssService;
 import com.obby.android.localscreenshare.support.Constants;
 
 public class MainActivity extends AppCompatActivity {
+    private boolean mIsServiceBound;
+
+    @Nullable
+    private Messenger mServiceMessenger;
+
+    private final String mTag = "MainActivity@" + hashCode();
+
+    @NonNull
+    private final Messenger mMessenger = new Messenger(new Handler(Looper.getMainLooper(), msg -> false));
+
+    @NonNull
+    private final ServiceConnection mServiceConnection = new ServiceConnection() {
+        @Override
+        public void onServiceConnected(ComponentName name, IBinder service) {
+            if (!mIsServiceBound) {
+                return;
+            }
+
+            Log.i(mTag, String.format("mServiceConnection: service connected, name = %s", name));
+            mServiceMessenger = new Messenger(service);
+            registerServiceClient();
+        }
+
+        @Override
+        public void onServiceDisconnected(ComponentName name) {
+            Log.i(mTag, String.format("mServiceConnection: service disconnected, name = %s", name));
+            mServiceMessenger = null;
+        }
+    };
+
     @NonNull
     private final ActivityResultLauncher<Intent> mScreenCaptureLauncher = registerForActivityResult(
         new ActivityResultContracts.StartActivityForResult(),
@@ -42,8 +83,56 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
+    @Override
+    protected void onStart() {
+        super.onStart();
+        Log.i(mTag, "onStart: activity started");
+
+        mIsServiceBound = true;
+        bindService(new Intent(this, LssService.class), mServiceConnection, Context.BIND_AUTO_CREATE);
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        Log.i(mTag, "onStop: activity stopped");
+
+        unregisterServiceClient();
+        mIsServiceBound = false;
+        mServiceMessenger = null;
+        unbindService(mServiceConnection);
+    }
+
     private void requestScreenCapture() {
         final MediaProjectionManager mediaProjectionManager = getSystemService(MediaProjectionManager.class);
         mScreenCaptureLauncher.launch(mediaProjectionManager.createScreenCaptureIntent());
+    }
+
+    private void registerServiceClient() {
+        if (mServiceMessenger == null) {
+            return;
+        }
+
+        try {
+            final Message message = Message.obtain(null, Constants.MSG_REGISTER_CLIENT);
+            message.replyTo = mMessenger;
+            mServiceMessenger.send(message);
+        } catch (RemoteException e) {
+            // ignored
+        }
+    }
+
+    private void unregisterServiceClient() {
+        if (mServiceMessenger == null) {
+            return;
+        }
+
+        try {
+            final Message message = Message.obtain(null, Constants.MSG_UNREGISTER_CLIENT);
+            message.replyTo = mMessenger;
+            mServiceMessenger.send(message);
+        } catch (RemoteException e) {
+            // ignored
+        }
     }
 }

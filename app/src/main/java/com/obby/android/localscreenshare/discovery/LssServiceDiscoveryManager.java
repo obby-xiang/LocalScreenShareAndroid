@@ -127,8 +127,8 @@ public final class LssServiceDiscoveryManager {
                         } else {
                             mServiceInfoMap.entrySet()
                                 .stream()
-                                .filter(element ->
-                                    Objects.equals(element.getValue().getId(), Preferences.get().getLssServiceId()))
+                                .filter(entry ->
+                                    Objects.equals(entry.getValue().getId(), Preferences.get().getLssServiceId()))
                                 .map(Map.Entry::getKey)
                                 .forEach(mServiceInfoMap::remove);
                             mServiceInfoMap.put(serviceName, lssServiceInfo);
@@ -160,7 +160,10 @@ public final class LssServiceDiscoveryManager {
     }
 
     public void discoverServices(@NonNull final LssServiceDiscoveryListener listener) {
+        Log.i(TAG, "discoverServices: discover services");
+
         if (mServiceDiscoveryListeners.contains(listener)) {
+            Log.w(TAG, "discoverServices: listener already exists");
             return;
         }
 
@@ -174,7 +177,12 @@ public final class LssServiceDiscoveryManager {
     }
 
     public void stopServiceDiscovery(@NonNull final LssServiceDiscoveryListener listener) {
-        mServiceDiscoveryListeners.remove(listener);
+        Log.i(TAG, "stopServiceDiscovery: stop service discovery");
+
+        if (!mServiceDiscoveryListeners.remove(listener)) {
+            Log.w(TAG, "stopServiceDiscovery: listener does not exist");
+            return;
+        }
 
         if (mServiceDiscoveryListeners.isEmpty() && mIsDiscovering) {
             mIsDiscovering = false;
@@ -207,7 +215,9 @@ public final class LssServiceDiscoveryManager {
         }
 
         mServiceInfoList = Collections.unmodifiableList(serviceInfoList);
-        mServiceDiscoveryListeners.forEach(element -> element.onServicesChanged(mServiceInfoList));
+        Log.i(TAG, String.format("updateServiceInfoList: service info list size is %d", mServiceInfoList.size()));
+
+        mServiceDiscoveryListeners.forEach(listener -> listener.onServicesChanged(mServiceInfoList));
     }
 
     @Nullable
