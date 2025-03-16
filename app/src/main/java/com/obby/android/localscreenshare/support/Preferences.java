@@ -11,7 +11,10 @@ import com.obby.android.localscreenshare.App;
 import java.util.Optional;
 import java.util.UUID;
 
+@SuppressLint("ApplySharedPref")
 public final class Preferences {
+    public static final String KEY_LSS_SERVER_PORT = "lss_server_port";
+
     private static final String PREF_FILE_NAME = "preferences";
 
     private static final String KEY_LSS_SERVICE_ID = "lss_service_id";
@@ -28,7 +31,6 @@ public final class Preferences {
         return InstanceHolder.INSTANCE;
     }
 
-    @SuppressLint("ApplySharedPref")
     @NonNull
     public String getLssServiceId() {
         return Optional.ofNullable(mPreferences.getString(KEY_LSS_SERVICE_ID, null))
@@ -37,6 +39,14 @@ public final class Preferences {
                 mPreferences.edit().putString(KEY_LSS_SERVICE_ID, serviceId).commit();
                 return serviceId;
             });
+    }
+
+    public int getLssServerPort() {
+        return mPreferences.getInt(KEY_LSS_SERVER_PORT, Constants.DEFAULT_LSS_SERVER_PORT);
+    }
+
+    public void setLssServerPort(final int port) {
+        mPreferences.edit().putInt(KEY_LSS_SERVER_PORT, port).commit();
     }
 
     private static class InstanceHolder {

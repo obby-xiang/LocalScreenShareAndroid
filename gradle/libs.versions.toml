@@ -11,6 +11,7 @@ lombok = "1.18.36"
 grpc = "1.71.0"
 tomcat = "6.0.53"
 protobuf = "0.9.4"
+commons-lang3 = "3.17.0"
 guava = "33.4.0-android"
 
 [libraries]
@@ -26,6 +27,7 @@ grpc-okhttp = { group = "io.grpc", name = "grpc-okhttp", version.ref = "grpc" }
 grpc-protobuf-lite = { group = "io.grpc", name = "grpc-protobuf-lite", version.ref = "grpc" }
 grpc-stub = { group = "io.grpc", name = "grpc-stub", version.ref = "grpc" }
 tomcat-annotations-api = { group = "org.apache.tomcat", name = "annotations-api", version.ref = "tomcat" }
+commons-lang3 = { group = "org.apache.commons", name = "commons-lang3", version.ref = "commons-lang3" }
 guava = { group = "com.google.guava", name = "guava", version.ref = "guava" }
 
 [plugins]
