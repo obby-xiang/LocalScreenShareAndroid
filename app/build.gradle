@@ -1,5 +1,6 @@
 plugins {
     alias(libs.plugins.android.application)
+    alias(libs.plugins.protobuf)
 }
 
 android {
@@ -28,6 +29,27 @@ android {
     }
 }
 
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:3.25.5"
+    }
+    plugins {
+        grpc {
+            artifact = 'io.grpc:protoc-gen-grpc-java:1.71.0'
+        }
+    }
+    generateProtoTasks {
+        all().each { task ->
+            task.builtins {
+                java { option 'lite' }
+            }
+            task.plugins {
+                grpc { option 'lite' }
+            }
+        }
+    }
+}
+
 dependencies {
 
     implementation libs.appcompat
@@ -39,4 +61,8 @@ dependencies {
     androidTestImplementation libs.espresso.core
     compileOnly libs.lombok
     annotationProcessor libs.lombok
+    implementation libs.grpc.okhttp
+    implementation libs.grpc.protobuf.lite
+    implementation libs.grpc.stub
+    compileOnly libs.tomcat.annotations.api
 }

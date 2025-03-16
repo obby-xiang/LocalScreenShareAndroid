@@ -9,7 +9,7 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ServiceInfo;
 import android.content.res.Resources;
-import android.graphics.ImageFormat;
+import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.hardware.display.DisplayManager;
 import android.hardware.display.VirtualDisplay;
@@ -50,6 +50,8 @@ public class LssService extends Service {
     private static final String IMAGE_READER_HANDLER_THREAD_NAME = "lss-service-image-reader";
 
     private static final int NOTIFICATION_ID = 1;
+
+    private static final int IMAGE_READER_MAX_IMAGES = 2;
 
     private HandlerThread mImageReaderHandlerThread;
 
@@ -253,7 +255,8 @@ public class LssService extends Service {
     @NonNull
     private ImageReader createImageReader() {
         final Rect windowBounds = WindowUtils.getMaximumWindowBounds(this);
-        return ImageReader.newInstance(windowBounds.width(), windowBounds.height(), ImageFormat.JPEG, 2);
+        return ImageReader.newInstance(windowBounds.width(), windowBounds.height(), PixelFormat.RGBA_8888,
+            IMAGE_READER_MAX_IMAGES);
     }
 
     @SuppressWarnings("DataFlowIssue")
