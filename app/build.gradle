@@ -65,4 +65,5 @@ dependencies {
     implementation libs.grpc.protobuf.lite
     implementation libs.grpc.stub
     compileOnly libs.tomcat.annotations.api
+    implementation libs.guava
 }
