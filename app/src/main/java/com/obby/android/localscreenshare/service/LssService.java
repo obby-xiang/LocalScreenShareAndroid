@@ -34,27 +34,16 @@ import androidx.core.app.NotificationManagerCompat;
 import androidx.core.app.ServiceCompat;
 import androidx.core.content.ContextCompat;
 
-import com.google.protobuf.Empty;
 import com.obby.android.localscreenshare.MainActivity;
 import com.obby.android.localscreenshare.R;
-import com.obby.android.localscreenshare.grpc.screenstream.ScreenFrame;
-import com.obby.android.localscreenshare.grpc.screenstream.ScreenStreamServiceGrpc;
+import com.obby.android.localscreenshare.server.LssServer;
 import com.obby.android.localscreenshare.support.Constants;
 import com.obby.android.localscreenshare.support.Preferences;
 import com.obby.android.localscreenshare.utils.WindowUtils;
 
 import java.io.IOException;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-
-import io.grpc.Grpc;
-import io.grpc.InsecureServerCredentials;
-import io.grpc.Server;
-import io.grpc.stub.ServerCallStreamObserver;
-import io.grpc.stub.StreamObserver;
 
 public class LssService extends Service {
     private static final String NOTIFICATION_CHANNEL_ID = "lss-service";
@@ -66,8 +55,6 @@ public class LssService extends Service {
     private static final int NOTIFICATION_ID = 1;
 
     private static final int IMAGE_READER_MAX_IMAGES = 2;
-
-    private static final int SERVER_EXECUTOR_THREADS = 4;
 
     @Nullable
     private MediaProjection mMediaProjection;
@@ -85,13 +72,7 @@ public class LssService extends Service {
     private VirtualDisplay mVirtualDisplay;
 
     @Nullable
-    private ExecutorService mServerExecutor;
-
-    @Nullable
-    private ScreenStreamService mScreenStreamService;
-
-    @Nullable
-    private Server mServer;
+    private LssServer mServer;
 
     private final String mTag = "LssService@" + hashCode();
 
@@ -197,6 +178,11 @@ public class LssService extends Service {
     public int onStartCommand(Intent intent, int flags, int startId) {
         Log.i(mTag, String.format("onStartCommand: startId = %d", startId));
 
+        if (intent == null) {
+            Log.w(mTag, "onStartCommand: intent is null");
+            return START_NOT_STICKY;
+        }
+
         createNotificationChannel();
 
         try {
@@ -224,15 +210,9 @@ public class LssService extends Service {
 
         mVirtualDisplay = createVirtualDisplay(mMediaProjection, mImageReader.getSurface(), mVirtualDisplayCallback);
 
-        mServerExecutor = Executors.newFixedThreadPool(SERVER_EXECUTOR_THREADS);
-        mScreenStreamService = new ScreenStreamService();
+        mServer = new LssServer();
         try {
-            mServer = Grpc.newServerBuilderForPort(Preferences.get().getLssServerPort(),
-                    InsecureServerCredentials.create())
-                .addService(mScreenStreamService)
-                .executor(mServerExecutor)
-                .build()
-                .start();
+            mServer.start();
         } catch (IOException e) {
             Log.e(mTag, "onStartCommand: start server failed", e);
             stopService();
@@ -246,18 +226,8 @@ public class LssService extends Service {
         Log.i(mTag, "stopService: stop service");
 
         if (mServer != null) {
-            mServer.shutdownNow();
+            mServer.stop();
             mServer = null;
-        }
-
-        if (mScreenStreamService != null) {
-            mScreenStreamService.release();
-            mScreenStreamService = null;
-        }
-
-        if (mServerExecutor != null) {
-            mServerExecutor.shutdownNow();
-            mServerExecutor = null;
         }
 
         if (mVirtualDisplay != null) {
@@ -358,36 +328,5 @@ public class LssService extends Service {
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .build();
-    }
-
-    private static class ScreenStreamService extends ScreenStreamServiceGrpc.ScreenStreamServiceImplBase {
-        @NonNull
-        private final List<StreamObserver<ScreenFrame>> mResponseObservers = new CopyOnWriteArrayList<>();
-
-        @NonNull
-        private final ExecutorService mExecutor = Executors.newFixedThreadPool(4);
-
-        @Override
-        public void getScreenStream(Empty request, StreamObserver<ScreenFrame> responseObserver) {
-            mResponseObservers.add(responseObserver);
-
-            final ServerCallStreamObserver<ScreenFrame> responseCallObserver =
-                (ServerCallStreamObserver<ScreenFrame>) responseObserver;
-            responseCallObserver.setOnCloseHandler(() -> mResponseObservers.remove(responseObserver));
-            responseCallObserver.setOnCancelHandler(() -> mResponseObservers.remove(responseObserver));
-        }
-
-        public void dispatchScreenFrame(@NonNull final ScreenFrame frame) {
-            final CompletableFuture<?>[] futures = mResponseObservers.stream()
-                .map(observer -> CompletableFuture.runAsync(() -> observer.onNext(frame), mExecutor))
-                .toArray(CompletableFuture<?>[]::new);
-            CompletableFuture.allOf(futures).join();
-        }
-
-        public void release() {
-            mExecutor.shutdownNow();
-            mResponseObservers.forEach(StreamObserver::onCompleted);
-            mResponseObservers.clear();
-        }
     }
 }

@@ -27,9 +27,6 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 
-import lombok.experimental.Accessors;
-
-@Accessors(prefix = "m")
 public final class LssServiceDiscoveryManager {
     private static final String TAG = "LssServiceDiscoveryManager";
 
@@ -130,8 +127,7 @@ public final class LssServiceDiscoveryManager {
                         } else {
                             mServiceInfoMap.entrySet()
                                 .stream()
-                                .filter(entry ->
-                                    Objects.equals(entry.getValue().getId(), Preferences.get().getLssServiceId()))
+                                .filter(entry -> Objects.equals(entry.getValue().getId(), lssServiceInfo.getId()))
                                 .map(Map.Entry::getKey)
                                 .forEach(mServiceInfoMap::remove);
                             mServiceInfoMap.put(serviceName, lssServiceInfo);
