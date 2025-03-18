@@ -1,5 +1,6 @@
 package com.obby.android.localscreenshare.service;
 
+import android.annotation.SuppressLint;
 import android.app.Notification;
 import android.app.PendingIntent;
 import android.app.Service;
@@ -9,10 +10,12 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ServiceInfo;
 import android.content.res.Resources;
+import android.graphics.Bitmap;
 import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.hardware.display.DisplayManager;
 import android.hardware.display.VirtualDisplay;
+import android.media.Image;
 import android.media.ImageReader;
 import android.media.projection.MediaProjection;
 import android.media.projection.MediaProjectionManager;
@@ -22,25 +25,29 @@ import android.os.HandlerThread;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.Messenger;
+import android.os.SystemClock;
 import android.util.Log;
 import android.view.Surface;
 
 import androidx.activity.result.ActivityResult;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.camera.core.ImageProcessingUtil;
 import androidx.core.app.NotificationChannelCompat;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
 import androidx.core.app.ServiceCompat;
 import androidx.core.content.ContextCompat;
 
+import com.google.protobuf.ByteString;
 import com.obby.android.localscreenshare.MainActivity;
 import com.obby.android.localscreenshare.R;
+import com.obby.android.localscreenshare.grpc.screenstream.ScreenFrame;
 import com.obby.android.localscreenshare.server.LssServer;
 import com.obby.android.localscreenshare.support.Constants;
-import com.obby.android.localscreenshare.support.Preferences;
 import com.obby.android.localscreenshare.utils.WindowUtils;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -55,6 +62,8 @@ public class LssService extends Service {
     private static final int NOTIFICATION_ID = 1;
 
     private static final int IMAGE_READER_MAX_IMAGES = 2;
+
+    private static final int SCREEN_FRAME_QUALITY = 100;
 
     @Nullable
     private MediaProjection mMediaProjection;
@@ -114,10 +123,36 @@ public class LssService extends Service {
         }
     };
 
+    @SuppressLint("RestrictedApi")
     @NonNull
     private final ImageReader.OnImageAvailableListener mOnImageAvailableListener = reader -> {
-        if (mImageReader != reader) {
+        if (mImageReader != reader || mServer == null) {
             return;
+        }
+
+        try (final Image image = reader.acquireLatestImage()) {
+            if (image == null) {
+                return;
+            }
+
+            final long timestamp = SystemClock.elapsedRealtimeNanos();
+            final Bitmap bitmap = Bitmap.createBitmap(image.getWidth(), image.getHeight(), Bitmap.Config.ARGB_8888);
+            final Image.Plane plane = image.getPlanes()[0];
+            plane.getBuffer().rewind();
+            ImageProcessingUtil.copyByteBufferToBitmap(bitmap, plane.getBuffer(), plane.getRowStride());
+
+            final byte[] data;
+            try (final ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
+                bitmap.compress(Bitmap.CompressFormat.JPEG, SCREEN_FRAME_QUALITY, outputStream);
+                data = outputStream.toByteArray();
+            } catch (IOException e) {
+                return;
+            }
+
+            mServer.dispatchScreenFrame(ScreenFrame.newBuilder()
+                .setTimestamp(timestamp)
+                .setData(ByteString.copyFrom(data))
+                .build());
         }
     };
 
@@ -198,6 +233,15 @@ public class LssService extends Service {
             return START_NOT_STICKY;
         }
 
+        mServer = new LssServer();
+        try {
+            mServer.start();
+        } catch (IOException e) {
+            Log.e(mTag, "onStartCommand: start server failed", e);
+            stopService();
+            return START_NOT_STICKY;
+        }
+
         mMediaProjection = getMediaProjection(intent);
         mMediaProjection.registerCallback(mMediaProjectionCallback, new Handler(Looper.getMainLooper()));
 
@@ -210,25 +254,11 @@ public class LssService extends Service {
 
         mVirtualDisplay = createVirtualDisplay(mMediaProjection, mImageReader.getSurface(), mVirtualDisplayCallback);
 
-        mServer = new LssServer();
-        try {
-            mServer.start();
-        } catch (IOException e) {
-            Log.e(mTag, "onStartCommand: start server failed", e);
-            stopService();
-            return START_NOT_STICKY;
-        }
-
         return START_STICKY;
     }
 
     private void stopService() {
         Log.i(mTag, "stopService: stop service");
-
-        if (mServer != null) {
-            mServer.stop();
-            mServer = null;
-        }
 
         if (mVirtualDisplay != null) {
             mVirtualDisplay.release();
@@ -254,6 +284,11 @@ public class LssService extends Service {
             mMediaProjection.unregisterCallback(mMediaProjectionCallback);
             mMediaProjection.stop();
             mMediaProjection = null;
+        }
+
+        if (mServer != null) {
+            mServer.stop();
+            mServer = null;
         }
 
         ServiceCompat.stopForeground(LssService.this, ServiceCompat.STOP_FOREGROUND_REMOVE);

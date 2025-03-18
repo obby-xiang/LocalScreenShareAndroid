@@ -2,6 +2,7 @@ package com.obby.android.localscreenshare.server;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.core.util.Pair;
 
 import com.google.protobuf.Empty;
 import com.obby.android.localscreenshare.grpc.screenstream.ScreenFrame;
@@ -14,6 +15,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicLong;
 
 import io.grpc.Grpc;
 import io.grpc.InsecureServerCredentials;
@@ -48,9 +50,13 @@ public final class LssServer {
     }
 
     public void stop() {
+        mGrpcServer.shutdownNow();
         mScreenStreamService.stop();
         mGrpcServerExecutor.shutdownNow();
-        mGrpcServer.shutdownNow();
+    }
+
+    public void dispatchScreenFrame(@NonNull final ScreenFrame frame) {
+        mScreenStreamService.dispatchScreenFrame(frame);
     }
 
     private static class ScreenStreamService extends ScreenStreamServiceGrpc.ScreenStreamServiceImplBase {
@@ -61,7 +67,8 @@ public final class LssServer {
         private final Executor mExecutor;
 
         @NonNull
-        private final List<ServerCallStreamObserver<ScreenFrame>> mResponseObservers = new CopyOnWriteArrayList<>();
+        private final List<Pair<ServerCallStreamObserver<ScreenFrame>, Runnable>> mResponseObservers =
+            new CopyOnWriteArrayList<>();
 
         public ScreenStreamService(@NonNull final Executor executor) {
             mExecutor = executor;
@@ -71,14 +78,42 @@ public final class LssServer {
         public void getScreenStream(Empty request, StreamObserver<ScreenFrame> responseObserver) {
             final ServerCallStreamObserver<ScreenFrame> responseCallObserver =
                 (ServerCallStreamObserver<ScreenFrame>) responseObserver;
-            mResponseObservers.add(responseCallObserver);
-            responseCallObserver.setOnCloseHandler(() -> mResponseObservers.remove(responseCallObserver));
-            responseCallObserver.setOnCancelHandler(() -> mResponseObservers.remove(responseCallObserver));
+            final Runnable onReadyHandler = new Runnable() {
+                private final AtomicLong mFrameTimestamp = new AtomicLong(-1L);
+
+                @Override
+                public void run() {
+                    if (mScreenFrame != null
+                        && mFrameTimestamp.getAndSet(mScreenFrame.getTimestamp()) != mScreenFrame.getTimestamp()) {
+                        responseCallObserver.onNext(mScreenFrame);
+                    }
+                }
+            };
+            mResponseObservers.add(Pair.create(responseCallObserver, onReadyHandler));
+
+            responseCallObserver.setOnCloseHandler(
+                () -> mResponseObservers.remove(Pair.create(responseCallObserver, onReadyHandler)));
+            responseCallObserver.setOnCancelHandler(
+                () -> mResponseObservers.remove(Pair.create(responseCallObserver, onReadyHandler)));
+            responseCallObserver.setOnReadyHandler(onReadyHandler);
+
+            if (responseCallObserver.isReady()) {
+                mExecutor.execute(onReadyHandler);
+            }
+        }
+
+        public void dispatchScreenFrame(@NonNull final ScreenFrame frame) {
+            mScreenFrame = frame;
+            mResponseObservers.forEach(pair -> {
+                if (pair.first.isReady()) {
+                    mExecutor.execute(pair.second);
+                }
+            });
         }
 
         public void stop() {
             mScreenFrame = null;
-            mResponseObservers.forEach(StreamObserver::onCompleted);
+            mResponseObservers.forEach(pair -> pair.first.onCompleted());
             mResponseObservers.clear();
         }
     }

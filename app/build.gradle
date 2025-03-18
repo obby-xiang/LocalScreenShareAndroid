@@ -67,4 +67,5 @@ dependencies {
     compileOnly libs.tomcat.annotations.api
     implementation libs.commons.lang3
     implementation libs.guava
+    implementation libs.camera.core
 }
