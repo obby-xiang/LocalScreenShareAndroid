@@ -11,11 +11,16 @@ import com.obby.android.localscreenshare.support.Preferences;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 import io.grpc.Grpc;
 import io.grpc.InsecureServerCredentials;
@@ -36,7 +41,8 @@ public final class LssServer {
     private final Server mGrpcServer;
 
     public LssServer() {
-        mGrpcServerExecutor = Executors.newFixedThreadPool(GRPC_SERVER_EXECUTOR_THREADS);
+        mGrpcServerExecutor = new ThreadPoolExecutor(GRPC_SERVER_EXECUTOR_THREADS, GRPC_SERVER_EXECUTOR_THREADS, 0L,
+            TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(), new ThreadPoolExecutor.DiscardPolicy());
         mScreenStreamService = new ScreenStreamService(mGrpcServerExecutor);
         mGrpcServer = Grpc.newServerBuilderForPort(Preferences.get().getLssServerPort(),
                 InsecureServerCredentials.create())
@@ -79,13 +85,26 @@ public final class LssServer {
             final ServerCallStreamObserver<ScreenFrame> responseCallObserver =
                 (ServerCallStreamObserver<ScreenFrame>) responseObserver;
             final Runnable onReadyHandler = new Runnable() {
+                @NonNull
+                private final Lock mLock = new ReentrantLock();
+
+                @NonNull
                 private final AtomicLong mFrameTimestamp = new AtomicLong(-1L);
 
                 @Override
                 public void run() {
-                    if (mScreenFrame != null
-                        && mFrameTimestamp.getAndSet(mScreenFrame.getTimestamp()) != mScreenFrame.getTimestamp()) {
-                        responseCallObserver.onNext(mScreenFrame);
+                    if (!mLock.tryLock()) {
+                        return;
+                    }
+
+                    try {
+                        Optional.ofNullable(mScreenFrame).ifPresent(screenFrame -> {
+                            if (mFrameTimestamp.getAndSet(screenFrame.getTimestamp()) != screenFrame.getTimestamp()) {
+                                responseCallObserver.onNext(screenFrame);
+                            }
+                        });
+                    } finally {
+                        mLock.unlock();
                     }
                 }
             };
@@ -113,7 +132,6 @@ public final class LssServer {
 
         public void stop() {
             mScreenFrame = null;
-            mResponseObservers.forEach(pair -> pair.first.onCompleted());
             mResponseObservers.clear();
         }
     }

@@ -50,6 +50,7 @@ import com.obby.android.localscreenshare.utils.WindowUtils;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 public class LssService extends Service {
@@ -82,6 +83,9 @@ public class LssService extends Service {
 
     @Nullable
     private LssServer mServer;
+
+    @Nullable
+    private Bitmap mScreenFrameBitmap;
 
     private final String mTag = "LssService@" + hashCode();
 
@@ -126,7 +130,7 @@ public class LssService extends Service {
     @SuppressLint("RestrictedApi")
     @NonNull
     private final ImageReader.OnImageAvailableListener mOnImageAvailableListener = reader -> {
-        if (mImageReader != reader || mServer == null) {
+        if (mImageReader != reader) {
             return;
         }
 
@@ -136,23 +140,36 @@ public class LssService extends Service {
             }
 
             final long timestamp = SystemClock.elapsedRealtimeNanos();
-            final Bitmap bitmap = Bitmap.createBitmap(image.getWidth(), image.getHeight(), Bitmap.Config.ARGB_8888);
+
+            final Bitmap frame = Optional.ofNullable(mScreenFrameBitmap)
+                .map(bitmap -> {
+                    if (bitmap.getWidth() == image.getWidth() && bitmap.getHeight() == image.getHeight()) {
+                        return bitmap;
+                    } else {
+                        bitmap.recycle();
+                        return null;
+                    }
+                })
+                .orElseGet(() -> Bitmap.createBitmap(image.getWidth(), image.getHeight(), Bitmap.Config.ARGB_8888));
+            mScreenFrameBitmap = frame;
+
             final Image.Plane plane = image.getPlanes()[0];
             plane.getBuffer().rewind();
-            ImageProcessingUtil.copyByteBufferToBitmap(bitmap, plane.getBuffer(), plane.getRowStride());
+            ImageProcessingUtil.copyByteBufferToBitmap(frame, plane.getBuffer(), plane.getRowStride());
 
             final byte[] data;
             try (final ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
-                bitmap.compress(Bitmap.CompressFormat.JPEG, SCREEN_FRAME_QUALITY, outputStream);
+                frame.compress(Bitmap.CompressFormat.JPEG, SCREEN_FRAME_QUALITY, outputStream);
                 data = outputStream.toByteArray();
             } catch (IOException e) {
                 return;
             }
 
-            mServer.dispatchScreenFrame(ScreenFrame.newBuilder()
-                .setTimestamp(timestamp)
-                .setData(ByteString.copyFrom(data))
-                .build());
+            Optional.ofNullable(mServer)
+                .ifPresent(server -> server.dispatchScreenFrame(ScreenFrame.newBuilder()
+                    .setTimestamp(timestamp)
+                    .setData(ByteString.copyFrom(data))
+                    .build()));
         }
     };
 
@@ -259,6 +276,11 @@ public class LssService extends Service {
 
     private void stopService() {
         Log.i(mTag, "stopService: stop service");
+
+        if (mScreenFrameBitmap != null) {
+            mScreenFrameBitmap.recycle();
+            mScreenFrameBitmap = null;
+        }
 
         if (mVirtualDisplay != null) {
             mVirtualDisplay.release();
