@@ -2,6 +2,7 @@ package com.obby.android.localscreenshare.discovery;
 
 import android.net.nsd.NsdManager;
 import android.net.nsd.NsdServiceInfo;
+import android.os.Process;
 import android.text.TextUtils;
 import android.util.Log;
 
@@ -12,6 +13,8 @@ import com.obby.android.localscreenshare.App;
 import com.obby.android.localscreenshare.support.Constants;
 import com.obby.android.localscreenshare.support.Preferences;
 import com.obby.android.localscreenshare.utils.ThreadUtils;
+
+import org.apache.commons.lang3.concurrent.BasicThreadFactory;
 
 import java.net.InetAddress;
 import java.nio.charset.StandardCharsets;
@@ -27,6 +30,10 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 
+import lombok.AccessLevel;
+import lombok.NoArgsConstructor;
+
+@NoArgsConstructor(access = AccessLevel.PRIVATE)
 public final class LssServiceDiscoveryManager {
     private static final String TAG = "LssServiceDiscoveryManager";
 
@@ -36,7 +43,7 @@ public final class LssServiceDiscoveryManager {
     private List<LssServiceInfo> mServiceInfoList = Collections.emptyList();
 
     @NonNull
-    private final NsdManager mNsdManager;
+    private final NsdManager mNsdManager = App.get().getSystemService(NsdManager.class);
 
     @NonNull
     private final Map<String, NsdServiceInfo> mNsdServiceInfoMap = new ConcurrentHashMap<>();
@@ -48,7 +55,17 @@ public final class LssServiceDiscoveryManager {
     private final List<LssServiceDiscoveryListener> mServiceDiscoveryListeners = new CopyOnWriteArrayList<>();
 
     @NonNull
-    private final Executor mResolveNsdServiceExecutor = Executors.newSingleThreadExecutor();
+    private final Executor mResolveNsdServiceExecutor =
+        Executors.newSingleThreadExecutor(new BasicThreadFactory.Builder()
+            .namingPattern("lss-service-discovery-nsd-resolver-%d")
+            .wrappedFactory(runnable -> new Thread(runnable) {
+                @Override
+                public void run() {
+                    Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND);
+                    super.run();
+                }
+            })
+            .build());
 
     @NonNull
     private final NsdManager.DiscoveryListener mNsdDiscoveryListener =
@@ -149,10 +166,6 @@ public final class LssServiceDiscoveryManager {
                 }
             }
         }, ThreadUtils.getMainThreadExecutor());
-
-    private LssServiceDiscoveryManager() {
-        mNsdManager = App.get().getSystemService(NsdManager.class);
-    }
 
     @NonNull
     public static LssServiceDiscoveryManager get() {

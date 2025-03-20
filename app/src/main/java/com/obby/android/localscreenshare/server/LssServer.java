@@ -1,5 +1,7 @@
 package com.obby.android.localscreenshare.server;
 
+import android.os.Process;
+
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.core.util.Pair;
@@ -8,6 +10,8 @@ import com.google.protobuf.Empty;
 import com.obby.android.localscreenshare.grpc.screenstream.ScreenFrame;
 import com.obby.android.localscreenshare.grpc.screenstream.ScreenStreamServiceGrpc;
 import com.obby.android.localscreenshare.support.Preferences;
+
+import org.apache.commons.lang3.concurrent.BasicThreadFactory;
 
 import java.io.IOException;
 import java.util.List;
@@ -29,27 +33,28 @@ import io.grpc.stub.ServerCallStreamObserver;
 import io.grpc.stub.StreamObserver;
 
 public final class LssServer {
-    private static final int GRPC_SERVER_EXECUTOR_THREADS = 4;
+    @NonNull
+    private final ExecutorService mGrpcServerExecutor = new ThreadPoolExecutor(1, 4, 10L, TimeUnit.SECONDS,
+        new LinkedBlockingQueue<>(100), new BasicThreadFactory.Builder()
+        .namingPattern("lss-server-grpc-%d")
+        .wrappedFactory(runnable -> new Thread(runnable) {
+            @Override
+            public void run() {
+                Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND);
+                super.run();
+            }
+        })
+        .build(), new ThreadPoolExecutor.DiscardOldestPolicy());
 
     @NonNull
-    private final ExecutorService mGrpcServerExecutor;
+    private final ScreenStreamService mScreenStreamService = new ScreenStreamService(mGrpcServerExecutor);
 
     @NonNull
-    private final ScreenStreamService mScreenStreamService;
-
-    @NonNull
-    private final Server mGrpcServer;
-
-    public LssServer() {
-        mGrpcServerExecutor = new ThreadPoolExecutor(GRPC_SERVER_EXECUTOR_THREADS, GRPC_SERVER_EXECUTOR_THREADS, 0L,
-            TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(), new ThreadPoolExecutor.DiscardPolicy());
-        mScreenStreamService = new ScreenStreamService(mGrpcServerExecutor);
-        mGrpcServer = Grpc.newServerBuilderForPort(Preferences.get().getLssServerPort(),
-                InsecureServerCredentials.create())
-            .executor(mGrpcServerExecutor)
-            .addService(mScreenStreamService)
-            .build();
-    }
+    private final Server mGrpcServer = Grpc.newServerBuilderForPort(Preferences.get().getLssServerPort(),
+            InsecureServerCredentials.create())
+        .executor(mGrpcServerExecutor)
+        .addService(mScreenStreamService)
+        .build();
 
     public void start() throws IOException {
         mGrpcServer.start();
@@ -99,7 +104,8 @@ public final class LssServer {
 
                     try {
                         Optional.ofNullable(mScreenFrame).ifPresent(screenFrame -> {
-                            if (mFrameTimestamp.getAndSet(screenFrame.getTimestamp()) != screenFrame.getTimestamp()) {
+                            if (mFrameTimestamp.get() < screenFrame.getTimestamp()) {
+                                mFrameTimestamp.set(screenFrame.getTimestamp());
                                 responseCallObserver.onNext(screenFrame);
                             }
                         });

@@ -25,6 +25,7 @@ import android.os.HandlerThread;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.Messenger;
+import android.os.Process;
 import android.os.SystemClock;
 import android.util.Log;
 import android.view.Surface;
@@ -262,7 +263,8 @@ public class LssService extends Service {
         mMediaProjection = getMediaProjection(intent);
         mMediaProjection.registerCallback(mMediaProjectionCallback, new Handler(Looper.getMainLooper()));
 
-        mImageReaderHandlerThread = new HandlerThread(IMAGE_READER_HANDLER_THREAD_NAME);
+        mImageReaderHandlerThread =
+            new HandlerThread(IMAGE_READER_HANDLER_THREAD_NAME, Process.THREAD_PRIORITY_BACKGROUND);
         mImageReaderHandlerThread.start();
         mImageReaderHandler = new Handler(mImageReaderHandlerThread.getLooper());
 
