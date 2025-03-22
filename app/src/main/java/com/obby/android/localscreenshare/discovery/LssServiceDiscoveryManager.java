@@ -2,7 +2,6 @@ package com.obby.android.localscreenshare.discovery;
 
 import android.net.nsd.NsdManager;
 import android.net.nsd.NsdServiceInfo;
-import android.os.Process;
 import android.text.TextUtils;
 import android.util.Log;
 
@@ -12,9 +11,8 @@ import androidx.annotation.Nullable;
 import com.obby.android.localscreenshare.App;
 import com.obby.android.localscreenshare.support.Constants;
 import com.obby.android.localscreenshare.support.Preferences;
+import com.obby.android.localscreenshare.utils.NsdUtils;
 import com.obby.android.localscreenshare.utils.ThreadUtils;
-
-import org.apache.commons.lang3.concurrent.BasicThreadFactory;
 
 import java.net.InetAddress;
 import java.nio.charset.StandardCharsets;
@@ -26,9 +24,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
-import java.util.concurrent.Executors;
 
 import lombok.AccessLevel;
 import lombok.NoArgsConstructor;
@@ -53,19 +49,6 @@ public final class LssServiceDiscoveryManager {
 
     @NonNull
     private final List<LssServiceDiscoveryListener> mServiceDiscoveryListeners = new CopyOnWriteArrayList<>();
-
-    @NonNull
-    private final Executor mResolveNsdServiceExecutor =
-        Executors.newSingleThreadExecutor(new BasicThreadFactory.Builder()
-            .namingPattern("lss-service-discovery-nsd-resolver-%d")
-            .wrappedFactory(runnable -> new Thread(runnable) {
-                @Override
-                public void run() {
-                    Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND);
-                    super.run();
-                }
-            })
-            .build());
 
     @NonNull
     private final NsdManager.DiscoveryListener mNsdDiscoveryListener =
@@ -116,7 +99,7 @@ public final class LssServiceDiscoveryManager {
                 final String serviceName = serviceInfo.getServiceName();
                 mNsdServiceInfoMap.put(serviceName, serviceInfo);
 
-                resolveNsdService(serviceInfo, new NsdManager.ResolveListener() {
+                NsdUtils.resolveService(mNsdManager, serviceInfo, new NsdManager.ResolveListener() {
                     @Override
                     public void onResolveFailed(NsdServiceInfo serviceInfo, int errorCode) {
                         if (!mNsdServiceInfoMap.containsKey(serviceName)) {
@@ -217,8 +200,6 @@ public final class LssServiceDiscoveryManager {
     }
 
     private void updateServiceInfoList() {
-        Log.i(TAG, "updateServiceInfoList: update service info list");
-
         final List<LssServiceInfo> serviceInfoList = new ArrayList<>(mServiceInfoMap.values());
         Collections.sort(serviceInfoList);
 
@@ -255,34 +236,6 @@ public final class LssServiceDiscoveryManager {
             .hostAddress(hostAddress)
             .port(serviceInfo.getPort())
             .build();
-    }
-
-    private void resolveNsdService(@NonNull final NsdServiceInfo serviceInfo,
-        @NonNull final NsdManager.ResolveListener listener) {
-        mResolveNsdServiceExecutor.execute(() -> {
-            final CountDownLatch latch = new CountDownLatch(1);
-            final Executor executor = ThreadUtils.getMainThreadExecutor();
-
-            mNsdManager.resolveService(serviceInfo, new NsdManager.ResolveListener() {
-                @Override
-                public void onResolveFailed(NsdServiceInfo serviceInfo, int errorCode) {
-                    latch.countDown();
-                    executor.execute(() -> listener.onResolveFailed(serviceInfo, errorCode));
-                }
-
-                @Override
-                public void onServiceResolved(NsdServiceInfo serviceInfo) {
-                    latch.countDown();
-                    executor.execute(() -> listener.onServiceResolved(serviceInfo));
-                }
-            });
-
-            try {
-                latch.await();
-            } catch (InterruptedException e) {
-                // ignored
-            }
-        });
     }
 
     private static class NsdDiscoveryListenerWrapper implements NsdManager.DiscoveryListener {

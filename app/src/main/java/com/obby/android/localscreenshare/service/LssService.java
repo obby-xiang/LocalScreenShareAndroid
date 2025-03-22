@@ -76,8 +76,7 @@ public class LssService extends Service {
     @Nullable
     private Handler mImageReaderHandler;
 
-    @Nullable
-    private ImageReader mImageReader;
+    private volatile ImageReader mImageReader;
 
     @Nullable
     private VirtualDisplay mVirtualDisplay;
@@ -89,6 +88,9 @@ public class LssService extends Service {
     private Bitmap mScreenFrameBitmap;
 
     private final String mTag = "LssService@" + hashCode();
+
+    @NonNull
+    private final Object mImageReaderLock = new Object();
 
     @NonNull
     private final List<Messenger> mClientMessengers = new CopyOnWriteArrayList<>();
@@ -135,42 +137,40 @@ public class LssService extends Service {
             return;
         }
 
-        try (final Image image = reader.acquireLatestImage()) {
-            if (image == null) {
+        synchronized (mImageReaderLock) {
+            if (mImageReader != reader) {
                 return;
             }
 
-            final long timestamp = SystemClock.elapsedRealtimeNanos();
+            try (final Image image = reader.acquireLatestImage()) {
+                if (image == null) {
+                    return;
+                }
 
-            final Bitmap frame = Optional.ofNullable(mScreenFrameBitmap)
-                .map(bitmap -> {
-                    if (bitmap.getWidth() == image.getWidth() && bitmap.getHeight() == image.getHeight()) {
-                        return bitmap;
-                    } else {
-                        bitmap.recycle();
-                        return null;
-                    }
-                })
-                .orElseGet(() -> Bitmap.createBitmap(image.getWidth(), image.getHeight(), Bitmap.Config.ARGB_8888));
-            mScreenFrameBitmap = frame;
+                if (mScreenFrameBitmap == null || mScreenFrameBitmap.getWidth() != image.getWidth()
+                    || mScreenFrameBitmap.getHeight() != image.getHeight()) {
+                    Optional.ofNullable(mScreenFrameBitmap).ifPresent(Bitmap::recycle);
+                    mScreenFrameBitmap =
+                        Bitmap.createBitmap(image.getWidth(), image.getHeight(), Bitmap.Config.ARGB_8888);
+                }
 
-            final Image.Plane plane = image.getPlanes()[0];
-            plane.getBuffer().rewind();
-            ImageProcessingUtil.copyByteBufferToBitmap(frame, plane.getBuffer(), plane.getRowStride());
+                final Image.Plane plane = image.getPlanes()[0];
+                plane.getBuffer().rewind();
+                ImageProcessingUtil.copyByteBufferToBitmap(mScreenFrameBitmap, plane.getBuffer(), plane.getRowStride());
 
-            final byte[] data;
-            try (final ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
-                frame.compress(Bitmap.CompressFormat.JPEG, SCREEN_FRAME_QUALITY, outputStream);
-                data = outputStream.toByteArray();
-            } catch (IOException e) {
-                return;
-            }
+                final byte[] data;
+                try (final ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
+                    mScreenFrameBitmap.compress(Bitmap.CompressFormat.JPEG, SCREEN_FRAME_QUALITY, outputStream);
+                    data = outputStream.toByteArray();
+                } catch (IOException e) {
+                    return;
+                }
 
-            Optional.ofNullable(mServer)
-                .ifPresent(server -> server.dispatchScreenFrame(ScreenFrame.newBuilder()
-                    .setTimestamp(timestamp)
+                mServer.dispatchScreenFrame(ScreenFrame.newBuilder()
+                    .setTimestamp(SystemClock.elapsedRealtimeNanos())
                     .setData(ByteString.copyFrom(data))
-                    .build()));
+                    .build());
+            }
         }
     };
 
@@ -251,7 +251,7 @@ public class LssService extends Service {
             return START_NOT_STICKY;
         }
 
-        mServer = new LssServer();
+        mServer = new LssServer(this);
         try {
             mServer.start();
         } catch (IOException e) {
@@ -289,9 +289,11 @@ public class LssService extends Service {
             mVirtualDisplay = null;
         }
 
-        if (mImageReader != null) {
-            mImageReader.close();
-            mImageReader = null;
+        synchronized (mImageReaderLock) {
+            if (mImageReader != null) {
+                mImageReader.close();
+                mImageReader = null;
+            }
         }
 
         if (mImageReaderHandler != null) {

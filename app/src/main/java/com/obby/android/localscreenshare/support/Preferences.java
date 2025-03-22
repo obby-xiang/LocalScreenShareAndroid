@@ -3,6 +3,7 @@ package com.obby.android.localscreenshare.support;
 import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.provider.Settings;
 
 import androidx.annotation.NonNull;
 
@@ -18,6 +19,8 @@ public final class Preferences {
     private static final String PREF_FILE_NAME = "preferences";
 
     private static final String KEY_LSS_SERVICE_ID = "lss_service_id";
+
+    private static final String KEY_LSS_SERVICE_NAME = "lss_service_name";
 
     @NonNull
     private final SharedPreferences mPreferences;
@@ -38,6 +41,17 @@ public final class Preferences {
                 final String serviceId = UUID.randomUUID().toString().replace("-", "");
                 mPreferences.edit().putString(KEY_LSS_SERVICE_ID, serviceId).commit();
                 return serviceId;
+            });
+    }
+
+    @NonNull
+    public String getLssServiceName() {
+        return Optional.ofNullable(mPreferences.getString(KEY_LSS_SERVICE_NAME, null))
+            .orElseGet(() -> {
+                final String serviceName =
+                    Settings.Global.getString(App.get().getContentResolver(), Settings.Global.DEVICE_NAME);
+                mPreferences.edit().putString(KEY_LSS_SERVICE_NAME, serviceName).commit();
+                return serviceName;
             });
     }
 

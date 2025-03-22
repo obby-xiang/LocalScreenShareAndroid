@@ -4,7 +4,6 @@ import android.os.Handler;
 import android.os.Looper;
 
 import androidx.annotation.NonNull;
-import androidx.core.os.HandlerCompat;
 
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
@@ -49,7 +48,7 @@ public final class ThreadUtils {
         if (sMainThreadExecutor == null) {
             synchronized (EXECUTOR_LOCK) {
                 if (sMainThreadExecutor == null) {
-                    final Handler handler = HandlerCompat.createAsync(Looper.getMainLooper());
+                    final Handler handler = new Handler(Looper.getMainLooper());
                     sMainThreadExecutor = handler::post;
                 }
             }
