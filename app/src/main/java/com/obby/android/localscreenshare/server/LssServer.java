@@ -12,6 +12,7 @@ import android.net.nsd.NsdServiceInfo;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Process;
+import android.os.SystemClock;
 import android.text.TextUtils;
 import android.util.Log;
 
@@ -20,21 +21,18 @@ import androidx.annotation.Nullable;
 import androidx.core.content.ContextCompat;
 
 import com.google.protobuf.Empty;
-import com.obby.android.localscreenshare.discovery.LssServiceInfo;
 import com.obby.android.localscreenshare.grpc.screenstream.ScreenFrame;
 import com.obby.android.localscreenshare.grpc.screenstream.ScreenStreamServiceGrpc;
 import com.obby.android.localscreenshare.support.Constants;
 import com.obby.android.localscreenshare.support.Preferences;
+import com.obby.android.localscreenshare.utils.NetUtils;
 import com.obby.android.localscreenshare.utils.NsdUtils;
 
-import org.apache.commons.lang3.ObjectUtils;
-import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.concurrent.BasicThreadFactory;
 
 import java.io.IOException;
-import java.net.InetAddress;
 import java.net.InetSocketAddress;
-import java.util.Collections;
+import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -45,21 +43,45 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Collectors;
 
+import io.grpc.Attributes;
 import io.grpc.Grpc;
 import io.grpc.InsecureServerCredentials;
+import io.grpc.Metadata;
 import io.grpc.Server;
+import io.grpc.ServerStreamTracer;
+import io.grpc.ServerTransportFilter;
 import io.grpc.stub.ServerCallStreamObserver;
 import io.grpc.stub.StreamObserver;
+import lombok.AccessLevel;
+import lombok.Getter;
 import lombok.Setter;
 import lombok.experimental.Accessors;
 
+@Accessors(prefix = "m")
 public final class LssServer {
+    private static final long UPDATE_SERVER_STATS_INTERVAL_MS = 3000L;
+
     @Nullable
-    private LssServiceInfo mServiceInfo;
+    private LssServerInfo mServerInfo;
 
     @Nullable
     private NsdServiceInfo mNsdServiceInfo;
+
+    @Nullable
+    private ServerProfile mServerProfile;
+
+    @Nullable
+    private LssServerStats mServerStats;
+
+    @Setter
+    @Nullable
+    private LssServerInfoListener mServerInfoListener;
+
+    @Setter
+    @Nullable
+    private LssServerStatsListener mServerStatsListener;
 
     private final String mTag = "LssServer@" + hashCode();
 
@@ -92,9 +114,68 @@ public final class LssServer {
     private final ScreenStreamService mScreenStreamService = new ScreenStreamService(mGrpcServerExecutor);
 
     @NonNull
+    private final ServerTransportFilter mServerTransportFilter = new ServerTransportFilter() {
+        @SuppressWarnings("DataFlowIssue")
+        @Override
+        public Attributes transportReady(Attributes transportAttrs) {
+            Log.i(mTag, String.format("mServerTransportFilter.transportReady: transport ready, transportAttrs = %s",
+                transportAttrs));
+
+            final InetSocketAddress remoteAddress =
+                (InetSocketAddress) transportAttrs.get(Grpc.TRANSPORT_ATTR_REMOTE_ADDR);
+            Optional.ofNullable(mServerProfile).ifPresent(serverProfile -> serverProfile.addTransport(remoteAddress));
+
+            return super.transportReady(transportAttrs);
+        }
+
+        @SuppressWarnings("DataFlowIssue")
+        @Override
+        public void transportTerminated(Attributes transportAttrs) {
+            super.transportTerminated(transportAttrs);
+            Log.i(mTag, String.format("mServerTransportFilter.transportTerminated: transport terminated"
+                + ", transportAttrs = %s", transportAttrs));
+
+            final InetSocketAddress remoteAddress =
+                (InetSocketAddress) transportAttrs.get(Grpc.TRANSPORT_ATTR_REMOTE_ADDR);
+            Optional.ofNullable(mServerProfile)
+                .ifPresent(serverProfile -> serverProfile.removeTransport(remoteAddress));
+        }
+    };
+
+    @NonNull
+    private final ServerStreamTracer.Factory mServerStreamTracerFactory = new ServerStreamTracer.Factory() {
+        @Override
+        public ServerStreamTracer newServerStreamTracer(String fullMethodName, Metadata headers) {
+            return new ServerStreamTracer() {
+                private volatile ServerProfile.TransportProfile mTransportProfile;
+
+                @SuppressWarnings("DataFlowIssue")
+                @Override
+                public void serverCallStarted(ServerCallInfo<?, ?> callInfo) {
+                    super.serverCallStarted(callInfo);
+                    final InetSocketAddress remoteAddress =
+                        (InetSocketAddress) callInfo.getAttributes().get(Grpc.TRANSPORT_ATTR_REMOTE_ADDR);
+                    mTransportProfile = Optional.ofNullable(mServerProfile)
+                        .map(serverProfile -> serverProfile.getTransport(remoteAddress))
+                        .orElse(null);
+                }
+
+                @Override
+                public void outboundWireSize(long bytes) {
+                    super.outboundWireSize(bytes);
+                    Optional.ofNullable(mTransportProfile)
+                        .ifPresent(transportProfile -> transportProfile.addOutboundDataSize(bytes));
+                }
+            };
+        }
+    };
+
+    @NonNull
     private final Server mGrpcServer = Grpc.newServerBuilderForPort(Preferences.get().getLssServerPort(),
             InsecureServerCredentials.create())
         .executor(mGrpcServerExecutor)
+        .addTransportFilter(mServerTransportFilter)
+        .addStreamTracerFactory(mServerStreamTracerFactory)
         .addService(mScreenStreamService)
         .build();
 
@@ -105,6 +186,32 @@ public final class LssServer {
             if (mNsdServiceInfo != null) {
                 NsdUtils.resolveService(mNsdManager, mNsdServiceInfo, mNsdResolveListener);
             }
+        }
+    };
+
+    @NonNull
+    private final Runnable mUpdateServerStatsRunnable = new Runnable() {
+        @Override
+        public void run() {
+            mMainHandler.removeCallbacks(mUpdateServerStatsRunnable);
+            if (mServerProfile == null) {
+                return;
+            }
+
+            final LssServerStats serverStats = mServerProfile.collect();
+            if (Objects.equals(mServerStats, serverStats)) {
+                Log.w(mTag, "mUpdateServerStatsRunnable: server stats not changed");
+            } else {
+                mServerStats = serverStats;
+                Log.i(mTag, String.format("mUpdateServerStatsRunnable: server stats changed, serverStats = %s",
+                    mServerStats));
+
+                if (mServerStatsListener != null) {
+                    mServerStatsListener.onServerStatsChanged(mServerStats);
+                }
+            }
+
+            mMainHandler.postDelayed(mUpdateServerStatsRunnable, UPDATE_SERVER_STATS_INTERVAL_MS);
         }
     };
 
@@ -157,7 +264,7 @@ public final class LssServer {
         @Override
         public void onServiceResolved(NsdServiceInfo serviceInfo) {
             final String hostAddress = Optional.ofNullable(serviceInfo.getHost())
-                .map(InetAddress::getHostAddress)
+                .map(NetUtils::getHostAddress)
                 .orElse(null);
             Log.i(mTag, String.format("mNsdResolveListener.onServiceResolved: service resolved, serviceInfo = %s"
                 + ", hostAddress = %s", serviceInfo, hostAddress));
@@ -166,8 +273,8 @@ public final class LssServer {
                 postResolveNsdServiceRunnable();
             } else {
                 mMainHandler.post(() -> {
-                    if (mServiceInfo != null) {
-                        updateServerInfo(mServiceInfo.toBuilder().hostAddress(hostAddress).build());
+                    if (mServerInfo != null) {
+                        updateServerInfo(mServerInfo.toBuilder().hostAddress(hostAddress).build());
                     }
                 });
             }
@@ -215,24 +322,34 @@ public final class LssServer {
     public void start() throws IOException {
         mGrpcServer.start();
 
-        mServiceInfo = LssServiceInfo.builder()
+        final String hostAddress =
+            NetUtils.getHostAddress(((InetSocketAddress) mGrpcServer.getListenSockets().get(0)).getAddress());
+        mServerInfo = LssServerInfo.builder()
             .id(Preferences.get().getLssServiceId())
             .name(Preferences.get().getLssServiceName())
-            .hostAddress(getHostAddress(mGrpcServer))
+            .hostAddress(hostAddress)
             .port(mGrpcServer.getPort())
             .build();
-        mNsdServiceInfo = buildNsdServiceInfo(mServiceInfo);
+        mNsdServiceInfo = buildNsdServiceInfo(mServerInfo);
         mNsdManager.registerService(mNsdServiceInfo, NsdManager.PROTOCOL_DNS_SD, mNsdRegistrationListener);
         mConnectivityManager.registerDefaultNetworkCallback(mNetworkCallback);
 
         final IntentFilter intentFilter = new IntentFilter();
         intentFilter.addAction(Constants.ACTION_WIFI_AP_STATE_CHANGED);
         ContextCompat.registerReceiver(mContext, mBroadcastReceiver, intentFilter, ContextCompat.RECEIVER_NOT_EXPORTED);
+
+        if (mServerInfoListener != null) {
+            mServerInfoListener.onServerInfoChanged(mServerInfo);
+        }
+
+        mServerProfile = new ServerProfile();
+        mMainHandler.postDelayed(mUpdateServerStatsRunnable, UPDATE_SERVER_STATS_INTERVAL_MS);
     }
 
     public void stop() {
-        mServiceInfo = null;
+        mServerInfo = null;
         mNsdServiceInfo = null;
+        mServerProfile = null;
         mMainHandler.removeCallbacksAndMessages(null);
         mContext.unregisterReceiver(mBroadcastReceiver);
         mConnectivityManager.unregisterNetworkCallback(mNetworkCallback);
@@ -246,14 +363,18 @@ public final class LssServer {
         mScreenStreamService.dispatchScreenFrame(frame);
     }
 
-    private void updateServerInfo(@NonNull final LssServiceInfo serviceInfo) {
-        if (Objects.equals(mServiceInfo, serviceInfo)) {
-            Log.w(mTag, "updateServerInfo: service info not changed");
+    private void updateServerInfo(@NonNull final LssServerInfo serverInfo) {
+        if (Objects.equals(mServerInfo, serverInfo)) {
+            Log.w(mTag, "updateServerInfo: server info not changed");
             return;
         }
 
-        mServiceInfo = serviceInfo;
-        Log.i(mTag, String.format("updateServerInfo: service info changed, serviceInfo = %s", mServiceInfo));
+        mServerInfo = serverInfo;
+        Log.i(mTag, String.format("updateServerInfo: server info changed, serverInfo = %s", mServerInfo));
+
+        if (mServerInfoListener != null) {
+            mServerInfoListener.onServerInfoChanged(mServerInfo);
+        }
     }
 
     private void postResolveNsdServiceRunnable() {
@@ -262,25 +383,14 @@ public final class LssServer {
     }
 
     @NonNull
-    private NsdServiceInfo buildNsdServiceInfo(@NonNull final LssServiceInfo serviceInfo) {
+    private NsdServiceInfo buildNsdServiceInfo(@NonNull final LssServerInfo serverInfo) {
         final NsdServiceInfo nsdServiceInfo = new NsdServiceInfo();
-        nsdServiceInfo.setServiceName(serviceInfo.getId());
+        nsdServiceInfo.setServiceName(serverInfo.getId());
         nsdServiceInfo.setServiceType(Constants.NSD_SERVICE_TYPE);
         nsdServiceInfo.setPort(mGrpcServer.getPort());
-        nsdServiceInfo.setAttribute(Constants.NSD_SERVICE_ATTR_ID, serviceInfo.getId());
-        nsdServiceInfo.setAttribute(Constants.NSD_SERVICE_ATTR_NAME, serviceInfo.getName());
+        nsdServiceInfo.setAttribute(Constants.NSD_SERVICE_ATTR_ID, serverInfo.getId());
+        nsdServiceInfo.setAttribute(Constants.NSD_SERVICE_ATTR_NAME, serverInfo.getName());
         return nsdServiceInfo;
-    }
-
-    @NonNull
-    private String getHostAddress(@NonNull final Server server) {
-        return ObjectUtils.defaultIfNull(server.getListenSockets(), Collections.emptyList())
-            .stream()
-            .filter(socketAddress -> socketAddress instanceof InetSocketAddress)
-            .findFirst()
-            .map(socketAddress -> ((InetSocketAddress) socketAddress).getAddress())
-            .map(InetAddress::getHostAddress)
-            .orElse(StringUtils.EMPTY);
     }
 
     private static class ScreenStreamService extends ScreenStreamServiceGrpc.ScreenStreamServiceImplBase {
@@ -436,6 +546,98 @@ public final class LssServer {
         @FunctionalInterface
         private interface OnReleaseListener {
             void onRelease();
+        }
+    }
+
+    @Accessors(prefix = "m")
+    private static class ServerProfile {
+        @NonNull
+        private final Object mLock = new Object();
+
+        @NonNull
+        private final AtomicLong mTimestamp = new AtomicLong(SystemClock.elapsedRealtimeNanos());
+
+        @NonNull
+        private final List<TransportProfile> mTransports = new CopyOnWriteArrayList<>();
+
+        public void addTransport(@NonNull final InetSocketAddress remoteAddress) {
+            synchronized (mLock) {
+                if (getTransport(remoteAddress) == null) {
+                    mTransports.add(new TransportProfile(remoteAddress));
+                }
+            }
+        }
+
+        public void removeTransport(@NonNull final InetSocketAddress remoteAddress) {
+            synchronized (mLock) {
+                final TransportProfile transportProfile = getTransport(remoteAddress);
+                if (transportProfile != null) {
+                    mTransports.remove(transportProfile);
+                }
+            }
+        }
+
+        @Nullable
+        public TransportProfile getTransport(@NonNull final InetSocketAddress remoteAddress) {
+            return mTransports.stream()
+                .filter(transportProfile -> Objects.equals(transportProfile.getRemoteAddress(), remoteAddress))
+                .findFirst()
+                .orElse(null);
+        }
+
+        @NonNull
+        public LssServerStats collect() {
+            synchronized (mLock) {
+                final long startTimestamp = mTimestamp.getAndSet(SystemClock.elapsedRealtimeNanos());
+                final long endTimestamp = mTimestamp.get();
+                final List<LssServerStats.TransportStats> transports = mTransports.stream()
+                    .map(transportProfile -> {
+                        final long outboundDataSize = transportProfile.getAndResetOutboundDataSize();
+                        final long outboundDataRate = Math.round((double) outboundDataSize
+                            / (endTimestamp - startTimestamp) * Duration.ofSeconds(1L).toNanos());
+                        return LssServerStats.TransportStats.builder()
+                            .remoteAddress(transportProfile.getRemoteAddress().toString())
+                            .outboundDataSize(outboundDataSize)
+                            .outboundDataRate(outboundDataRate)
+                            .build();
+                    })
+                    .collect(Collectors.toUnmodifiableList());
+                final long outboundDataSize = transports.stream()
+                    .map(LssServerStats.TransportStats::getOutboundDataSize)
+                    .reduce(0L, Long::sum);
+                final long outboundDataRate = Math.round((double) outboundDataSize / (endTimestamp - startTimestamp)
+                    * Duration.ofSeconds(1L).toNanos());
+
+                return LssServerStats.builder()
+                    .startTimestamp(startTimestamp)
+                    .endTimestamp(endTimestamp)
+                    .outboundDataSize(outboundDataSize)
+                    .outboundDataRate(outboundDataRate)
+                    .transports(transports)
+                    .build();
+            }
+        }
+
+        @Accessors(prefix = "m")
+        private static class TransportProfile {
+            @Getter(AccessLevel.PRIVATE)
+            @NonNull
+            private final InetSocketAddress mRemoteAddress;
+
+            @NonNull
+            private final AtomicLong mOutboundDataSize = new AtomicLong();
+
+            private TransportProfile(@NonNull final InetSocketAddress remoteAddress) {
+                mRemoteAddress = remoteAddress;
+            }
+
+            public void addOutboundDataSize(final long size) {
+                mOutboundDataSize.addAndGet(size);
+            }
+
+            public long getAndResetOutboundDataSize() {
+                return mOutboundDataSize.getAndSet(0L);
+            }
         }
     }
 }

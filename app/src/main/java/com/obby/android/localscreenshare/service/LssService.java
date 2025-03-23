@@ -65,7 +65,7 @@ public class LssService extends Service {
 
     private static final int IMAGE_READER_MAX_IMAGES = 2;
 
-    private static final int SCREEN_FRAME_QUALITY = 100;
+    private static final int SCREEN_FRAME_QUALITY = 85;
 
     @Nullable
     private MediaProjection mMediaProjection;
@@ -317,7 +317,7 @@ public class LssService extends Service {
             mServer = null;
         }
 
-        ServiceCompat.stopForeground(LssService.this, ServiceCompat.STOP_FOREGROUND_REMOVE);
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE);
         stopSelf();
     }
 

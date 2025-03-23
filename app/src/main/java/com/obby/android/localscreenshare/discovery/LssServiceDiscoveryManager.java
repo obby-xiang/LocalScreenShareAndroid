@@ -11,10 +11,10 @@ import androidx.annotation.Nullable;
 import com.obby.android.localscreenshare.App;
 import com.obby.android.localscreenshare.support.Constants;
 import com.obby.android.localscreenshare.support.Preferences;
+import com.obby.android.localscreenshare.utils.NetUtils;
 import com.obby.android.localscreenshare.utils.NsdUtils;
 import com.obby.android.localscreenshare.utils.ThreadUtils;
 
-import java.net.InetAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -224,7 +224,7 @@ public final class LssServiceDiscoveryManager {
             .map(value -> new String(value, StandardCharsets.UTF_8))
             .orElse(null);
         final String hostAddress = Optional.ofNullable(serviceInfo.getHost())
-            .map(InetAddress::getHostAddress)
+            .map(NetUtils::getHostAddress)
             .orElse(null);
         if (TextUtils.isEmpty(id) || TextUtils.isEmpty(name) || TextUtils.isEmpty(hostAddress)) {
             return null;
