@@ -11,6 +11,6 @@ import lombok.NonNull;
 public final class NetUtils {
     @NonNull
     public static String getHostAddress(@NonNull final InetAddress address) {
-        return String.format((address instanceof Inet6Address) ? "[%s]" : "%s", address.getHostAddress());
+        return String.format(address instanceof Inet6Address ? "[%s]" : "%s", address.getHostAddress());
     }
 }

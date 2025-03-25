@@ -27,8 +27,7 @@ public class LssServerStats {
     @Data
     @lombok.Builder(builderClassName = "Builder", toBuilder = true)
     public static class TransportStats implements Comparable<TransportStats> {
-        @NonNull
-        private final Comparator<TransportStats> mComparator =
+        private static final Comparator<TransportStats> COMPARATOR =
             Comparator.nullsLast(Comparator.comparing(TransportStats::getRemoteAddress)
                 .thenComparing(TransportStats::getOutboundDataRate, Comparator.reverseOrder()));
 
@@ -41,7 +40,7 @@ public class LssServerStats {
 
         @Override
         public int compareTo(TransportStats transportStats) {
-            return mComparator.compare(this, transportStats);
+            return COMPARATOR.compare(this, transportStats);
         }
     }
 }

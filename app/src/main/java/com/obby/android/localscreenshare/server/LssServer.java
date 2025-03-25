@@ -147,7 +147,8 @@ public final class LssServer {
         @Override
         public ServerStreamTracer newServerStreamTracer(String fullMethodName, Metadata headers) {
             return new ServerStreamTracer() {
-                private volatile ServerProfile.TransportProfile mTransportProfile;
+                @Nullable
+                private ServerProfile.TransportProfile mTransportProfile;
 
                 @SuppressWarnings("DataFlowIssue")
                 @Override
@@ -350,6 +351,7 @@ public final class LssServer {
         mServerInfo = null;
         mNsdServiceInfo = null;
         mServerProfile = null;
+        mServerStats = null;
         mMainHandler.removeCallbacksAndMessages(null);
         mContext.unregisterReceiver(mBroadcastReceiver);
         mConnectivityManager.unregisterNetworkCallback(mNetworkCallback);
