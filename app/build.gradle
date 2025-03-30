@@ -3,6 +3,12 @@ plugins {
     alias(libs.plugins.protobuf)
 }
 
+def signingProperties = new Properties()
+def signingPropertiesFile = rootProject.file("signing.properties")
+if (signingPropertiesFile.exists()) {
+    signingProperties.load(new FileInputStream(signingPropertiesFile))
+}
+
 android {
     namespace 'com.obby.android.localscreenshare'
     compileSdk 35
@@ -17,8 +23,18 @@ android {
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        release {
+            storeFile rootProject.file(signingProperties['storeFile'] ?: property('signing.storeFile'))
+            storePassword signingProperties['storePassword'] ?: property('signing.storePassword')
+            keyAlias signingProperties['keyAlias'] ?: property('signing.keyAlias')
+            keyPassword signingProperties['keyPassword'] ?: property('signing.keyPassword')
+        }
+    }
+
     buildTypes {
         release {
+            signingConfig signingConfigs.release
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
