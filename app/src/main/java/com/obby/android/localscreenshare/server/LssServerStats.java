@@ -1,11 +1,12 @@
 package com.obby.android.localscreenshare.server;
 
+import androidx.annotation.NonNull;
+
 import java.util.Comparator;
 import java.util.List;
 
 import lombok.Builder;
 import lombok.Data;
-import lombok.NonNull;
 import lombok.experimental.Accessors;
 
 @Accessors(prefix = "m")

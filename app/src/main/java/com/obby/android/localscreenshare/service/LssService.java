@@ -28,11 +28,15 @@ import android.os.Messenger;
 import android.os.Process;
 import android.os.SystemClock;
 import android.util.Log;
+import android.view.Gravity;
 import android.view.Surface;
+import android.view.ViewGroup;
+import android.view.WindowManager;
 
 import androidx.activity.result.ActivityResult;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.appcompat.view.ContextThemeWrapper;
 import androidx.camera.core.ImageProcessingUtil;
 import androidx.core.app.NotificationChannelCompat;
 import androidx.core.app.NotificationCompat;
@@ -40,6 +44,8 @@ import androidx.core.app.NotificationManagerCompat;
 import androidx.core.app.ServiceCompat;
 import androidx.core.content.ContextCompat;
 
+import com.google.android.material.chip.Chip;
+import com.google.android.material.color.MaterialColors;
 import com.google.protobuf.ByteString;
 import com.obby.android.localscreenshare.MainActivity;
 import com.obby.android.localscreenshare.R;
@@ -47,6 +53,8 @@ import com.obby.android.localscreenshare.grpc.screenstream.ScreenFrame;
 import com.obby.android.localscreenshare.server.LssServer;
 import com.obby.android.localscreenshare.support.Constants;
 import com.obby.android.localscreenshare.utils.WindowUtils;
+
+import org.apache.commons.lang3.time.DurationFormatUtils;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -68,6 +76,9 @@ public class LssService extends Service {
     private static final int SCREEN_FRAME_QUALITY = 85;
 
     @Nullable
+    private LssServer mServer;
+
+    @Nullable
     private MediaProjection mMediaProjection;
 
     @Nullable
@@ -82,7 +93,7 @@ public class LssService extends Service {
     private VirtualDisplay mVirtualDisplay;
 
     @Nullable
-    private LssServer mServer;
+    private ScreenShareChip mScreenShareChip;
 
     @Nullable
     private Bitmap mScreenFrameBitmap;
@@ -273,11 +284,19 @@ public class LssService extends Service {
 
         mVirtualDisplay = createVirtualDisplay(mMediaProjection, mImageReader.getSurface(), mVirtualDisplayCallback);
 
+        mScreenShareChip = new ScreenShareChip(this);
+        mScreenShareChip.attach();
+
         return START_STICKY;
     }
 
     private void stopService() {
         Log.i(mTag, "stopService: stop service");
+
+        if (mScreenShareChip != null) {
+            mScreenShareChip.detach();
+            mScreenShareChip = null;
+        }
 
         if (mScreenFrameBitmap != null) {
             mScreenFrameBitmap.recycle();
@@ -389,5 +408,68 @@ public class LssService extends Service {
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .build();
+    }
+
+    private static class ScreenShareChip {
+        @NonNull
+        private final WindowManager mWindowManager;
+
+        @NonNull
+        private final Chip mChip;
+
+        @NonNull
+        private final WindowManager.LayoutParams mLayoutParams;
+
+        private long mAttachTimestamp;
+
+        @NonNull
+        private final Runnable mTickRunnable = new Runnable() {
+            @Override
+            public void run() {
+                mChip.removeCallbacks(mTickRunnable);
+                updateDuration();
+                mChip.postDelayed(mTickRunnable, 1000L - (SystemClock.elapsedRealtime() - mAttachTimestamp) % 1000L);
+            }
+        };
+
+        private ScreenShareChip(@NonNull final Context context) {
+            mWindowManager = context.getSystemService(WindowManager.class);
+
+            final Context themedContext = new ContextThemeWrapper(context, R.style.AppTheme);
+            mChip = new Chip(themedContext, null,
+                com.google.android.material.R.style.Widget_Material3_Chip_Assist_Elevated);
+            mChip.setChipIconResource(R.drawable.ic_screen_share_chip);
+            mChip.setChipIconTint(MaterialColors.getColorStateListOrNull(themedContext,
+                com.google.android.material.R.attr.colorOnError));
+            mChip.setTextColor(MaterialColors.getColorStateListOrNull(themedContext,
+                com.google.android.material.R.attr.colorOnError));
+            mChip.setChipBackgroundColor(MaterialColors.getColorStateListOrNull(themedContext,
+                com.google.android.material.R.attr.colorError));
+
+            mLayoutParams = new WindowManager.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, 0, 0,
+                Build.VERSION.SDK_INT < Build.VERSION_CODES.O ? WindowManager.LayoutParams.TYPE_SYSTEM_ALERT
+                    : WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                    | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON, PixelFormat.TRANSLUCENT);
+            mLayoutParams.gravity = Gravity.START | Gravity.TOP;
+        }
+
+        public void attach() {
+            mAttachTimestamp = SystemClock.elapsedRealtime();
+            mWindowManager.addView(mChip, mLayoutParams);
+            updateDuration();
+            mChip.post(mTickRunnable);
+        }
+
+        public void detach() {
+            mChip.removeCallbacks(mTickRunnable);
+            mWindowManager.removeView(mChip);
+        }
+
+        private void updateDuration() {
+            mChip.setText(DurationFormatUtils.formatDuration(SystemClock.elapsedRealtime() - mAttachTimestamp,
+                "[HH:]mm:ss"));
+        }
     }
 }

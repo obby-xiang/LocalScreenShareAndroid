@@ -1,11 +1,12 @@
 package com.obby.android.localscreenshare.utils;
 
+import androidx.annotation.NonNull;
+
 import java.net.Inet6Address;
 import java.net.InetAddress;
 
 import lombok.AccessLevel;
 import lombok.NoArgsConstructor;
-import lombok.NonNull;
 
 @NoArgsConstructor(access = AccessLevel.PRIVATE)
 public final class NetUtils {

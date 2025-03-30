@@ -18,4 +18,8 @@ public class App extends Application {
     public static App get() {
         return sApp;
     }
+
+    public static CharSequence getLabel() {
+        return sApp.getApplicationInfo().loadLabel(sApp.getPackageManager());
+    }
 }
