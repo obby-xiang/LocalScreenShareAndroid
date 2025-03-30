@@ -52,6 +52,7 @@ import io.grpc.Metadata;
 import io.grpc.Server;
 import io.grpc.ServerStreamTracer;
 import io.grpc.ServerTransportFilter;
+import io.grpc.okhttp.OkHttpServerBuilder;
 import io.grpc.stub.ServerCallStreamObserver;
 import io.grpc.stub.StreamObserver;
 import lombok.AccessLevel;
@@ -61,6 +62,8 @@ import lombok.experimental.Accessors;
 
 @Accessors(prefix = "m")
 public final class LssServer {
+    private static final int CPU_COUNT = Runtime.getRuntime().availableProcessors();
+
     private static final long UPDATE_SERVER_STATS_INTERVAL_MS = 3000L;
 
     @Nullable
@@ -98,8 +101,8 @@ public final class LssServer {
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
 
     @NonNull
-    private final ExecutorService mGrpcServerExecutor = new ThreadPoolExecutor(1, 4, 10L, TimeUnit.SECONDS,
-        new LinkedBlockingQueue<>(100), new BasicThreadFactory.Builder()
+    private final ExecutorService mGrpcServerExecutor = new ThreadPoolExecutor(CPU_COUNT, CPU_COUNT * 2, 30L,
+        TimeUnit.SECONDS, new LinkedBlockingQueue<>(200), new BasicThreadFactory.Builder()
         .namingPattern("lss-server-grpc-%d")
         .wrappedFactory(runnable -> new Thread(runnable) {
             @Override
@@ -108,7 +111,7 @@ public final class LssServer {
                 super.run();
             }
         })
-        .build(), new ThreadPoolExecutor.DiscardOldestPolicy());
+        .build(), new ThreadPoolExecutor.CallerRunsPolicy());
 
     @NonNull
     private final ScreenStreamService mScreenStreamService = new ScreenStreamService(mGrpcServerExecutor);
@@ -172,9 +175,11 @@ public final class LssServer {
     };
 
     @NonNull
-    private final Server mGrpcServer = Grpc.newServerBuilderForPort(Preferences.get().getLssServerPort(),
+    private final Server mGrpcServer = OkHttpServerBuilder.forPort(Preferences.get().getLssServerPort(),
             InsecureServerCredentials.create())
         .executor(mGrpcServerExecutor)
+        .flowControlWindow(8 * 1024 * 1024)
+        .maxInboundMessageSize(8 * 1024 * 1024)
         .addTransportFilter(mServerTransportFilter)
         .addStreamTracerFactory(mServerStreamTracerFactory)
         .addService(mScreenStreamService)
