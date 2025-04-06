@@ -55,4 +55,8 @@
         <item name="colorSurfaceContainerHigh">@color/md_theme_surfaceContainerHigh</item>
         <item name="colorSurfaceContainerHighest">@color/md_theme_surfaceContainerHighest</item>
     </style>
+
+    <style name="ScreenShareChipTheme" parent="AppTheme">
+        <item name="chipStyle">@style/Widget.Material3.Chip.Assist.Elevated</item>
+    </style>
 </resources>

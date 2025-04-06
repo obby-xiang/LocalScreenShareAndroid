@@ -7,4 +7,5 @@
     <string name="request_post_notification">"请允许应用“&lt;b&gt;%1$s"&lt;/b&gt;"”发送通知。"</string>
     <string name="request_ignore_battery_optimizations">"请允许应用“&lt;b&gt;%1$s&lt;/b&gt;”一直在后台运行。"</string>
     <string name="request_system_alert_window">"请允许应用“&lt;b&gt;%1$s&lt;/b&gt;”显示在其他应用的上层。"</string>
+    <string name="stop_screen_share_confirm">"是否停止共享屏幕？"</string>
 </resources>

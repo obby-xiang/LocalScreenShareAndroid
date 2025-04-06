@@ -109,7 +109,7 @@ public class MainActivity extends AppCompatActivity {
             return insets;
         });
 
-        findViewById(R.id.main).setOnClickListener(v -> startScreenShare());
+        findViewById(R.id.text).setOnClickListener(v -> startScreenShare());
     }
 
     @Override

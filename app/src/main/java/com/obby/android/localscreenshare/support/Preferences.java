@@ -3,6 +3,7 @@ package com.obby.android.localscreenshare.support;
 import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.graphics.PointF;
 import android.provider.Settings;
 
 import androidx.annotation.NonNull;
@@ -16,11 +17,15 @@ import java.util.UUID;
 public final class Preferences {
     public static final String KEY_LSS_SERVER_PORT = "lss_server_port";
 
-    private static final String PREF_FILE_NAME = "preferences";
+    private static final String PREF_FILE_NAME = "lss-preferences";
 
     private static final String KEY_LSS_SERVICE_ID = "lss_service_id";
 
     private static final String KEY_LSS_SERVICE_NAME = "lss_service_name";
+
+    private static final String KEY_LSS_SERVICE_CHIP_POSITION_X = "lss_service_chip_position_x";
+
+    private static final String KEY_LSS_SERVICE_CHIP_POSITION_Y = "lss_service_chip_position_y";
 
     @NonNull
     private final SharedPreferences mPreferences;
@@ -32,6 +37,20 @@ public final class Preferences {
     @NonNull
     public static Preferences get() {
         return InstanceHolder.INSTANCE;
+    }
+
+    @NonNull
+    public PointF getServiceChipPosition() {
+        final float positionX = mPreferences.getFloat(KEY_LSS_SERVICE_CHIP_POSITION_X, 0f);
+        final float positionY = mPreferences.getFloat(KEY_LSS_SERVICE_CHIP_POSITION_Y, 0f);
+        return new PointF(positionX, positionY);
+    }
+
+    public void setServiceChipPosition(@NonNull final PointF position) {
+        mPreferences.edit()
+            .putFloat(KEY_LSS_SERVICE_CHIP_POSITION_X, position.x)
+            .putFloat(KEY_LSS_SERVICE_CHIP_POSITION_Y, position.y)
+            .commit();
     }
 
     @NonNull
