@@ -492,7 +492,6 @@ public class LssService extends Service {
                 }
             };
 
-        @SuppressLint({"InflateParams", "ClickableViewAccessibility"})
         private ScreenShareChip(@NonNull final Context context) {
             mContext = new ContextThemeWrapper(context, R.style.ScreenShareChipTheme);
             mWindowManager = mContext.getSystemService(WindowManager.class);
@@ -619,8 +618,8 @@ public class LssService extends Service {
                     switch (event.getActionMasked()) {
                         case MotionEvent.ACTION_DOWN:
                             mChipView.removeCallbacks(mTransitionRunnable);
-                            mTouchOffset.set(mLayoutParams.x - event.getRawX(), mLayoutParams.y - event.getRawY());
                             mOverScroller.forceFinished(true);
+                            mTouchOffset.set(mLayoutParams.x - event.getRawX(), mLayoutParams.y - event.getRawY());
                             break;
                         case MotionEvent.ACTION_MOVE:
                             updatePosition((int) (event.getRawX() + mTouchOffset.x),
