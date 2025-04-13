@@ -616,8 +616,6 @@ public final class LssServer {
                     * Duration.ofSeconds(1L).toNanos());
 
                 return LssServerStats.builder()
-                    .startTimestamp(startTimestamp)
-                    .endTimestamp(endTimestamp)
                     .outboundDataSize(outboundDataSize)
                     .outboundDataRate(outboundDataRate)
                     .transports(transports)

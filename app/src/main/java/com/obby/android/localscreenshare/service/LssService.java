@@ -26,8 +26,10 @@ import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.Message;
 import android.os.Messenger;
 import android.os.Process;
+import android.os.RemoteException;
 import android.os.SystemClock;
 import android.util.Log;
 import android.view.GestureDetector;
@@ -60,6 +62,10 @@ import com.obby.android.localscreenshare.MainActivity;
 import com.obby.android.localscreenshare.R;
 import com.obby.android.localscreenshare.grpc.screenstream.ScreenFrame;
 import com.obby.android.localscreenshare.server.LssServer;
+import com.obby.android.localscreenshare.server.LssServerInfo;
+import com.obby.android.localscreenshare.server.LssServerInfoListener;
+import com.obby.android.localscreenshare.server.LssServerStats;
+import com.obby.android.localscreenshare.server.LssServerStatsListener;
 import com.obby.android.localscreenshare.support.Constants;
 import com.obby.android.localscreenshare.support.Preferences;
 import com.obby.android.localscreenshare.utils.WindowUtils;
@@ -108,6 +114,14 @@ public class LssService extends Service {
     @Nullable
     private Bitmap mScreenFrameBitmap;
 
+    @Nullable
+    private LssServerInfo mServerInfo;
+
+    @Nullable
+    private LssServerStats mServerStats;
+
+    private int mConnectionCount;
+
     private final String mTag = "LssService@" + hashCode();
 
     @NonNull
@@ -129,6 +143,12 @@ public class LssService extends Service {
                 return false;
         }
     }));
+
+    @NonNull
+    private final LssServerInfoListener mServerInfoListener = this::onServerInfoChanged;
+
+    @NonNull
+    private final LssServerStatsListener mServerStatsListener = this::onServerStatsChanged;
 
     @NonNull
     private final MediaProjection.Callback mMediaProjectionCallback = new MediaProjection.Callback() {
@@ -273,6 +293,9 @@ public class LssService extends Service {
         }
 
         mServer = new LssServer(this);
+        mServer.setServerInfoListener(mServerInfoListener);
+        mServer.setServerStatsListener(mServerStatsListener);
+
         try {
             mServer.start();
         } catch (IOException e) {
@@ -350,6 +373,39 @@ public class LssService extends Service {
         stopSelf();
     }
 
+    private void onServerInfoChanged(@NonNull final LssServerInfo serverInfo) {
+        mServerInfo = serverInfo;
+        mClientMessengers.forEach(this::notifyServerInfoChanged);
+    }
+
+    @SuppressLint("MissingPermission")
+    private void onServerStatsChanged(@NonNull final LssServerStats serverStats) {
+        mServerStats = serverStats;
+        mClientMessengers.forEach(this::notifyServerStatsChanged);
+
+        final int connectionCount = mServerStats.getTransports().size();
+        if (mConnectionCount != connectionCount) {
+            mConnectionCount = connectionCount;
+            NotificationManagerCompat.from(this).notify(NOTIFICATION_ID, buildNotification());
+        }
+    }
+
+    private void notifyServerInfoChanged(@NonNull final Messenger messenger) {
+        try {
+            messenger.send(Message.obtain(null, Constants.MSG_SERVER_INFO_CHANGED, mServerInfo));
+        } catch (RemoteException e) {
+            // ignored
+        }
+    }
+
+    private void notifyServerStatsChanged(@NonNull final Messenger messenger) {
+        try {
+            messenger.send(Message.obtain(null, Constants.MSG_SERVER_STATS_CHANGED, mServerStats));
+        } catch (RemoteException e) {
+            // ignored
+        }
+    }
+
     private void registerServiceClient(@NonNull final Messenger messenger) {
         Log.i(mTag, "registerServiceClient: register service client");
 
@@ -357,6 +413,14 @@ public class LssService extends Service {
             Log.w(mTag, "registerServiceClient: client already exists");
         } else {
             mClientMessengers.add(messenger);
+
+            if (mServerInfo != null) {
+                notifyServerInfoChanged(messenger);
+            }
+
+            if (mServerStats != null) {
+                notifyServerStatsChanged(messenger);
+            }
         }
     }
 
@@ -407,7 +471,7 @@ public class LssService extends Service {
         return new NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle(getString(R.string.lss_service_notification_title))
-            .setContentText(getString(R.string.lss_service_notification_text, 0))
+            .setContentText(getString(R.string.lss_service_notification_text, mConnectionCount))
             .setContentIntent(PendingIntent.getActivity(this, 0, new Intent(this, MainActivity.class),
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT))
             .addAction(0, getString(R.string.lss_service_stop_notification_action),

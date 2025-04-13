@@ -35,6 +35,8 @@ import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
+import com.obby.android.localscreenshare.server.LssServerInfo;
+import com.obby.android.localscreenshare.server.LssServerStats;
 import com.obby.android.localscreenshare.service.LssService;
 import com.obby.android.localscreenshare.support.Constants;
 import com.obby.android.localscreenshare.utils.IntentUtils;
@@ -45,10 +47,27 @@ public class MainActivity extends AppCompatActivity {
     @Nullable
     private Messenger mServiceMessenger;
 
+    @Nullable
+    private LssServerInfo mServerInfo;
+
+    @Nullable
+    private LssServerStats mServerStats;
+
     private final String mTag = "MainActivity@" + hashCode();
 
     @NonNull
-    private final Messenger mMessenger = new Messenger(new Handler(Looper.getMainLooper(), msg -> false));
+    private final Messenger mMessenger = new Messenger(new Handler(Looper.getMainLooper(), msg -> {
+        switch (msg.what) {
+            case Constants.MSG_SERVER_INFO_CHANGED:
+                onServerInfoChanged((LssServerInfo) msg.obj);
+                return true;
+            case Constants.MSG_SERVER_STATS_CHANGED:
+                onServerStatsChanged((LssServerStats) msg.obj);
+                return true;
+            default:
+                return false;
+        }
+    }));
 
     @NonNull
     private final ServiceConnection mServiceConnection = new ServiceConnection() {
@@ -130,6 +149,14 @@ public class MainActivity extends AppCompatActivity {
         mIsServiceBound = false;
         mServiceMessenger = null;
         unbindService(mServiceConnection);
+    }
+
+    private void onServerInfoChanged(@NonNull final LssServerInfo serverInfo) {
+        mServerInfo = serverInfo;
+    }
+
+    private void onServerStatsChanged(@NonNull final LssServerStats serverStats) {
+        mServerStats = serverStats;
     }
 
     private void startScreenShare() {

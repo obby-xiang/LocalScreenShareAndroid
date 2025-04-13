@@ -24,4 +24,8 @@ public final class Constants {
     public static final int MSG_REGISTER_SERVICE_CLIENT = 1;
 
     public static final int MSG_UNREGISTER_SERVICE_CLIENT = 2;
+
+    public static final int MSG_SERVER_INFO_CHANGED = 3;
+
+    public static final int MSG_SERVER_STATS_CHANGED = 4;
 }
