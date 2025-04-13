@@ -103,7 +103,7 @@ public final class LssServer {
     @NonNull
     private final ExecutorService mGrpcServerExecutor = new ThreadPoolExecutor(CPU_COUNT, CPU_COUNT * 2, 30L,
         TimeUnit.SECONDS, new LinkedBlockingQueue<>(200), new BasicThreadFactory.Builder()
-        .namingPattern("lss-server-grpc-%d")
+        .namingPattern("lss-grpc-server-%d")
         .wrappedFactory(runnable -> new Thread(runnable) {
             @Override
             public void run() {
@@ -178,8 +178,8 @@ public final class LssServer {
     private final Server mGrpcServer = OkHttpServerBuilder.forPort(Preferences.get().getLssServerPort(),
             InsecureServerCredentials.create())
         .executor(mGrpcServerExecutor)
-        .flowControlWindow(8 * 1024 * 1024)
-        .maxInboundMessageSize(8 * 1024 * 1024)
+        .flowControlWindow(Constants.GRPC_FLOW_CONTROL_WINDOW)
+        .maxInboundMessageSize(Constants.GRPC_MAX_INBOUND_MESSAGE_SIZE)
         .addTransportFilter(mServerTransportFilter)
         .addStreamTracerFactory(mServerStreamTracerFactory)
         .addService(mScreenStreamService)

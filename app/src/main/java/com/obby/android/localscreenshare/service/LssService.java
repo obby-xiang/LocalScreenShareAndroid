@@ -326,6 +326,9 @@ public class LssService extends Service {
     private void stopService() {
         Log.i(mTag, "stopService: stop service");
 
+        mServerInfo = null;
+        mServerStats = null;
+
         if (mScreenShareChip != null) {
             mScreenShareChip.detach();
             mScreenShareChip = null;

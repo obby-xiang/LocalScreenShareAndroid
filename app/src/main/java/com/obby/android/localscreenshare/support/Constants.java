@@ -28,4 +28,8 @@ public final class Constants {
     public static final int MSG_SERVER_INFO_CHANGED = 3;
 
     public static final int MSG_SERVER_STATS_CHANGED = 4;
+
+    public static final int GRPC_FLOW_CONTROL_WINDOW = 8 * 1024 * 1024;
+
+    public static final int GRPC_MAX_INBOUND_MESSAGE_SIZE = 8 * 1024 * 1024;
 }
