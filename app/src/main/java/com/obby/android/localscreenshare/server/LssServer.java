@@ -62,8 +62,6 @@ import lombok.experimental.Accessors;
 
 @Accessors(prefix = "m")
 public final class LssServer {
-    private static final int CPU_COUNT = Runtime.getRuntime().availableProcessors();
-
     private static final long UPDATE_SERVER_STATS_INTERVAL_MS = 3000L;
 
     @Nullable
@@ -101,8 +99,8 @@ public final class LssServer {
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
 
     @NonNull
-    private final ExecutorService mGrpcServerExecutor = new ThreadPoolExecutor(CPU_COUNT, CPU_COUNT * 2, 30L,
-        TimeUnit.SECONDS, new LinkedBlockingQueue<>(200), new BasicThreadFactory.Builder()
+    private final ExecutorService mGrpcServerExecutor = new ThreadPoolExecutor(Constants.CPU_COUNT,
+        Constants.CPU_COUNT * 2, 30L, TimeUnit.SECONDS, new LinkedBlockingQueue<>(200), new BasicThreadFactory.Builder()
         .namingPattern("lss-grpc-server-%d")
         .wrappedFactory(runnable -> new Thread(runnable) {
             @Override

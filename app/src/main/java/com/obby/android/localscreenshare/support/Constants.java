@@ -5,6 +5,8 @@ import lombok.NoArgsConstructor;
 
 @NoArgsConstructor(access = AccessLevel.PRIVATE)
 public final class Constants {
+    public static final int CPU_COUNT = Runtime.getRuntime().availableProcessors();
+
     @SuppressWarnings("SpellCheckingInspection")
     public static final String NSD_SERVICE_TYPE = "_localscreenshare._udp";
 
