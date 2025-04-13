@@ -335,15 +335,11 @@ public class LssService extends Service {
 
         mServerInfo = null;
         mServerStats = null;
+        mConnectionCount = 0;
 
         if (mScreenShareChip != null) {
             mScreenShareChip.detach();
             mScreenShareChip = null;
-        }
-
-        if (mScreenFrameBitmap != null) {
-            mScreenFrameBitmap.recycle();
-            mScreenFrameBitmap = null;
         }
 
         if (mVirtualDisplay != null) {
@@ -352,6 +348,11 @@ public class LssService extends Service {
         }
 
         synchronized (mImageReaderLock) {
+            if (mScreenFrameBitmap != null) {
+                mScreenFrameBitmap.recycle();
+                mScreenFrameBitmap = null;
+            }
+
             if (mImageReader != null) {
                 mImageReader.close();
                 mImageReader = null;
