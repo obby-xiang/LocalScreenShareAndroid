@@ -207,7 +207,7 @@ public class LssService extends Service {
                     return;
                 }
 
-                mServer.dispatchScreenFrame(ScreenFrame.newBuilder()
+                mServer.postScreenFrame(ScreenFrame.newBuilder()
                     .setTimestamp(SystemClock.elapsedRealtimeNanos())
                     .setData(ByteString.copyFrom(data))
                     .build());

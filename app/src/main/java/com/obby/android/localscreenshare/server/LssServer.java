@@ -364,8 +364,8 @@ public final class LssServer {
         mGrpcServerExecutor.shutdownNow();
     }
 
-    public void dispatchScreenFrame(@NonNull final ScreenFrame frame) {
-        mScreenStreamService.dispatchScreenFrame(frame);
+    public void postScreenFrame(@NonNull final ScreenFrame frame) {
+        mScreenStreamService.postScreenFrame(frame);
     }
 
     private void updateServerInfo(@NonNull final LssServerInfo serverInfo) {
@@ -437,12 +437,12 @@ public final class LssServer {
                 mScreenStreamResponseObservers.add(observer);
 
                 if (mScreenFrame != null) {
-                    observer.send(mScreenFrame);
+                    observer.postScreenFrame(mScreenFrame);
                 }
             }
         }
 
-        public void dispatchScreenFrame(@NonNull final ScreenFrame frame) {
+        public void postScreenFrame(@NonNull final ScreenFrame frame) {
             if (mIsStopped) {
                 return;
             }
@@ -453,7 +453,7 @@ public final class LssServer {
                 }
 
                 mScreenFrame = frame;
-                mScreenStreamResponseObservers.forEach(observer -> observer.send(mScreenFrame));
+                mScreenStreamResponseObservers.forEach(observer -> observer.postScreenFrame(mScreenFrame));
             }
         }
 
@@ -521,7 +521,7 @@ public final class LssServer {
             mObserver.setOnCancelHandler(this::release);
         }
 
-        public void send(@NonNull final ScreenFrame screenFrame) {
+        public void postScreenFrame(@NonNull final ScreenFrame screenFrame) {
             if (mIsReleased) {
                 return;
             }
