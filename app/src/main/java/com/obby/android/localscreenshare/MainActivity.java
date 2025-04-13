@@ -41,11 +41,16 @@ import com.obby.android.localscreenshare.service.LssService;
 import com.obby.android.localscreenshare.support.Constants;
 import com.obby.android.localscreenshare.utils.IntentUtils;
 
+import org.apache.commons.lang3.BooleanUtils;
+
 public class MainActivity extends AppCompatActivity {
     private boolean mIsServiceBound;
 
     @Nullable
     private Messenger mServiceMessenger;
+
+    @Nullable
+    private Boolean mIsServerRunning;
 
     @Nullable
     private LssServerInfo mServerInfo;
@@ -58,6 +63,12 @@ public class MainActivity extends AppCompatActivity {
     @NonNull
     private final Messenger mMessenger = new Messenger(new Handler(Looper.getMainLooper(), msg -> {
         switch (msg.what) {
+            case Constants.MSG_SERVER_STARTED:
+                onServerStarted();
+                return true;
+            case Constants.MSG_SERVER_STOPPED:
+                onServerStopped();
+                return true;
             case Constants.MSG_SERVER_INFO_CHANGED:
                 onServerInfoChanged((LssServerInfo) msg.obj);
                 return true;
@@ -87,6 +98,9 @@ public class MainActivity extends AppCompatActivity {
             Log.i(mTag, String.format("mServiceConnection.onServiceDisconnected: service disconnected, name = %s",
                 name));
             mServiceMessenger = null;
+            mIsServerRunning = null;
+            mServerInfo = null;
+            mServerStats = null;
         }
     };
 
@@ -128,7 +142,11 @@ public class MainActivity extends AppCompatActivity {
             return insets;
         });
 
-        findViewById(R.id.text).setOnClickListener(v -> startScreenShare());
+        findViewById(R.id.text).setOnClickListener(v -> {
+            if (BooleanUtils.isFalse(mIsServerRunning)) {
+                startScreenShare();
+            }
+        });
     }
 
     @Override
@@ -149,6 +167,16 @@ public class MainActivity extends AppCompatActivity {
         mIsServiceBound = false;
         mServiceMessenger = null;
         unbindService(mServiceConnection);
+    }
+
+    private void onServerStarted() {
+        mIsServerRunning = true;
+    }
+
+    private void onServerStopped() {
+        mIsServerRunning = false;
+        mServerInfo = null;
+        mServerStats = null;
     }
 
     private void onServerInfoChanged(@NonNull final LssServerInfo serverInfo) {

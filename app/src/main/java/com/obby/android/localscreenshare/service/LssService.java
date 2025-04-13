@@ -272,6 +272,11 @@ public class LssService extends Service {
     public int onStartCommand(Intent intent, int flags, int startId) {
         Log.i(mTag, String.format("onStartCommand: startId = %d", startId));
 
+        if (mServer != null) {
+            Log.w(mTag, "onStartCommand: server already running");
+            return START_NOT_STICKY;
+        }
+
         if (intent == null) {
             Log.w(mTag, "onStartCommand: intent is null");
             return START_NOT_STICKY;
@@ -319,6 +324,8 @@ public class LssService extends Service {
 
         mScreenShareChip = new ScreenShareChip(this);
         mScreenShareChip.attach();
+
+        mClientMessengers.forEach(this::notifyServerStarted);
 
         return START_STICKY;
     }
@@ -372,6 +379,8 @@ public class LssService extends Service {
             mServer = null;
         }
 
+        mClientMessengers.forEach(this::notifyServerStopped);
+
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE);
         stopSelf();
     }
@@ -390,6 +399,22 @@ public class LssService extends Service {
         if (mConnectionCount != connectionCount) {
             mConnectionCount = connectionCount;
             NotificationManagerCompat.from(this).notify(NOTIFICATION_ID, buildNotification());
+        }
+    }
+
+    private void notifyServerStarted(@NonNull final Messenger messenger) {
+        try {
+            messenger.send(Message.obtain(null, Constants.MSG_SERVER_STARTED));
+        } catch (RemoteException e) {
+            // ignored
+        }
+    }
+
+    private void notifyServerStopped(@NonNull final Messenger messenger) {
+        try {
+            messenger.send(Message.obtain(null, Constants.MSG_SERVER_STOPPED));
+        } catch (RemoteException e) {
+            // ignored
         }
     }
 
@@ -416,6 +441,12 @@ public class LssService extends Service {
             Log.w(mTag, "registerServiceClient: client already exists");
         } else {
             mClientMessengers.add(messenger);
+
+            if (mServer == null) {
+                notifyServerStopped(messenger);
+            } else {
+                notifyServerStarted(messenger);
+            }
 
             if (mServerInfo != null) {
                 notifyServerInfoChanged(messenger);

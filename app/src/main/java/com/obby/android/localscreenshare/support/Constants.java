@@ -27,9 +27,13 @@ public final class Constants {
 
     public static final int MSG_UNREGISTER_SERVICE_CLIENT = 2;
 
-    public static final int MSG_SERVER_INFO_CHANGED = 3;
+    public static final int MSG_SERVER_STARTED = 3;
 
-    public static final int MSG_SERVER_STATS_CHANGED = 4;
+    public static final int MSG_SERVER_STOPPED = 4;
+
+    public static final int MSG_SERVER_INFO_CHANGED = 5;
+
+    public static final int MSG_SERVER_STATS_CHANGED = 6;
 
     public static final int GRPC_FLOW_CONTROL_WINDOW = 8 * 1024 * 1024;
 
