@@ -7,7 +7,9 @@ import androidx.annotation.NonNull;
 import com.obby.android.localscreenshare.support.Reference;
 
 public interface LssClientObserver {
-    void onScreenFrameReceived(@NonNull Reference<Bitmap> frame);
+    void onConnected();
 
     void onDisconnected();
+
+    void onScreenFrameReceived(@NonNull Reference<Bitmap> frame);
 }

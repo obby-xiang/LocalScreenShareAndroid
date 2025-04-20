@@ -322,7 +322,7 @@ public class LssService extends Service {
         mVirtualDisplay = createVirtualDisplay(mMediaProjection, mImageReader.getSurface(), mVirtualDisplayCallback);
 
         mScreenShareChip = new ScreenShareChip(this);
-        mScreenShareChip.attach();
+        mScreenShareChip.show();
 
         mClientMessengers.forEach(this::notifyServerStarted);
 
@@ -337,7 +337,7 @@ public class LssService extends Service {
         mConnectionCount = 0;
 
         if (mScreenShareChip != null) {
-            mScreenShareChip.detach();
+            mScreenShareChip.dismiss();
             mScreenShareChip = null;
         }
 
@@ -519,7 +519,7 @@ public class LssService extends Service {
     }
 
     private static class ScreenShareChip {
-        private long mAttachTimestamp;
+        private long mShowTimestamp;
 
         @Nullable
         private AlertDialog mDialog;
@@ -552,7 +552,7 @@ public class LssService extends Service {
                 mChipView.removeCallbacks(mTickRunnable);
                 updateDuration();
                 mChipView.postDelayed(mTickRunnable,
-                    1000L - (SystemClock.elapsedRealtime() - mAttachTimestamp) % 1000L);
+                    1000L - (SystemClock.elapsedRealtime() - mShowTimestamp) % 1000L);
             }
         };
 
@@ -602,19 +602,20 @@ public class LssService extends Service {
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
                     | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON, PixelFormat.TRANSLUCENT);
             mLayoutParams.gravity = Gravity.START | Gravity.TOP;
+            mLayoutParams.windowAnimations = R.style.FloatingWindowAnimation;
             mOverScroller = new OverScroller(mContext);
             mGestureDetector = new GestureDetector(mContext, mOnGestureListener);
         }
 
-        public void attach() {
-            mAttachTimestamp = SystemClock.elapsedRealtime();
+        public void show() {
+            mShowTimestamp = SystemClock.elapsedRealtime();
             mWindowManager.addView(mChipView, mLayoutParams);
             restorePosition();
             updateDuration();
             mChipView.post(mTickRunnable);
         }
 
-        public void detach() {
+        public void dismiss() {
             mChipView.removeCallbacks(mTickRunnable);
             mChipView.removeCallbacks(mTransitionRunnable);
             mWindowManager.removeViewImmediate(mChipView);
@@ -668,7 +669,7 @@ public class LssService extends Service {
         }
 
         private void updateDuration() {
-            mChipView.setText(DurationFormatUtils.formatDuration(SystemClock.elapsedRealtime() - mAttachTimestamp,
+            mChipView.setText(DurationFormatUtils.formatDuration(SystemClock.elapsedRealtime() - mShowTimestamp,
                 "[HH:]mm:ss"));
         }
 

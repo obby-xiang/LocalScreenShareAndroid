@@ -150,6 +150,8 @@ public final class LssClient {
     public void start(@NonNull final LssClientObserver observer) {
         ScreenStreamServiceGrpc.newStub(mGrpcChannel)
             .getScreenStream(Empty.getDefaultInstance(), new StreamObserver<>() {
+                private boolean mIsConnected;
+
                 private long mLastScreenFrameTimestamp = -1L;
 
                 @Override
@@ -188,6 +190,16 @@ public final class LssClient {
                     }
 
                     ThreadUtils.runOnMainThread(() -> {
+                        if (mIsStopped) {
+                            bitmap.recycle();
+                            return;
+                        }
+
+                        if (!mIsConnected) {
+                            mIsConnected = true;
+                            observer.onConnected();
+                        }
+
                         final Reference<Bitmap> reference = new Reference<>(bitmap) {
                             @Override
                             public void clear() {
