@@ -1,5 +1,8 @@
 package com.obby.android.localscreenshare.support;
 
+import android.os.Build;
+import android.view.WindowManager;
+
 import lombok.AccessLevel;
 import lombok.NoArgsConstructor;
 
@@ -19,7 +22,16 @@ public final class Constants {
     @SuppressWarnings("SpellCheckingInspection")
     public static final String ACTION_STOP_LSS_SERVICE = "com.obby.android.localscreenshare.ACTION_STOP_LSS_SERVICE";
 
+    @SuppressWarnings("SpellCheckingInspection")
+    public static final String ACTION_STOP_LSS_CLIENT_SERVICE =
+        "com.obby.android.localscreenshare.ACTION_STOP_LSS_CLIENT_SERVICE";
+
     public static final String EXTRA_MEDIA_PROJECTION_RESULT = "mediaProjectionResult";
+
+    public static final String EXTRA_SERVICE_INFO = "serviceInfo";
+
+    public static final int FLOATING_WINDOW_TYPE = Build.VERSION.SDK_INT < Build.VERSION_CODES.O
+        ? WindowManager.LayoutParams.TYPE_SYSTEM_ALERT : WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
 
     public static final int DEFAULT_LSS_SERVER_PORT = 8080;
 

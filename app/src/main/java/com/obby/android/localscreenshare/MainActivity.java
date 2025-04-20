@@ -25,6 +25,7 @@ import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.app.NotificationManagerCompat;
@@ -57,6 +58,9 @@ public class MainActivity extends AppCompatActivity {
 
     @Nullable
     private LssServerStats mServerStats;
+
+    @Nullable
+    private AlertDialog mDialog;
 
     private final String mTag = "MainActivity@" + hashCode();
 
@@ -109,8 +113,11 @@ public class MainActivity extends AppCompatActivity {
         registerForActivityResult(new ActivityResultContracts.RequestPermission(), isGranted -> {
             if (!isGranted
                 && !ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.POST_NOTIFICATIONS)) {
-                new MaterialAlertDialogBuilder(this)
-                    .setTitle(HtmlCompat.fromHtml(getString(R.string.request_post_notification, App.getLabel()),
+                if (mDialog != null) {
+                    mDialog.dismiss();
+                }
+                mDialog = new MaterialAlertDialogBuilder(this)
+                    .setMessage(HtmlCompat.fromHtml(getString(R.string.request_post_notification, App.getLabel()),
                         HtmlCompat.FROM_HTML_MODE_LEGACY))
                     .setPositiveButton(android.R.string.ok,
                         (dialog, which) -> startActivity(IntentUtils.createAppNotificationSettingsIntent(this)))
@@ -169,6 +176,15 @@ public class MainActivity extends AppCompatActivity {
         unbindService(mServiceConnection);
     }
 
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        if (mDialog != null) {
+            mDialog.dismiss();
+            mDialog = null;
+        }
+    }
+
     private void onServerStarted() {
         mIsServerRunning = true;
     }
@@ -196,8 +212,11 @@ public class MainActivity extends AppCompatActivity {
         }
 
         if (!NotificationManagerCompat.from(this).areNotificationsEnabled()) {
-            new MaterialAlertDialogBuilder(this)
-                .setTitle(HtmlCompat.fromHtml(getString(R.string.request_post_notification, App.getLabel()),
+            if (mDialog != null) {
+                mDialog.dismiss();
+            }
+            mDialog = new MaterialAlertDialogBuilder(this)
+                .setMessage(HtmlCompat.fromHtml(getString(R.string.request_post_notification, App.getLabel()),
                     HtmlCompat.FROM_HTML_MODE_LEGACY))
                 .setPositiveButton(android.R.string.ok,
                     (dialog, which) -> startActivity(IntentUtils.createAppNotificationSettingsIntent(this)))
@@ -208,8 +227,11 @@ public class MainActivity extends AppCompatActivity {
         }
 
         if (!Settings.canDrawOverlays(this)) {
-            new MaterialAlertDialogBuilder(this)
-                .setTitle(HtmlCompat.fromHtml(getString(R.string.request_system_alert_window, App.getLabel()),
+            if (mDialog != null) {
+                mDialog.dismiss();
+            }
+            mDialog = new MaterialAlertDialogBuilder(this)
+                .setMessage(HtmlCompat.fromHtml(getString(R.string.request_system_alert_window, App.getLabel()),
                     HtmlCompat.FROM_HTML_MODE_LEGACY))
                 .setPositiveButton(android.R.string.ok,
                     (dialog, which) -> startActivity(IntentUtils.createManageOverlayPermissionIntent(this)))
@@ -221,9 +243,12 @@ public class MainActivity extends AppCompatActivity {
 
         final PowerManager powerManager = getSystemService(PowerManager.class);
         if (!powerManager.isIgnoringBatteryOptimizations(getPackageName())) {
-            new MaterialAlertDialogBuilder(this)
-                .setTitle(HtmlCompat.fromHtml(getString(R.string.request_ignore_battery_optimizations, App.getLabel()),
-                    HtmlCompat.FROM_HTML_MODE_LEGACY))
+            if (mDialog != null) {
+                mDialog.dismiss();
+            }
+            mDialog = new MaterialAlertDialogBuilder(this)
+                .setMessage(HtmlCompat.fromHtml(getString(R.string.request_ignore_battery_optimizations,
+                    App.getLabel()), HtmlCompat.FROM_HTML_MODE_LEGACY))
                 .setPositiveButton(android.R.string.ok,
                     (dialog, which) -> startActivity(IntentUtils.createRequestIgnoreBatteryOptimizationsIntent(this)))
                 .setNegativeButton(android.R.string.cancel, null)

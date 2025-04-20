@@ -52,7 +52,6 @@ import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
 import androidx.core.app.ServiceCompat;
 import androidx.core.content.ContextCompat;
-import androidx.core.view.GestureDetectorCompat;
 
 import com.google.android.material.chip.Chip;
 import com.google.android.material.color.MaterialColors;
@@ -520,10 +519,10 @@ public class LssService extends Service {
     }
 
     private static class ScreenShareChip {
-        private static final int WINDOW_TYPE = Build.VERSION.SDK_INT < Build.VERSION_CODES.O
-            ? WindowManager.LayoutParams.TYPE_SYSTEM_ALERT : WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
-
         private long mAttachTimestamp;
+
+        @Nullable
+        private AlertDialog mDialog;
 
         @NonNull
         private final Context mContext;
@@ -541,7 +540,7 @@ public class LssService extends Service {
         private final OverScroller mOverScroller;
 
         @NonNull
-        private final GestureDetectorCompat mGestureDetector;
+        private final GestureDetector mGestureDetector;
 
         @NonNull
         private final Rect mTransitionBounds = new Rect();
@@ -569,17 +568,20 @@ public class LssService extends Service {
                     return true;
                 }
 
+                @SuppressWarnings("DataFlowIssue")
                 @Override
                 public boolean onSingleTapConfirmed(@NonNull MotionEvent e) {
-                    final AlertDialog confirmDialog = new MaterialAlertDialogBuilder(mContext)
-                        .setTitle(R.string.stop_screen_share_confirm)
-                        .setPositiveButton(android.R.string.ok, (dialog, which) -> mContext.sendBroadcast(
-                            new Intent(Constants.ACTION_STOP_LSS_SERVICE).setPackage(mContext.getPackageName())))
-                        .setNegativeButton(android.R.string.cancel, null)
-                        .setCancelable(false)
-                        .create();
-                    Optional.ofNullable(confirmDialog.getWindow()).ifPresent(window -> window.setType(WINDOW_TYPE));
-                    confirmDialog.show();
+                    if (mDialog == null) {
+                        mDialog = new MaterialAlertDialogBuilder(mContext)
+                            .setMessage(R.string.stop_screen_share_confirm)
+                            .setPositiveButton(android.R.string.ok, (dialog, which) -> mContext.sendBroadcast(
+                                new Intent(Constants.ACTION_STOP_LSS_SERVICE).setPackage(mContext.getPackageName())))
+                            .setNegativeButton(android.R.string.cancel, null)
+                            .setCancelable(false)
+                            .create();
+                        mDialog.getWindow().setType(Constants.FLOATING_WINDOW_TYPE);
+                    }
+                    mDialog.show();
                     return true;
                 }
 
@@ -596,12 +598,12 @@ public class LssService extends Service {
             mWindowManager = mContext.getSystemService(WindowManager.class);
             mChipView = createChipView(mContext);
             mLayoutParams = new WindowManager.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT, 0, 0, WINDOW_TYPE, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,
-                PixelFormat.TRANSLUCENT);
+                ViewGroup.LayoutParams.WRAP_CONTENT, 0, 0, Constants.FLOATING_WINDOW_TYPE,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
+                    | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON, PixelFormat.TRANSLUCENT);
             mLayoutParams.gravity = Gravity.START | Gravity.TOP;
             mOverScroller = new OverScroller(mContext);
-            mGestureDetector = new GestureDetectorCompat(mContext, mOnGestureListener);
+            mGestureDetector = new GestureDetector(mContext, mOnGestureListener);
         }
 
         public void attach() {
@@ -616,6 +618,11 @@ public class LssService extends Service {
             mChipView.removeCallbacks(mTickRunnable);
             mChipView.removeCallbacks(mTransitionRunnable);
             mWindowManager.removeViewImmediate(mChipView);
+
+            if (mDialog != null) {
+                mDialog.dismiss();
+                mDialog = null;
+            }
         }
 
         private void restorePosition() {
@@ -742,7 +749,7 @@ public class LssService extends Service {
             chipView.setTextColor(MaterialColors.getColorStateListOrNull(context,
                 com.google.android.material.R.attr.colorOnError));
             chipView.setChipBackgroundColor(MaterialColors.getColorStateListOrNull(context,
-                com.google.android.material.R.attr.colorError));
+                androidx.appcompat.R.attr.colorError));
 
             return chipView;
         }
