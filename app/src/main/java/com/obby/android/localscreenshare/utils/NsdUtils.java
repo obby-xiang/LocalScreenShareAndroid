@@ -6,6 +6,9 @@ import android.os.Process;
 
 import androidx.annotation.NonNull;
 
+import com.google.common.base.Supplier;
+import com.google.common.base.Suppliers;
+
 import org.apache.commons.lang3.concurrent.BasicThreadFactory;
 
 import java.util.concurrent.CountDownLatch;
@@ -17,13 +20,21 @@ import lombok.NoArgsConstructor;
 
 @NoArgsConstructor(access = AccessLevel.PRIVATE)
 public final class NsdUtils {
-    private static final Object RESOLVE_SERVICE_EXECUTOR_LOCK = new Object();
-
-    private static volatile Executor sResolveServiceExecutor;
+    private static final Supplier<Executor> RESOLVE_SERVICE_EXECUTOR_SUPPLIER =
+        Suppliers.memoize(() -> Executors.newSingleThreadExecutor(new BasicThreadFactory.Builder()
+            .namingPattern("lss-nsd-service-resolver-%d")
+            .wrappedFactory(runnable -> new Thread(runnable) {
+                @Override
+                public void run() {
+                    Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND);
+                    super.run();
+                }
+            })
+            .build()));
 
     public static void resolveService(@NonNull final NsdManager nsdManager, @NonNull final NsdServiceInfo serviceInfo,
         @NonNull final NsdManager.ResolveListener listener) {
-        getResolveServiceExecutor().execute(() -> {
+        RESOLVE_SERVICE_EXECUTOR_SUPPLIER.get().execute(() -> {
             final CountDownLatch latch = new CountDownLatch(1);
             final Executor executor = ThreadUtils.getMainThreadExecutor();
 
@@ -47,26 +58,5 @@ public final class NsdUtils {
                 // ignored
             }
         });
-    }
-
-    @NonNull
-    private static Executor getResolveServiceExecutor() {
-        if (sResolveServiceExecutor == null) {
-            synchronized (RESOLVE_SERVICE_EXECUTOR_LOCK) {
-                if (sResolveServiceExecutor == null) {
-                    sResolveServiceExecutor = Executors.newSingleThreadExecutor(new BasicThreadFactory.Builder()
-                        .namingPattern("lss-nsd-service-resolver-%d")
-                        .wrappedFactory(runnable -> new Thread(runnable) {
-                            @Override
-                            public void run() {
-                                Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND);
-                                super.run();
-                            }
-                        })
-                        .build());
-                }
-            }
-        }
-        return sResolveServiceExecutor;
     }
 }

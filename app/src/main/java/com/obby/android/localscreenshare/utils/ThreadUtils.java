@@ -5,6 +5,9 @@ import android.os.Looper;
 
 import androidx.annotation.NonNull;
 
+import com.google.common.base.Supplier;
+import com.google.common.base.Suppliers;
+
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 
@@ -13,11 +16,11 @@ import lombok.NoArgsConstructor;
 
 @NoArgsConstructor(access = AccessLevel.PRIVATE)
 public final class ThreadUtils {
-    private static final Object EXECUTOR_LOCK = new Object();
+    private static final Supplier<Executor> MAIN_THREAD_EXECUTOR_SUPPLIER =
+        Suppliers.memoize(() -> new Handler(Looper.getMainLooper())::post);
 
-    private static volatile Executor sMainThreadExecutor;
-
-    private static volatile Executor sWorkerThreadExecutor;
+    private static final Supplier<Executor> WORKER_THREAD_EXECUTOR_SUPPLIER =
+        Suppliers.memoize(() -> CompletableFuture::runAsync);
 
     public static void runOnMainThread(@NonNull final Runnable runnable) {
         if (isMainThread()) {
@@ -45,27 +48,12 @@ public final class ThreadUtils {
 
     @NonNull
     public static Executor getMainThreadExecutor() {
-        if (sMainThreadExecutor == null) {
-            synchronized (EXECUTOR_LOCK) {
-                if (sMainThreadExecutor == null) {
-                    final Handler handler = new Handler(Looper.getMainLooper());
-                    sMainThreadExecutor = handler::post;
-                }
-            }
-        }
-        return sMainThreadExecutor;
+        return MAIN_THREAD_EXECUTOR_SUPPLIER.get();
     }
 
     @NonNull
     public static Executor getWorkerThreadExecutor() {
-        if (sWorkerThreadExecutor == null) {
-            synchronized (EXECUTOR_LOCK) {
-                if (sWorkerThreadExecutor == null) {
-                    sWorkerThreadExecutor = CompletableFuture::runAsync;
-                }
-            }
-        }
-        return sWorkerThreadExecutor;
+        return WORKER_THREAD_EXECUTOR_SUPPLIER.get();
     }
 
     public static boolean isMainThread() {
