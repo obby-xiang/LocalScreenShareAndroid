@@ -1,11 +1,13 @@
 package com.obby.android.localscreenshare.client;
 
+import android.graphics.Bitmap;
+
 import androidx.annotation.NonNull;
 
-import com.obby.android.localscreenshare.grpc.screenstream.ScreenFrame;
+import com.obby.android.localscreenshare.support.Reference;
 
 public interface LssClientObserver {
-    void onScreenFrameReceived(@NonNull ScreenFrame frame);
+    void onScreenFrameReceived(@NonNull Reference<Bitmap> frame);
 
     void onDisconnected();
 }

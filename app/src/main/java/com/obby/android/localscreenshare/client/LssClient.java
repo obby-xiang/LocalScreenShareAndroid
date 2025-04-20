@@ -1,21 +1,29 @@
 package com.obby.android.localscreenshare.client;
 
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Process;
 import android.os.SystemClock;
 import android.util.Log;
+import android.util.Size;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.core.util.Pools;
 
 import com.google.protobuf.Empty;
 import com.obby.android.localscreenshare.grpc.screenstream.ScreenFrame;
 import com.obby.android.localscreenshare.grpc.screenstream.ScreenStreamServiceGrpc;
 import com.obby.android.localscreenshare.support.Constants;
+import com.obby.android.localscreenshare.support.Reference;
+import com.obby.android.localscreenshare.utils.ThreadUtils;
 
 import org.apache.commons.lang3.concurrent.BasicThreadFactory;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.time.Duration;
 import java.util.Objects;
 import java.util.Optional;
@@ -43,6 +51,8 @@ import lombok.experimental.Accessors;
 public final class LssClient {
     private static final long UPDATE_CLIENT_STATS_INTERVAL_MS = 3000L;
 
+    private boolean mIsStopped;
+
     @Nullable
     private ClientProfile mClientProfile;
 
@@ -60,6 +70,9 @@ public final class LssClient {
 
     @NonNull
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
+
+    @NonNull
+    private final Pools.Pool<Bitmap> mScreenFrameCache = new Pools.SynchronizedPool<>(4);
 
     @NonNull
     private final ExecutorService mGrpcClientExecutor = new ThreadPoolExecutor(Constants.CPU_COUNT,
@@ -137,19 +150,79 @@ public final class LssClient {
     public void start(@NonNull final LssClientObserver observer) {
         ScreenStreamServiceGrpc.newStub(mGrpcChannel)
             .getScreenStream(Empty.getDefaultInstance(), new StreamObserver<>() {
+                private long mLastScreenFrameTimestamp = -1L;
+
                 @Override
                 public void onNext(ScreenFrame value) {
-                    observer.onScreenFrameReceived(value);
+                    final BitmapFactory.Options options = new BitmapFactory.Options();
+                    options.inJustDecodeBounds = true;
+
+                    try (final InputStream input = value.getData().newInput()) {
+                        BitmapFactory.decodeStream(input, null, options);
+                    } catch (IOException e) {
+                        return;
+                    }
+
+                    final Size size = new Size(options.outWidth, options.outHeight);
+                    final Bitmap cachedBitmap = mScreenFrameCache.acquire();
+                    if (cachedBitmap == null || cachedBitmap.getWidth() != size.getWidth()
+                        || cachedBitmap.getHeight() != size.getHeight()) {
+                        Optional.ofNullable(cachedBitmap).ifPresent(Bitmap::recycle);
+                        options.inBitmap = Bitmap.createBitmap(size.getWidth(), size.getHeight(),
+                            Bitmap.Config.ARGB_8888);
+                    } else {
+                        options.inBitmap = cachedBitmap;
+                    }
+                    options.inJustDecodeBounds = false;
+
+                    final Bitmap bitmap;
+                    try (final InputStream input = value.getData().newInput()) {
+                        bitmap = BitmapFactory.decodeStream(input, null, options);
+                        if (bitmap == null) {
+                            options.inBitmap.recycle();
+                            return;
+                        }
+                    } catch (IOException e) {
+                        options.inBitmap.recycle();
+                        return;
+                    }
+
+                    ThreadUtils.runOnMainThread(() -> {
+                        final Reference<Bitmap> reference = new Reference<>(bitmap) {
+                            @Override
+                            public void clear() {
+                                super.clear();
+                                if (mIsStopped || !mScreenFrameCache.release(bitmap)) {
+                                    bitmap.recycle();
+                                }
+                            }
+                        };
+                        if (mLastScreenFrameTimestamp >= value.getTimestamp()) {
+                            reference.clear();
+                            return;
+                        }
+
+                        mLastScreenFrameTimestamp = value.getTimestamp();
+                        observer.onScreenFrameReceived(reference);
+                    });
                 }
 
                 @Override
                 public void onError(Throwable t) {
-                    observer.onDisconnected();
+                    onDisconnected();
                 }
 
                 @Override
                 public void onCompleted() {
-                    observer.onDisconnected();
+                    onDisconnected();
+                }
+
+                private void onDisconnected() {
+                    mMainHandler.post(() -> {
+                        if (!mIsStopped) {
+                            observer.onDisconnected();
+                        }
+                    });
                 }
             });
 
@@ -158,11 +231,20 @@ public final class LssClient {
     }
 
     public void stop() {
+        mIsStopped = true;
         mClientProfile = null;
         mClientStats = null;
         mMainHandler.removeCallbacksAndMessages(null);
         mGrpcChannel.shutdownNow();
         mGrpcClientExecutor.shutdownNow();
+
+        while (true) {
+            final Bitmap bitmap = mScreenFrameCache.acquire();
+            if (bitmap == null) {
+                break;
+            }
+            bitmap.recycle();
+        }
     }
 
     @Accessors(prefix = "m")

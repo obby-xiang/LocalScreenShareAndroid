@@ -473,6 +473,8 @@ public final class LssServer {
 
         private volatile ScreenFrame mScreenFrame;
 
+        private volatile long mLastScreenFrameTimestamp = -1L;
+
         @Setter
         @Nullable
         private OnReleaseListener mOnReleaseListener;
@@ -487,9 +489,6 @@ public final class LssServer {
         private final Object mLock = new Object();
 
         @NonNull
-        private final AtomicLong mLastScreenFrameTimestamp = new AtomicLong(-1L);
-
-        @NonNull
         private final Runnable mOnReadyHandler = new Runnable() {
             @Override
             public void run() {
@@ -502,9 +501,9 @@ public final class LssServer {
                         return;
                     }
 
-                    if (mLastScreenFrameTimestamp.get() < mScreenFrame.getTimestamp()) {
+                    if (mLastScreenFrameTimestamp < mScreenFrame.getTimestamp()) {
+                        mLastScreenFrameTimestamp = mScreenFrame.getTimestamp();
                         mObserver.onNext(mScreenFrame);
-                        mLastScreenFrameTimestamp.set(mScreenFrame.getTimestamp());
                     }
 
                     mScreenFrame = null;
