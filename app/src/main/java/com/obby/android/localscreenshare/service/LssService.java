@@ -596,7 +596,7 @@ public class LssService extends Service {
         private ScreenShareChip(@NonNull final Context context) {
             mContext = new ContextThemeWrapper(context, R.style.ScreenShareChipTheme);
             mWindowManager = mContext.getSystemService(WindowManager.class);
-            mChipView = createChipView(mContext);
+            mChipView = createChipView();
             mLayoutParams = new WindowManager.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 0, 0, Constants.FLOATING_WINDOW_TYPE,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
@@ -663,9 +663,14 @@ public class LssService extends Service {
 
         private void updatePosition(final int x, final int y) {
             getTransitionBounds(mTransitionBounds);
-            mLayoutParams.x = Math.max(mTransitionBounds.left, Math.min(x, mTransitionBounds.right));
-            mLayoutParams.y = Math.max(mTransitionBounds.top, Math.min(y, mTransitionBounds.bottom));
-            mWindowManager.updateViewLayout(mChipView, mLayoutParams);
+
+            final int finalX = Math.max(mTransitionBounds.left, Math.min(x, mTransitionBounds.right));
+            final int finalY = Math.max(mTransitionBounds.top, Math.min(y, mTransitionBounds.bottom));
+            if (mLayoutParams.x != finalX || mLayoutParams.y != finalY) {
+                mLayoutParams.x = finalX;
+                mLayoutParams.y = finalY;
+                mWindowManager.updateViewLayout(mChipView, mLayoutParams);
+            }
         }
 
         private void updateDuration() {
@@ -701,8 +706,8 @@ public class LssService extends Service {
         }
 
         @NonNull
-        private Chip createChipView(@NonNull final Context context) {
-            final Chip chipView = new Chip(context) {
+        private Chip createChipView() {
+            final Chip chipView = new Chip(mContext) {
                 @NonNull
                 private final PointF mTouchOffset = new PointF();
 
@@ -745,11 +750,11 @@ public class LssService extends Service {
             };
 
             chipView.setChipIconResource(R.drawable.ic_screen_share_chip);
-            chipView.setChipIconTint(MaterialColors.getColorStateListOrNull(context,
+            chipView.setChipIconTint(MaterialColors.getColorStateListOrNull(mContext,
                 com.google.android.material.R.attr.colorOnError));
-            chipView.setTextColor(MaterialColors.getColorStateListOrNull(context,
+            chipView.setTextColor(MaterialColors.getColorStateListOrNull(mContext,
                 com.google.android.material.R.attr.colorOnError));
-            chipView.setChipBackgroundColor(MaterialColors.getColorStateListOrNull(context,
+            chipView.setChipBackgroundColor(MaterialColors.getColorStateListOrNull(mContext,
                 androidx.appcompat.R.attr.colorError));
 
             return chipView;

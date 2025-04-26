@@ -1,11 +1,18 @@
 <resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
     <string name="app_name">"屏幕共享"</string>
-    <string name="lss_service_notification_channel_name">"屏幕共享服务"</string>
+    <string name="lss_service_notification_channel_name">"共享屏幕服务"</string>
     <string name="lss_service_notification_title">"正在共享屏幕…"</string>
     <string name="lss_service_notification_text">"%1$d 个连接"</string>
     <string name="lss_service_stop_notification_action">"停止共享"</string>
+    <string name="lss_client_service_notification_channel_name">"查看共享屏幕服务"</string>
+    <string name="lss_client_service_notification_title">"正在查看“%1$s”的屏幕…"</string>
+    <string name="lss_client_service_stop_notification_action">"停止查看"</string>
     <string name="request_post_notification">"请允许应用“&lt;b&gt;%1$s"&lt;/b&gt;"”发送通知。"</string>
     <string name="request_ignore_battery_optimizations">"请允许应用“&lt;b&gt;%1$s&lt;/b&gt;”一直在后台运行。"</string>
     <string name="request_system_alert_window">"请允许应用“&lt;b&gt;%1$s&lt;/b&gt;”显示在其他应用的上层。"</string>
     <string name="stop_screen_share_confirm">"是否停止共享屏幕？"</string>
+    <string name="connecting_screen_share">"正在连接到共享屏幕…"</string>
+    <string name="disconnect_screen_share_confirm">"是否断开与共享屏幕的连接？"</string>
+    <string name="retry_connect_screen_share_confirm">"无法连接到共享屏幕，是否重试？"</string>
+    <string name="reconnect_screen_share_confirm">"已断开与共享屏幕的连接，是否重新连接？"</string>
 </resources>

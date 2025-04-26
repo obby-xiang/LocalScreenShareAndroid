@@ -2,4 +2,5 @@
 <resources>
     <dimen name="screen_share_chip_horizontal_margin">16dp</dimen>
     <dimen name="screen_share_chip_vertical_margin">8dp</dimen>
+    <dimen name="screen_share_viewer_elevation">1dp</dimen>
 </resources>
