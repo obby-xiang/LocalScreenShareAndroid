@@ -10,9 +10,9 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ServiceInfo;
 import android.content.res.Configuration;
-import android.content.res.Resources;
 import android.graphics.Bitmap;
 import android.graphics.PixelFormat;
+import android.graphics.Point;
 import android.graphics.PointF;
 import android.graphics.Rect;
 import android.hardware.display.DisplayManager;
@@ -35,7 +35,6 @@ import android.util.Log;
 import android.view.GestureDetector;
 import android.view.Gravity;
 import android.view.MotionEvent;
-import android.view.Surface;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
@@ -122,6 +121,9 @@ public class LssService extends Service {
     private int mConnectionCount;
 
     private final String mTag = "LssService@" + hashCode();
+
+    @NonNull
+    private final Point mScreenSize = new Point();
 
     @NonNull
     private final Object mImageReaderLock = new Object();
@@ -260,6 +262,34 @@ public class LssService extends Service {
         unregisterReceiver(mBroadcastReceiver);
     }
 
+    @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        if (mVirtualDisplay == null) {
+            return;
+        }
+
+        final Rect windowBounds = WindowUtils.getMaximumWindowBounds(this);
+        if (mScreenSize.x == windowBounds.width() && mScreenSize.y == windowBounds.height()) {
+            return;
+        }
+
+        mScreenSize.set(windowBounds.width(), windowBounds.height());
+        mVirtualDisplay.resize(mScreenSize.x, mScreenSize.y, getResources().getConfiguration().densityDpi);
+
+        synchronized (mImageReaderLock) {
+            if (mImageReader == null) {
+                return;
+            }
+
+            mImageReader.close();
+            mImageReader = ImageReader.newInstance(mScreenSize.x, mScreenSize.y, PixelFormat.RGBA_8888,
+                IMAGE_READER_MAX_IMAGES);
+            mImageReader.setOnImageAvailableListener(mOnImageAvailableListener, mImageReaderHandler);
+            mVirtualDisplay.setSurface(mImageReader.getSurface());
+        }
+    }
+
     @Nullable
     @Override
     public IBinder onBind(Intent intent) {
@@ -316,10 +346,17 @@ public class LssService extends Service {
         mImageReaderHandlerThread.start();
         mImageReaderHandler = new Handler(mImageReaderHandlerThread.getLooper());
 
-        mImageReader = createImageReader();
+        final Rect windowBounds = WindowUtils.getMaximumWindowBounds(this);
+        mScreenSize.set(windowBounds.width(), windowBounds.height());
+
+        mImageReader = ImageReader.newInstance(mScreenSize.x, mScreenSize.y, PixelFormat.RGBA_8888,
+            IMAGE_READER_MAX_IMAGES);
         mImageReader.setOnImageAvailableListener(mOnImageAvailableListener, mImageReaderHandler);
 
-        mVirtualDisplay = createVirtualDisplay(mMediaProjection, mImageReader.getSurface(), mVirtualDisplayCallback);
+        mVirtualDisplay = mMediaProjection.createVirtualDisplay(VIRTUAL_DISPLAY_NAME, mScreenSize.x, mScreenSize.y,
+            getResources().getConfiguration().densityDpi,
+            DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC | DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY,
+            mImageReader.getSurface(), mVirtualDisplayCallback, new Handler(Looper.getMainLooper()));
 
         mScreenShareChip = new ScreenShareChip(this);
         mScreenShareChip.show();
@@ -464,23 +501,6 @@ public class LssService extends Service {
         if (!mClientMessengers.remove(messenger)) {
             Log.w(mTag, "unregisterServiceClient: client does not exist");
         }
-    }
-
-    @NonNull
-    private VirtualDisplay createVirtualDisplay(@NonNull final MediaProjection mediaProjection,
-        @NonNull final Surface surface, @NonNull final VirtualDisplay.Callback callback) {
-        final Rect windowBounds = WindowUtils.getMaximumWindowBounds(this);
-        return mediaProjection.createVirtualDisplay(VIRTUAL_DISPLAY_NAME, windowBounds.width(), windowBounds.height(),
-            Resources.getSystem().getConfiguration().densityDpi,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC | DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY, surface,
-            callback, new Handler(Looper.getMainLooper()));
-    }
-
-    @NonNull
-    private ImageReader createImageReader() {
-        final Rect windowBounds = WindowUtils.getMaximumWindowBounds(this);
-        return ImageReader.newInstance(windowBounds.width(), windowBounds.height(), PixelFormat.RGBA_8888,
-            IMAGE_READER_MAX_IMAGES);
     }
 
     @SuppressWarnings("DataFlowIssue")
