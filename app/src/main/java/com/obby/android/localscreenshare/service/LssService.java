@@ -12,6 +12,7 @@ import android.content.pm.ServiceInfo;
 import android.content.res.Configuration;
 import android.graphics.Bitmap;
 import android.graphics.PixelFormat;
+import android.graphics.Point;
 import android.graphics.PointF;
 import android.graphics.Rect;
 import android.hardware.display.DisplayManager;
@@ -211,6 +212,7 @@ public class LssService extends Service {
                 mServer.postScreenFrame(ScreenFrame.newBuilder()
                     .setTimestamp(SystemClock.elapsedRealtimeNanos())
                     .setData(ByteString.copyFrom(data))
+                    .setSecure(Preferences.get().isProjectionSecure())
                     .build());
             }
         }
@@ -519,14 +521,14 @@ public class LssService extends Service {
     @NonNull
     private Size getProjectionSize() {
         final Rect windowBounds = WindowUtils.getMaximumWindowBounds(this);
-        final float scale = Preferences.get().getProjectionScalePercentage() / 100f;
+        final float scale = Preferences.get().getProjectionScale() / 100f;
         return new Size((int) (windowBounds.width() * scale), (int) (windowBounds.height() * scale));
     }
 
     private void createNotificationChannel() {
         final NotificationChannelCompat notificationChannel =
             new NotificationChannelCompat.Builder(NOTIFICATION_CHANNEL_ID, NotificationManagerCompat.IMPORTANCE_LOW)
-                .setName(getString(R.string.lss_service_notification_channel_name))
+                .setName(getString(R.string.service_notification_channel_name))
                 .build();
         NotificationManagerCompat.from(this).createNotificationChannel(notificationChannel);
     }
@@ -535,14 +537,13 @@ public class LssService extends Service {
     private Notification buildNotification() {
         return new NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle(getString(R.string.lss_service_notification_title))
-            .setContentText(getString(R.string.lss_service_notification_text, mConnectionCount))
+            .setContentTitle(getString(R.string.service_notification_title))
+            .setContentText(getString(R.string.service_notification_text, mConnectionCount))
             .setContentIntent(PendingIntent.getActivity(this, 0, new Intent(this, MainActivity.class),
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT))
-            .addAction(0, getString(R.string.lss_service_stop_notification_action),
-                PendingIntent.getBroadcast(this, 0,
-                    new Intent(Constants.ACTION_STOP_SERVICE).setPackage(getPackageName()),
-                    PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT))
+            .addAction(0, getString(R.string.service_stop_notification_action), PendingIntent.getBroadcast(this, 0,
+                new Intent(Constants.ACTION_STOP_SERVICE).setPackage(getPackageName()),
+                PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT))
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
@@ -632,15 +633,19 @@ public class LssService extends Service {
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
                     | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON, PixelFormat.TRANSLUCENT);
             mLayoutParams.gravity = Gravity.CENTER;
-            mLayoutParams.windowAnimations = R.style.FloatingWindowAnimation;
             mOverScroller = new OverScroller(mContext);
             mGestureDetector = new GestureDetector(mContext, mOnGestureListener);
         }
 
         public void show() {
             mStartTimestamp = SystemClock.elapsedRealtime();
+
+            final Point location = getLocation();
+            mLayoutParams.x = location.x;
+            mLayoutParams.y = location.y;
+
             mWindowManager.addView(mChipView, mLayoutParams);
-            updateLocation();
+            adjustLocation();
             updateDuration();
             mChipView.post(mTickRunnable);
         }
@@ -683,10 +688,8 @@ public class LssService extends Service {
         }
 
         private void updateLocation() {
-            getLocationBounds(mLocationBounds);
-            final PointF location = Preferences.get().getServiceChipLocation();
-            updateLocation((int) (mLocationBounds.left + mLocationBounds.width() * location.x),
-                (int) (mLocationBounds.top + mLocationBounds.height() * location.y));
+            final Point location = getLocation();
+            updateLocation(location.x, location.y);
             adjustLocation();
         }
 
@@ -705,6 +708,14 @@ public class LssService extends Service {
         private void updateDuration() {
             mChipView.setText(DurationFormatUtils.formatDuration(SystemClock.elapsedRealtime() - mStartTimestamp,
                 "[HH:]mm:ss"));
+        }
+
+        @NonNull
+        private Point getLocation() {
+            getLocationBounds(mLocationBounds);
+            final PointF location = Preferences.get().getServiceChipLocation();
+            return new Point((int) (mLocationBounds.left + mLocationBounds.width() * location.x),
+                (int) (mLocationBounds.top + mLocationBounds.height() * location.y));
         }
 
         private void getLocationBounds(@NonNull final Rect rect) {

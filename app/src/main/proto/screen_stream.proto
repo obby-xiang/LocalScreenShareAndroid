@@ -13,4 +13,5 @@ service ScreenStreamService {
 message ScreenFrame {
   int64 timestamp = 1;
   bytes data = 2;
+  bool secure = 3;
 }

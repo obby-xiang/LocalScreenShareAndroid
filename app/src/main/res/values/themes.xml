@@ -56,11 +56,6 @@
         <item name="colorSurfaceContainerHighest">@color/md_theme_surfaceContainerHighest</item>
     </style>
 
-    <style name="FloatingWindowAnimation">
-        <item name="android:windowEnterAnimation">@anim/floating_window_enter</item>
-        <item name="android:windowExitAnimation">@anim/floating_window_exit</item>
-    </style>
-
     <style name="ScreenShareChipTheme" parent="AppTheme">
         <item name="chipStyle">@style/Widget.Material3.Chip.Assist.Elevated</item>
     </style>
