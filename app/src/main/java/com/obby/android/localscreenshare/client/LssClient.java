@@ -152,7 +152,7 @@ public final class LssClient {
             .getScreenStream(Empty.getDefaultInstance(), new StreamObserver<>() {
                 private boolean mIsConnected;
 
-                private long mLastScreenFrameTimestamp = -1L;
+                private long mScreenFrameTimestamp = -1L;
 
                 @Override
                 public void onNext(ScreenFrame value) {
@@ -209,12 +209,12 @@ public final class LssClient {
                                 }
                             }
                         };
-                        if (mLastScreenFrameTimestamp >= value.getTimestamp()) {
+                        if (mScreenFrameTimestamp >= value.getTimestamp()) {
                             reference.clear();
                             return;
                         }
 
-                        mLastScreenFrameTimestamp = value.getTimestamp();
+                        mScreenFrameTimestamp = value.getTimestamp();
                         observer.onScreenFrameReceived(reference);
                     });
                 }
@@ -265,7 +265,7 @@ public final class LssClient {
         private final Object mLock = new Object();
 
         @NonNull
-        private final AtomicLong mTimestamp = new AtomicLong(SystemClock.elapsedRealtimeNanos());
+        private final AtomicLong mCollectionTimestamp = new AtomicLong(SystemClock.elapsedRealtimeNanos());
 
         @NonNull
         private final AtomicLong mInboundDataSize = new AtomicLong();
@@ -277,8 +277,8 @@ public final class LssClient {
         @NonNull
         public LssClientStats collect() {
             synchronized (mLock) {
-                final long startTimestamp = mTimestamp.getAndSet(SystemClock.elapsedRealtimeNanos());
-                final long endTimestamp = mTimestamp.get();
+                final long startTimestamp = mCollectionTimestamp.getAndSet(SystemClock.elapsedRealtimeNanos());
+                final long endTimestamp = mCollectionTimestamp.get();
                 final long inboundDataSize = mInboundDataSize.getAndSet(0L);
                 final long inboundDataRate = Math.round((double) inboundDataSize / (endTimestamp - startTimestamp)
                     * Duration.ofSeconds(1L).toNanos());

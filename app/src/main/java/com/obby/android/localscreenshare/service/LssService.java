@@ -12,7 +12,6 @@ import android.content.pm.ServiceInfo;
 import android.content.res.Configuration;
 import android.graphics.Bitmap;
 import android.graphics.PixelFormat;
-import android.graphics.Point;
 import android.graphics.PointF;
 import android.graphics.Rect;
 import android.hardware.display.DisplayManager;
@@ -32,6 +31,7 @@ import android.os.Process;
 import android.os.RemoteException;
 import android.os.SystemClock;
 import android.util.Log;
+import android.util.Size;
 import android.view.GestureDetector;
 import android.view.Gravity;
 import android.view.MotionEvent;
@@ -73,6 +73,7 @@ import org.apache.commons.lang3.time.DurationFormatUtils;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -87,13 +88,14 @@ public class LssService extends Service {
 
     private static final int IMAGE_READER_MAX_IMAGES = 2;
 
-    private static final int SCREEN_FRAME_QUALITY = 85;
-
     @Nullable
     private LssServer mServer;
 
     @Nullable
     private MediaProjection mMediaProjection;
+
+    @Nullable
+    private Size mProjectionSize;
 
     @Nullable
     private HandlerThread mImageReaderHandlerThread;
@@ -121,9 +123,6 @@ public class LssService extends Service {
     private int mConnectionCount;
 
     private final String mTag = "LssService@" + hashCode();
-
-    @NonNull
-    private final Point mScreenSize = new Point();
 
     @NonNull
     private final Object mImageReaderLock = new Object();
@@ -202,7 +201,8 @@ public class LssService extends Service {
 
                 final byte[] data;
                 try (final ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
-                    mScreenFrameBitmap.compress(Bitmap.CompressFormat.JPEG, SCREEN_FRAME_QUALITY, outputStream);
+                    mScreenFrameBitmap.compress(Bitmap.CompressFormat.JPEG, Preferences.get().getProjectionQuality(),
+                        outputStream);
                     data = outputStream.toByteArray();
                 } catch (IOException e) {
                     return;
@@ -238,7 +238,7 @@ public class LssService extends Service {
     private final BroadcastReceiver mBroadcastReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
-            if (Constants.ACTION_STOP_LSS_SERVICE.equals(intent.getAction())) {
+            if (Constants.ACTION_STOP_SERVICE.equals(intent.getAction())) {
                 stopService();
             }
         }
@@ -250,7 +250,7 @@ public class LssService extends Service {
         Log.i(mTag, "onCreate: service created");
 
         final IntentFilter intentFilter = new IntentFilter();
-        intentFilter.addAction(Constants.ACTION_STOP_LSS_SERVICE);
+        intentFilter.addAction(Constants.ACTION_STOP_SERVICE);
         ContextCompat.registerReceiver(this, mBroadcastReceiver, intentFilter, ContextCompat.RECEIVER_NOT_EXPORTED);
     }
 
@@ -265,29 +265,7 @@ public class LssService extends Service {
     @Override
     public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
-        if (mVirtualDisplay == null) {
-            return;
-        }
-
-        final Rect windowBounds = WindowUtils.getMaximumWindowBounds(this);
-        if (mScreenSize.x == windowBounds.width() && mScreenSize.y == windowBounds.height()) {
-            return;
-        }
-
-        mScreenSize.set(windowBounds.width(), windowBounds.height());
-        mVirtualDisplay.resize(mScreenSize.x, mScreenSize.y, getResources().getConfiguration().densityDpi);
-
-        synchronized (mImageReaderLock) {
-            if (mImageReader == null) {
-                return;
-            }
-
-            mImageReader.close();
-            mImageReader = ImageReader.newInstance(mScreenSize.x, mScreenSize.y, PixelFormat.RGBA_8888,
-                IMAGE_READER_MAX_IMAGES);
-            mImageReader.setOnImageAvailableListener(mOnImageAvailableListener, mImageReaderHandler);
-            mVirtualDisplay.setSurface(mImageReader.getSurface());
-        }
+        updateProjectionSize();
     }
 
     @Nullable
@@ -340,21 +318,19 @@ public class LssService extends Service {
 
         mMediaProjection = getMediaProjection(intent);
         mMediaProjection.registerCallback(mMediaProjectionCallback, new Handler(Looper.getMainLooper()));
+        mProjectionSize = getProjectionSize();
 
         mImageReaderHandlerThread =
             new HandlerThread(IMAGE_READER_HANDLER_THREAD_NAME, Process.THREAD_PRIORITY_BACKGROUND);
         mImageReaderHandlerThread.start();
         mImageReaderHandler = new Handler(mImageReaderHandlerThread.getLooper());
 
-        final Rect windowBounds = WindowUtils.getMaximumWindowBounds(this);
-        mScreenSize.set(windowBounds.width(), windowBounds.height());
-
-        mImageReader = ImageReader.newInstance(mScreenSize.x, mScreenSize.y, PixelFormat.RGBA_8888,
-            IMAGE_READER_MAX_IMAGES);
+        mImageReader = ImageReader.newInstance(mProjectionSize.getWidth(), mProjectionSize.getHeight(),
+            PixelFormat.RGBA_8888, IMAGE_READER_MAX_IMAGES);
         mImageReader.setOnImageAvailableListener(mOnImageAvailableListener, mImageReaderHandler);
 
-        mVirtualDisplay = mMediaProjection.createVirtualDisplay(VIRTUAL_DISPLAY_NAME, mScreenSize.x, mScreenSize.y,
-            getResources().getConfiguration().densityDpi,
+        mVirtualDisplay = mMediaProjection.createVirtualDisplay(VIRTUAL_DISPLAY_NAME, mProjectionSize.getWidth(),
+            mProjectionSize.getHeight(), getResources().getConfiguration().densityDpi,
             DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC | DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY,
             mImageReader.getSurface(), mVirtualDisplayCallback, new Handler(Looper.getMainLooper()));
 
@@ -370,6 +346,7 @@ public class LssService extends Service {
         Log.i(mTag, "stopService: stop service");
 
         mServerInfo = null;
+        mProjectionSize = null;
         mServerStats = null;
         mConnectionCount = 0;
 
@@ -439,35 +416,30 @@ public class LssService extends Service {
         }
     }
 
-    private void notifyServerStarted(@NonNull final Messenger messenger) {
-        try {
-            messenger.send(Message.obtain(null, Constants.MSG_SERVER_STARTED));
-        } catch (RemoteException e) {
-            // ignored
+    private void updateProjectionSize() {
+        if (mProjectionSize == null || mVirtualDisplay == null) {
+            return;
         }
-    }
 
-    private void notifyServerStopped(@NonNull final Messenger messenger) {
-        try {
-            messenger.send(Message.obtain(null, Constants.MSG_SERVER_STOPPED));
-        } catch (RemoteException e) {
-            // ignored
+        final Size size = getProjectionSize();
+        if (Objects.equals(mProjectionSize, size)) {
+            return;
         }
-    }
 
-    private void notifyServerInfoChanged(@NonNull final Messenger messenger) {
-        try {
-            messenger.send(Message.obtain(null, Constants.MSG_SERVER_INFO_CHANGED, mServerInfo));
-        } catch (RemoteException e) {
-            // ignored
-        }
-    }
+        mProjectionSize = size;
+        mVirtualDisplay.resize(mProjectionSize.getWidth(), mProjectionSize.getHeight(),
+            getResources().getConfiguration().densityDpi);
 
-    private void notifyServerStatsChanged(@NonNull final Messenger messenger) {
-        try {
-            messenger.send(Message.obtain(null, Constants.MSG_SERVER_STATS_CHANGED, mServerStats));
-        } catch (RemoteException e) {
-            // ignored
+        synchronized (mImageReaderLock) {
+            if (mImageReader == null) {
+                return;
+            }
+
+            mImageReader.close();
+            mImageReader = ImageReader.newInstance(mProjectionSize.getWidth(), mProjectionSize.getHeight(),
+                PixelFormat.RGBA_8888, IMAGE_READER_MAX_IMAGES);
+            mImageReader.setOnImageAvailableListener(mOnImageAvailableListener, mImageReaderHandler);
+            mVirtualDisplay.setSurface(mImageReader.getSurface());
         }
     }
 
@@ -503,6 +475,38 @@ public class LssService extends Service {
         }
     }
 
+    private void notifyServerStarted(@NonNull final Messenger messenger) {
+        try {
+            messenger.send(Message.obtain(null, Constants.MSG_SERVER_STARTED));
+        } catch (RemoteException e) {
+            // ignored
+        }
+    }
+
+    private void notifyServerStopped(@NonNull final Messenger messenger) {
+        try {
+            messenger.send(Message.obtain(null, Constants.MSG_SERVER_STOPPED));
+        } catch (RemoteException e) {
+            // ignored
+        }
+    }
+
+    private void notifyServerInfoChanged(@NonNull final Messenger messenger) {
+        try {
+            messenger.send(Message.obtain(null, Constants.MSG_SERVER_INFO_CHANGED, mServerInfo));
+        } catch (RemoteException e) {
+            // ignored
+        }
+    }
+
+    private void notifyServerStatsChanged(@NonNull final Messenger messenger) {
+        try {
+            messenger.send(Message.obtain(null, Constants.MSG_SERVER_STATS_CHANGED, mServerStats));
+        } catch (RemoteException e) {
+            // ignored
+        }
+    }
+
     @SuppressWarnings("DataFlowIssue")
     @NonNull
     private MediaProjection getMediaProjection(@NonNull final Intent intent) {
@@ -510,6 +514,13 @@ public class LssService extends Service {
         final MediaProjectionManager mediaProjectionManager = getSystemService(MediaProjectionManager.class);
         return mediaProjectionManager.getMediaProjection(mediaProjectionResult.getResultCode(),
             mediaProjectionResult.getData());
+    }
+
+    @NonNull
+    private Size getProjectionSize() {
+        final Rect windowBounds = WindowUtils.getMaximumWindowBounds(this);
+        final float scale = Preferences.get().getProjectionScalePercentage() / 100f;
+        return new Size((int) (windowBounds.width() * scale), (int) (windowBounds.height() * scale));
     }
 
     private void createNotificationChannel() {
@@ -530,7 +541,7 @@ public class LssService extends Service {
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT))
             .addAction(0, getString(R.string.lss_service_stop_notification_action),
                 PendingIntent.getBroadcast(this, 0,
-                    new Intent(Constants.ACTION_STOP_LSS_SERVICE).setPackage(getPackageName()),
+                    new Intent(Constants.ACTION_STOP_SERVICE).setPackage(getPackageName()),
                     PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT))
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setOngoing(true)
@@ -539,7 +550,7 @@ public class LssService extends Service {
     }
 
     private static class ScreenShareChip {
-        private long mShowTimestamp;
+        private long mStartTimestamp;
 
         @Nullable
         private AlertDialog mDialog;
@@ -563,7 +574,7 @@ public class LssService extends Service {
         private final GestureDetector mGestureDetector;
 
         @NonNull
-        private final Rect mTransitionBounds = new Rect();
+        private final Rect mLocationBounds = new Rect();
 
         @NonNull
         private final Runnable mTickRunnable = new Runnable() {
@@ -571,13 +582,12 @@ public class LssService extends Service {
             public void run() {
                 mChipView.removeCallbacks(mTickRunnable);
                 updateDuration();
-                mChipView.postDelayed(mTickRunnable,
-                    1000L - (SystemClock.elapsedRealtime() - mShowTimestamp) % 1000L);
+                mChipView.postDelayed(mTickRunnable, 1000L - (SystemClock.elapsedRealtime() - mStartTimestamp) % 1000L);
             }
         };
 
         @NonNull
-        private final Runnable mTransitionRunnable = this::transition;
+        private final Runnable mAdjustLocationRunnable = this::adjustLocation;
 
         @SuppressWarnings("FieldCanBeLocal")
         @NonNull
@@ -595,7 +605,7 @@ public class LssService extends Service {
                         mDialog = new MaterialAlertDialogBuilder(mContext)
                             .setMessage(R.string.stop_screen_share_confirm)
                             .setPositiveButton(android.R.string.ok, (dialog, which) -> mContext.sendBroadcast(
-                                new Intent(Constants.ACTION_STOP_LSS_SERVICE).setPackage(mContext.getPackageName())))
+                                new Intent(Constants.ACTION_STOP_SERVICE).setPackage(mContext.getPackageName())))
                             .setNegativeButton(android.R.string.cancel, null)
                             .setCancelable(false)
                             .create();
@@ -621,23 +631,23 @@ public class LssService extends Service {
                 ViewGroup.LayoutParams.WRAP_CONTENT, 0, 0, Constants.FLOATING_WINDOW_TYPE,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
                     | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON, PixelFormat.TRANSLUCENT);
-            mLayoutParams.gravity = Gravity.START | Gravity.TOP;
+            mLayoutParams.gravity = Gravity.CENTER;
             mLayoutParams.windowAnimations = R.style.FloatingWindowAnimation;
             mOverScroller = new OverScroller(mContext);
             mGestureDetector = new GestureDetector(mContext, mOnGestureListener);
         }
 
         public void show() {
-            mShowTimestamp = SystemClock.elapsedRealtime();
+            mStartTimestamp = SystemClock.elapsedRealtime();
             mWindowManager.addView(mChipView, mLayoutParams);
-            restorePosition();
+            updateLocation();
             updateDuration();
             mChipView.post(mTickRunnable);
         }
 
         public void dismiss() {
             mChipView.removeCallbacks(mTickRunnable);
-            mChipView.removeCallbacks(mTransitionRunnable);
+            mChipView.removeCallbacks(mAdjustLocationRunnable);
             mWindowManager.removeViewImmediate(mChipView);
 
             if (mDialog != null) {
@@ -646,46 +656,45 @@ public class LssService extends Service {
             }
         }
 
-        private void restorePosition() {
-            getTransitionBounds(mTransitionBounds);
-            final PointF position = Preferences.get().getServiceChipPosition();
-            updatePosition((int) (mTransitionBounds.left + mTransitionBounds.width() * position.x),
-                (int) (mTransitionBounds.top + mTransitionBounds.height() * position.y));
-            transition();
-        }
-
-        private void transition() {
-            mChipView.removeCallbacks(mTransitionRunnable);
+        private void adjustLocation() {
+            mChipView.removeCallbacks(mAdjustLocationRunnable);
 
             if (mOverScroller.computeScrollOffset()) {
-                updatePosition(mOverScroller.getCurrX(), mOverScroller.getCurrY());
+                updateLocation(mOverScroller.getCurrX(), mOverScroller.getCurrY());
             } else {
-                getTransitionBounds(mTransitionBounds);
-                final int transitionX = mLayoutParams.x < mTransitionBounds.centerX() ? mTransitionBounds.left
-                    : mTransitionBounds.right;
-                final int transitionY = Math.max(mTransitionBounds.top,
-                    Math.min(mLayoutParams.y, mTransitionBounds.bottom));
+                getLocationBounds(mLocationBounds);
+                final int locationX = mLayoutParams.x < mLocationBounds.centerX() ? mLocationBounds.left
+                    : mLocationBounds.right;
+                final int locationY = Math.max(mLocationBounds.top, Math.min(mLayoutParams.y, mLocationBounds.bottom));
 
-                Preferences.get().setServiceChipPosition(new PointF(
-                    (float) (transitionX - mTransitionBounds.left) / mTransitionBounds.width(),
-                    (float) (transitionY - mTransitionBounds.top) / mTransitionBounds.height()));
+                Preferences.get().setServiceChipLocation(new PointF(
+                    (float) (locationX - mLocationBounds.left) / mLocationBounds.width(),
+                    (float) (locationY - mLocationBounds.top) / mLocationBounds.height()));
 
-                if (mLayoutParams.x == transitionX && mLayoutParams.y == transitionY) {
+                if (mLayoutParams.x == locationX && mLayoutParams.y == locationY) {
                     return;
                 }
 
-                mOverScroller.startScroll(mLayoutParams.x, mLayoutParams.y, transitionX - mLayoutParams.x,
-                    transitionY - mLayoutParams.y);
+                mOverScroller.startScroll(mLayoutParams.x, mLayoutParams.y, locationX - mLayoutParams.x,
+                    locationY - mLayoutParams.y);
             }
 
-            mChipView.post(mTransitionRunnable);
+            mChipView.post(mAdjustLocationRunnable);
         }
 
-        private void updatePosition(final int x, final int y) {
-            getTransitionBounds(mTransitionBounds);
+        private void updateLocation() {
+            getLocationBounds(mLocationBounds);
+            final PointF location = Preferences.get().getServiceChipLocation();
+            updateLocation((int) (mLocationBounds.left + mLocationBounds.width() * location.x),
+                (int) (mLocationBounds.top + mLocationBounds.height() * location.y));
+            adjustLocation();
+        }
 
-            final int finalX = Math.max(mTransitionBounds.left, Math.min(x, mTransitionBounds.right));
-            final int finalY = Math.max(mTransitionBounds.top, Math.min(y, mTransitionBounds.bottom));
+        private void updateLocation(final int x, final int y) {
+            getLocationBounds(mLocationBounds);
+
+            final int finalX = Math.max(mLocationBounds.left, Math.min(x, mLocationBounds.right));
+            final int finalY = Math.max(mLocationBounds.top, Math.min(y, mLocationBounds.bottom));
             if (mLayoutParams.x != finalX || mLayoutParams.y != finalY) {
                 mLayoutParams.x = finalX;
                 mLayoutParams.y = finalY;
@@ -694,20 +703,14 @@ public class LssService extends Service {
         }
 
         private void updateDuration() {
-            mChipView.setText(DurationFormatUtils.formatDuration(SystemClock.elapsedRealtime() - mShowTimestamp,
+            mChipView.setText(DurationFormatUtils.formatDuration(SystemClock.elapsedRealtime() - mStartTimestamp,
                 "[HH:]mm:ss"));
         }
 
-        private void getTransitionBounds(@NonNull final Rect rect) {
+        private void getLocationBounds(@NonNull final Rect rect) {
             mChipView.getWindowVisibleDisplayFrame(rect);
             rect.offsetTo(0, 0);
-
-            final int horizontalMargin = mChipView.getResources()
-                .getDimensionPixelSize(R.dimen.screen_share_chip_horizontal_margin);
-            final int verticalMargin = mChipView.getResources()
-                .getDimensionPixelSize(R.dimen.screen_share_chip_vertical_margin);
-            rect.left += horizontalMargin;
-            rect.top += verticalMargin;
+            rect.offset(-rect.width() / 2, -rect.height() / 2);
 
             final int width;
             final int height;
@@ -721,8 +724,14 @@ public class LssService extends Service {
                 height = mChipView.getMeasuredHeight();
             }
 
-            rect.right -= width + horizontalMargin;
-            rect.bottom -= height + verticalMargin;
+            final int horizontalMargin = mChipView.getResources()
+                .getDimensionPixelSize(R.dimen.screen_share_chip_horizontal_margin);
+            final int verticalMargin = mChipView.getResources()
+                .getDimensionPixelSize(R.dimen.screen_share_chip_vertical_margin);
+            rect.left += width / 2 + horizontalMargin;
+            rect.top += height / 2 + verticalMargin;
+            rect.right -= width / 2 + horizontalMargin;
+            rect.bottom -= height / 2 + verticalMargin;
         }
 
         @NonNull
@@ -734,14 +743,14 @@ public class LssService extends Service {
                 @Override
                 protected void onConfigurationChanged(Configuration newConfig) {
                     super.onConfigurationChanged(newConfig);
-                    restorePosition();
+                    updateLocation();
                 }
 
                 @SuppressWarnings("SpellCheckingInspection")
                 @Override
                 protected void onSizeChanged(int w, int h, int oldw, int oldh) {
                     super.onSizeChanged(w, h, oldw, oldh);
-                    restorePosition();
+                    updateLocation();
                 }
 
                 @SuppressLint("ClickableViewAccessibility")
@@ -749,17 +758,17 @@ public class LssService extends Service {
                 public boolean onTouchEvent(@NonNull MotionEvent event) {
                     switch (event.getActionMasked()) {
                         case MotionEvent.ACTION_DOWN:
-                            mChipView.removeCallbacks(mTransitionRunnable);
+                            mChipView.removeCallbacks(mAdjustLocationRunnable);
                             mOverScroller.forceFinished(true);
                             mTouchOffset.set(mLayoutParams.x - event.getRawX(), mLayoutParams.y - event.getRawY());
                             break;
                         case MotionEvent.ACTION_MOVE:
-                            updatePosition((int) (event.getRawX() + mTouchOffset.x),
+                            updateLocation((int) (event.getRawX() + mTouchOffset.x),
                                 (int) (event.getRawY() + mTouchOffset.y));
                             break;
                         case MotionEvent.ACTION_UP:
                         case MotionEvent.ACTION_CANCEL:
-                            transition();
+                            adjustLocation();
                             break;
                         default:
                             break;

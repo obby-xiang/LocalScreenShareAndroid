@@ -122,7 +122,7 @@ public final class LssServiceDiscoveryManager {
                         mNsdServiceInfoMap.put(serviceName, serviceInfo);
 
                         if (lssServiceInfo == null
-                            || Objects.equals(lssServiceInfo.getId(), Preferences.get().getLssServiceId())) {
+                            || Objects.equals(lssServiceInfo.getId(), Preferences.get().getServiceId())) {
                             mServiceInfoMap.remove(serviceName);
                         } else {
                             mServiceInfoMap.entrySet()

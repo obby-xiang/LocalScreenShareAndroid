@@ -85,6 +85,7 @@ dependencies {
     coreLibraryDesugaring libs.desugar.jdk.libs
     compileOnly libs.lombok
     annotationProcessor libs.lombok
+    implementation libs.gson
     implementation libs.grpc.okhttp
     implementation libs.grpc.protobuf.lite
     implementation libs.grpc.stub

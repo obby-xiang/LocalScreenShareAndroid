@@ -173,15 +173,15 @@ public final class LssServer {
     };
 
     @NonNull
-    private final Server mGrpcServer = OkHttpServerBuilder.forPort(Preferences.get().getLssServerPort(),
-            InsecureServerCredentials.create())
-        .executor(mGrpcServerExecutor)
-        .flowControlWindow(Constants.GRPC_FLOW_CONTROL_WINDOW)
-        .maxInboundMessageSize(Constants.GRPC_MAX_INBOUND_MESSAGE_SIZE)
-        .addTransportFilter(mServerTransportFilter)
-        .addStreamTracerFactory(mServerStreamTracerFactory)
-        .addService(mScreenStreamService)
-        .build();
+    private final Server mGrpcServer =
+        OkHttpServerBuilder.forPort(Preferences.get().getServerPort(), InsecureServerCredentials.create())
+            .executor(mGrpcServerExecutor)
+            .flowControlWindow(Constants.GRPC_FLOW_CONTROL_WINDOW)
+            .maxInboundMessageSize(Constants.GRPC_MAX_INBOUND_MESSAGE_SIZE)
+            .addTransportFilter(mServerTransportFilter)
+            .addStreamTracerFactory(mServerStreamTracerFactory)
+            .addService(mScreenStreamService)
+            .build();
 
     @NonNull
     private final Runnable mResolveNsdServiceRunnable = new Runnable() {
@@ -329,8 +329,8 @@ public final class LssServer {
         final String hostAddress =
             NetUtils.getHostAddress(((InetSocketAddress) mGrpcServer.getListenSockets().get(0)).getAddress());
         mServerInfo = LssServerInfo.builder()
-            .id(Preferences.get().getLssServiceId())
-            .name(Preferences.get().getLssServiceName())
+            .id(Preferences.get().getServiceId())
+            .name(Preferences.get().getServiceName())
             .hostAddress(hostAddress)
             .port(mGrpcServer.getPort())
             .build();
@@ -473,7 +473,7 @@ public final class LssServer {
 
         private volatile ScreenFrame mScreenFrame;
 
-        private volatile long mLastScreenFrameTimestamp = -1L;
+        private volatile long mScreenFrameTimestamp = -1L;
 
         @Setter
         @Nullable
@@ -501,8 +501,8 @@ public final class LssServer {
                         return;
                     }
 
-                    if (mLastScreenFrameTimestamp < mScreenFrame.getTimestamp()) {
-                        mLastScreenFrameTimestamp = mScreenFrame.getTimestamp();
+                    if (mScreenFrameTimestamp < mScreenFrame.getTimestamp()) {
+                        mScreenFrameTimestamp = mScreenFrame.getTimestamp();
                         mObserver.onNext(mScreenFrame);
                     }
 
@@ -520,7 +520,7 @@ public final class LssServer {
             mObserver.setOnCancelHandler(this::release);
         }
 
-        public void postScreenFrame(@NonNull final ScreenFrame screenFrame) {
+        public void postScreenFrame(@NonNull final ScreenFrame frame) {
             if (mIsReleased) {
                 return;
             }
@@ -530,7 +530,7 @@ public final class LssServer {
                     return;
                 }
 
-                mScreenFrame = screenFrame;
+                mScreenFrame = frame;
                 if (mObserver.isReady()) {
                     mExecutor.execute(mOnReadyHandler);
                 }
@@ -559,7 +559,7 @@ public final class LssServer {
         private final Object mLock = new Object();
 
         @NonNull
-        private final AtomicLong mTimestamp = new AtomicLong(SystemClock.elapsedRealtimeNanos());
+        private final AtomicLong mCollectionTimestamp = new AtomicLong(SystemClock.elapsedRealtimeNanos());
 
         @NonNull
         private final List<TransportProfile> mTransports = new CopyOnWriteArrayList<>();
@@ -592,8 +592,8 @@ public final class LssServer {
         @NonNull
         public LssServerStats collect() {
             synchronized (mLock) {
-                final long startTimestamp = mTimestamp.getAndSet(SystemClock.elapsedRealtimeNanos());
-                final long endTimestamp = mTimestamp.get();
+                final long startTimestamp = mCollectionTimestamp.getAndSet(SystemClock.elapsedRealtimeNanos());
+                final long endTimestamp = mCollectionTimestamp.get();
                 final List<LssServerStats.TransportStats> transports = mTransports.stream()
                     .map(transportProfile -> {
                         final long outboundDataSize = transportProfile.getAndResetOutboundDataSize();
