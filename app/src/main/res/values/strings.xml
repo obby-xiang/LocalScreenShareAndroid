@@ -15,4 +15,8 @@
     <string name="disconnect_screen_share_confirm">"是否断开与共享屏幕的连接？"</string>
     <string name="retry_connect_screen_share_confirm">"无法连接到共享屏幕，是否重试？"</string>
     <string name="reconnect_screen_share_confirm">"已断开与共享屏幕的连接，是否重新连接？"</string>
+    <string name="keep_screen_on_setting_label">"保持屏幕常亮"</string>
+    <string name="viewer_opacity_setting_label">"不透明度"</string>
+    <string name="viewer_scale_setting_label">"显示大小"</string>
+    <string name="viewer_rounded_setting_label">"圆角"</string>
 </resources>

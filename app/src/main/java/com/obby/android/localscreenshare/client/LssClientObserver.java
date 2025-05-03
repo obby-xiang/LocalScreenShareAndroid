@@ -11,5 +11,5 @@ public interface LssClientObserver {
 
     void onDisconnected();
 
-    void onScreenFrameReceived(@NonNull Reference<Bitmap> frame);
+    void onScreenFrameReceived(@NonNull Reference<Bitmap> frame, boolean isSecure);
 }

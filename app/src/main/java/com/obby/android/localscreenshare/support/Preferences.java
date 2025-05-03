@@ -26,11 +26,15 @@ public final class Preferences {
 
     private static final String KEY_PROJECTION_SECURE = "projection_secure";
 
+    private static final String KEY_PROJECTION_KEEP_SCREEN_ON = "projection_keep_screen_on";
+
     private static final String KEY_PROJECTION_QUALITY = "projection_quality";
 
     private static final String KEY_PROJECTION_SCALE = "projection_scale";
 
     private static final String KEY_SERVICE_CHIP_LOCATION = "service_chip_location";
+
+    private static final String KEY_VIEWER_KEEP_SCREEN_ON = "viewer_keep_screen_on";
 
     private static final String KEY_VIEWER_OPACITY = "viewer_opacity";
 
@@ -38,15 +42,21 @@ public final class Preferences {
 
     private static final String KEY_VIEWER_LOCATION = "viewer_location";
 
+    private static final String KEY_VIEWER_ROUNDED = "viewer_rounded";
+
     private static final int DEFAULT_SERVER_PORT = 8080;
 
     private static final int DEFAULT_PROJECTION_SCALE = 100;
 
     private static final int DEFAULT_PROJECTION_QUALITY = 85;
 
+    private static final PointF DEFAULT_SERVICE_CHIP_LOCATION = new PointF(0f, 0f);
+
     private static final int DEFAULT_VIEWER_OPACITY = 100;
 
     private static final int DEFAULT_VIEWER_SCALE = 80;
+
+    private static final PointF DEFAULT_VIEWER_LOCATION = new PointF(0.5f, 0.5f);
 
     @NonNull
     private final SharedPreferences mPreferences;
@@ -101,6 +111,14 @@ public final class Preferences {
         mPreferences.edit().putBoolean(KEY_PROJECTION_SECURE, isSecure).commit();
     }
 
+    public boolean isProjectionKeepScreenOn() {
+        return mPreferences.getBoolean(KEY_PROJECTION_KEEP_SCREEN_ON, true);
+    }
+
+    public void setProjectionKeepScreenOn(final boolean isKeepScreenOn) {
+        mPreferences.edit().putBoolean(KEY_PROJECTION_KEEP_SCREEN_ON, isKeepScreenOn).commit();
+    }
+
     public int getProjectionQuality() {
         return mPreferences.getInt(KEY_PROJECTION_QUALITY, DEFAULT_PROJECTION_QUALITY);
     }
@@ -121,11 +139,19 @@ public final class Preferences {
     public PointF getServiceChipLocation() {
         return Optional.ofNullable(mPreferences.getString(KEY_SERVICE_CHIP_LOCATION, null))
             .map(value -> mGson.fromJson(value, PointF.class))
-            .orElseGet(PointF::new);
+            .orElseGet(() -> new PointF(DEFAULT_SERVICE_CHIP_LOCATION.x, DEFAULT_SERVICE_CHIP_LOCATION.y));
     }
 
     public void setServiceChipLocation(@NonNull final PointF location) {
         mPreferences.edit().putString(KEY_SERVICE_CHIP_LOCATION, mGson.toJson(location)).commit();
+    }
+
+    public boolean isViewerKeepScreenOn() {
+        return mPreferences.getBoolean(KEY_VIEWER_KEEP_SCREEN_ON, true);
+    }
+
+    public void setViewerKeepScreenOn(final boolean isKeepScreenOn) {
+        mPreferences.edit().putBoolean(KEY_VIEWER_KEEP_SCREEN_ON, isKeepScreenOn).commit();
     }
 
     public int getViewerOpacity() {
@@ -148,11 +174,19 @@ public final class Preferences {
     public PointF getViewerLocation() {
         return Optional.ofNullable(mPreferences.getString(KEY_VIEWER_LOCATION, null))
             .map(value -> mGson.fromJson(value, PointF.class))
-            .orElseGet(PointF::new);
+            .orElseGet(() -> new PointF(DEFAULT_VIEWER_LOCATION.x, DEFAULT_VIEWER_LOCATION.y));
     }
 
     public void setViewerLocation(@NonNull final PointF location) {
         mPreferences.edit().putString(KEY_VIEWER_LOCATION, mGson.toJson(location)).commit();
+    }
+
+    public boolean isViewerRounded() {
+        return mPreferences.getBoolean(KEY_VIEWER_ROUNDED, true);
+    }
+
+    public void setViewerRounded(final boolean isRounded) {
+        mPreferences.edit().putBoolean(KEY_VIEWER_ROUNDED, isRounded).commit();
     }
 
     private static class InstanceHolder {

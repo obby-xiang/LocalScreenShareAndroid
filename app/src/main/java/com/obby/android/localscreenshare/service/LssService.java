@@ -630,8 +630,8 @@ public class LssService extends Service {
             mChipView = createChipView();
             mLayoutParams = new WindowManager.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 0, 0, Constants.FLOATING_WINDOW_TYPE,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
-                    | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON, PixelFormat.TRANSLUCENT);
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+                PixelFormat.TRANSLUCENT);
             mLayoutParams.gravity = Gravity.CENTER;
             mOverScroller = new OverScroller(mContext);
             mGestureDetector = new GestureDetector(mContext, mOnGestureListener);
@@ -639,14 +639,12 @@ public class LssService extends Service {
 
         public void show() {
             mStartTimestamp = SystemClock.elapsedRealtime();
-
-            final Point location = getLocation();
-            mLayoutParams.x = location.x;
-            mLayoutParams.y = location.y;
-
-            mWindowManager.addView(mChipView, mLayoutParams);
-            adjustLocation();
             updateDuration();
+
+            updateLayoutParams();
+            mWindowManager.addView(mChipView, mLayoutParams);
+
+            adjustLocation();
             mChipView.post(mTickRunnable);
         }
 
@@ -672,9 +670,10 @@ public class LssService extends Service {
                     : mLocationBounds.right;
                 final int locationY = Math.max(mLocationBounds.top, Math.min(mLayoutParams.y, mLocationBounds.bottom));
 
-                Preferences.get().setServiceChipLocation(new PointF(
-                    (float) (locationX - mLocationBounds.left) / mLocationBounds.width(),
-                    (float) (locationY - mLocationBounds.top) / mLocationBounds.height()));
+                Preferences.get().setServiceChipLocation(new PointF(mLocationBounds.width() <= 0 ? 0f
+                    : (float) (locationX - mLocationBounds.left) / mLocationBounds.width(),
+                    mLocationBounds.height() <= 0 ? 0f
+                        : (float) (locationY - mLocationBounds.top) / mLocationBounds.height()));
 
                 if (mLayoutParams.x == locationX && mLayoutParams.y == locationY) {
                     return;
@@ -685,6 +684,18 @@ public class LssService extends Service {
             }
 
             mChipView.post(mAdjustLocationRunnable);
+        }
+
+        private void updateLayoutParams() {
+            if (Preferences.get().isProjectionKeepScreenOn()) {
+                mLayoutParams.flags |= WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON;
+            } else {
+                mLayoutParams.flags &= ~WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON;
+            }
+
+            final Point location = getLocation();
+            mLayoutParams.x = location.x;
+            mLayoutParams.y = location.y;
         }
 
         private void updateLocation() {
@@ -754,7 +765,7 @@ public class LssService extends Service {
                 @Override
                 protected void onConfigurationChanged(Configuration newConfig) {
                     super.onConfigurationChanged(newConfig);
-                    updateLocation();
+                    post(() -> updateLocation());
                 }
 
                 @SuppressWarnings("SpellCheckingInspection")

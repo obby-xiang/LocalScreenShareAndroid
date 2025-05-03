@@ -215,7 +215,7 @@ public final class LssClient {
                         }
 
                         mScreenFrameTimestamp = value.getTimestamp();
-                        observer.onScreenFrameReceived(reference);
+                        observer.onScreenFrameReceived(reference, value.getSecure());
                     });
                 }
 
