@@ -37,6 +37,7 @@ import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
 import androidx.core.app.ServiceCompat;
 import androidx.core.content.ContextCompat;
+import androidx.core.text.HtmlCompat;
 
 import com.google.android.material.bottomsheet.BottomSheetBehavior;
 import com.google.android.material.bottomsheet.BottomSheetDialog;
@@ -110,7 +111,7 @@ public class LssClientService extends Service {
             }
 
             if (mScreenShareViewer == null) {
-                mScreenShareViewer = new ScreenShareViewer(LssClientService.this);
+                mScreenShareViewer = new ScreenShareViewer(LssClientService.this, mServiceInfo);
             }
 
             mScreenShareViewer.show();
@@ -145,7 +146,8 @@ public class LssClientService extends Service {
 
             final Context themedContext = new ContextThemeWrapper(LssClientService.this, R.style.AppTheme);
             mDialog = new MaterialAlertDialogBuilder(themedContext)
-                .setMessage(messageResId)
+                .setMessage(HtmlCompat.fromHtml(getString(messageResId, mServiceInfo.getName()),
+                    HtmlCompat.FROM_HTML_MODE_LEGACY))
                 .setPositiveButton(android.R.string.ok, (dialog, which) -> {
                     mClient = new LssClient(mServiceInfo.getHostAddress(), mServiceInfo.getPort());
                     mClient.setClientStatsListener(mClientStatsListener);
@@ -245,18 +247,20 @@ public class LssClientService extends Service {
 
         if (mScreenShareViewer != null) {
             mScreenShareViewer.dismiss();
+            mScreenShareViewer = null;
+        }
+
+        if (mScreenShareLoading != null) {
+            mScreenShareLoading.dismiss();
         }
 
         if (mClient != null) {
             mClient.stop();
         }
 
-        if (mScreenShareLoading == null) {
-            mScreenShareLoading = new ScreenShareLoading(this);
-        }
-
         mClient = new LssClient(mServiceInfo.getHostAddress(), mServiceInfo.getPort());
         mClient.setClientStatsListener(mClientStatsListener);
+        mScreenShareLoading = new ScreenShareLoading(this, mServiceInfo);
         mScreenShareLoading.show();
         mClient.start(mClientObserver);
 
@@ -317,14 +321,13 @@ public class LssClientService extends Service {
     }
 
     @SuppressWarnings("DataFlowIssue")
-    @SuppressLint("DefaultLocale")
     @NonNull
     private Notification buildNotification() {
         return new NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle(getString(R.string.client_service_notification_title, mServiceInfo.getName()))
-            .setContentText(String.format("%s:%d | %s/s", mServiceInfo.getHostAddress(), mServiceInfo.getPort(),
-                Formatter.formatFileSize(this, mInboundDataRate)))
+            .setContentText(getString(R.string.client_service_notification_text, mServiceInfo.getHostAddress(),
+                mServiceInfo.getPort(), Formatter.formatFileSize(this, mInboundDataRate)))
             .setContentIntent(PendingIntent.getActivity(this, 0, new Intent(this, MainActivity.class),
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT))
             .addAction(0, getString(R.string.client_service_stop_notification_action),
@@ -352,7 +355,7 @@ public class LssClientService extends Service {
 
         @SuppressWarnings("DataFlowIssue")
         @SuppressLint("InflateParams")
-        private ScreenShareLoading(@NonNull final Context context) {
+        private ScreenShareLoading(@NonNull final Context context, @NonNull final LssServiceInfo serviceInfo) {
             final Context themedContext = new ContextThemeWrapper(context, R.style.AppTheme);
             mWindowManager = themedContext.getSystemService(WindowManager.class);
             mLoadingView = LayoutInflater.from(themedContext).inflate(R.layout.widget_screen_share_loading, null);
@@ -365,7 +368,9 @@ public class LssClientService extends Service {
             mLoadingView.setOnClickListener(v -> {
                 if (mDialog == null) {
                     mDialog = new MaterialAlertDialogBuilder(themedContext)
-                        .setMessage(R.string.disconnect_screen_share_confirm)
+                        .setMessage(HtmlCompat.fromHtml(themedContext.getString(
+                                R.string.disconnect_screen_share_confirm, serviceInfo.getName()),
+                            HtmlCompat.FROM_HTML_MODE_LEGACY))
                         .setPositiveButton(android.R.string.ok, (dialog, which) -> themedContext.sendBroadcast(
                             new Intent(Constants.ACTION_STOP_CLIENT_SERVICE)
                                 .setPackage(themedContext.getPackageName())))
@@ -431,6 +436,9 @@ public class LssClientService extends Service {
         private final Context mContext;
 
         @NonNull
+        private final LssServiceInfo mServiceInfo;
+
+        @NonNull
         private final WindowManager mWindowManager;
 
         @NonNull
@@ -474,7 +482,8 @@ public class LssClientService extends Service {
                 public boolean onSingleTapConfirmed(@NonNull MotionEvent e) {
                     if (mDialog == null) {
                         mDialog = new MaterialAlertDialogBuilder(mContext)
-                            .setMessage(R.string.disconnect_screen_share_confirm)
+                            .setMessage(HtmlCompat.fromHtml(mContext.getString(R.string.disconnect_screen_share_confirm,
+                                mServiceInfo.getName()), HtmlCompat.FROM_HTML_MODE_LEGACY))
                             .setPositiveButton(android.R.string.ok, (dialog, which) -> mContext.sendBroadcast(
                                 new Intent(Constants.ACTION_STOP_CLIENT_SERVICE).setPackage(mContext.getPackageName())))
                             .setNegativeButton(android.R.string.cancel, null)
@@ -503,8 +512,9 @@ public class LssClientService extends Service {
             };
 
         @SuppressLint("InflateParams")
-        private ScreenShareViewer(@NonNull final Context context) {
+        private ScreenShareViewer(@NonNull final Context context, @NonNull final LssServiceInfo serviceInfo) {
             mContext = new ContextThemeWrapper(context, R.style.AppTheme);
+            mServiceInfo = serviceInfo;
             mWindowManager = mContext.getSystemService(WindowManager.class);
             mFrameView = createFrameView();
             mLayoutParams = new WindowManager.LayoutParams(0, 0, 0, 0, Constants.FLOATING_WINDOW_TYPE,

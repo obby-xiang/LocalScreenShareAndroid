@@ -2,19 +2,20 @@
     <string name="app_name">"屏幕共享"</string>
     <string name="service_notification_channel_name">"共享屏幕服务"</string>
     <string name="service_notification_title">"正在共享屏幕…"</string>
-    <string name="service_notification_text">"%1$d 个连接"</string>
+    <string name="service_notification_text">"<xliff:g id="count">%1$d</xliff:g> 个连接 | <xliff:g id="speed">%2$s/s</xliff:g>"</string>
     <string name="service_stop_notification_action">"停止共享"</string>
     <string name="client_service_notification_channel_name">"查看共享屏幕服务"</string>
-    <string name="client_service_notification_title">"正在查看“%1$s”的屏幕…"</string>
+    <string name="client_service_notification_title">"正在查看共享屏幕“<xliff:g id="name">%1$s</xliff:g>”…"</string>
+    <string name="client_service_notification_text">"<xliff:g id="ip">%1$s</xliff:g>:<xliff:g id="port">%2$d</xliff:g> | <xliff:g id="speed">%3$s/s</xliff:g>"</string>
     <string name="client_service_stop_notification_action">"停止查看"</string>
-    <string name="request_post_notification">"请允许应用“&lt;b&gt;%1$s"&lt;/b&gt;"”发送通知。"</string>
-    <string name="request_ignore_battery_optimizations">"请允许应用“&lt;b&gt;%1$s&lt;/b&gt;”一直在后台运行。"</string>
-    <string name="request_system_alert_window">"请允许应用“&lt;b&gt;%1$s&lt;/b&gt;”显示在其他应用的上层。"</string>
+    <string name="request_post_notification">"请允许应用“&lt;b&gt;<xliff:g id="name">%1$s</xliff:g>"&lt;/b&gt;"”发送通知。"</string>
+    <string name="request_ignore_battery_optimizations">"请允许应用“&lt;b&gt;<xliff:g id="name">%1$s</xliff:g>&lt;/b&gt;”一直在后台运行。"</string>
+    <string name="request_system_alert_window">"请允许应用“&lt;b&gt;<xliff:g id="name">%1$s</xliff:g>&lt;/b&gt;”显示在其他应用的上层。"</string>
     <string name="stop_screen_share_confirm">"是否停止共享屏幕？"</string>
     <string name="connecting_screen_share">"正在连接到共享屏幕…"</string>
-    <string name="disconnect_screen_share_confirm">"是否断开与共享屏幕的连接？"</string>
-    <string name="retry_connect_screen_share_confirm">"无法连接到共享屏幕，是否重试？"</string>
-    <string name="reconnect_screen_share_confirm">"已断开与共享屏幕的连接，是否重新连接？"</string>
+    <string name="disconnect_screen_share_confirm">"是否断开与共享屏幕“&lt;b&gt;<xliff:g id="name">%1$s</xliff:g>"&lt;/b&gt;"”的连接？"</string>
+    <string name="retry_connect_screen_share_confirm">"无法连接到共享屏幕“&lt;b&gt;<xliff:g id="name">%1$s</xliff:g>"&lt;/b&gt;"”，是否重试？"</string>
+    <string name="reconnect_screen_share_confirm">"已断开与共享屏幕“&lt;b&gt;<xliff:g id="name">%1$s</xliff:g>"&lt;/b&gt;"”的连接，是否重新连接？"</string>
     <string name="keep_screen_on_setting_label">"屏幕常亮"</string>
     <string name="viewer_opacity_setting_label">"不透明度"</string>
     <string name="viewer_scale_setting_label">"显示大小"</string>

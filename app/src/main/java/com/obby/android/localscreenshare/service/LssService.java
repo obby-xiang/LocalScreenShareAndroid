@@ -31,6 +31,7 @@ import android.os.Messenger;
 import android.os.Process;
 import android.os.RemoteException;
 import android.os.SystemClock;
+import android.text.format.Formatter;
 import android.util.Log;
 import android.util.Size;
 import android.view.GestureDetector;
@@ -122,6 +123,8 @@ public class LssService extends Service {
     private LssServerStats mServerStats;
 
     private int mConnectionCount;
+
+    private long mOutboundDataRate;
 
     private final String mTag = "LssService@" + hashCode();
 
@@ -351,6 +354,7 @@ public class LssService extends Service {
         mProjectionSize = null;
         mServerStats = null;
         mConnectionCount = 0;
+        mOutboundDataRate = 0L;
 
         if (mScreenShareChip != null) {
             mScreenShareChip.dismiss();
@@ -412,10 +416,13 @@ public class LssService extends Service {
         mClientMessengers.forEach(this::notifyServerStatsChanged);
 
         final int connectionCount = mServerStats.getTransports().size();
-        if (mConnectionCount != connectionCount) {
-            mConnectionCount = connectionCount;
-            NotificationManagerCompat.from(this).notify(NOTIFICATION_ID, buildNotification());
+        if (mConnectionCount == connectionCount && mOutboundDataRate == mServerStats.getOutboundDataRate()) {
+            return;
         }
+
+        mConnectionCount = connectionCount;
+        mOutboundDataRate = mServerStats.getOutboundDataRate();
+        NotificationManagerCompat.from(this).notify(NOTIFICATION_ID, buildNotification());
     }
 
     private void updateProjectionSize() {
@@ -538,7 +545,8 @@ public class LssService extends Service {
         return new NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle(getString(R.string.service_notification_title))
-            .setContentText(getString(R.string.service_notification_text, mConnectionCount))
+            .setContentText(getString(R.string.service_notification_text, mConnectionCount,
+                Formatter.formatFileSize(this, mOutboundDataRate)))
             .setContentIntent(PendingIntent.getActivity(this, 0, new Intent(this, MainActivity.class),
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT))
             .addAction(0, getString(R.string.service_stop_notification_action), PendingIntent.getBroadcast(this, 0,
