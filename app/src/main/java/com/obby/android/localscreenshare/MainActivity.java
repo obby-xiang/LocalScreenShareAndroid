@@ -1,6 +1,7 @@
 package com.obby.android.localscreenshare;
 
 import android.Manifest;
+import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.ComponentName;
 import android.content.Context;
@@ -365,6 +366,7 @@ public class MainActivity extends AppCompatActivity {
         updateServiceStatsView();
     }
 
+    @SuppressLint("StringFormatMatches")
     private void updateServiceInfoView() {
         mServiceNameView.setText(Optional.ofNullable(mServerInfo)
             .map(LssServerInfo::getName)
@@ -377,6 +379,7 @@ public class MainActivity extends AppCompatActivity {
         mServiceAddressView.setEnabled(mServiceStatus == SERVICE_STATUS_ONLINE);
     }
 
+    @SuppressLint("StringFormatMatches")
     private void updateServiceStatsView() {
         mServiceStatsView.setText(getString(R.string.service_stats,
             mServerStats == null ? 0 : mServerStats.getTransports().size(),
