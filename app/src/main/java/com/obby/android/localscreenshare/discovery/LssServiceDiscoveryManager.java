@@ -57,11 +57,6 @@ public final class LssServiceDiscoveryManager {
             public void onStartDiscoveryFailed(String serviceType, int errorCode) {
                 Log.e(TAG, String.format("mNsdDiscoveryListener.onStartDiscoveryFailed: start discovery failed"
                     + ", serviceType = %s, errorCode = %d", serviceType, errorCode));
-                if (mIsDiscovering) {
-                    Log.i(TAG, "mNsdDiscoveryListener.onStartDiscoveryFailed: restart discovery");
-                    stopDiscovery();
-                    startDiscovery();
-                }
             }
 
             @Override
@@ -80,11 +75,6 @@ public final class LssServiceDiscoveryManager {
             public void onDiscoveryStopped(String serviceType) {
                 Log.i(TAG, String.format("mNsdDiscoveryListener.onDiscoveryStopped: discovery stopped"
                     + ", serviceType = %s", serviceType));
-                if (mIsDiscovering) {
-                    Log.i(TAG, "mNsdDiscoveryListener.onDiscoveryStopped: restart discovery");
-                    stopDiscovery();
-                    startDiscovery();
-                }
             }
 
             @Override

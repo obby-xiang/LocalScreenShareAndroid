@@ -44,6 +44,8 @@ public final class Preferences {
 
     private static final String KEY_VIEWER_ROUNDED = "viewer_rounded";
 
+    private static final String KEY_DISCOVERY_ENABLED = "discovery_enabled";
+
     private static final int DEFAULT_SERVER_PORT = 8080;
 
     private static final int DEFAULT_PROJECTION_SCALE = 100;
@@ -187,6 +189,14 @@ public final class Preferences {
 
     public void setViewerRounded(final boolean isRounded) {
         mPreferences.edit().putBoolean(KEY_VIEWER_ROUNDED, isRounded).commit();
+    }
+
+    public boolean isDiscoveryEnabled() {
+        return mPreferences.getBoolean(KEY_DISCOVERY_ENABLED, true);
+    }
+
+    public void setDiscoveryEnabled(final boolean isEnabled) {
+        mPreferences.edit().putBoolean(KEY_DISCOVERY_ENABLED, isEnabled).commit();
     }
 
     private static class InstanceHolder {

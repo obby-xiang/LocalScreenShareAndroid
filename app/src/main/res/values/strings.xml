@@ -6,7 +6,7 @@
     <string name="service_stop_notification_action">"停止共享"</string>
     <string name="client_service_notification_channel_name">"查看共享屏幕服务"</string>
     <string name="client_service_notification_title">"正在查看共享屏幕“<xliff:g id="name">%1$s</xliff:g>”…"</string>
-    <string name="client_service_notification_text">"<xliff:g id="ip">%1$s</xliff:g>:<xliff:g id="port">%2$d</xliff:g> | <xliff:g id="speed">%3$s/s</xliff:g>"</string>
+    <string name="client_service_notification_text">"<xliff:g id="host">%1$s</xliff:g>:<xliff:g id="port">%2$d</xliff:g> | <xliff:g id="speed">%3$s/s</xliff:g>"</string>
     <string name="client_service_stop_notification_action">"停止查看"</string>
     <string name="request_post_notification">"请允许应用“&lt;b&gt;<xliff:g id="name">%1$s</xliff:g>"&lt;/b&gt;"”发送通知。"</string>
     <string name="request_ignore_battery_optimizations">"请允许应用“&lt;b&gt;<xliff:g id="name">%1$s</xliff:g>&lt;/b&gt;”一直在后台运行。"</string>
@@ -20,4 +20,12 @@
     <string name="viewer_opacity_setting_label">"不透明度"</string>
     <string name="viewer_scale_setting_label">"显示大小"</string>
     <string name="viewer_rounded_setting_label">"窗口圆角"</string>
+    <string name="projection_toolbar_title">"我的共享屏幕"</string>
+    <string name="service_online">"在线"</string>
+    <string name="service_offline">"离线"</string>
+    <string name="service_address">"<xliff:g id="host">%1$s</xliff:g>:<xliff:g id="port">%2$d</xliff:g>"</string>
+    <string name="service_stats">"<xliff:g id="count">%1$d</xliff:g> 个连接 | <xliff:g id="speed">%2$s/s</xliff:g>"</string>
+    <string name="discovery_toolbar_title">"附近的共享屏幕"</string>
+    <string name="searching_services">"正在搜索…"</string>
+    <string name="search_services_off">"搜索已关闭"</string>
 </resources>

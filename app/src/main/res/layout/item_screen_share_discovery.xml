@@ -2,28 +2,35 @@
 <com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     style="?attr/materialCardViewElevatedStyle"
-    android:layout_width="wrap_content"
+    android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    app:cardBackgroundColor="?attr/colorSurfaceInverse"
+    android:clickable="true"
+    android:focusable="true"
+    android:minHeight="64dp"
     app:contentPadding="16dp">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:gravity="center"
+        android:layout_gravity="center"
         android:orientation="vertical">
 
-        <com.google.android.material.loadingindicator.LoadingIndicator
+        <com.google.android.material.textview.MaterialTextView
+            android:id="@+id/name"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            app:indicatorColor="?attr/colorPrimaryInverse" />
+            android:maxLines="1"
+            android:singleLine="true"
+            android:textAppearance="?attr/textAppearanceTitleMedium"
+            android:textColor="?attr/colorOnSurface" />
 
         <com.google.android.material.textview.MaterialTextView
+            android:id="@+id/address"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:text="@string/connecting_screen_share"
+            android:maxLines="1"
+            android:singleLine="true"
             android:textAppearance="?attr/textAppearanceBodyMedium"
-            android:textColor="?attr/colorOnSurfaceInverse" />
+            android:textColor="?attr/colorOnSurfaceVariant" />
     </LinearLayout>
 </com.google.android.material.card.MaterialCardView>

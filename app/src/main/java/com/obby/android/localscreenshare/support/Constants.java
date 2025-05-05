@@ -10,6 +10,8 @@ import lombok.NoArgsConstructor;
 public final class Constants {
     public static final int CPU_COUNT = Runtime.getRuntime().availableProcessors();
 
+    public static final String UNKNOWN_HOST_ADDRESS = "N/A";
+
     @SuppressWarnings("SpellCheckingInspection")
     public static final String NSD_SERVICE_TYPE = "_localscreenshare._udp";
 

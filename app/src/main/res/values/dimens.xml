@@ -4,4 +4,5 @@
     <dimen name="screen_share_chip_vertical_margin">8dp</dimen>
     <dimen name="screen_share_viewer_elevation">1dp</dimen>
     <dimen name="screen_share_viewer_min_size">56dp</dimen>
+    <dimen name="discovery_list_item_decoration_thickness">16dp</dimen>
 </resources>
