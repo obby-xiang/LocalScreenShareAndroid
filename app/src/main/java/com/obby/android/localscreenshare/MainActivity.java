@@ -477,18 +477,21 @@ public class MainActivity extends AppCompatActivity {
 
         final PowerManager powerManager = getSystemService(PowerManager.class);
         if (!powerManager.isIgnoringBatteryOptimizations(getPackageName())) {
-            if (mDialog != null) {
-                mDialog.dismiss();
+            final Intent intent = IntentUtils.createRequestIgnoreBatteryOptimizationsIntent(this);
+            if (getPackageManager().resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY) != null) {
+                if (mDialog != null) {
+                    mDialog.dismiss();
+                }
+                mDialog = new MaterialAlertDialogBuilder(this)
+                    .setMessage(HtmlCompat.fromHtml(getString(R.string.request_ignore_battery_optimizations,
+                        App.getLabel()), HtmlCompat.FROM_HTML_MODE_LEGACY))
+                    .setPositiveButton(android.R.string.ok,
+                        (dialog, which) -> startActivity(intent))
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .setCancelable(false)
+                    .show();
+                return false;
             }
-            mDialog = new MaterialAlertDialogBuilder(this)
-                .setMessage(HtmlCompat.fromHtml(getString(R.string.request_ignore_battery_optimizations,
-                    App.getLabel()), HtmlCompat.FROM_HTML_MODE_LEGACY))
-                .setPositiveButton(android.R.string.ok,
-                    (dialog, which) -> startActivity(IntentUtils.createRequestIgnoreBatteryOptimizationsIntent(this)))
-                .setNegativeButton(android.R.string.cancel, null)
-                .setCancelable(false)
-                .show();
-            return false;
         }
 
         return true;
