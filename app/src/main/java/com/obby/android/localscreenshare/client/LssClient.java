@@ -76,7 +76,7 @@ public final class LssClient {
 
     @NonNull
     private final ExecutorService mGrpcClientExecutor = new ThreadPoolExecutor(Constants.CPU_COUNT,
-        Constants.CPU_COUNT * 2, 30L, TimeUnit.SECONDS, new LinkedBlockingQueue<>(200), new BasicThreadFactory.Builder()
+        Constants.CPU_COUNT * 2, 30L, TimeUnit.SECONDS, new LinkedBlockingQueue<>(10), new BasicThreadFactory.Builder()
         .namingPattern("lss-grpc-client-%d")
         .wrappedFactory(runnable -> new Thread(runnable) {
             @Override
