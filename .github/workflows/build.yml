@@ -1,4 +1,4 @@
-name: Android Build
+name: Build
 
 on:
   push:
@@ -11,7 +11,7 @@ jobs:
   build:
     name: Build Android
     env:
-      SIGNING_STORE_FILE: 'keystore.jks'
+      SIGNING_STORE_FILE: "${{ github.workspace }}/keystore.jks"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
