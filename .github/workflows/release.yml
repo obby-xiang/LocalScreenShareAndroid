@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to create'
+        description: 'Tag'
         required: true
         type: string
 
@@ -12,6 +12,7 @@ jobs:
   build:
     uses: ./.github/workflows/build.yml
   release:
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
