@@ -34,4 +34,5 @@
     <string name="projection_frame_rate_setting_label">"最大帧率"</string>
     <string name="projection_quality_setting_label">"画面质量"</string>
     <string name="frame_rate_label">"<xliff:g id="fps">%1$d</xliff:g>fps"</string>
+    <string name="start_service_failed">"启动共享屏幕服务失败。"</string>
 </resources>

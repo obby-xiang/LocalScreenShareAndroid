@@ -136,10 +136,12 @@ public final class LssServer {
             Log.i(mTag, String.format("mServerTransportFilter.transportTerminated: transport terminated"
                 + ", transportAttrs = %s", transportAttrs));
 
-            final InetSocketAddress remoteAddress =
-                (InetSocketAddress) transportAttrs.get(Grpc.TRANSPORT_ATTR_REMOTE_ADDR);
-            Optional.ofNullable(mServerProfile)
-                .ifPresent(serverProfile -> serverProfile.removeTransport(remoteAddress));
+            if (transportAttrs != null) {
+                final InetSocketAddress remoteAddress =
+                    (InetSocketAddress) transportAttrs.get(Grpc.TRANSPORT_ATTR_REMOTE_ADDR);
+                Optional.ofNullable(mServerProfile)
+                    .ifPresent(serverProfile -> serverProfile.removeTransport(remoteAddress));
+            }
         }
     };
 
@@ -354,9 +356,25 @@ public final class LssServer {
         mServerProfile = null;
         mServerStats = null;
         mMainHandler.removeCallbacksAndMessages(null);
-        mContext.unregisterReceiver(mBroadcastReceiver);
-        mConnectivityManager.unregisterNetworkCallback(mNetworkCallback);
-        mNsdManager.unregisterService(mNsdRegistrationListener);
+
+        try {
+            mContext.unregisterReceiver(mBroadcastReceiver);
+        } catch (Exception e) {
+            // ignored
+        }
+
+        try {
+            mConnectivityManager.unregisterNetworkCallback(mNetworkCallback);
+        } catch (Exception e) {
+            // ignored
+        }
+
+        try {
+            mNsdManager.unregisterService(mNsdRegistrationListener);
+        } catch (Exception e) {
+            // ignored
+        }
+
         mGrpcServer.shutdownNow();
         mScreenStreamService.stop();
         mGrpcServerExecutor.shutdownNow();

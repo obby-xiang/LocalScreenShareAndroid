@@ -41,6 +41,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.OverScroller;
+import android.widget.Toast;
 
 import androidx.activity.result.ActivityResult;
 import androidx.annotation.NonNull;
@@ -378,6 +379,7 @@ public class LssService extends Service {
             mServer.start();
         } catch (IOException e) {
             Log.e(mTag, "onStartCommand: start server failed", e);
+            Toast.makeText(this, R.string.start_service_failed, Toast.LENGTH_LONG).show();
             stopService();
             return START_NOT_STICKY;
         }
