@@ -11,6 +11,11 @@ import android.content.IntentFilter;
 import android.content.pm.ServiceInfo;
 import android.content.res.Configuration;
 import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.DrawFilter;
+import android.graphics.Matrix;
+import android.graphics.Paint;
+import android.graphics.PaintFlagsDrawFilter;
 import android.graphics.PixelFormat;
 import android.graphics.PointF;
 import android.graphics.Rect;
@@ -427,6 +432,9 @@ public class LssClientService extends Service {
         private Size mFrameSize;
 
         @Nullable
+        private Matrix mMatrix;
+
+        @Nullable
         private AlertDialog mDialog;
 
         @Nullable
@@ -538,6 +546,7 @@ public class LssClientService extends Service {
                 shouldUpdate.setTrue();
                 mFrameSize = new Size(bitmap.getWidth(), bitmap.getHeight());
                 updateLayoutParams();
+                updateMatrix();
                 updateShape();
             }
 
@@ -565,6 +574,7 @@ public class LssClientService extends Service {
                 mScale = Preferences.get().getViewerScale();
                 mLocation.set(Preferences.get().getViewerLocation());
                 updateLayoutParams();
+                updateMatrix();
                 updateShape();
                 mWindowManager.addView(mFrameView, mLayoutParams);
             }
@@ -597,8 +607,22 @@ public class LssClientService extends Service {
 
         private void updateView() {
             updateLayoutParams();
+            updateMatrix();
             updateShape();
             mWindowManager.updateViewLayout(mFrameView, mLayoutParams);
+        }
+
+        private void updateMatrix() {
+            final Matrix matrix = new Matrix();
+            if (mFrameSize != null && mFrameSize.getWidth() > 0 && mFrameSize.getHeight() > 0) {
+                matrix.setScale((float) mLayoutParams.width / mFrameSize.getWidth(),
+                    (float) mLayoutParams.height / mFrameSize.getHeight());
+            }
+
+            if (!Objects.equals(mMatrix, matrix)) {
+                mMatrix = matrix;
+                mFrameView.setImageMatrix(mMatrix);
+            }
         }
 
         private void updateShape() {
@@ -769,6 +793,16 @@ public class LssClientService extends Service {
         @NonNull
         private ShapeableImageView createFrameView() {
             final ShapeableImageView frameView = new ShapeableImageView(mContext) {
+                @NonNull
+                private final DrawFilter mDrawFilter =
+                    new PaintFlagsDrawFilter(0, Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+
+                @Override
+                protected void onDraw(Canvas canvas) {
+                    canvas.setDrawFilter(mDrawFilter);
+                    super.onDraw(canvas);
+                }
+
                 @Override
                 protected void onConfigurationChanged(Configuration newConfig) {
                     super.onConfigurationChanged(newConfig);
@@ -800,6 +834,7 @@ public class LssClientService extends Service {
                 }
             };
 
+            frameView.setAdjustViewBounds(true);
             frameView.setScaleType(ImageView.ScaleType.FIT_XY);
             frameView.setElevation(mContext.getResources().getDimension(R.dimen.screen_share_viewer_elevation));
             MaterialShapeUtils.setParentAbsoluteElevation(frameView);

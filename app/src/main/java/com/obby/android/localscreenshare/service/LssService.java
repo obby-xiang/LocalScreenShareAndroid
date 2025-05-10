@@ -74,6 +74,7 @@ import org.apache.commons.lang3.time.DurationFormatUtils;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -107,6 +108,8 @@ public class LssService extends Service {
 
     private volatile ImageReader mImageReader;
 
+    private volatile long mFrameTimestamp;
+
     @Nullable
     private VirtualDisplay mVirtualDisplay;
 
@@ -125,6 +128,14 @@ public class LssService extends Service {
     private int mConnectionCount;
 
     private long mOutboundDataRate;
+
+    private boolean mIsProjectionSecure;
+
+    private int mProjectionScale;
+
+    private int mProjectionQuality;
+
+    private int mProjectionFrameRate;
 
     private final String mTag = "LssService@" + hashCode();
 
@@ -175,51 +186,64 @@ public class LssService extends Service {
         }
     };
 
-    @SuppressLint("RestrictedApi")
     @NonNull
-    private final ImageReader.OnImageAvailableListener mOnImageAvailableListener = reader -> {
-        if (mImageReader != reader) {
-            return;
-        }
+    private final ImageReader.OnImageAvailableListener mOnImageAvailableListener =
+        new ImageReader.OnImageAvailableListener() {
+            private final long mNanosPerSecond = Duration.ofSeconds(1L).toNanos();
 
-        synchronized (mImageReaderLock) {
-            if (mImageReader != reader) {
-                return;
-            }
-
-            try (final Image image = reader.acquireLatestImage()) {
-                if (image == null) {
+            @SuppressLint("RestrictedApi")
+            @Override
+            public void onImageAvailable(ImageReader reader) {
+                if (mImageReader != reader) {
                     return;
                 }
 
-                if (mScreenFrameBitmap == null || mScreenFrameBitmap.getWidth() != image.getWidth()
-                    || mScreenFrameBitmap.getHeight() != image.getHeight()) {
-                    Optional.ofNullable(mScreenFrameBitmap).ifPresent(Bitmap::recycle);
-                    mScreenFrameBitmap =
-                        Bitmap.createBitmap(image.getWidth(), image.getHeight(), Bitmap.Config.ARGB_8888);
+                synchronized (mImageReaderLock) {
+                    if (mImageReader != reader) {
+                        return;
+                    }
+
+                    try (final Image image = reader.acquireLatestImage()) {
+                        if (image == null) {
+                            return;
+                        }
+
+                        if (mProjectionFrameRate > 0 && mFrameTimestamp >= 0L
+                            && image.getTimestamp() - mFrameTimestamp < mNanosPerSecond / mProjectionFrameRate) {
+                            return;
+                        }
+
+                        mFrameTimestamp = image.getTimestamp();
+
+                        if (mScreenFrameBitmap == null || mScreenFrameBitmap.getWidth() != image.getWidth()
+                            || mScreenFrameBitmap.getHeight() != image.getHeight()) {
+                            Optional.ofNullable(mScreenFrameBitmap).ifPresent(Bitmap::recycle);
+                            mScreenFrameBitmap =
+                                Bitmap.createBitmap(image.getWidth(), image.getHeight(), Bitmap.Config.ARGB_8888);
+                        }
+
+                        final Image.Plane plane = image.getPlanes()[0];
+                        plane.getBuffer().rewind();
+                        ImageProcessingUtil.copyByteBufferToBitmap(mScreenFrameBitmap, plane.getBuffer(),
+                            plane.getRowStride());
+
+                        final byte[] data;
+                        try (final ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
+                            mScreenFrameBitmap.compress(Bitmap.CompressFormat.JPEG, mProjectionQuality, outputStream);
+                            data = outputStream.toByteArray();
+                        } catch (IOException e) {
+                            return;
+                        }
+
+                        mServer.postScreenFrame(ScreenFrame.newBuilder()
+                            .setTimestamp(mFrameTimestamp)
+                            .setData(ByteString.copyFrom(data))
+                            .setSecure(mIsProjectionSecure)
+                            .build());
+                    }
                 }
-
-                final Image.Plane plane = image.getPlanes()[0];
-                plane.getBuffer().rewind();
-                ImageProcessingUtil.copyByteBufferToBitmap(mScreenFrameBitmap, plane.getBuffer(), plane.getRowStride());
-
-                final byte[] data;
-                try (final ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
-                    mScreenFrameBitmap.compress(Bitmap.CompressFormat.JPEG, Preferences.get().getProjectionQuality(),
-                        outputStream);
-                    data = outputStream.toByteArray();
-                } catch (IOException e) {
-                    return;
-                }
-
-                mServer.postScreenFrame(ScreenFrame.newBuilder()
-                    .setTimestamp(SystemClock.elapsedRealtimeNanos())
-                    .setData(ByteString.copyFrom(data))
-                    .setSecure(Preferences.get().isProjectionSecure())
-                    .build());
             }
-        }
-    };
+        };
 
     @NonNull
     private final VirtualDisplay.Callback mVirtualDisplayCallback = new VirtualDisplay.Callback() {
@@ -249,6 +273,36 @@ public class LssService extends Service {
         }
     };
 
+    @NonNull
+    private final Preferences.Observer mPreferencesObserver = key -> {
+        if (key == null) {
+            mIsProjectionSecure = Preferences.get().isProjectionSecure();
+            mProjectionScale = Preferences.get().getProjectionScale();
+            mProjectionQuality = Preferences.get().getProjectionQuality();
+            mProjectionFrameRate = Preferences.get().getProjectionFrameRate();
+            updateProjectionSize();
+            return;
+        }
+
+        switch (key) {
+            case Preferences.KEY_PROJECTION_SECURE:
+                mIsProjectionSecure = Preferences.get().isProjectionSecure();
+                break;
+            case Preferences.KEY_PROJECTION_SCALE:
+                mProjectionScale = Preferences.get().getProjectionScale();
+                updateProjectionSize();
+                break;
+            case Preferences.KEY_PROJECTION_QUALITY:
+                mProjectionQuality = Preferences.get().getProjectionQuality();
+                break;
+            case Preferences.KEY_PROJECTION_FRAME_RATE:
+                mProjectionFrameRate = Preferences.get().getProjectionFrameRate();
+                break;
+            default:
+                break;
+        }
+    };
+
     @Override
     public void onCreate() {
         super.onCreate();
@@ -257,6 +311,12 @@ public class LssService extends Service {
         final IntentFilter intentFilter = new IntentFilter();
         intentFilter.addAction(Constants.ACTION_STOP_SERVICE);
         ContextCompat.registerReceiver(this, mBroadcastReceiver, intentFilter, ContextCompat.RECEIVER_NOT_EXPORTED);
+
+        mIsProjectionSecure = Preferences.get().isProjectionSecure();
+        mProjectionScale = Preferences.get().getProjectionScale();
+        mProjectionQuality = Preferences.get().getProjectionQuality();
+        mProjectionFrameRate = Preferences.get().getProjectionFrameRate();
+        Preferences.get().addObserver(mPreferencesObserver);
     }
 
     @Override
@@ -265,6 +325,7 @@ public class LssService extends Service {
         Log.i(mTag, "onDestroy: service destroyed");
 
         unregisterReceiver(mBroadcastReceiver);
+        Preferences.get().removeObserver(mPreferencesObserver);
     }
 
     @Override
@@ -332,6 +393,7 @@ public class LssService extends Service {
 
         mImageReader = ImageReader.newInstance(mProjectionSize.getWidth(), mProjectionSize.getHeight(),
             PixelFormat.RGBA_8888, IMAGE_READER_MAX_IMAGES);
+        mFrameTimestamp = -1L;
         mImageReader.setOnImageAvailableListener(mOnImageAvailableListener, mImageReaderHandler);
 
         mVirtualDisplay = mMediaProjection.createVirtualDisplay(VIRTUAL_DISPLAY_NAME, mProjectionSize.getWidth(),
@@ -367,6 +429,8 @@ public class LssService extends Service {
         }
 
         synchronized (mImageReaderLock) {
+            mFrameTimestamp = -1L;
+
             if (mScreenFrameBitmap != null) {
                 mScreenFrameBitmap.recycle();
                 mScreenFrameBitmap = null;
@@ -447,6 +511,7 @@ public class LssService extends Service {
             mImageReader.close();
             mImageReader = ImageReader.newInstance(mProjectionSize.getWidth(), mProjectionSize.getHeight(),
                 PixelFormat.RGBA_8888, IMAGE_READER_MAX_IMAGES);
+            mFrameTimestamp = -1L;
             mImageReader.setOnImageAvailableListener(mOnImageAvailableListener, mImageReaderHandler);
             mVirtualDisplay.setSurface(mImageReader.getSurface());
         }
@@ -528,7 +593,7 @@ public class LssService extends Service {
     @NonNull
     private Size getProjectionSize() {
         final Rect windowBounds = WindowUtils.getMaximumWindowBounds(this);
-        final float scale = Preferences.get().getProjectionScale() / 100f;
+        final float scale = mProjectionScale / 100f;
         return new Size((int) (windowBounds.width() * scale), (int) (windowBounds.height() * scale));
     }
 
@@ -560,6 +625,8 @@ public class LssService extends Service {
 
     private static class ScreenShareChip {
         private long mStartTimestamp;
+
+        private boolean mIsKeepScreenOn;
 
         @Nullable
         private AlertDialog mDialog;
@@ -597,6 +664,18 @@ public class LssService extends Service {
 
         @NonNull
         private final Runnable mAdjustLocationRunnable = this::adjustLocation;
+
+        @NonNull
+        private final Preferences.Observer mPreferencesObserver = new Preferences.Observer() {
+            @Override
+            public void onChanged(@Nullable String key) {
+                if (key == null || Preferences.KEY_PROJECTION_KEEP_SCREEN_ON.equals(key)) {
+                    mIsKeepScreenOn = Preferences.get().isProjectionKeepScreenOn();
+                    updateLayoutParams();
+                    mWindowManager.updateViewLayout(mChipView, mLayoutParams);
+                }
+            }
+        };
 
         @SuppressWarnings("FieldCanBeLocal")
         @NonNull
@@ -647,6 +726,7 @@ public class LssService extends Service {
 
         public void show() {
             mStartTimestamp = SystemClock.elapsedRealtime();
+            mIsKeepScreenOn = Preferences.get().isProjectionKeepScreenOn();
             updateDuration();
 
             updateLayoutParams();
@@ -654,12 +734,15 @@ public class LssService extends Service {
 
             adjustLocation();
             mChipView.post(mTickRunnable);
+
+            Preferences.get().addObserver(mPreferencesObserver);
         }
 
         public void dismiss() {
             mChipView.removeCallbacks(mTickRunnable);
             mChipView.removeCallbacks(mAdjustLocationRunnable);
             mWindowManager.removeViewImmediate(mChipView);
+            Preferences.get().removeObserver(mPreferencesObserver);
 
             if (mDialog != null) {
                 mDialog.dismiss();
@@ -695,7 +778,7 @@ public class LssService extends Service {
         }
 
         private void updateLayoutParams() {
-            if (Preferences.get().isProjectionKeepScreenOn()) {
+            if (mIsKeepScreenOn) {
                 mLayoutParams.flags |= WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON;
             } else {
                 mLayoutParams.flags &= ~WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON;
