@@ -19,5 +19,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: build-artifact
-      - name: Display structure of downloaded files
-        run: ls -R
+      - run: gh release create "$TAG" ./apk/**/*.apk
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
