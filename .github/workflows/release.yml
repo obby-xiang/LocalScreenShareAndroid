@@ -19,7 +19,10 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: build-artifact
-      - run: gh release create "$TAG" ./apk/**/*.apk
+      - run: |
+          gh release create "$TAG" ./apk/**/*.apk \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_BASE_REF"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ inputs.tag }}
