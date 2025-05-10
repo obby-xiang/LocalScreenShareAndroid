@@ -326,12 +326,10 @@ public final class LssServer {
     public void start() throws IOException {
         mGrpcServer.start();
 
-        final String hostAddress =
-            NetUtils.getHostAddress(((InetSocketAddress) mGrpcServer.getListenSockets().get(0)).getAddress());
         mServerInfo = LssServerInfo.builder()
             .id(Preferences.get().getServiceId())
             .name(Preferences.get().getServiceName())
-            .hostAddress(hostAddress)
+            .hostAddress(Constants.UNKNOWN_HOST_ADDRESS)
             .port(mGrpcServer.getPort())
             .build();
         mNsdServiceInfo = buildNsdServiceInfo(mServerInfo);

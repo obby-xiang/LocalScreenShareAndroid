@@ -664,8 +664,8 @@ public class LssClientService extends Service {
                 final int minSize = mContext.getResources().getDimensionPixelSize(R.dimen.screen_share_viewer_min_size);
                 final float scale = Math.min(mBounds.width() * mScale / 100f / mFrameSize.getWidth(),
                     mBounds.height() * mScale / 100f / mFrameSize.getHeight());
-                final float finalScale = Math.min(NumberUtils.max((float) minSize / mFrameSize.getWidth(),
-                    (float) minSize / mFrameSize.getHeight(), scale), 1f);
+                final float finalScale = NumberUtils.max((float) minSize / mFrameSize.getWidth(),
+                    (float) minSize / mFrameSize.getHeight(), scale);
                 mLayoutParams.width = (int) (mFrameSize.getWidth() * finalScale);
                 mLayoutParams.height = (int) (mFrameSize.getHeight() * finalScale);
             }

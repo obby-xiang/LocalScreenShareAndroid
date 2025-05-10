@@ -28,4 +28,10 @@
     <string name="discovery_toolbar_title">"附近的共享屏幕"</string>
     <string name="searching_services">"正在搜索…"</string>
     <string name="search_services_off">"搜索已关闭"</string>
+    <string name="server_port_setting_label">"服务端口"</string>
+    <string name="projection_secure_setting_label">"画面私密"</string>
+    <string name="projection_scale_setting_label">"画面大小"</string>
+    <string name="projection_frame_rate_setting_label">"最大帧率"</string>
+    <string name="projection_quality_setting_label">"画面质量"</string>
+    <string name="frame_rate_label">"<xliff:g id="fps">%1$d</xliff:g>fps"</string>
 </resources>

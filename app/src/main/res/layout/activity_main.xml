@@ -23,7 +23,8 @@
 
             <com.google.android.material.dockedtoolbar.DockedToolbarLayout
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content">
+                android:layout_height="wrap_content"
+                android:backgroundTint="@android:color/transparent">
 
                 <com.google.android.material.appbar.MaterialToolbar
                     android:id="@+id/service_toolbar"
@@ -86,7 +87,8 @@
 
             <com.google.android.material.dockedtoolbar.DockedToolbarLayout
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content">
+                android:layout_height="wrap_content"
+                android:backgroundTint="@android:color/transparent">
 
                 <com.google.android.material.appbar.MaterialToolbar
                     android:id="@+id/discovery_toolbar"

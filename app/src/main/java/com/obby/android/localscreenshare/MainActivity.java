@@ -26,6 +26,7 @@ import android.view.LayoutInflater;
 import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.NumberPicker;
 
 import androidx.activity.EdgeToEdge;
 import androidx.activity.result.ActivityResultLauncher;
@@ -53,6 +54,9 @@ import com.google.android.material.button.MaterialButton;
 import com.google.android.material.color.MaterialColors;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.divider.MaterialDividerItemDecoration;
+import com.google.android.material.materialswitch.MaterialSwitch;
+import com.google.android.material.slider.LabelFormatter;
+import com.google.android.material.slider.Slider;
 import com.google.android.material.textview.MaterialTextView;
 import com.obby.android.localscreenshare.discovery.LssServiceDiscoveryListener;
 import com.obby.android.localscreenshare.discovery.LssServiceDiscoveryManager;
@@ -65,6 +69,7 @@ import com.obby.android.localscreenshare.support.Constants;
 import com.obby.android.localscreenshare.support.Preferences;
 import com.obby.android.localscreenshare.utils.IntentUtils;
 
+import java.text.NumberFormat;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
@@ -77,6 +82,28 @@ public class MainActivity extends AppCompatActivity {
     private static final int SERVICE_STATUS_ONLINE = 1;
 
     private static final int SERVICE_STATUS_OFFLINE = 2;
+
+    private static final int MIN_PROJECTION_QUALITY = 0;
+
+    private static final int MAX_PROJECTION_QUALITY = 100;
+
+    private static final int PROJECTION_QUALITY_STEP = 1;
+
+    private static final int MIN_PROJECTION_SCALE = 5;
+
+    private static final int MAX_PROJECTION_SCALE = 100;
+
+    private static final int PROJECTION_SCALE_STEP = 1;
+
+    private static final int MIN_PROJECTION_FRAME_RATE = 1;
+
+    private static final int MAX_PROJECTION_FRAME_RATE = 120;
+
+    private static final int PROJECTION_FRAME_RATE_STEP = 1;
+
+    private static final int MIN_SERVER_PORT = 1024;
+
+    private static final int MAX_SERVER_PORT = 65535;
 
     private boolean mIsServiceBound;
 
@@ -525,6 +552,7 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    @SuppressWarnings("DataFlowIssue")
     @NonNull
     private BottomSheetDialog createServiceSettingsDialog() {
         final BottomSheetDialog settingsDialog = new BottomSheetDialog(this);
@@ -532,8 +560,89 @@ public class MainActivity extends AppCompatActivity {
         settingsDialog.setDismissWithAnimation(true);
         settingsDialog.getBehavior().setSkipCollapsed(true);
 
-        settingsDialog.setOnShowListener(
-            dialog -> settingsDialog.getBehavior().setState(BottomSheetBehavior.STATE_EXPANDED));
+        final Slider qualitySettingView = settingsDialog.findViewById(R.id.quality_setting);
+        qualitySettingView.setValue(MIN_PROJECTION_QUALITY);
+        qualitySettingView.setValueFrom(MIN_PROJECTION_QUALITY);
+        qualitySettingView.setValueTo(MAX_PROJECTION_QUALITY);
+        qualitySettingView.setStepSize(PROJECTION_QUALITY_STEP);
+        qualitySettingView.addOnChangeListener((slider, value, fromUser) -> {
+            if (Preferences.get().getProjectionQuality() != (int) value) {
+                Preferences.get().setProjectionQuality((int) value);
+            }
+        });
+
+        final Slider scaleSettingView = settingsDialog.findViewById(R.id.scale_setting);
+        scaleSettingView.setValue(MIN_PROJECTION_SCALE);
+        scaleSettingView.setValueFrom(MIN_PROJECTION_SCALE);
+        scaleSettingView.setValueTo(MAX_PROJECTION_SCALE);
+        scaleSettingView.setStepSize(PROJECTION_SCALE_STEP);
+        scaleSettingView.setLabelFormatter(new LabelFormatter() {
+            @NonNull
+            @Override
+            public String getFormattedValue(float value) {
+                return NumberFormat.getPercentInstance().format(value / 100f);
+            }
+        });
+        scaleSettingView.addOnChangeListener((slider, value, fromUser) -> {
+            if (Preferences.get().getProjectionScale() != (int) value) {
+                Preferences.get().setProjectionScale((int) value);
+            }
+        });
+
+        final Slider frameRateSettingView = settingsDialog.findViewById(R.id.frame_rate_setting);
+        frameRateSettingView.setValue(MIN_PROJECTION_FRAME_RATE);
+        frameRateSettingView.setValueFrom(MIN_PROJECTION_FRAME_RATE);
+        frameRateSettingView.setValueTo(MAX_PROJECTION_FRAME_RATE);
+        frameRateSettingView.setStepSize(PROJECTION_FRAME_RATE_STEP);
+        frameRateSettingView.setLabelFormatter(new LabelFormatter() {
+            @NonNull
+            @Override
+            public String getFormattedValue(float value) {
+                return getString(R.string.frame_rate_label, (int) value);
+            }
+        });
+        frameRateSettingView.addOnChangeListener((slider, value, fromUser) -> {
+            if (Preferences.get().getProjectionFrameRate() != (int) value) {
+                Preferences.get().setProjectionFrameRate((int) value);
+            }
+        });
+
+        final MaterialSwitch keepScreenOnSettingView = settingsDialog.findViewById(R.id.keep_screen_on_setting);
+        keepScreenOnSettingView.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            if (Preferences.get().isProjectionKeepScreenOn() != isChecked) {
+                Preferences.get().setProjectionKeepScreenOn(isChecked);
+            }
+        });
+
+        final MaterialSwitch secureSettingView = settingsDialog.findViewById(R.id.secure_setting);
+        secureSettingView.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            if (Preferences.get().isProjectionSecure() != isChecked) {
+                Preferences.get().setProjectionSecure(isChecked);
+            }
+        });
+
+        final NumberPicker portSettingView = settingsDialog.findViewById(R.id.port_setting);
+        portSettingView.setValue(MIN_SERVER_PORT);
+        portSettingView.setMinValue(MIN_SERVER_PORT);
+        portSettingView.setMaxValue(MAX_SERVER_PORT);
+        portSettingView.setOnValueChangedListener((picker, oldVal, newVal) -> {
+            if (Preferences.get().getServerPort() != newVal) {
+                Preferences.get().setServerPort(newVal);
+                updateServiceInfoView();
+            }
+        });
+
+        settingsDialog.setOnShowListener(dialog -> {
+            settingsDialog.getBehavior().setState(BottomSheetBehavior.STATE_EXPANDED);
+            qualitySettingView.setValue(Preferences.get().getProjectionQuality());
+            scaleSettingView.setValue(Preferences.get().getProjectionScale());
+            frameRateSettingView.setValue(Preferences.get().getProjectionFrameRate());
+            keepScreenOnSettingView.setChecked(Preferences.get().isProjectionKeepScreenOn());
+            keepScreenOnSettingView.jumpDrawablesToCurrentState();
+            secureSettingView.setChecked(Preferences.get().isProjectionSecure());
+            secureSettingView.jumpDrawablesToCurrentState();
+            portSettingView.setValue(Preferences.get().getServerPort());
+        });
 
         return settingsDialog;
     }

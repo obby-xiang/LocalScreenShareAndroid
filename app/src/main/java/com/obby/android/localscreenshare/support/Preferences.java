@@ -57,7 +57,7 @@ public final class Preferences {
 
     private static final int DEFAULT_PROJECTION_QUALITY = 85;
 
-    private static final int DEFAULT_PROJECTION_FRAME_RATE = 0;
+    private static final int DEFAULT_PROJECTION_FRAME_RATE = 60;
 
     private static final PointF DEFAULT_SERVICE_CHIP_LOCATION = new PointF(0f, 0f);
 

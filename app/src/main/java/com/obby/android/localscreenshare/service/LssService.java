@@ -208,7 +208,7 @@ public class LssService extends Service {
                             return;
                         }
 
-                        if (mProjectionFrameRate > 0 && mFrameTimestamp >= 0L
+                        if (mFrameTimestamp >= 0L
                             && image.getTimestamp() - mFrameTimestamp < mNanosPerSecond / mProjectionFrameRate) {
                             return;
                         }
