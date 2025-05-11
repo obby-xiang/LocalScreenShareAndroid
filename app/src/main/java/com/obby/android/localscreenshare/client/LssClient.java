@@ -51,8 +51,6 @@ import lombok.experimental.Accessors;
 public final class LssClient {
     private static final long UPDATE_CLIENT_STATS_INTERVAL_MS = 3000L;
 
-    private static final long DEADLINE_AFTER_MS = 5000L;
-
     private boolean mIsStopped;
 
     @Nullable
@@ -151,7 +149,6 @@ public final class LssClient {
 
     public void start(@NonNull final LssClientObserver observer) {
         ScreenStreamServiceGrpc.newStub(mGrpcChannel)
-            .withDeadlineAfter(Duration.ofMillis(DEADLINE_AFTER_MS))
             .getScreenStream(Empty.getDefaultInstance(), new StreamObserver<>() {
                 private boolean mIsConnected;
 

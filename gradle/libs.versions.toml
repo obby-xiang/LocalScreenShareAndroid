@@ -9,13 +9,14 @@ activity = "1.8.0"
 constraintlayout = "2.1.4"
 desugar-jdk-libs = "2.0.3"
 lombok = "1.18.36"
+gson = "2.13.1"
 grpc = "1.72.0"
 tomcat = "6.0.53"
 protobuf = "0.9.4"
 commons-lang3 = "3.17.0"
 guava = "33.4.0-android"
 camera = "1.4.1"
-gson = "2.13.1"
+splashscreen = "1.2.0-beta02"
 
 [libraries]
 junit = { group = "junit", name = "junit", version.ref = "junit" }
@@ -35,6 +36,7 @@ tomcat-annotations-api = { group = "org.apache.tomcat", name = "annotations-api"
 commons-lang3 = { group = "org.apache.commons", name = "commons-lang3", version.ref = "commons-lang3" }
 guava = { group = "com.google.guava", name = "guava", version.ref = "guava" }
 camera-core = { group = "androidx.camera", name = "camera-core", version.ref = "camera" }
+splashscreen = { group = "androidx.core", name = "core-splashscreen", version.ref = "splashscreen" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

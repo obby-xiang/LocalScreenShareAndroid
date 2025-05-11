@@ -56,6 +56,11 @@
         <item name="colorSurfaceContainerHighest">@color/md_theme_surfaceContainerHighest</item>
     </style>
 
+    <style name="SplashScreenTheme" parent="Theme.SplashScreen">
+        <item name="postSplashScreenTheme">@style/AppTheme</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+    </style>
+
     <style name="ScreenShareChipTheme" parent="AppTheme">
         <item name="chipStyle">@style/Widget.Material3.Chip.Assist.Elevated</item>
     </style>
