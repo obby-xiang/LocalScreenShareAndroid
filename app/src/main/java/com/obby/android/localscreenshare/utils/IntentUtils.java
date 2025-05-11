@@ -1,6 +1,5 @@
 package com.obby.android.localscreenshare.utils;
 
-import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
@@ -29,13 +28,6 @@ public final class IntentUtils {
     @NonNull
     public static Intent createManageOverlayPermissionIntent(@NonNull final Context context) {
         return new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION)
-            .setData(Uri.fromParts(SCHEME_PACKAGE, context.getPackageName(), null));
-    }
-
-    @SuppressLint("BatteryLife")
-    @NonNull
-    public static Intent createRequestIgnoreBatteryOptimizationsIntent(@NonNull final Context context) {
-        return new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
             .setData(Uri.fromParts(SCHEME_PACKAGE, context.getPackageName(), null));
     }
 

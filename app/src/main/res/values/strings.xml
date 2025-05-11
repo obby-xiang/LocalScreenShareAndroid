@@ -9,7 +9,6 @@
     <string name="client_service_notification_text">"<xliff:g id="host">%1$s</xliff:g>:<xliff:g id="port">%2$d</xliff:g> | <xliff:g id="speed">%3$s/s</xliff:g>"</string>
     <string name="client_service_stop_notification_action">"停止查看"</string>
     <string name="request_post_notification">"请允许应用“&lt;b&gt;<xliff:g id="name">%1$s</xliff:g>"&lt;/b&gt;"”发送通知。"</string>
-    <string name="request_ignore_battery_optimizations">"请允许应用“&lt;b&gt;<xliff:g id="name">%1$s</xliff:g>&lt;/b&gt;”一直在后台运行。"</string>
     <string name="request_system_alert_window">"请允许应用“&lt;b&gt;<xliff:g id="name">%1$s</xliff:g>&lt;/b&gt;”显示在其他应用的上层。"</string>
     <string name="stop_screen_share_confirm">"是否停止共享屏幕？"</string>
     <string name="connecting_screen_share">"正在连接到共享屏幕…"</string>
