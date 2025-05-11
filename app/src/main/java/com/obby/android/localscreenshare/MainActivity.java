@@ -9,6 +9,7 @@ import android.content.Intent;
 import android.content.ServiceConnection;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.media.projection.MediaProjectionConfig;
 import android.media.projection.MediaProjectionManager;
 import android.os.Build;
 import android.os.Bundle;
@@ -17,7 +18,6 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.os.Message;
 import android.os.Messenger;
-import android.os.PowerManager;
 import android.os.RemoteException;
 import android.provider.Settings;
 import android.text.format.Formatter;
@@ -438,7 +438,14 @@ public class MainActivity extends AppCompatActivity {
     private void startScreenShareService() {
         if (requestScreenShare()) {
             final MediaProjectionManager mediaProjectionManager = getSystemService(MediaProjectionManager.class);
-            mScreenCaptureLauncher.launch(mediaProjectionManager.createScreenCaptureIntent());
+            final Intent intent;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                intent = mediaProjectionManager.createScreenCaptureIntent(
+                    MediaProjectionConfig.createConfigForDefaultDisplay());
+            } else {
+                intent = mediaProjectionManager.createScreenCaptureIntent();
+            }
+            mScreenCaptureLauncher.launch(intent);
         }
     }
 
@@ -500,25 +507,6 @@ public class MainActivity extends AppCompatActivity {
                 .setCancelable(false)
                 .show();
             return false;
-        }
-
-        final PowerManager powerManager = getSystemService(PowerManager.class);
-        if (!powerManager.isIgnoringBatteryOptimizations(getPackageName())) {
-            final Intent intent = IntentUtils.createRequestIgnoreBatteryOptimizationsIntent(this);
-            if (getPackageManager().resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY) != null) {
-                if (mDialog != null) {
-                    mDialog.dismiss();
-                }
-                mDialog = new MaterialAlertDialogBuilder(this)
-                    .setMessage(HtmlCompat.fromHtml(getString(R.string.request_ignore_battery_optimizations,
-                        App.getLabel()), HtmlCompat.FROM_HTML_MODE_LEGACY))
-                    .setPositiveButton(android.R.string.ok,
-                        (dialog, which) -> startActivity(intent))
-                    .setNegativeButton(android.R.string.cancel, null)
-                    .setCancelable(false)
-                    .show();
-                return false;
-            }
         }
 
         return true;
