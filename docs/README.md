@@ -36,11 +36,11 @@
 
 | 文档 | 主要内容 |
 | --- | --- |
-| [task-board.md](task-board.md) | 当前焦点、进行中、待办、已完成、暂缓/等待验证；任务 ID、优先级、状态、交付物/验证证据与关联文档 |
-| [decision-board.md](decision-board.md) | 已形成的技术裁决、状态、理由、重新评估条件/验证证据、关联文档，以及待决策/待验证事项 |
+| [task-board.md](task-board.md) | 当前焦点、本轮裁决同步、进行中、待办、已完成、暂缓/等待验证；任务 ID、优先级、状态、交付物/验证证据与关联文档 |
+| [decision-board.md](decision-board.md) | 本轮裁决记录、已形成的技术裁决、状态、理由、重新评估条件/验证证据、关联文档，以及待决策/待验证事项 |
 | [project-assessment.md](project-assessment.md) | 构建基线、代码结构、当前采集/传输/显示流程、并发与生命周期风险、安全边界、工程成熟度判断 |
 | [product-context.md](product-context.md) | 产品意图推测、目标用户与任务、悬浮窗差异化、车机场景、与会议 PiP、远程桌面、厂商多屏协同等形态的对比 |
-| [media-architecture.md](media-architecture.md) | MediaProjection 到 MediaCodec 的硬编硬解目标、H.264/HEVC 选择、编码缓存、TCP/RTP/WebRTC 裁决、音频、反控、多客户端、Android 权限边界 |
+| [media-architecture.md](media-architecture.md) | MediaProjection 到 MediaCodec 的硬编硬解目标、H.264/HEVC 选择、参数语义、编码缓存、客户端能力协商与多档编码边界、TCP/RTP/WebRTC 裁决、音频、反控、多客户端、Android 权限边界 |
 | [windowing-session-design.md](windowing-session-design.md) | ClientSession 与 RenderTarget 解耦、悬浮窗展开与 Activity 互切、最后帧快照、`setOutputSurface`、TextureView/SurfaceView、窗口技术选型、状态机 |
 | [optimization-roadmap.md](optimization-roadmap.md) | 可观测性、并发与资源清理、Session 解耦、H.264、窗口切换、客户端画质、音频、单客户端反控、传输决策的阶段与验收标准 |
 
@@ -50,7 +50,7 @@
 - 构建使用 JDK 17，项目源码/目标为 Java 11；构建基线为 minSdk 25、compileSdk/targetSdk 35、AGP 8.9.0、Gradle 8.11.1。它使用了较新的 Android API 和依赖，不属于“必须推倒重来的老项目”。
 - 当前服务端每帧执行 RGBA 到 ARGB Bitmap 拷贝和软件 JPEG 压缩；客户端每帧做全尺寸 JPEG 解码，显示大小只改变悬浮窗尺寸。即使没有客户端，服务端仍持续采集和编码。
 - 发热与卡顿的主要风险来自服务端与客户端的 CPU 图像路径、全尺寸 Bitmap、队列积压与 `CallerRunsPolicy` 反压，以及长临界区与资源清理不完整；这是从代码路径推断的风险，不是实测结论。
-- 媒体裁决是：普通 App 继续使用 MediaProjection，但 VirtualDisplay 直接输出到 MediaCodec 输入 Surface，以硬件 H.264 为基线，HEVC 可选，稳态不经过 Bitmap/JPEG。gRPC/TCP 保留控制面，媒体第一版可继续独立 TCP；只有在实测发现 TCP 重传拖尾不可接受时，才引入 RTP/UDP 的 jitter、NACK、PLI 与 pacing。WebRTC 用于浏览器、跨网或需要完整栈的场景。
+- 媒体裁决是：普通 App 继续使用 MediaProjection，但 VirtualDisplay 直接输出到 MediaCodec 输入 Surface，以硬件 H.264 为基线，HEVC 可选，稳态不经过 Bitmap/JPEG。一个 MediaProjection/VirtualDisplay 通常只跑一路编码；每客户端独立网络会话、有界队列与解码器。分辨率由 VirtualDisplay 与编码器共同决定并需匹配；分辨率或旋转变化通常重建编码器与输入 Surface，发布新 configEpoch、SPS/PPS 与 IDR，但不断开网络会话。`KEY_FRAME_RATE` 只是目标提示；客户端以 HELLO/STREAM_INFO 协商，收到 IDR 前处于 WAIT_IDR。gRPC/TCP 保留控制面，媒体第一版可继续独立 TCP；只有在实测发现 TCP 重传拖尾不可接受时，才引入 RTP/UDP 的 jitter、NACK、PLI 与 pacing。WebRTC 用于浏览器、跨网或需要完整栈的场景。
 - 窗口裁决是：由 Service 持有 ClientSession，网络、解码、音频、反控和最后一帧与 RenderTarget 解耦；悬浮窗与全屏 Activity 只是 attach/detach 渲染目标，不停止 Service、不重建连接。优先做“同一悬浮窗展开”的低风险方案；需要沉浸式、返回键和输入法时再做 Activity 方案。
 - 安全现状只适合可信局域网：无认证、无加密，`FLAG_SECURE` 不是加密。签名材料问题只做概括，不在文档中复述任何路径、口令或密钥细节。
 - 路线图顺序是：先做可观测性，再做队列/锁/资源清理与 Session 解耦；随后是 H.264 硬编硬解（先 TCP）、窗口切换与客户端画质、音频与单客户端反控；最后按实测决定 RTP/UDP/WebRTC。

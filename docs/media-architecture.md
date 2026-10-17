@@ -8,9 +8,11 @@
 
 | 领域 | 当前实现 | 目标裁决 | 理由 |
 | --- | --- | --- | --- |
-| 屏幕采集 | MediaProjection 经 VirtualDisplay 到 ImageReader（RGBA_8888） | 继续使用 MediaProjection；VirtualDisplay 直接输出到 MediaCodec 输入 Surface | 普通 App 没有更合规的屏幕采集入口；去掉从 RGBA 到 Bitmap 的 CPU 路径 |
-| 视频编码 | 软件 JPEG，每帧压缩 | 硬件 H.264/AVC 为基线；HEVC 可选；稳态不经过 Bitmap/JPEG | 硬件编码器通常比软件 JPEG 更省 CPU；H.264 兼容性最好 |
+| 屏幕采集 | MediaProjection 经 VirtualDisplay 到 ImageReader（RGBA_8888） | 继续使用 MediaProjection；一个 MediaProjection/VirtualDisplay 采集，VirtualDisplay 直接输出到 MediaCodec 输入 Surface | 普通 App 没有更合规的屏幕采集入口；去掉从 RGBA 到 Bitmap 的 CPU 路径；不建立多个采集会话 |
+| 视频编码 | 软件 JPEG，每帧压缩 | 硬件 H.264/AVC 为基线；通常只跑一路编码；HEVC 可选；稳态不经过 Bitmap/JPEG | 硬件编码器通常比软件 JPEG 更省 CPU；H.264 兼容性最好；多档编码的成本高 |
 | 编码缓存 | 无编码帧缓存；JPEG 即帧 | 缓存 config、最近 IDR 与其后 AU；不缓存大量 RGBA | 新客户端快速加入、重连、Surface 切换都从 config+IDR 开始 |
+| 参数语义 | 帧率、质量参数按固定值使用 | `KEY_FRAME_RATE` 是目标提示，不是严格上限；码率通常可运行时调整；IDR 间隔可配置，同步请求合并限频 | 静态画面/VFR 不保证满帧；minSdk 25 不能依赖高版本参数；频繁 IDR 会放大码率 |
+| 配置切换 | resize 只改采集或显示尺寸 | 分辨率或旋转变化通常重建编码器与输入 Surface，发布新 `configEpoch`、SPS/PPS 与 IDR；网络会话不断开 | 只 resize VirtualDisplay 不改变编码输出尺寸，还可能引入隐式缩放 |
 | 控制面 | gRPC/OkHttp，明文，无认证 | 保留 gRPC/TCP 作为控制面；增加认证、能力协商、配置、统计、反控消息 | 控制消息量小，gRPC 的流和超时语义合适 |
 | 媒体面 | 每帧 protobuf `ScreenFrame` + gRPC stream | 第一版独立 TCP 帧协议；实测 TCP 重传拖尾后再评估 RTP/UDP；WebRTC 按场景引入 | 降低每帧封装开销，便于分片、背压和慢客户端隔离 |
 | 音频 | 无 | API 29+ AudioPlaybackCapture + AudioRecord；API 25–28 降级无声或显式麦克风模式 | 系统内录受版本和 App 策略限制；不能假装所有版本都能内录 |
@@ -86,10 +88,10 @@ flowchart LR
 1. 先查询编码器能力：`MediaCodecList`、`MediaCodecInfo`、`VideoCapabilities`，确认支持的分辨率、帧率、码率范围和 `COLOR_FormatSurface`。
 2. 配置 `MediaFormat`：MIME 为 `video/avc`；设置 width/height、bitrate、frame-rate、I-frame interval；不依赖 B 帧。
 3. `configure(format, null, null, CONFIGURE_FLAG_ENCODE)`，然后 `createInputSurface()`，再 `start()`。
-4. 用 `MediaProjection.createVirtualDisplay` 把输出指向该 Surface；VirtualDisplay 的尺寸应与编码器配置尺寸一致，避免系统隐式缩放。
+4. 用 `MediaProjection.createVirtualDisplay` 把输出指向该 Surface；VirtualDisplay 的尺寸应与编码器配置尺寸一致，并按 `VideoCapabilities` 的对齐要求取整，避免系统隐式缩放。
 5. 编码器输出通过 `dequeueOutputBuffer` 或异步 callback 读取；处理 `INFO_OUTPUT_FORMAT_CHANGED`、`BUFFER_FLAG_CODEC_CONFIG`、`BUFFER_FLAG_KEY_FRAME` 和 PTS。
 6. 停止时先调用 `stop`，再调用 `release` 释放编码器，然后释放 VirtualDisplay 和 MediaProjection；顺序要稳定，避免 Surface 已释放但编码器仍在写。
-7. 尺寸/方向变化时，不要只改 VirtualDisplay；要显式重建编码器或重新配置，并提升 `configEpoch`。第一版可以固定采集尺寸，客户端只做显示缩放，减少重配置。
+7. 尺寸/方向变化时，不要只改 VirtualDisplay；只 resize 采集缓冲不会改变编码器输出尺寸，还可能增加一次隐式缩放。通常要重建编码器与输入 Surface，重新对齐到编码器支持的尺寸，提升 `configEpoch`，并向所有客户端发布新的 SPS/PPS 与 IDR。网络会话不因此断开，客户端在同一连接上重新等待 IDR。第一版可以固定采集尺寸，客户端只做显示缩放，减少重配置。
 
 这样做的直接效果是：
 
@@ -114,7 +116,8 @@ H.264 的具体建议：
 
 - 优先 Baseline/Constrained Baseline，保证老设备和浏览器兼容；能力允许时再协商 Main/High。
 - 不依赖 B 帧，降低乱序、延迟和解码器依赖；PTS 与 DTS 可以简化。
-- 关键帧间隔按场景和实测设置；太短浪费码率，太长导致新客户端等待和错误恢复慢。
+- 关键帧间隔是配置项，可运行时调整；太短浪费码率，太长导致新客户端等待和错误恢复慢。运行中的同步请求（新客户端加入、错误恢复、慢客户端追帧）必须合并并限频，不能让每个请求都立刻触发一次 IDR。
+- 码率是配置项，通常可以在运行时调整；具体生效时机、步进与粒度取决于设备的码率控制实现，不能假设立即生效。
 - 码率控制模式（CBR/VBR/CQ）因厂商而异；第一版用设备支持的稳定模式，不要假设某个模式一定更好。
 - 分辨率必须是编码器支持的尺寸，必要时对齐到厂商要求；不要假设 1080p/4K/60fps 一定可用。
 
@@ -124,12 +127,16 @@ H.264 的具体建议：
 
 | 参数 | 服务端职责 | 客户端职责 |
 | --- | --- | --- |
-| 采集分辨率 | 由 VirtualDisplay + 编码器配置决定 | 只请求档位，不直接改服务端 Surface |
-| 编码分辨率 | 与采集一致或按能力缩放 | 解码后按窗口缩放 |
-| 帧率 | 编码器/采集限帧 | 可请求上限，但不强制服务端超能力 |
-| 码率 | 编码器码率控制 | 可根据队列/丢帧反馈请求调整 |
+| 采集分辨率 | 由 VirtualDisplay + 编码器配置共同决定，两者尺寸匹配 | 只请求档位，不直接改服务端 Surface |
+| 编码分辨率 | 按编码器能力与对齐要求配置 | 解码后按窗口缩放 |
+| 帧率 | 编码器/采集限帧，`KEY_FRAME_RATE` 只作目标提示 | 可请求上限，但不强制服务端超能力 |
+| 码率 | 编码器码率控制，通常可运行时调整 | 可根据队列/丢帧反馈请求调整 |
 | 显示尺寸 | 不感知 | 悬浮窗/全屏自行缩放 |
 | 旋转 | 采集方向与 configEpoch | 渲染方向与容器变换 |
+
+分辨率不是只由 VirtualDisplay 决定。VirtualDisplay 决定采集缓冲尺寸，编码器决定输出码流的宽高；两者必须匹配，并按编码器能力对齐。只 resize VirtualDisplay 而不同步编码器，通常只会得到缩放后的采集内容，不会改变码流尺寸。分辨率或旋转变化时，通常需要重建编码器与输入 Surface，发布新的 `configEpoch`、SPS/PPS 与 IDR；网络会话与客户端连接不必断开，客户端收到新配置后重新等待 IDR，而不是继续用旧参数解新码流。
+
+`KEY_FRAME_RATE` 是目标提示，不是严格上限。静态画面、VFR 或编码器内部调度都可能让实际输出低于该值，部分设备也可能短时超过。需要严格限帧时，应在 GPU/采集上游做调度，或按系统版本与设备能力逐项验证；minSdk 25 基线不能依赖高版本才有的参数或行为。
 
 这意味着：
 
@@ -143,6 +150,15 @@ H.264 的具体建议：
 - 如果编码器不提供可靠 PTS，使用采集侧单调时钟打点，但要保持单调递增。
 - 记录 `configEpoch`：编码器重建、分辨率变化、方向变化、编解码配置变化时递增；客户端用它拒绝旧配置的帧。
 - 首帧、关键帧、配置帧要能被客户端识别；新客户端必须从 config + IDR 开始。
+
+### 4.5 客户端显示与解码边界
+
+客户端窗口缩放只改变本地渲染尺寸，不减少网络字节数，也不减少解码工作量。客户端即使不渲染某些输出帧，解码器仍然要解码（除非设备与码流明确支持可丢弃的机制）。
+
+- 分辨率变化通常需要重配解码器，除非设备明确支持 adaptive playback；是否支持要以解码器能力查询与实测为准。
+- 码率或帧率变化通常不需要重配解码器。
+- 重配解码器不等于重连网络：保持会话，等待新的 config、SPS/PPS 与 IDR，再回到正常渲染。
+- 客户端不能通过缩小悬浮窗来声称“省流”；真正的省流只能来自服务端调整采集/编码参数或减少发送。
 
 ## 5. 编码帧缓存与 GOP 语义
 
@@ -165,27 +181,40 @@ H.264 的具体建议：
 
 ```mermaid
 sequenceDiagram
-    participant C as 新客户端
+    participant C as 客户端
     participant CP as 控制面
     participant M as 媒体面
     participant E as 编码器/缓存
 
-    C->>CP: 认证 + 能力协商 + 加入会话
+    C->>CP: HELLO（编解码、分辨率、HDR、音频等能力）
     CP->>C: 会话参数、configEpoch、媒体端口/令牌
     C->>M: 建立媒体连接
     M->>E: 取 config + 最近 IDR + 后续 AU
     E-->>M: config, IDR, AU...
-    M-->>C: config + IDR + AU...
-    C->>C: 初始化解码器，等待首帧
-    C->>CP: 就绪/统计
+    M-->>C: STREAM_INFO（实际宽高、profile/level、SPS/PPS）+ IDR + AU...
+    C->>C: 初始化解码器，进入 WAIT_IDR
+    C->>CP: 收到 IDR 后进入 STREAMING，上报就绪/统计
+```
+
+客户端状态：
+
+```mermaid
+stateDiagram-v2
+    [*] --> Negotiating
+    Negotiating --> WAIT_IDR: HELLO 完成并收到 STREAM_INFO
+    WAIT_IDR --> STREAMING: 收到首个 IDR
+    STREAMING --> WAIT_IDR: 新 configEpoch、队列溢出或解码器重建
+    STREAMING --> [*]: 会话结束
 ```
 
 原则：
 
-- 新客户端从 **config + IDR** 开始；不能从任意 P 帧开始。
+- 客户端在 HELLO 中声明能力；服务端据此选择一条兼容单流，并在 STREAM_INFO 中给出实际宽高、profile/level 与 SPS/PPS。能力字段必须允许缺省，旧客户端也能被识别和降级。
+- 新客户端从 **config + IDR** 开始；收到 IDR 前处于 WAIT_IDR，不能从任意 P 帧开始。收到 IDR 后才进入 STREAMING。
 - 如果缓存里没有可用 IDR，控制面请求编码器产生 IDR；客户端等待，不要发送半截 GOP。
 - 多个客户端同时请求 IDR 时，合并请求并限流；IDR 会增大码率，不能每个客户端随意触发。
 - 如果客户端在 GOP 中间加入，且缓存不足，宁可等待下一个 IDR，也不要发送无法解码的 P 帧。
+- 已有客户端不因新客户端加入而断开或重新授权，也不因新加入者单独改变已接受的参数。若服务端决定全局重配，所有客户端都通过新 `configEpoch`、SPS/PPS 与 IDR 过渡，而不是各自重连。
 
 ### 5.3 为什么不能随意丢中间 P 帧
 
@@ -390,28 +419,36 @@ API 25–28 没有 AudioPlaybackCapture。可选策略：
 
 ```mermaid
 flowchart LR
-    MP[MediaProjection] --> VD[VirtualDisplay]
-    VD --> ENC[Encoder]
-    ENC --> EF[EncodedFrame]
-    EF --> QA[客户端 A 队列]
-    EF --> QB[客户端 B 队列]
-    EF --> QC[客户端 C 队列]
-    QA --> TA[TCP]
-    QB --> TB[TCP]
-    QC --> TC[TCP]
+    subgraph S[服务端]
+        MP[MediaProjection] --> VD[VirtualDisplay]
+        VD --> ENC[H.264 编码器]
+        ENC --> FAN[编码帧扇出]
+        FAN --> QA[有界队列 A]
+        FAN --> QB[有界队列 B]
+        FAN --> QC[有界队列 C]
+        QA --> NA[网络会话 A]
+        QB --> NB[网络会话 B]
+        QC --> NC[网络会话 C]
+    end
+    subgraph C[客户端]
+        NA --> DA[解码器 A]
+        NB --> DB[解码器 B]
+        NC --> DC[解码器 C]
+    end
 ```
 
-- 采集和编码只有一份；每个客户端有自己的有界队列和发送状态。
-- 第一版不做每客户端转码；客户端按自己的窗口缩放解码画面。
-- 如果某客户端需要更低码率/分辨率，优先请求服务端调整全局编码参数，或后续引入 simulcast/转码；不要偷偷为每个客户端跑一套软件编码。
+- 采集和编码只有一份；每个客户端拥有独立的网络会话、有界队列、发送状态与解码器。
+- 不同能力默认选择一条兼容单流：使用所有已连接客户端都能解码的 profile/level、宽高与码率。不能为了个别客户端的更高能力，让低能力客户端无法解码。
+- 第一版不做每客户端转码；客户端按自己的窗口缩放解码画面。窗口缩放不减少网络与解码负载。
+- 如果某客户端需要更低码率/分辨率，优先请求服务端调整全局编码参数，或按 9.4 评估有限档位；不要偷偷为每个客户端跑一套软件编码。
 - 每个客户端有独立统计：队列深度、发送速率、丢弃 GOP 数、RTT、解码/渲染反馈。
 
 ### 9.2 慢客户端隔离
 
 慢客户端的处理顺序：
 
-1. 降低该客户端的发送速率/队列水位，优先发送关键帧和最新 GOP。
-2. 如果仍然跟不上，丢弃到下一个 IDR，从新 GOP 开始。
+1. 降低该客户端的发送速率/队列水位，优先保留关键帧与最新 GOP。
+2. 队列溢出时让该客户端进入 WAIT_IDR，跳到下一个 IDR 恢复；不能丢中间 P 帧后继续发送。
 3. 如果持续跟不上，断开该客户端，让它在网络恢复后重新加入。
 4. 任何情况下都不能阻塞编码器、采集线程或其他客户端。
 
@@ -424,10 +461,30 @@ flowchart LR
 
 ### 9.3 新客户端与重连
 
-- 新客户端先完成认证和能力协商，再订阅媒体；收到 config + IDR 后，从后续 AU 继续。
+- 新客户端先完成 HELLO 能力协商，再订阅媒体；收到 STREAM_INFO 与 config + IDR 后，从后续 AU 继续。
+- 已有客户端不因新客户端加入而断开或重新授权；新加入者不能单独改变它们已接受的参数。
 - 重连时，如果产品允许会话恢复令牌，就重新协商，并从 config + IDR 开始；不要假设断点前的 P 帧还有效。
-- IDR 请求合并：多个客户端同时加入时，只触发一次编码器 IDR；其余客户端复用同一个 IDR。
+- IDR 请求合并：多个客户端同时加入时，只触发一次编码器 IDR；其余客户端复用同一个 IDR。合并后的请求仍要限频。
 - 记录每个客户端的 `configEpoch`；配置变化后，旧 epoch 的帧丢弃。
+
+### 9.4 兼容单流与多档编码
+
+默认只做一条兼容单流，优先保证所有客户端都能解码。确实需要多档时，仍只保留一个 MediaProjection 与一个 VirtualDisplay；由 GPU 把同一采集画面分发到有限数量的编码器，而不是为每档建立新的 MediaProjection 会话。
+
+```mermaid
+flowchart LR
+    MP[MediaProjection] --> VD[VirtualDisplay]
+    VD --> GPU[GPU 分发]
+    GPU --> E1[编码器：档位 1]
+    GPU --> E2[编码器：档位 2]
+    E1 --> F1[扇出与有界队列]
+    E2 --> F2[扇出与有界队列]
+```
+
+- 多编码器会占用硬件编码器实例、带宽、功耗与发热，档位数量必须受设备能力限制，并逐项实测。
+- 不能为每个客户端建立独立的 MediaProjection 会话：那会重复授权、重复采集并放大资源占用。
+- 没有明确需求与实测收益时，保持单流 + 客户端本地缩放。
+
 
 ## 10. Android 权限与能力边界
 
@@ -483,7 +540,9 @@ flowchart LR
 | 解码器初始化失败 | 重建解码器；换 Profile/分辨率；失败则断开并提示 | 明确错误，不无限重试 |
 | Surface 切换失败 | 重建解码器，从 config+IDR 开始；保持网络连接 | 短暂黑屏/占位，不重连 |
 | TCP 重传拖尾严重 | 降低码率/帧率；评估 RTP/UDP | 统计可见；不在未测量前切换 |
-| 慢客户端 | 丢到下一个 IDR 或断开 | 该客户端降级/重连，不影响他人 |
+| 慢客户端 / 客户端队列溢出 | 该客户端进入 WAIT_IDR，跳到下一个 IDR 恢复；持续跟不上则断开；不丢中间 P 帧后继续，不阻塞其他客户端 | 该客户端短暂停帧或重连，不影响他人 |
+| 分辨率或旋转变化 | 重建编码器与输入 Surface，提升 `configEpoch`，发布 SPS/PPS 与 IDR；网络会话保持 | 客户端短暂黑屏/占位后恢复，不重连 |
+| 实际帧率低于目标提示 | 记录实际输出，不把 `KEY_FRAME_RATE` 当保证；必要时在上游调度 | 帧率低于设置值，不伪装成故障 |
 | 音频捕获被拒绝 | 静音并显示原因 | 不静默开启麦克风 |
 | 无障碍未开启 | 只读模式 | 反控按钮禁用并引导设置 |
 | 租约过期/被收回 | 拒绝旧事件，回到只读 | 提示控制权已收回 |
@@ -495,6 +554,9 @@ flowchart LR
 
 - 继续在服务端逐帧 Bitmap + 软件 JPEG，只做参数微调。
 - 在客户端继续全尺寸 JPEG 解码，只把悬浮窗改小。
+- 只 resize VirtualDisplay 就宣称分辨率已经切换，而不同步编码器与输入 Surface。
+- 把 `KEY_FRAME_RATE` 当严格帧率上限，或用高版本参数实现 minSdk 25 的限帧。
+- 为每个客户端建立新的 MediaProjection 会话，或为每个客户端跑一套软件编码。
 - 把每帧媒体继续塞进 protobuf/gRPC，并长期依赖 `CallerRunsPolicy`。
 - 在 H.264 流里随意丢中间 P 帧，期望“最新帧覆盖”能工作。
 - 未测量就宣称 UDP/WebRTC 一定更低延迟。
@@ -509,7 +571,12 @@ flowchart LR
 
 - 编码器/解码器能力矩阵：API 25/26/29/33/34/35，目标厂商设备。
 - 稳态路径无全尺寸 Bitmap：用内存/CPU profiler 与代码审查确认。
-- 新客户端从 config+IDR 加入；慢客户端不影响其他客户端。
+- 新客户端从 config+IDR 加入：HELLO 能力协商、STREAM_INFO、WAIT_IDR → STREAMING 状态正确。
+- 慢客户端队列溢出进入 WAIT_IDR，并从下一个 IDR 恢复；其他客户端不受影响。
+- 多客户端同时加入只触发合并后的 IDR；已有客户端不被断开或重新授权。
+- 分辨率或旋转切换：只重建编码器与输入 Surface，网络会话不断开；客户端经新 `configEpoch`、SPS/PPS 与 IDR 恢复。
+- `KEY_FRAME_RATE` 在静态/VFR 场景的实际输出与目标差异；严格限帧方案的设备覆盖。
+- 客户端窗口缩放不改变网络与解码负载；分辨率切换的解码器重配与 adaptive playback 支持矩阵。
 - 窗口切换不重连（见 [windowing-session-design.md](windowing-session-design.md)）。
 - 音频权限、App 拒绝内录、API 25–28 降级。
 - 反控授权、租约、epoch、旋转坐标。

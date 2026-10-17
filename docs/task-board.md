@@ -1,7 +1,7 @@
 # 任务看板
 
 > 用途：让作者和 AI 在开始工作前快速确认“现在做什么、接下来做什么、哪些还没验证”，不替代设计文档和验收标准。
-> 当前基线：文档体系已完成（提交 `7a8a05d`）；CI 依赖仓库顺序问题已修复（提交 `302e604`）；代码优化尚未开始；当前没有进行中的代码任务。
+> 当前基线：文档体系已完成（提交 `7a8a05d`）；CI 依赖仓库顺序问题已修复（提交 `302e604`），CI 修复与验证证据已记录（提交 `2aa5bbf`）；本轮补齐采集与多客户端裁决（本次文档提交）；代码优化尚未开始，当前没有进行中的代码任务。
 > 证据口径：“已完成”必须有可核对的交付物或提交；“待办”和“等待验证”只代表计划或待验证条件，不代表已经取得结果。
 
 ## 状态与优先级
@@ -23,9 +23,18 @@
 
 ## 当前焦点
 
-文档体系与两个看板已经建立，当前事实与设计裁决有了统一入口。代码优化尚未开始，当前没有进行中的代码任务。
+文档体系与两个看板已经建立，当前事实与设计裁决有了统一入口。问题 1（采集 API 选择）已由用户关闭；问题 3（采集、编码参数与多客户端）的裁决已记录，待确认与实机验证。代码优化尚未开始，当前没有进行中的代码任务。
 
 下一步建议按 [渐进优化路线图](optimization-roadmap.md) 的阶段 0 启动可观测性与基线；在确认设备、网络与排期后再把对应任务移入“进行中”。在拿到基线前，不预设任何性能、发热或延迟收益。
+
+## 本轮裁决同步（问题 1 / 问题 3）
+
+“已关闭（裁决完成）”和“裁决已记录，待确认/待实机验证”描述的是讨论与验证状态，不是实施状态。对应实现任务仍在待办或等待验证；裁决不等于实施。
+
+| 议题 | 状态 | 结论 | 证据 / 边界 | 关联 |
+| --- | --- | --- | --- | --- |
+| 问题 1：采集 API 选择 | 已关闭（裁决完成） | 保留 `MediaProjection`；主链路改为 `VirtualDisplay` 直接输出到 `MediaCodec` 输入 Surface，稳态不经过 `ImageReader`、Bitmap 与软件 JPEG。 | 用户明确关闭，裁决已记录。代码未实施，未实机验证。 | [DB-CAP-001](decision-board.md)、[DB-CAP-002](decision-board.md)、[媒体架构](media-architecture.md) |
+| 问题 3：采集、编码参数与多客户端 | 裁决已记录，待确认/待实机验证 | 一个 MediaProjection/VirtualDisplay，通常一路 H.264 编码；每客户端独立网络会话、有界队列与解码器；分辨率与编码器尺寸匹配；`KEY_FRAME_RATE` 只是目标提示；码率与 IDR 间隔可配置；HELLO/STREAM_INFO/WAIT_IDR/STREAMING；窗口缩放不省网络与解码；队列溢出进入 WAIT_IDR；多档编码不新建 MediaProjection。 | 用户已给出完整技术回答，但尚未明确关闭；本轮只同步文档，未改代码，未实机验证。 | [DB-CAP-002](decision-board.md)、[DB-CODEC-003](decision-board.md)、[DB-CODEC-004](decision-board.md)、[DB-CODEC-005](decision-board.md)、[DB-SESSION-002](decision-board.md)、[DB-MULTI-002](decision-board.md)、[DB-MULTI-003](decision-board.md) |
 
 ## 进行中
 
@@ -54,6 +63,7 @@
 | --- | --- | --- | --- | --- | --- |
 | TB-DOC-001 | — | 已完成 | 文档体系：根 README、文档索引、项目现状、产品语境、媒体架构、窗口会话设计与优化路线图。 | 交付：提交 `7a8a05d` 中的 7 个文档文件。验证：该提交为静态审查与设计整理，未执行构建、单元测试或实机验证。 | [文档索引](README.md) |
 | TB-DOC-002 | — | 已完成 | 任务与决策看板：建立稳定 ID、状态、证据与关联文档；接入文档索引和根 README 文档列表；补充看板维护规则。 | 交付：`docs/task-board.md`、`docs/decision-board.md`、`docs/README.md` 入口与维护规则；根 README 链接。验证：链接、围栏、Mermaid、禁用角色词、敏感信息与行尾空白检查随本次文档提交执行；未运行 Android 构建。 | [决策看板](decision-board.md)、[文档索引](README.md) |
+| TB-DOC-003 | — | 已完成 | 本轮裁决同步：记录问题 1（已关闭）与问题 3（待确认/待实机验证）的采集、编码参数与多客户端裁决，补充协议状态、参数语义与多档编码边界。 | 交付：本次提交 `docs: 记录采集与多客户端裁决` 中的 `docs/media-architecture.md`、`docs/decision-board.md`、`docs/task-board.md`、`docs/README.md`。验证：链接、围栏、Mermaid、角色词、敏感信息与表格列数检查；未修改代码或 CI，未运行 Android 构建，未实机验证。 | [决策看板](decision-board.md)、[媒体架构](media-architecture.md) |
 | TB-CI-001 | P0 | 已完成 | CI 构建稳定性：修复依赖仓库顺序。 | 根因：失败 run [39030949452](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39030949452) 在解析 `io.grpc:grpc-context:1.72.0` 时收到阿里云镜像 HTTP 502，Gradle 未回退到后续官方仓库。交付：`settings.gradle` 将 `google()`、`mavenCentral()` 置于镜像之前，镜像保留为后备。验证：本地 `./gradlew build` 成功（113 tasks）；`--refresh-dependencies` 解析日志为 0 次阿里云、70 次 Maven Central、67 次 Google；修复提交 `302e604` 触发的 run [39032521963](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39032521963) 成功。 | [项目现状构建基线](project-assessment.md) |
 
 代码任务完成情况：当前没有已完成的代码优化任务。已完成项涉及文档、看板与构建仓库配置；仓库顺序调整不改变应用行为。
@@ -86,5 +96,6 @@
 - 状态变化时只更新对应任务的“状态”和“交付物 / 验证证据”，不手工维护任务总数或完成率。
 - 开始实施前补充范围与验证方式；完成时补充可核对的提交、测试输出或实测记录。
 - 未实测的收益、未执行的验证和产品推测不得写成已完成或已验证。
+- 问题讨论的“关闭”与代码任务的“完成”分开记录；裁决关闭不改变对应实现任务的状态。
 - 新增或删除任务时同步检查 [决策看板](decision-board.md) 是否需要新增裁决或复审条件。
 - 任务状态或技术裁决变化时，同步更新本页、[决策看板](decision-board.md) 和 [文档索引](README.md)。
