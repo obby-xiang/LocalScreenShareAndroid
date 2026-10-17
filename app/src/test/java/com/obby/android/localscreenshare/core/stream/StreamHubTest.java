@@ -8,6 +8,7 @@ import com.obby.android.localscreenshare.core.model.EncodedAccessUnit;
 import com.obby.android.localscreenshare.core.model.StreamDescriptor;
 import com.obby.android.localscreenshare.core.model.StreamKey;
 import com.obby.android.localscreenshare.core.model.StreamParameters;
+import com.obby.android.localscreenshare.core.support.BlockingTransport;
 import com.obby.android.localscreenshare.core.support.FakeCodec;
 import com.obby.android.localscreenshare.core.support.FakeTransport;
 import com.obby.android.localscreenshare.core.support.MutableClock;
@@ -23,8 +24,10 @@ import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.Assert.assertEquals;
@@ -745,6 +748,125 @@ public class StreamHubTest {
         assertTrue("concurrent attach/detach failed: " + failures,
                 failures.isEmpty());
         assertEquals(0, hub.getSessionCount());
+    }
+
+    @Test
+    public void drainFailure_afterReconnect_keepsNewSessionCapabilities() throws Exception {
+        MutableClock clock = new MutableClock();
+        CodecRegistry registry = new CodecRegistry();
+        FakeCodec fake = register(registry, ACTIVE_CODEC_ID, 0);
+        register(registry, "fallbackA", 20);
+        register(registry, "fallbackB", 10);
+        fake.setAutoEmitJoinOnRequest(false);
+        StreamRuntime runtime = startedRuntime(registry, STREAM_KEY, ACTIVE_CODEC_ID, clock);
+        StreamHub hub = newHub(registry, clock);
+        hub.register(runtime);
+        hub.activate(STREAM_KEY);
+
+        BlockingTransport oldTransport = new BlockingTransport();
+        assertEquals(JoinDecision.Status.ACCEPTED,
+                hub.join(CLIENT_A, capabilities(ACTIVE_CODEC_ID, "fallbackA"), oldTransport)
+                        .getStatus());
+        ClientSendSession oldSession = hub.getSession(CLIENT_A);
+        fake.emitJoin(new byte[]{0x31});
+        assertTrue(hub.drainOne(CLIENT_A));
+
+        oldTransport.failNextSend();
+        oldTransport.blockNextAccessUnitSend();
+
+        ExecutorService pool = Executors.newSingleThreadExecutor();
+        try {
+            Future<Boolean> drain = pool.submit(() -> hub.drainOne(CLIENT_A));
+            assertTrue("the old session send must be in flight",
+                    oldTransport.awaitSendStarted(2L, TimeUnit.SECONDS));
+
+            hub.detach(CLIENT_A);
+            FakeTransport newTransport = new FakeTransport();
+            assertEquals(JoinDecision.Status.ACCEPTED,
+                    hub.join(CLIENT_A, capabilities(ACTIVE_CODEC_ID, "fallbackA"),
+                            newTransport).getStatus());
+
+            oldTransport.releaseSend();
+            ExecutionException failure = assertThrows(ExecutionException.class,
+                    () -> drain.get(2L, TimeUnit.SECONDS));
+            assertTrue(failure.getCause() instanceof IOException);
+        } finally {
+            oldTransport.releaseSend();
+            pool.shutdownNow();
+        }
+
+        ClientSendSession newSession = hub.getSession(CLIENT_A);
+        assertNotNull(newSession);
+        assertNotSame(oldSession, newSession);
+        assertEquals(1, hub.getSessionCount());
+
+        JoinDecision fallback = hub.join(CANDIDATE_CLIENT,
+                capabilities("fallbackA", "fallbackB"), new FakeTransport());
+        assertEquals(JoinDecision.Status.REQUIRES_EXPLICIT_FALLBACK, fallback.getStatus());
+        assertEquals("fallbackA", fallback.getFallbackCodecId());
+        assertSame(newSession, hub.getSession(CLIENT_A));
+    }
+
+    @Test
+    public void join_requestJoinPointFailure_rollsBackSessionAndCapabilities() {
+        MutableClock clock = new MutableClock();
+        CodecRegistry registry = new CodecRegistry();
+        FakeCodec fake = register(registry, ACTIVE_CODEC_ID, 0);
+        fake.setAutoEmitJoinOnRequest(false);
+        StreamRuntime runtime = startedRuntime(registry, STREAM_KEY, ACTIVE_CODEC_ID, clock);
+        StreamHub hub = newHub(registry, clock);
+        hub.register(runtime);
+        hub.activate(STREAM_KEY);
+
+        FakeTransport failedTransport = new FakeTransport();
+        fake.failNextRequestSyncPoint();
+        assertThrows(RuntimeException.class,
+                () -> hub.join(CLIENT_A, capabilities(ACTIVE_CODEC_ID), failedTransport));
+
+        assertEquals(0, hub.getSessionCount());
+        assertNull(hub.getSession(CLIENT_A));
+        assertTrue(failedTransport.isClosed());
+        assertEquals(1, failedTransport.getCloseCount());
+
+        FakeTransport retryTransport = new FakeTransport();
+        JoinDecision retry =
+                hub.join(CLIENT_A, capabilities(ACTIVE_CODEC_ID), retryTransport);
+        assertEquals(JoinDecision.Status.ACCEPTED, retry.getStatus());
+        assertNotNull(hub.getSession(CLIENT_A));
+        assertEquals(1, hub.getSessionCount());
+    }
+
+    @Test
+    public void join_fallback_respectsExistingClientsAndReleasesAfterDetach() {
+        MutableClock clock = new MutableClock();
+        CodecRegistry registry = new CodecRegistry();
+        FakeCodec fake = register(registry, ACTIVE_CODEC_ID, 0);
+        register(registry, "fallbackA", 20);
+        register(registry, "fallbackB", 10);
+        fake.setAutoEmitJoinOnRequest(false);
+        StreamRuntime runtime = startedRuntime(registry, STREAM_KEY, ACTIVE_CODEC_ID, clock);
+        StreamHub hub = newHub(registry, clock);
+        hub.register(runtime);
+        hub.activate(STREAM_KEY);
+
+        assertEquals(JoinDecision.Status.ACCEPTED,
+                hub.join(EXISTING_CLIENT,
+                        capabilities(ACTIVE_CODEC_ID, "fallbackA"),
+                        new FakeTransport()).getStatus());
+
+        JoinDecision constrained = hub.join(CANDIDATE_CLIENT,
+                capabilities("fallbackA", "fallbackB"), new FakeTransport());
+        assertEquals(JoinDecision.Status.REQUIRES_EXPLICIT_FALLBACK, constrained.getStatus());
+        assertEquals("fallbackA", constrained.getFallbackCodecId());
+        assertEquals(1, hub.getSessionCount());
+
+        hub.detach(EXISTING_CLIENT);
+        assertEquals(0, hub.getSessionCount());
+
+        JoinDecision released = hub.join(CANDIDATE_CLIENT,
+                capabilities("fallbackA", "fallbackB"), new FakeTransport());
+        assertEquals(JoinDecision.Status.REQUIRES_EXPLICIT_FALLBACK, released.getStatus());
+        assertEquals("fallbackB", released.getFallbackCodecId());
     }
 
     private static CodecRegistry registry(FakeCodec codec) {

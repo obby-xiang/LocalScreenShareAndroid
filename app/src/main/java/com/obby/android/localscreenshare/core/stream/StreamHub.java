@@ -122,6 +122,7 @@ public final class StreamHub implements StreamRuntimeListener {
         }
 
         StreamRuntime toRequestJoin = null;
+        ClientSendSession createdSession = null;
         JoinDecision decision;
         synchronized (lock) {
             StreamRuntime active = activeRuntime;
@@ -137,20 +138,30 @@ public final class StreamHub implements StreamRuntimeListener {
             }
 
             if (caps.supports(activeDescriptor.getCodecId())) {
-                ClientSendSession session =
+                createdSession =
                         new ClientSendSession(key, registry, limits, transport, timeSource);
-                session.onDescriptor(activeDescriptor);
-                sessions.put(key, session);
+                createdSession.onDescriptor(activeDescriptor);
+                sessions.put(key, createdSession);
                 capabilities.put(key, caps);
                 toRequestJoin = active;
-                decision = JoinDecision.accepted(session);
+                decision = JoinDecision.accepted(createdSession);
             } else {
                 decision = computeFallback(caps);
             }
         }
 
         if (toRequestJoin != null) {
-            toRequestJoin.requestJoinPoint();
+            try {
+                toRequestJoin.requestJoinPoint();
+            } catch (RuntimeException e) {
+                synchronized (lock) {
+                    if (sessions.remove(key, createdSession)) {
+                        capabilities.remove(key);
+                    }
+                }
+                createdSession.detach();
+                throw e;
+            }
         }
         return decision;
     }
@@ -183,8 +194,9 @@ public final class StreamHub implements StreamRuntimeListener {
             return session.drainOne();
         } catch (IOException e) {
             synchronized (lock) {
-                sessions.remove(key, session);
-                capabilities.remove(key);
+                if (sessions.remove(key, session)) {
+                    capabilities.remove(key);
+                }
             }
             throw e;
         }
