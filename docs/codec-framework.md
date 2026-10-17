@@ -1,6 +1,6 @@
 # 可扩展编码框架设计
 
-> 状态：**已获用户批准，待实施/验证**。本文是已批准的设计契约，不是实现说明。仓库当前仍是 JPEG + gRPC 路径；本文列出的组件、接口、状态机与扩展点均未落地，未经构建、设备或性能验证。
+> 状态：**隔离子集已落地并仅经 JVM 验证；现有投屏和 H.264 等未接线**。静态 Codec SPI、单活动流 Runtime、StreamHub、每客户端有界队列、客户端六状态机与 JPEG 独立帧参考适配已在 `core` 落地，并通过 JVM 单元测试；H.264/MediaCodec/HEVC/AV1、RTP/Packetizer、采集输出 Surface 切换、Service/UI 接线与真实设备验证均未实现。本文是设计契约，不能当作完整 spec 已实现或设备验证通过的证据。
 > 适用范围：一个 `MediaProjection` 与一个 `VirtualDisplay` 的采集结果，第一版只跑一条活动流。多流、GPU 分发、RTP 与 WebRTC 只描述扩展位置与触发条件。
 > 相关文档：[媒体链路目标架构](media-architecture.md) · [渐进优化路线图](optimization-roadmap.md) · [窗口与会话设计](windowing-session-design.md) · [决策看板](decision-board.md) · [任务看板](task-board.md)
 
@@ -8,17 +8,17 @@
 
 | 议题 | 已批准裁决 | 状态 |
 | --- | --- | --- |
-| 总体结构 | 静态 Codec SPI + 单活动流核心 + 可扩展 StreamHub；不引入动态插件或通用多媒体引擎 | 已批准，未实施 |
-| 第一版验证方式 | 用 H.264 与 JPEG 两条差异最大的实现验证同一契约；HEVC 用于验证 `MediaCodec` 骨架复用 | 已批准，未实施 |
-| 第一版范围 | 单采集会话、单 VirtualDisplay、单 Surface、单活动流；不做 GPU Fanout、多流与每客户端转码 | 已批准，未实施 |
-| 契约边界 | 公共层只处理描述符、参数、访问单元、状态与队列；不解析 NAL/OBU/JPEG 负载 | 已批准，未实施 |
-| 解码配置 | `StreamDescriptor` 与 `StreamParameters` 分离，只有解码关键变化才推进 `configEpoch` | 已批准，未实施 |
-| 新客户端加入 | 不假设所有关键帧/RAP 都可加入；按 codec 策略等待明确可加入点 | 已批准，未实施 |
-| 编码切换 | 第一版单 VirtualDisplay、无 GPU Fanout，不能保证零间隙；只保证会话不重建、画面不花屏 | 已批准，未实施 |
-| 传输 | TCP/gRPC 传完整访问单元；RTP 由 `(codec, transport)` 封包器处理；WebRTC 作为独立媒体栈 | 已批准，未实施 |
-| 高级能力 | AV1、HDR、B 帧、时域层只预留契约，不在本阶段实现 | 已批准，未实施 |
+| 总体结构 | 静态 Codec SPI + 单活动流核心 + 可扩展 StreamHub；不引入动态插件或通用多媒体引擎 | 隔离子集已落地，JVM 验证 |
+| 第一版验证方式 | 用 H.264 与 JPEG 两条差异最大的实现验证同一契约；HEVC 用于验证 `MediaCodec` 骨架复用 | JPEG 参考适配已落地；H.264/HEVC 未实现 |
+| 第一版范围 | 单采集会话、单 VirtualDisplay、单 Surface、单活动流；不做 GPU Fanout、多流与每客户端转码 | 隔离核心已落地；采集/VirtualDisplay 接线未实现 |
+| 契约边界 | 公共层只处理描述符、参数、访问单元、状态与队列；不解析 NAL/OBU/JPEG 负载 | 已落地，JVM 验证 |
+| 解码配置 | `StreamDescriptor` 与 `StreamParameters` 分离，只有解码关键变化才推进 `configEpoch` | 已落地，JVM 验证 |
+| 新客户端加入 | 不假设所有关键帧/RAP 都可加入；按 codec 策略等待明确可加入点 | 已落地，JVM 验证 |
+| 编码切换 | 第一版单 VirtualDisplay、无 GPU Fanout，不能保证零间隙；只保证会话不重建、画面不花屏 | Runtime 预热/切换/旧 encoder 释放已落地并 JVM 验证；采集输出 Surface 切换未接线 |
+| 传输 | TCP/gRPC 传完整访问单元；RTP 由 `(codec, transport)` 封包器处理；WebRTC 作为独立媒体栈 | 传输接口已落地；TCP/gRPC 接线、RTP Packetizer 未实现 |
+| 高级能力 | AV1、HDR、B 帧、时域层只预留契约，不在本阶段实现 | 未实现 |
 
-本文中的“已批准”只表示设计获得用户确认，不表示代码、构建、设备或性能验证已完成。
+本文中的“已批准”只表示设计获得用户确认；当前只有隔离子集的 JVM 代码与测试证据，未接现有投屏，未做 H.264/MediaCodec/RTP 或设备/性能验证。
 
 ## 2. 设计目标与不变量
 
