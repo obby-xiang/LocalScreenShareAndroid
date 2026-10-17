@@ -36,6 +36,7 @@ import java.util.concurrent.TimeUnit;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -428,6 +429,58 @@ public class ClientSendSessionTest {
         assertEquals("transport.close() must run only once", 1, transport.getCloseCount());
         assertEquals(QueueOfferResult.REJECTED_CLOSED, session.offer(jpegJoin(1, 2L)));
         assertFalse(session.drainOne());
+    }
+
+    @Test
+    public void descriptorSendUncheckedFailure_detachesClosesOnceAndDoesNotLeakPending()
+            throws Exception {
+        FakeTransport transport = new FakeTransport();
+        ClientSendSession session = jpegSession(transport, new MutableClock(), 64L, 4);
+        assertTrue(session.onDescriptor(jpegDescriptor(1)));
+        transport.failNextDescriptorSendUnchecked();
+
+        assertThrows(IllegalStateException.class, () -> session.drainOne());
+
+        assertTrue(session.isDetached());
+        assertEquals(ClientState.CLOSED, session.getState());
+        assertTrue(transport.isClosed());
+        assertEquals(1, transport.getCloseCount());
+        assertTrue(transport.getEvents().isEmpty());
+        assertFalse("a failed descriptor must not be retried or followed by an AU",
+                session.drainOne());
+        assertEquals(0, transport.getEvents().size());
+        assertEquals(QueueOfferResult.REJECTED_CLOSED, session.offer(jpegJoin(1, 0L)));
+
+        session.detach();
+        assertEquals(1, transport.getCloseCount());
+    }
+
+    @Test
+    public void accessUnitSendUncheckedFailure_detachesStopsSendingAndClosesOnce()
+            throws Exception {
+        FakeTransport transport = new FakeTransport();
+        ClientSendSession session = referenceSession(transport, new MutableClock(), 64L, 4);
+        assertTrue(session.onDescriptor(referenceDescriptor(1)));
+        assertTrue(session.drainOne());
+        streamTo(session, referenceJoin(1, 0L));
+
+        assertEquals(QueueOfferResult.ACCEPTED, session.offer(referencePlain(1, 1L)));
+        assertEquals(QueueOfferResult.ACCEPTED, session.offer(referencePlain(1, 2L)));
+        int eventsBefore = transport.getEvents().size();
+        assertEquals(2, eventsBefore);
+        transport.failNextAccessUnitSendUnchecked();
+
+        assertThrows(IllegalStateException.class, () -> session.drainOne());
+
+        assertTrue(session.isDetached());
+        assertEquals(ClientState.CLOSED, session.getState());
+        assertTrue(transport.isClosed());
+        assertEquals(1, transport.getCloseCount());
+        assertEquals(eventsBefore, transport.getEvents().size());
+        assertFalse("a failed AU must not be followed by another queued AU",
+                session.drainOne());
+        assertEquals(eventsBefore, transport.getEvents().size());
+        assertEquals(QueueOfferResult.REJECTED_CLOSED, session.offer(referenceJoin(1, 3L)));
     }
 
     @Test

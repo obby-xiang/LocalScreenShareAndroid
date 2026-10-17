@@ -41,6 +41,7 @@ public final class StreamRuntime {
     private StreamParameters parameters;
     private Encoder activeEncoder;
     private long generation;
+    private long nextAttemptGeneration;
     private boolean closed;
     private boolean pendingJoin;
     private long lastJoinMs;
@@ -87,8 +88,9 @@ public final class StreamRuntime {
                 throw new IllegalStateException("runtime is already started");
             }
             CodecRegistration registration = registry.require(descriptor.getCodecId());
+            long attempt = ++nextAttemptGeneration;
             Encoder encoder = registration.getEncoderFactory().create(streamKey, descriptor,
-                    parameters, outputForGeneration(generation));
+                    parameters, outputForGeneration(attempt));
             try {
                 if (registration.getDescriptor().isSurfaceInputRequired()
                         && encoder.getInputSurface() == null) {
@@ -100,6 +102,7 @@ public final class StreamRuntime {
                 encoder.close();
                 throw e;
             }
+            generation = attempt;
             activeEncoder = encoder;
         }
     }
@@ -221,12 +224,12 @@ public final class StreamRuntime {
                 throw new IllegalArgumentException("decode config is unchanged");
             }
 
-            long nextGeneration = generation + 1;
+            long attempt = ++nextAttemptGeneration;
             CodecRegistration registration = registry.require(next.getCodecId());
             Encoder newEncoder = null;
             try {
                 newEncoder = registration.getEncoderFactory().create(streamKey, next, parameters,
-                        outputForGeneration(nextGeneration));
+                        outputForGeneration(attempt));
                 if (registration.getDescriptor().isSurfaceInputRequired()
                         && newEncoder.getInputSurface() == null) {
                     throw new IllegalStateException(
@@ -252,7 +255,7 @@ public final class StreamRuntime {
                 throw e;
             }
             activeEncoder = newEncoder;
-            generation = nextGeneration;
+            generation = attempt;
             descriptor = next;
             pendingJoin = false;
             lastJoinMs = Long.MIN_VALUE;

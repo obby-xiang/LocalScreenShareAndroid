@@ -526,6 +526,42 @@ public class StreamRuntimeTest {
     }
 
     @Test
+    public void startFailureThenRetry_dropsLateAccessUnitFromFailedAttempt() {
+        FakeCodec fake = new FakeCodec(FakeCodec.DEFAULT_CODEC_ID, 0, false, false);
+        fake.setAutoEmitJoinOnRequest(false);
+        StreamRuntime runtime = newRuntime(fake, new MutableClock(), descriptor(1, 64, 48));
+        RecordingListener listener = new RecordingListener();
+        runtime.addListener(listener);
+
+        fake.failNextEncoderStart();
+        try {
+            runtime.start();
+            fail("encoder start failure must propagate");
+        } catch (IllegalStateException expected) {
+            assertNotNull(expected);
+        }
+        FakeCodec.FakeEncoder failedAttempt = fake.getLastEncoder();
+        assertNotNull(failedAttempt);
+        assertTrue(failedAttempt.isClosed());
+
+        runtime.start();
+        FakeCodec.FakeEncoder active = fake.getLastEncoder();
+        assertNotSame(failedAttempt, active);
+        assertTrue(active.isStarted());
+
+        failedAttempt.emit(1, false, new byte[]{0x61});
+        failedAttempt.emit(1, true, new byte[]{0x62});
+
+        assertTrue("late AUs from the failed start attempt must not be forwarded",
+                listener.accessUnits.isEmpty());
+
+        byte[] payload = new byte[]{0x63};
+        active.emitNonJoin(payload);
+        assertEquals(1, listener.accessUnits.size());
+        assertArrayEquals(payload, listener.accessUnits.get(0).getPayload());
+    }
+
+    @Test
     public void switchDescriptor_surfaceValidationFailure_closesNewEncoderAndKeepsOld() {
         FakeCodec oldFake = new FakeCodec("fake-old", 0, false, false);
         FakeCodec newFake = new FakeCodec("fake-new", 0, true, false);
@@ -624,6 +660,100 @@ public class StreamRuntimeTest {
         rejectedEncoder.emit(1, false, stalePayload);
         assertEquals(1, listener.accessUnits.size());
         assertArrayEquals(oldPayload, listener.accessUnits.get(0).getPayload());
+    }
+
+    @Test
+    public void switchPrewarmFailureThenRetry_dropsLateAccessUnitFromFailedAttempt() {
+        FakeCodec fake = new FakeCodec(FakeCodec.DEFAULT_CODEC_ID, 0, false, false);
+        fake.setAutoEmitJoinOnRequest(false);
+        StreamRuntime runtime = newRuntime(fake, new MutableClock(), descriptor(1, 64, 48));
+        RecordingListener listener = new RecordingListener();
+        runtime.addListener(listener);
+        runtime.start();
+        FakeCodec.FakeEncoder oldActive = fake.getLastEncoder();
+
+        fake.failNextEncoderStart();
+        try {
+            runtime.switchDescriptor(descriptor(2, 32, 24));
+            fail("encoder start failure must abort the switch");
+        } catch (CodecSwitchException expected) {
+            assertNotNull(expected.getCause());
+        }
+        FakeCodec.FakeEncoder failedAttempt = fake.getLastEncoder();
+        assertNotSame(oldActive, failedAttempt);
+        assertTrue(failedAttempt.isClosed());
+        assertFalse(oldActive.isStopped());
+
+        byte[] oldPayload = new byte[]{0x71};
+        oldActive.emitNonJoin(oldPayload);
+        assertEquals(1, listener.accessUnits.size());
+        assertArrayEquals(oldPayload, listener.accessUnits.get(0).getPayload());
+
+        runtime.switchDescriptor(descriptor(2, 32, 24));
+        FakeCodec.FakeEncoder active = fake.getLastEncoder();
+        assertNotSame(failedAttempt, active);
+        assertTrue(active.isStarted());
+        assertEquals(2, runtime.getConfigEpoch());
+
+        int before = listener.accessUnits.size();
+        failedAttempt.emit(2, false, new byte[]{0x72});
+        failedAttempt.emit(2, true, new byte[]{0x73});
+        assertEquals("late AUs from the failed prewarm attempt must not be forwarded",
+                before, listener.accessUnits.size());
+
+        byte[] activePayload = new byte[]{0x74};
+        active.emitNonJoin(activePayload);
+        assertEquals(before + 1, listener.accessUnits.size());
+        assertArrayEquals(activePayload,
+                listener.accessUnits.get(listener.accessUnits.size() - 1).getPayload());
+    }
+
+    @Test
+    public void switchOldStopFailureThenRetry_dropsLateAccessUnitFromFailedAttempt() {
+        FakeCodec fake = new FakeCodec(FakeCodec.DEFAULT_CODEC_ID, 0, false, false);
+        fake.setAutoEmitJoinOnRequest(false);
+        StreamRuntime runtime = newRuntime(fake, new MutableClock(), descriptor(1, 64, 48));
+        RecordingListener listener = new RecordingListener();
+        runtime.addListener(listener);
+        runtime.start();
+        FakeCodec.FakeEncoder oldActive = fake.getLastEncoder();
+
+        fake.failNextStop();
+        try {
+            runtime.switchDescriptor(descriptor(2, 32, 24));
+            fail("old encoder stop failure must abort the switch");
+        } catch (RuntimeException expected) {
+            assertNotNull(expected);
+        }
+        FakeCodec.FakeEncoder failedAttempt = fake.getLastEncoder();
+        assertNotSame(oldActive, failedAttempt);
+        assertTrue(failedAttempt.isStarted());
+        assertTrue(failedAttempt.isClosed());
+        assertFalse(oldActive.isStopped());
+        assertFalse(oldActive.isClosed());
+
+        byte[] oldPayload = new byte[]{0x41};
+        oldActive.emitNonJoin(oldPayload);
+        assertEquals(1, listener.accessUnits.size());
+        assertArrayEquals(oldPayload, listener.accessUnits.get(0).getPayload());
+
+        runtime.switchDescriptor(descriptor(2, 32, 24));
+        FakeCodec.FakeEncoder active = fake.getLastEncoder();
+        assertNotSame(failedAttempt, active);
+        assertTrue(active.isStarted());
+        assertEquals(2, runtime.getConfigEpoch());
+
+        int before = listener.accessUnits.size();
+        failedAttempt.emit(2, false, new byte[]{0x42});
+        failedAttempt.emit(2, true, new byte[]{0x43});
+        assertEquals("late AUs from the failed old-stop attempt must not be forwarded",
+                before, listener.accessUnits.size());
+
+        byte[] activePayload = new byte[]{0x44};
+        active.emitNonJoin(activePayload);
+        assertEquals(before + 1, listener.accessUnits.size());
+        assertArrayEquals(activePayload,
+                listener.accessUnits.get(listener.accessUnits.size() - 1).getPayload());
     }
 
     private static StreamRuntime newRuntime(FakeCodec fake, MutableClock clock,

@@ -225,7 +225,7 @@ public final class ClientSendSession {
                 }
             }
             return true;
-        } catch (IOException e) {
+        } catch (IOException | RuntimeException e) {
             synchronized (stateLock) {
                 detachInternalLocked();
             }

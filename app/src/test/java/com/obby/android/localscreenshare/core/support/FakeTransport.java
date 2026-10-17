@@ -63,6 +63,8 @@ public class FakeTransport implements MediaTransport {
     public final List<Event> events = Collections.synchronizedList(new ArrayList<Event>());
 
     private boolean failNextSend;
+    private boolean failNextDescriptorSendUnchecked;
+    private boolean failNextAccessUnitSendUnchecked;
     private int closeCount;
     private boolean closed;
 
@@ -70,15 +72,25 @@ public class FakeTransport implements MediaTransport {
         failNextSend = true;
     }
 
+    public synchronized void failNextDescriptorSendUnchecked() {
+        failNextDescriptorSendUnchecked = true;
+    }
+
+    public synchronized void failNextAccessUnitSendUnchecked() {
+        failNextAccessUnitSendUnchecked = true;
+    }
+
     @Override
     public void sendDescriptor(StreamDescriptor descriptor) throws IOException {
         maybeFail();
+        maybeFailUnchecked(true);
         events.add(Event.descriptor(descriptor));
     }
 
     @Override
     public void sendAccessUnit(EncodedAccessUnit accessUnit) throws IOException {
         maybeFail();
+        maybeFailUnchecked(false);
         events.add(Event.accessUnit(accessUnit));
     }
 
@@ -108,6 +120,17 @@ public class FakeTransport implements MediaTransport {
         if (failNextSend) {
             failNextSend = false;
             throw new IOException("injected transport failure");
+        }
+    }
+
+    private synchronized void maybeFailUnchecked(boolean descriptor) {
+        if (descriptor && failNextDescriptorSendUnchecked) {
+            failNextDescriptorSendUnchecked = false;
+            throw new IllegalStateException("injected unchecked descriptor send failure");
+        }
+        if (!descriptor && failNextAccessUnitSendUnchecked) {
+            failNextAccessUnitSendUnchecked = false;
+            throw new IllegalStateException("injected unchecked access unit send failure");
         }
     }
 }

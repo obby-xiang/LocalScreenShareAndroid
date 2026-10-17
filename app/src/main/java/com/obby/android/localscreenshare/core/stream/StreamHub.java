@@ -192,7 +192,7 @@ public final class StreamHub implements StreamRuntimeListener {
         }
         try {
             return session.drainOne();
-        } catch (IOException e) {
+        } catch (IOException | RuntimeException e) {
             synchronized (lock) {
                 if (sessions.remove(key, session)) {
                     capabilities.remove(key);

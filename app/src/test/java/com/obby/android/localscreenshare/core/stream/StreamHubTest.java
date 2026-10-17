@@ -650,6 +650,85 @@ public class StreamHubTest {
     }
 
     @Test
+    public void drainUncheckedDescriptorFailure_removesSessionAndCapabilities()
+            throws Exception {
+        MutableClock clock = new MutableClock();
+        CodecRegistry registry = new CodecRegistry();
+        register(registry, ACTIVE_CODEC_ID, 0);
+        register(registry, "fallbackA", 20);
+        register(registry, "fallbackB", 10);
+        StreamRuntime runtime = startedRuntime(registry, STREAM_KEY, ACTIVE_CODEC_ID, clock);
+        StreamHub hub = newHub(registry, clock);
+        hub.register(runtime);
+        hub.activate(STREAM_KEY);
+
+        FakeTransport transport = new FakeTransport();
+        assertEquals(JoinDecision.Status.ACCEPTED,
+                hub.join(CLIENT_A, capabilities(ACTIVE_CODEC_ID, "fallbackA"), transport)
+                        .getStatus());
+        ClientSendSession session = hub.getSession(CLIENT_A);
+        assertNotNull(session);
+
+        transport.failNextDescriptorSendUnchecked();
+        assertThrows(IllegalStateException.class, () -> hub.drainOne(CLIENT_A));
+
+        assertEquals(0, hub.getSessionCount());
+        assertNull(hub.getSession(CLIENT_A));
+        assertTrue(session.isDetached());
+        assertEquals(ClientState.CLOSED, session.getState());
+        assertEquals(1, transport.getCloseCount());
+        assertTrue(transport.getEvents().isEmpty());
+        assertFalse(hub.drainOne(CLIENT_A));
+
+        JoinDecision fallback = hub.join(CANDIDATE_CLIENT,
+                capabilities("fallbackA", "fallbackB"), new FakeTransport());
+        assertEquals(JoinDecision.Status.REQUIRES_EXPLICIT_FALLBACK, fallback.getStatus());
+        assertEquals("fallbackB", fallback.getFallbackCodecId());
+    }
+
+    @Test
+    public void drainUncheckedAccessUnitFailure_removesSessionAndCapabilities() throws Exception {
+        MutableClock clock = new MutableClock();
+        CodecRegistry registry = new CodecRegistry();
+        FakeCodec fake = register(registry, ACTIVE_CODEC_ID, 0);
+        register(registry, "fallbackA", 20);
+        register(registry, "fallbackB", 10);
+        fake.setAutoEmitJoinOnRequest(false);
+        StreamRuntime runtime = startedRuntime(registry, STREAM_KEY, ACTIVE_CODEC_ID, clock);
+        StreamHub hub = newHub(registry, clock);
+        hub.register(runtime);
+        hub.activate(STREAM_KEY);
+
+        FakeTransport transport = new FakeTransport();
+        assertEquals(JoinDecision.Status.ACCEPTED,
+                hub.join(CLIENT_A, capabilities(ACTIVE_CODEC_ID, "fallbackA"), transport)
+                        .getStatus());
+        ClientSendSession session = hub.getSession(CLIENT_A);
+        fake.emitJoin(new byte[]{0x31});
+        drainToStreaming(hub, CLIENT_A, transport);
+        assertEquals(2, transport.getEvents().size());
+
+        fake.emitNonJoin(new byte[]{0x41});
+        fake.emitNonJoin(new byte[]{0x42});
+        transport.failNextAccessUnitSendUnchecked();
+        assertThrows(IllegalStateException.class, () -> hub.drainOne(CLIENT_A));
+
+        assertEquals(0, hub.getSessionCount());
+        assertNull(hub.getSession(CLIENT_A));
+        assertTrue(session.isDetached());
+        assertEquals(ClientState.CLOSED, session.getState());
+        assertEquals(1, transport.getCloseCount());
+        assertEquals(2, transport.getEvents().size());
+        assertFalse(hub.drainOne(CLIENT_A));
+        assertEquals(2, transport.getEvents().size());
+
+        JoinDecision fallback = hub.join(CANDIDATE_CLIENT,
+                capabilities("fallbackA", "fallbackB"), new FakeTransport());
+        assertEquals(JoinDecision.Status.REQUIRES_EXPLICIT_FALLBACK, fallback.getStatus());
+        assertEquals("fallbackB", fallback.getFallbackCodecId());
+    }
+
+    @Test
     public void detach_isIdempotentAndAllowsRejoinWithNewTransport() throws Exception {
         MutableClock clock = new MutableClock();
         FakeCodec fake = new FakeCodec(ACTIVE_CODEC_ID, 0, false, false);
