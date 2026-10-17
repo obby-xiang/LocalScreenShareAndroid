@@ -154,6 +154,22 @@ public class StreamDescriptorTest {
     }
 
     @Test
+    public void builder_rejectsBlankCodecId() {
+        assertThrows(IllegalArgumentException.class, () -> StreamDescriptor
+                .builder(streamKey(), 1, "   ", MIME, BitstreamFormat.ANNEX_B)
+                .codedSize(1280, 720)
+                .build());
+    }
+
+    @Test
+    public void builder_rejectsBlankMime() {
+        assertThrows(IllegalArgumentException.class, () -> StreamDescriptor
+                .builder(streamKey(), 1, CODEC_ID, "   ", BitstreamFormat.ANNEX_B)
+                .codedSize(1280, 720)
+                .build());
+    }
+
+    @Test
     public void emptyConfigParts_areAllowedForJpegDescriptor() {
         StreamDescriptor descriptor = StreamDescriptor
                 .builder(streamKey(), 1, "jpeg", "image/jpeg", BitstreamFormat.JPEG_FRAME)

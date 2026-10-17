@@ -47,11 +47,11 @@ public final class StreamDescriptor {
         if (configEpoch < 1) {
             throw new IllegalArgumentException("configEpoch must be >= 1");
         }
-        if (codecId == null || codecId.isEmpty()) {
-            throw new IllegalArgumentException("codecId must not be null or empty");
+        if (codecId == null || codecId.trim().isEmpty()) {
+            throw new IllegalArgumentException("codecId must not be null or blank");
         }
-        if (mime == null || mime.isEmpty()) {
-            throw new IllegalArgumentException("mime must not be null or empty");
+        if (mime == null || mime.trim().isEmpty()) {
+            throw new IllegalArgumentException("mime must not be null or blank");
         }
         if (codedWidth <= 0 || codedHeight <= 0) {
             throw new IllegalArgumentException("coded size must be positive");
