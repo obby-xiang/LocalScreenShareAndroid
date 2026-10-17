@@ -313,13 +313,14 @@ sequenceDiagram
 | Desktop windowing | 新版本桌面模式 | 桌面窗口 | 设备/版本依赖强；不是手机基线 | 不作基础 |
 | `Presentation`/副屏 | API 17+ | 副屏显示 | 需要副屏/系统支持；不是跨应用悬浮 | 可选，非基线 |
 
-### 7.1 保持 minSdk 25
+### 7.1 保持 minSdk 25（兼容下限）
 
 - `Constants.FLOATING_WINDOW_TYPE` 已经在 API 25 用 `TYPE_SYSTEM_ALERT`、API 26+ 用 `TYPE_APPLICATION_OVERLAY`（`.../support/Constants.java:35-36`）；继续沿用这个门控。
 - `MediaCodec.setOutputSurface` 是 API 23+，minSdk 25 可用。
 - `PixelCopy` 是 API 24+，minSdk 25 可用。
 - `AudioPlaybackCapture`、PiP 等能力要按版本降级；不要为了它们抬高 minSdk。
 - 新窗口 API（如桌面窗口化）只能作为可选增强，不能成为基础路径。
+- minSdk 25 只决定最低兼容与回退路径，不限制高版本或高性能设备使用高级媒体能力。窗口形态（悬浮小窗/全屏）可以选择不同媒体档位，但档位由服务端与客户端的运行时能力探测决定，不能由窗口形态、API 等级或手机/平板/车机分类推断。
 
 ## 8. 状态机与并发
 
@@ -370,7 +371,7 @@ stateDiagram-v2
 | 权限被撤销 | 停止悬浮窗/Activity，保留通知/错误提示；不崩溃 |
 | 进程被杀 | 会话结束；不要假装“无缝恢复”；如需恢复，重新发现/认证/从 config+IDR 开始 |
 | 安全内容 | 两个显示目标都设置 `FLAG_SECURE`；快照不落盘；不在最近任务预览中暴露（按版本能力） |
-| 多显示器 | 默认主显示；副屏/车机多屏作为待验证场景，不作为基线 |
+| 多显示器 | 默认主显示；副屏/车机多屏作为待验证场景，不作为基线；窗口形态与设备分类不决定媒体能力，档位仍由运行时能力探测与场景协商决定 |
 
 ## 10. 验收标准
 

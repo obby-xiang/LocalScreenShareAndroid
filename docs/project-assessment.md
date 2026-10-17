@@ -249,11 +249,11 @@ flowchart LR
 | 层 | 当前 | 目标 |
 | --- | --- | --- |
 | 采集输出 | ImageReader RGBA + Bitmap | VirtualDisplay 直接输出到 MediaCodec 输入 Surface |
-| 编码 | 软件 JPEG | 硬件 H.264（HEVC 可选） |
+| 编码 | 软件 JPEG | 硬件 H.264 兼容基线；服务端/客户端能力探测后按档位选择 HEVC 等更高规格，H.264 可回退 |
 | 媒体承载 | 每帧 protobuf + gRPC stream | 独立 TCP 帧协议；按实测决定 RTP/UDP/WebRTC |
 | 客户端渲染 | 全尺寸 JPEG 解码 + ImageView | MediaCodec 解码 + Surface/TextureView |
 | 会话所有权 | Service 同时管网络和悬浮窗 | ClientSession 与 RenderTarget 解耦 |
-| 多客户端 | 每客户端最新帧（JPEG 可丢） | 一次编码扇出；每客户端有界队列；GOP 感知 |
+| 多客户端 | 每客户端最新帧（JPEG 可丢） | 默认一次编码扇出；确认需求与能力后可用受限多档流；每客户端有界队列；GOP 感知 |
 | 安全 | 无认证/明文 | 配对、令牌、TLS/DTLS、权限分级 |
 | 可观测性 | 速率统计 + 日志 | 结构化指标：队列、丢帧、延迟、重传、热状态 |
 
@@ -262,7 +262,7 @@ flowchart LR
 - MediaProjection 仍是普通 App 的唯一合规屏幕采集入口；不要为了“低延迟”改成 root/系统权限方案。
 - NSD 发现适合局域网零配置；保留，但修正服务类型与隐私默认值。
 - 前台 Service + 通知 + 悬浮窗的产品形态应保留；它是当前差异化所在。
-- minSdk 25 应保持；新增能力用版本门控和降级，不要为了新 API 抬高门槛。
+- minSdk 25 应保持；新增能力用版本门控和降级，不要为了新 API 抬高门槛。同时要明确：minSdk 25 只是兼容下限与回退路径，不是能力上限；高版本系统、旗舰手机/平板或其他高性能设备可按运行时探测使用更高编码档位，不能仅凭 API 等级或设备形态推断编解码能力。
 - 现有设置项可以保留为“服务端质量档位”，但需要与客户端能力协商解耦。
 
 ## 9. 安全与隐私边界
