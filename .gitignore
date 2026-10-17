@@ -16,3 +16,4 @@ local.properties
 
 /.idea/
 signing.properties
+.worktrees/
