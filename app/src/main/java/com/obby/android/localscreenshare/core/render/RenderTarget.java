@@ -3,10 +3,10 @@ package com.obby.android.localscreenshare.core.render;
 import android.view.Surface;
 
 /**
- * Destination that receives decoded frames from a {@link Decoder}.
+ * Destination that receives encoded media from a stream.
  *
- * <p>JPEG streams are delivered as {@link EncodedImageFrame}s; future MediaCodec
- * streams are rendered directly onto {@link #getSurface()}.</p>
+ * <p>An implementation consumes either a {@link Surface} via {@link #getSurface()}
+ * or encoded image frames via {@link #renderEncodedImage(EncodedImageFrame)}.</p>
  */
 public interface RenderTarget {
 
