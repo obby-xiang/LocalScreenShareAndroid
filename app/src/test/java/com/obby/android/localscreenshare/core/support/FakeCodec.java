@@ -51,6 +51,8 @@ public final class FakeCodec {
 
     private boolean autoEmitJoinOnRequest;
 
+    private boolean failNextEncoderCreate;
+
     public FakeCodec(String codecId, int fallbackPriority, boolean surfaceInputRequired,
                      boolean surfaceOutputRequired) {
         this.codecId = codecId;
@@ -81,6 +83,10 @@ public final class FakeCodec {
         }
     }
 
+    public void failNextEncoderCreate() {
+        this.failNextEncoderCreate = true;
+    }
+
     public int getRequestCount() {
         return lastEncoder == null ? 0 : lastEncoder.getRequestCount();
     }
@@ -109,6 +115,10 @@ public final class FakeCodec {
             @Override
             public Encoder create(StreamKey streamKey, StreamDescriptor descriptor,
                                   StreamParameters parameters, EncoderOutput output) {
+                if (failNextEncoderCreate) {
+                    failNextEncoderCreate = false;
+                    throw new IllegalStateException("injected encoder creation failure");
+                }
                 FakeEncoder encoder = new FakeEncoder(streamKey, descriptor, parameters, output,
                         autoEmitJoinOnRequest);
                 lastEncoder = encoder;
