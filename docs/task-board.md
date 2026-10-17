@@ -29,7 +29,7 @@
 
 本轮新增 [可扩展编码框架设计](codec-framework.md)：用户已明确批准“静态 Codec SPI + 单活动流核心 + 可扩展 StreamHub”，第一版用 H.264 与 JPEG 两条差异实现验证契约，HEVC 验证 `MediaCodec` 骨架复用，AV1/HDR/B 帧/时域层只预留契约。裁决状态是“已批准，待实施/验证”，没有代码、构建或实机证据；不能把任何组件写成已实现。
 
-编码框架实施计划已按两份审查与主 agent 最终裁决完成局部修订，当前状态为“计划最终修订待确认复审”（`TB-DOC-008`）；修订只涉及计划、设计语义与看板，未改产品/测试代码，未访问设备，未开始实施。计划复审通过后才进入执行。
+编码框架实施计划已按两份审查与主 agent 最终裁决完成局部修订，当前状态为“主 agent 复审通过，准备实施”（`TB-DOC-008`）；修订只涉及计划、设计语义与看板，未改产品/测试代码，未访问设备，未开始实施。实施将在隔离 worktree 中进行。
 
 下一步建议按 [渐进优化路线图](optimization-roadmap.md) 的阶段 0 启动可观测性与基线；编码框架的落地顺序以 [编码框架落地顺序](codec-framework.md) 为准，但仍受阶段 0/1 的前置约束。在确认设备、网络与排期后再把对应任务移入“进行中”。在拿到基线前，不预设任何性能、发热或延迟收益。
 
@@ -54,7 +54,7 @@
 
 | ID | 优先级 | 状态 | 任务 | 交付物 / 验证证据 | 关联文档 |
 | --- | --- | --- | --- | --- | --- |
-| TB-DOC-008 | P0 | 计划最终修订待确认复审 | 编码框架实施计划（最终局部修订待确认复审）：落实慢客户端先 drain 初始 descriptor+join、JoinDecision 嵌套 Status、Surface 白名单计数、visible size 推进 epoch、基线 diff/未跟踪检查、JPEG 适配器测试边界、参考帧单个 AU 超限 resync、transport close 归属与活动 runtime 描述符过滤等复审项；拆分 StreamRuntime/StreamHub 任务。 | 交付：[实施计划](superpowers/plans/2026-10-17-codec-framework.md)；同步 `codec-framework.md` 与 `decision-board.md` 的 visible size、AU epoch/sequence、描述符顺序、RenderTarget/EncodedImageFrame 与队列语义。验证：计划自审、相对链接、敏感信息、围栏与 `git diff` 检查通过；未写产品/测试代码，未访问设备，未实施。待用户确认复审后才进入执行。 | [编码框架设计](codec-framework.md)、[决策看板](decision-board.md)、[任务看板](task-board.md) |
+| TB-DOC-008 | P0 | 主 agent 复审通过，准备实施 | 编码框架实施计划（最终局部修订）：落实慢客户端先 drain 初始 descriptor+join、JoinDecision 嵌套 Status、Surface 白名单计数、visible size 推进 epoch、基线 diff/未跟踪检查、JPEG 适配器测试边界、参考帧单个 AU 超限 resync、transport close 归属与活动 runtime 描述符过滤等复审项；拆分 StreamRuntime/StreamHub 任务。 | 交付：[实施计划](superpowers/plans/2026-10-17-codec-framework.md)；同步 `codec-framework.md` 与 `decision-board.md` 的 visible size、AU epoch/sequence、描述符顺序、RenderTarget/EncodedImageFrame 与队列语义。验证：计划自审、相对链接、敏感信息、围栏与 `git diff` 检查通过；未写产品/测试代码，未访问设备，未实施。主 agent 复审已通过，准备实施。 | [编码框架设计](codec-framework.md)、[决策看板](decision-board.md)、[任务看板](task-board.md) |
 | TB-OBS-001 | P0 | 待办 | 可观测性与基线：统一指标接口，覆盖服务端采集/编码/发送、客户端接收/解码/渲染、网络与设备状态；建立测试矩阵并记录当前 JPEG 路径基线。 | 交付：指标定义、调试导出、基线报告。验证：阶段 0 的“指标可用、隐私、开销可控、基线完整、无行为变化”全部满足；当前未执行。 | [路线图阶段 0](optimization-roadmap.md)、[项目现状](project-assessment.md) |
 | TB-CORE-001 | P0 | 待办 | 正确性与资源清理：幂等停止、单一生命周期所有者、线程池终止、缩短临界区、媒体路径移除 `CallerRunsPolicy`、resize 代次隔离、权限撤销降级、重连退避、IPv6 地址与 NSD 服务类型修正、服务名隐私。 | 交付：代码改动与单元/仪器/压力测试。验证：阶段 1 的启动停止、旋转尺寸、网络、慢客户端、权限、回归各项通过；当前未执行。 | [路线图阶段 1](optimization-roadmap.md)、[项目现状风险清单](project-assessment.md) |
 | TB-CORE-002 | P0 | 待办 | `ClientSession` 与 `RenderTarget` 解耦：Service 持有会话，窗口只 attach/detach；关闭窗口不等于停止会话；先用现有 JPEG 与悬浮窗接入。 | 交付：会话抽象、悬浮窗接入、状态查询。验证：阶段 1“会话”项与窗口设计验收中的“切换不重连、不停止 Service”；当前未执行。 | [路线图阶段 1](optimization-roadmap.md)、[窗口与会话设计](windowing-session-design.md) |
