@@ -28,7 +28,7 @@
 
 - 最低系统：Android 7.1（API 25）。这是兼容下限与回退基线，不是能力上限；更高版本或高性能设备可按运行时探测使用更高编码档位。
 - 当前编译与目标版本：API 35。
-- 构建 JDK：JDK 17；项目源码目标为 Java 11。
+- 构建 JDK：最低 JDK 17（CI 使用 JDK 17；JDK 21 等其他 17+ 版本也可用）；项目源码目标为 Java 11。
 - 服务端与客户端通常需要处于同一局域网，并且网络允许 NSD/mDNS 发现。
 - 按系统提示完成屏幕采集授权，并授予通知、悬浮窗等所需权限。
 
@@ -49,6 +49,8 @@ gradlew.bat assembleDebug
 ```
 
 Debug APK 默认生成在 `app/build/outputs/apk/debug/`。
+
+Debug 与 Release 的签名要求不同：Debug 由 Android Gradle Plugin 自动使用 debug 签名，不需要私有证书；Release 在缺少 `signing.properties` 时会回退到仓库内的公开示例签名，技术上可以打包，但不能用于正式分发。正式发布必须改用私有 keystore 或 CI secrets，并保持与已安装版本相同的签名。完整的环境、设备、权限与签名清单见 [启动与签名检查清单](docs/startup-checklist.md)。
 
 ## 基本使用
 
@@ -103,6 +105,7 @@ flowchart TB
 ## 文档
 
 - [文档索引](docs/README.md)
+- [启动与签名检查清单](docs/startup-checklist.md)
 - [任务看板](docs/task-board.md)
 - [决策看板](docs/decision-board.md)
 - [项目现状与技术审查](docs/project-assessment.md)

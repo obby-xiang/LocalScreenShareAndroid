@@ -1,7 +1,7 @@
 # 任务看板
 
 > 用途：让作者和 AI 在开始工作前快速确认“现在做什么、接下来做什么、哪些还没验证”，不替代设计文档和验收标准。
-> 当前基线：文档体系已完成（提交 `7a8a05d`）；CI 依赖仓库顺序问题已修复（提交 `302e604`），CI 修复与验证证据已记录（提交 `2aa5bbf`）；此前已补齐采集与多客户端裁决（提交 `f7c7a5b`），并修订设备能力分档裁决（提交 `02b2d9f`）。本轮新增编码框架设计（提交 `b4fad88`），用户已明确批准，状态为“已批准，待实施/验证”。代码优化尚未开始，当前没有进行中的代码任务；问题 3 仍未由用户明确关闭。
+> 当前基线：文档体系已完成（提交 `7a8a05d`）；CI 依赖仓库顺序问题已修复（提交 `302e604`），CI 修复与验证证据已记录（提交 `2aa5bbf`）；此前已补齐采集与多客户端裁决（提交 `f7c7a5b`），并修订设备能力分档裁决（提交 `02b2d9f`）。编码框架设计已获用户批准（提交 `b4fad88`），状态为“已批准，待实施/验证”。本次补充启动与签名检查清单（提交 `docs: 补充启动与签名检查清单`），记录当前环境、Debug 启动条件与正式发布签名边界；未安装 APK、未修改设备、未实机验证。代码优化尚未开始，当前没有进行中的代码任务；问题 3 仍未由用户明确关闭。
 > 证据口径：“已完成”必须有可核对的交付物或提交；“待办”和“等待验证”只代表计划或待验证条件，不代表已经取得结果。
 
 ## 状态与优先级
@@ -72,6 +72,7 @@
 | TB-AUDIO-001 | P2 | 待办 | 音频：API 29+ 使用 `AudioPlaybackCapture`；API 25–28 默认无声或显式麦克风模式；AAC-LC 兼容优先；统一会话单调时钟与客户端 jitter buffer。 | 交付：可选音频链路、权限与拒绝提示、同步策略。验证：阶段 4 的权限、版本降级、音画同步、编码项通过；当前未执行。 | [路线图阶段 4](optimization-roadmap.md)、[媒体架构音频](media-architecture.md) |
 | TB-CTRL-001 | P2 | 待办 | 单客户端反控：`AccessibilityService.dispatchGesture`；默认关闭、用户手动开启；单客户端租约、心跳、epoch fencing；归一化坐标；敏感界面不注入。 | 交付：反控授权、租约、坐标与可见指示。验证：阶段 4 的反控授权、租约、坐标、安全项通过；当前未执行。 | [路线图阶段 4](optimization-roadmap.md)、[媒体架构反控](media-architecture.md) |
 | TB-ENG-001 | P2 | 待办 | 测试与发布工程：补齐状态机、停止幂等、队列、协议、重连与坐标测试；仪器与压力测试；R8/keep 规则；CI 增加独立测试步骤。 | 交付：测试用例、CI 配置、混淆规则。验证：测试可重复运行并阻断回归；当前仅模板测试，未执行新增测试。 | [项目现状工程审查](project-assessment.md)、[路线图阶段 1](optimization-roadmap.md) |
+| TB-ENG-002 | P2 | 待办 | 正式发布签名加固：把示例签名回退与正式签名隔离；使用私有 keystore + 本地 `signing.properties` 或 CI secrets；明确保管、备份、轮换与升级一致性；验证同 `applicationId` 的覆盖安装和不同签名的失败提示。 | 交付：签名配置说明、本地/CI 发布流程检查、升级安装验证记录。验证：正式包只由私有签名构建；仓库不含真实材料；同签名可覆盖安装，不同签名失败时明确告知用户卸载会清数据；当前未执行。 | [启动与签名检查清单](startup-checklist.md)、[项目现状安全边界](project-assessment.md) |
 
 说明：`TB-FW-001` 至 `TB-FW-008` 是 `TB-MEDIA-001`、`TB-CLIENT-001` 与 `TB-CLIENT-002` 的框架分解，实施时合并跟踪，不重复计算完成率。它们目前都是待办，不代表任何契约或组件已经存在。
 
@@ -84,6 +85,7 @@
 | TB-DOC-003 | — | 已完成 | 本轮裁决同步：记录问题 1（已关闭）与问题 3（待确认/待实机验证）的采集、编码参数与多客户端裁决，补充协议状态、参数语义与多档编码边界。 | 交付：本次提交 `docs: 记录采集与多客户端裁决` 中的 `docs/media-architecture.md`、`docs/decision-board.md`、`docs/task-board.md`、`docs/README.md`。验证：链接、围栏、Mermaid、角色词、敏感信息与表格列数检查；未修改代码或 CI，未运行 Android 构建，未实机验证。 | [决策看板](decision-board.md)、[媒体架构](media-architecture.md) |
 | TB-DOC-004 | — | 已完成 | 设备能力分档裁决修订：修正“自动永远只选 H.264”“按老车机能力限制全产品”“API 25 决定能力上限”等保守表述；补充服务端/客户端运行时能力探测、HEVC/AV1 边界、分辨率与帧率场景分档、兼容单流与多档流策略；在决策看板保留裁决演进痕迹。 | 交付：本次提交 `docs: 修订设备能力分档裁决` 中的根 `README.md`、`docs/README.md`、`docs/media-architecture.md`、`docs/decision-board.md`、`docs/task-board.md`、`docs/product-context.md`、`docs/project-assessment.md`、`docs/optimization-roadmap.md`、`docs/windowing-session-design.md`。验证：链接、围栏、Mermaid、角色词、敏感信息、表格列数与 `git diff` 检查；未修改代码或 CI，未运行 Android 构建，未实机验证。问题 3 本身仍未由用户关闭，不因本文档任务完成而标记关闭。 | [决策看板](decision-board.md)、[媒体架构](media-architecture.md)、[产品语境](product-context.md) |
 | TB-DOC-005 | — | 已完成 | 可扩展编码框架设计：记录用户已批准的“静态 Codec SPI + 单活动流核心 + 可扩展 StreamHub”；明确责任边界、扩展点、描述符与运行参数、访问单元、可加入点与六状态客户端、慢客户端、非无缝编码切换、传输解耦、落地顺序、验收标准与非目标；同步文档入口与两个看板。 | 交付：`docs/codec-framework.md`，以及根 `README.md`、`docs/README.md`、`docs/media-architecture.md`、`docs/optimization-roadmap.md`、`docs/decision-board.md`、`docs/task-board.md` 的入口与裁决更新（提交 `b4fad88`）。验证：链接、围栏、Mermaid、角色词、敏感信息、表格列数、`git diff --check` 与变更范围检查通过；未修改产品代码或构建配置；本地未执行 Android 构建；推送后远端 Build CI 成功（run [39036309808](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39036309808)）；未实机验证。框架裁决为“已批准，待实施/验证”，所有实现任务仍在待办。 | [编码框架设计](codec-framework.md)、[决策看板](decision-board.md) |
+| TB-DOC-006 | — | 已完成 | 启动与签名检查清单：区分当前环境编译/安装缺项、设备与运行时条件、Debug/Release/正式发布签名要求；记录真实权限与未知项；同步根 README 与文档索引；新增正式发布签名加固待办。 | 交付：`docs/startup-checklist.md`、根 `README.md`、`docs/README.md`、`docs/task-board.md`。验证：本地 `./gradlew :app:assembleDebug --offline` 与 `:app:assembleRelease --offline` 成功；未安装 APK、未连接或修改设备；未执行服务端/客户端实机联调。示例签名只做概括，文档不含任何真实签名值、口令或密钥内容。 | [启动与签名检查清单](startup-checklist.md) |
 | TB-CI-001 | P0 | 已完成 | CI 构建稳定性：修复依赖仓库顺序。 | 根因：失败 run [39030949452](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39030949452) 在解析 `io.grpc:grpc-context:1.72.0` 时收到阿里云镜像 HTTP 502，Gradle 未回退到后续官方仓库。交付：`settings.gradle` 将 `google()`、`mavenCentral()` 置于镜像之前，镜像保留为后备。验证：本地 `./gradlew build` 成功（113 tasks）；`--refresh-dependencies` 解析日志为 0 次阿里云、70 次 Maven Central、67 次 Google；修复提交 `302e604` 触发的 run [39032521963](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39032521963) 成功。 | [项目现状构建基线](project-assessment.md) |
 
 代码任务完成情况：当前没有已完成的代码优化任务。已完成项涉及文档、看板与构建仓库配置；仓库顺序调整不改变应用行为。编码框架的所有组件与契约仍为待办，未写任何实现代码。
