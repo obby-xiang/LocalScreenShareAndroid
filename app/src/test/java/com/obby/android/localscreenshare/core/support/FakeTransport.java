@@ -1,0 +1,113 @@
+package com.obby.android.localscreenshare.core.support;
+
+import com.obby.android.localscreenshare.core.model.EncodedAccessUnit;
+import com.obby.android.localscreenshare.core.model.StreamDescriptor;
+import com.obby.android.localscreenshare.core.stream.MediaTransport;
+
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+
+/**
+ * In-memory media transport that records every send in order. Test-only.
+ */
+public class FakeTransport implements MediaTransport {
+
+    public enum Kind {
+        DESCRIPTOR,
+        ACCESS_UNIT
+    }
+
+    public static final class Event {
+
+        private final Kind kind;
+        private final StreamDescriptor descriptor;
+        private final EncodedAccessUnit accessUnit;
+
+        private Event(Kind kind, StreamDescriptor descriptor, EncodedAccessUnit accessUnit) {
+            this.kind = kind;
+            this.descriptor = descriptor;
+            this.accessUnit = accessUnit;
+        }
+
+        public static Event descriptor(StreamDescriptor descriptor) {
+            return new Event(Kind.DESCRIPTOR, descriptor, null);
+        }
+
+        public static Event accessUnit(EncodedAccessUnit accessUnit) {
+            return new Event(Kind.ACCESS_UNIT, null, accessUnit);
+        }
+
+        public Kind getKind() {
+            return kind;
+        }
+
+        public StreamDescriptor getDescriptor() {
+            return descriptor;
+        }
+
+        public EncodedAccessUnit getAccessUnit() {
+            return accessUnit;
+        }
+
+        public boolean isDescriptor() {
+            return kind == Kind.DESCRIPTOR;
+        }
+
+        public boolean isAccessUnit() {
+            return kind == Kind.ACCESS_UNIT;
+        }
+    }
+
+    public final List<Event> events = Collections.synchronizedList(new ArrayList<Event>());
+
+    private boolean failNextSend;
+    private int closeCount;
+    private boolean closed;
+
+    public synchronized void failNextSend() {
+        failNextSend = true;
+    }
+
+    @Override
+    public void sendDescriptor(StreamDescriptor descriptor) throws IOException {
+        maybeFail();
+        events.add(Event.descriptor(descriptor));
+    }
+
+    @Override
+    public void sendAccessUnit(EncodedAccessUnit accessUnit) throws IOException {
+        maybeFail();
+        events.add(Event.accessUnit(accessUnit));
+    }
+
+    @Override
+    public synchronized void close() {
+        if (!closed) {
+            closed = true;
+            closeCount++;
+        }
+    }
+
+    public synchronized boolean isClosed() {
+        return closed;
+    }
+
+    public synchronized int getCloseCount() {
+        return closeCount;
+    }
+
+    public List<Event> getEvents() {
+        synchronized (events) {
+            return new ArrayList<>(events);
+        }
+    }
+
+    private synchronized void maybeFail() throws IOException {
+        if (failNextSend) {
+            failNextSend = false;
+            throw new IOException("injected transport failure");
+        }
+    }
+}
