@@ -103,6 +103,8 @@ flowchart TB
 ## 文档
 
 - [文档索引](docs/README.md)
+- [任务看板](docs/task-board.md)
+- [决策看板](docs/decision-board.md)
 - [项目现状与技术审查](docs/project-assessment.md)
 - [产品背景与场景分析](docs/product-context.md)
 - [媒体架构设计](docs/media-architecture.md)
