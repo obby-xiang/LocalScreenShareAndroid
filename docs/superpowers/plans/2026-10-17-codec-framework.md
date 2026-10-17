@@ -4,7 +4,7 @@
 
 **Goal:** 在**不接线现有投屏路径**的前提下，新增隔离的 `core` 框架：明确 RenderTarget/DecoderFactory 关系、带 `configEpoch` 的访问单元、描述符先行的媒体传输契约、静态 Codec SPI、JPEG 参考适配、单活动流运行时、可扩展 StreamHub、每客户端有界队列与客户端六状态机，并用 fake codec / fake transport / JVM 测试验证。本批次不宣称现有 JPEG/gRPC 投屏已经使用新框架。
 
-**Architecture:** 新增 `com.obby.android.localscreenshare.core` 包，分为 `model`（纯数据）、`render`（RenderTarget 与 DecodedImage）、`codec`（静态 SPI 与注册表）、`codec.jpeg`（JPEG 参考实现）、`stream`（队列、发送会话、运行时、Hub）、`client`（客户端状态机）。解码器只通过 `RenderTarget` 输出：MediaCodec 将来使用其 `Surface`，JPEG 通过 `renderImage(DecodedImage)`；错误只通过 `DecoderException` 一条通道。每个 AU 自带 `configEpoch`，`sequence` 在 epoch 内递增。媒体传输先下发描述符，再发同 epoch 的首个 AU。
+**Architecture:** 新增 `com.obby.android.localscreenshare.core` 包，分为 `model`（纯数据）、`render`（RenderTarget 与 EncodedImageFrame）、`codec`（静态 SPI 与注册表）、`codec.jpeg`（JPEG 参考实现）、`stream`（队列、发送会话、运行时、Hub）、`client`（客户端状态机）。解码器只通过 `RenderTarget` 输出：MediaCodec 将来使用其 `Surface`，JPEG 通过 `renderEncodedImage(EncodedImageFrame)`；错误只通过 `DecoderException` 一条通道。每个 AU 自带 `configEpoch`，`sequence` 在 epoch 内递增。媒体传输先下发描述符，再发同 epoch 的首个 AU。
 
 **Tech Stack:** Java 11 source/target、Android minSdk 25、compileSdk 35、AGP 8.9.0、Gradle 8.11.1、JUnit 4.13.2。仅使用现有依赖；不引入 Mockito、Kotlin、协程或新测试库。
 
@@ -20,14 +20,16 @@
 - 本批次不实现 `MediaCodec`、H.264、HEVC、AV1、RTP、WebRTC、GPU Fanout、多活动流调度、真实设备 instrumentation。
 - 本批次**删除** `Packetizer`/`PacketizerFactory`/`TransportKind` 等 RTP 契约，不在本计划冻结其签名；RTP 批次再定义。
 - 全过程禁止 `adb`、emulator、虚拟机、实机访问与 `connectedAndroidTest`；只允许本地 JVM/Gradle 单元测试。
-- 端到端测试只使用 fake codec、fake transport、fake RenderTarget 与 JVM；任何测试不得触发 Android 设备 API 或真实网络。
-- 核心生产代码禁止 `android.util.Log`、`android.os.*`、`android.graphics.*`、`android.media.*`、`System.out` 与日志框架；只允许 `android.view.Surface` 出现在 `Encoder.getInputSurface()` 与 `RenderTarget.getSurface()` 的签名中，允许 `androidx.annotation.Nullable` 注解。
-- 核心生产代码避免依赖不确定的 Java 9+ 便捷 API：不使用 `List.of`、`Set.of`、`Map.of`、`List.copyOf`、`Set.copyOf`、`String.isBlank`、`Optional.isEmpty`、`Stream.toList`、`java.time`；集合使用 `ArrayList`/`LinkedHashSet`/`Collections.unmodifiable*`，时间使用 `System.currentTimeMillis()` 或注入的 `TimeSource`。
+- 测试可使用 fake codec、fake transport、fake RenderTarget，也可直接实例化纯 JVM 的 JPEG 参考适配类（`JpegEncoder`/`JpegDecoder`，它们不调用 Android 设备 API）；禁止 MediaCodec、ImageReader、Bitmap、MediaProjection、真实 Surface/SurfaceTexture 等 Android 设备 API 与真实网络。
+- 核心生产代码禁止 `android.util.Log`、`android.os.*`、`android.graphics.*`、`android.media.*`、`System.out` 与日志框架；只允许 `android.view.Surface` 出现在 `Encoder.getInputSurface()`、`JpegEncoder.getInputSurface()`、`RenderTarget.getSurface()`、`StreamRuntime.getInputSurface()` 的签名中，允许 `androidx.annotation.Nullable` 注解。
+- 核心生产代码避免依赖不确定的 Java 9+ 便捷 API：不使用 `List.of`、`Set.of`、`Map.of`、`List.copyOf`、`Set.copyOf`、`String.isBlank`、`Optional.isEmpty`、`Stream.toList`、`java.time`；集合使用 `ArrayList`/`LinkedHashSet`/`Collections.unmodifiable*`。生产默认 `TimeSource` 使用 `System.nanoTime() / 1_000_000L`（毫秒，单调），测试注入 `MutableClock`。
 - Pro（DeepSeek v4 Pro）只写 `core` 生产代码，不编译、不运行 Gradle、不修改测试、不提交。
 - 测试代码、fixtures、fakes、集成验证、编译、测试运行、文档与提交由当前侧 agent 完成。
 - 文档角色只用“服务端/客户端”描述产品侧；执行角色使用“测试 agent / Pro / 验证 agent / 审查 agent / 集成 agent”。示意图如需使用 Mermaid。
 - 文档不得包含本机绝对路径、用户名、账号、令牌、密钥、签名口令或任何敏感材料；只写仓库相对路径。
 - 本批次范围是“隔离核心框架 + JPEG 参考适配 + fake/JVM 测试”。JPEG 只验证独立帧语义；参考帧语义由 fake contract tests 验证，**不等于真实 H.264 已验证**。H.264/MediaCodec/RTP/多流仍不在范围内。
+- 本批次 `visible size` 变化也产生新 descriptor 并推进 `configEpoch`，可能触发客户端重配；**不增加同 epoch 的显示参数更新通道**。
+- 客户端超时与旧 encoder 等待超时明确延后：本批次不实现超时定时器、恢复 ack 或自动断开；旧 encoder 以新 epoch 首个 join point 作为释放信号。
 
 ## Review Focus
 
@@ -40,7 +42,7 @@
 5. **队列策略分流**：JPEG `KEEP_LATEST_FRAME` 溢出覆盖旧帧并继续，不进入无意义 `RESYNCING`；参考帧 `DROP_UNTIL_JOIN_POINT` 在溢出或过期破坏可解码性时清空并进入 `RESYNCING`，直到下一个 joinable 点。Task 4、5、7、9。
 6. **null/空 payload**：`EncodedAccessUnit` 拒绝 null 与零长度 payload；空 JPEG、截断 JPEG 不产生 AU；API 对 null 参数显式失败。Task 1、3、4、5。
 7. **并发与慢发送**：Hub 广播使用快照；`drainOne` 锁内 poll、锁外 send；慢 transport 不阻塞 `offer`；detach 幂等，失败后 Hub 能移除/替换。Task 5、7、9。
-8. **RenderTarget 与 Surface 路径**：解码器不得把 AU 当解码帧；MediaCodec 将来通过 RenderTarget 的 Surface 输出，JPEG 通过 `renderImage`；错误只走 `DecoderException`。Task 2、3、8。
+8. **RenderTarget 与 Surface 路径**：解码器不得把 AU 当解码帧；MediaCodec 将来通过 RenderTarget 的 Surface 输出，JPEG 通过 `renderEncodedImage`；错误只走 `DecoderException`。Task 2、3、8。
 9. **通用 fallback**：Hub 不得硬编码 JPEG；使用 `CodecRegistration.fallbackPriority` 与保存的 `ClientCapabilities` 选择显式回退；`ClientSessionKey` 含 `streamId`/`clientId`。Task 7、9。
 10. **核心代码可 JVM 化**：核心生产代码不得依赖 Android 日志/OS/图形/媒体实现，不得依赖未确认的 Java 9+ API。Task 2–8 审查步骤。
 
@@ -84,7 +86,7 @@ core/
 │   └── ClientState.java
 ├── render/
 │   ├── RenderTarget.java
-│   └── DecodedImage.java
+│   └── EncodedImageFrame.java
 ├── codec/
 │   ├── CodecIds.java
 │   ├── CodecDescriptor.java
@@ -181,8 +183,8 @@ JPEG fixture 使用测试常量，不引入二进制资源文件。
   - `ColorInfo(@Nullable String colorSpace, @Nullable String transferFunction, boolean fullRange)`；`getColorSpace()`、`getTransferFunction()`、`isFullRange()`、`ColorInfo.UNSPECIFIED`。
   - `BitstreamFormat` 枚举：`JPEG_FRAME`、`ANNEX_B`、`AVCC`。
   - `StreamDescriptor` 不可变；字段 `streamKey`、`configEpoch`、`codecId`、`mime`、`profile`、`level`、`codedWidth`、`codedHeight`、`visibleWidth`、`visibleHeight`、`rotationDegrees`、`bitstreamFormat`、`configParts`、`colorInfo`、`configHash`。
-  - `StreamDescriptor.builder(StreamKey, int configEpoch, String codecId, String mime, BitstreamFormat)`；builder 方法 `profile`、`level`、`codedSize(int,int)`、`visibleSize(int,int)`、`rotationDegrees(int)`、`configParts(List<CodecConfigPart>)`、`colorInfo(ColorInfo)`、`build()`。缺省值：`profile/level` 为 null、`visibleSize` 等于 coded size、`rotationDegrees=0`、`configParts` 为空列表、`colorInfo=ColorInfo.UNSPECIFIED`。
-  - `StreamDescriptor` getters：`getStreamKey()`、`getConfigEpoch()`、`getCodecId()`、`getMime()`、`getProfile()`、`getLevel()`、`getCodedWidth()`、`getCodedHeight()`、`getVisibleWidth()`、`getVisibleHeight()`、`getRotationDegrees()`、`getBitstreamFormat()`、`getConfigParts()`、`getColorInfo()`、`getConfigHash()`、`sameDecodeConfig(StreamDescriptor)`、`withConfigEpoch(int)`。
+  - `StreamDescriptor.builder(StreamKey, int configEpoch, String codecId, String mime, BitstreamFormat)`；`configEpoch >= 1`；builder 方法 `profile`、`level`、`codedSize(int,int)`、`visibleSize(int,int)`、`rotationDegrees(int)`、`configParts(List<CodecConfigPart>)`、`colorInfo(ColorInfo)`、`build()`。缺省值：`profile/level` 为 null、`visibleSize` 等于 coded size、`rotationDegrees=0`、`configParts` 为空列表、`colorInfo=ColorInfo.UNSPECIFIED`。
+  - `StreamDescriptor` getters：`getStreamKey()`、`getConfigEpoch()`、`getCodecId()`、`getMime()`、`getProfile()`、`getLevel()`、`getCodedWidth()`、`getCodedHeight()`、`getVisibleWidth()`、`getVisibleHeight()`、`getRotationDegrees()`、`getBitstreamFormat()`、`getConfigParts()`、`getColorInfo()`、`getConfigHash()`（返回规范化的小写十六进制 SHA-256 字符串，非 null）、`sameDecodeConfig(StreamDescriptor)`、`withConfigEpoch(int)`。
   - `StreamParameters(int targetBitrateBps, int frameRateHint, int keyFrameIntervalMs)`；getters；`StreamParameters.DEFAULT`；`withTargetBitrate`、`withFrameRateHint`、`withKeyFrameInterval`。
   - `AccessUnitFlags.of(boolean syncPoint, boolean joinPoint, boolean config)`、`AccessUnitFlags.none()`；`isSyncPoint()`、`isJoinPoint()`、`isConfig()`。
   - `JoinInfo(int configEpoch, List<CodecConfigPart> requiredConfigParts)`；`getConfigEpoch()`、`getRequiredConfigParts()`；`requiredConfigParts` 可为空。
@@ -197,6 +199,8 @@ JPEG fixture 使用测试常量，不引入二进制资源文件。
 - `configHash_changesWhenConfigPartPayloadChanges`：仅配置部件字节不同，hash 不同。
 - `configHash_changesWhenVisibleSizeOrRotationChanges`：仅 `visibleWidth/visibleHeight` 或旋转变化，hash 不同；`sameDecodeConfig` 为 false。本批次按主 agent 裁决把 visible size 视为新 descriptor/epoch 的一部分。
 - `configHash_unchangedWhenOnlyEpochChanges`：仅 `configEpoch` 变化，hash 相同；`withConfigEpoch(2)` 保持 hash。
+- `configHash_isNormalizedLowercaseHexString`：`getConfigHash()` 非 null、匹配 `[0-9a-f]{64}`，同一输入重复构建结果稳定。
+- `builder_rejectsConfigEpochBelowOne`：`configEpoch` 为 0 或 -1 抛 `IllegalArgumentException`。
 - `builder_rejectsInvalidRotationAndNonPositiveCodedSize`：旋转 45 度、codedWidth 0 均抛 `IllegalArgumentException`。
 - `emptyConfigParts_areAllowedForJpegDescriptor`：JPEG 描述符不传配置部件，构建成功且 `getConfigParts().isEmpty()`。
 - `configPartsAndPayload_areDefensivelyCopied`：修改传入/取出的数组不改变对象内部值。
@@ -225,7 +229,7 @@ Expected: 编译失败，找不到模型类；记录该输出为红测证据。
 
 - [ ] **Step 3（Pro）：只写生产实现**
 
-实现上述模型类。`configHash` 使用 `java.security.MessageDigest` 的 SHA-256，对 `codecId`、`mime`、`profile`、`level`、coded size、**visible size**、rotation、`bitstreamFormat`、按顺序排列的 `CodecConfigPart`（id + payload hex）以及 `colorInfo` 做规范化拼接；不包含 `configEpoch`。所有集合与字节数组做防御性复制，不使用 Java 9+ 集合工厂。Pro 不运行 Gradle。
+实现上述模型类。`configHash` 使用 `java.security.MessageDigest` 的 SHA-256，对 `codecId`、`mime`、`profile`、`level`、coded size、**visible size**、rotation、`bitstreamFormat`、按顺序排列的 `CodecConfigPart`（id + payload hex）以及 `colorInfo` 做规范化拼接；固定 UTF-8、固定字段分隔符与长度前缀，输出小写十六进制 String；不包含 `configEpoch`。所有集合与字节数组做防御性复制，不使用 Java 9+ 集合工厂。Pro 不运行 Gradle。
 
 - [ ] **Step 4（验证 agent）：编译并跑绿测**
 
@@ -249,7 +253,7 @@ git commit -m "feat: 添加编码核心数据契约"
 
 **Files:**
 - Create: `app/src/main/java/com/obby/android/localscreenshare/core/render/RenderTarget.java`
-- Create: `app/src/main/java/com/obby/android/localscreenshare/core/render/DecodedImage.java`
+- Create: `app/src/main/java/com/obby/android/localscreenshare/core/render/EncodedImageFrame.java`
 - Create: `app/src/main/java/com/obby/android/localscreenshare/core/codec/CodecIds.java`
 - Create: `app/src/main/java/com/obby/android/localscreenshare/core/codec/CodecDescriptor.java`
 - Create: `app/src/main/java/com/obby/android/localscreenshare/core/codec/CodecRegistration.java`
@@ -273,8 +277,8 @@ git commit -m "feat: 添加编码核心数据契约"
 **Interfaces:**
 - Consumes: Task 1 的模型类型；`android.view.Surface`（仅签名，JVM 测试传 null/不调用）。
 - Produces:
-  - `RenderTarget`：`@Nullable Surface getSurface()`、`void renderImage(DecodedImage image)`。JPEG 使用 `renderImage`；未来 MediaCodec 使用 `getSurface()`。**不提供第二个错误回调。**
-  - `DecodedImage(byte[] payload, long ptsUs, int width, int height)`；`getPayload()`（防御性复制）、`getPayloadLength()`、`getPtsUs()`、`getWidth()`、`getHeight()`。
+  - `RenderTarget`：`@Nullable Surface getSurface()`、`void renderEncodedImage(EncodedImageFrame frame)`。JPEG 使用 `renderEncodedImage`；未来 MediaCodec 使用 `getSurface()`。**不提供第二个错误回调。**
+  - `EncodedImageFrame(byte[] payload, long ptsUs, int width, int height)`；`getPayload()`（防御性复制）、`getPayloadLength()`、`getPtsUs()`、`getWidth()`、`getHeight()`。**payload 是压缩图像字节（本批次为完整 JPEG），不是已解码像素；显示侧负责解码，命名不得暗示已解码。**
   - `CodecIds`：`JPEG="jpeg"`、`H264="h264"`、`HEVC="hevc"`、`AV1="av1"`。本批次只注册 JPEG；其余为契约保留常量。
   - `CodecDescriptor(String codecId, String mime, BitstreamFormat bitstreamFormat, boolean surfaceInputRequired, boolean surfaceOutputRequired, boolean carriesConfigParts)`；getters `isSurfaceInputRequired()`、`isSurfaceOutputRequired()`、`hasConfigParts()`；codecId/mime 非空。
   - `CodecRegistration(CodecDescriptor descriptor, EncoderFactory encoderFactory, DecoderFactory decoderFactory, CodecPolicy policy, int fallbackPriority)`；getters；`fallbackPriority >= 0`，**数值越小越优先**；不含 Packetizer。
@@ -292,10 +296,10 @@ git commit -m "feat: 添加编码核心数据契约"
   - `OverflowAction` 枚举：`KEEP_LATEST_FRAME`、`DROP_UNTIL_JOIN_POINT`。
 
 **测试支持（本 Task 创建，后续复用）：**
-- `FakeRenderTarget implements RenderTarget`：`getSurface()` 返回 null；`renderImage` 把 `DecodedImage` 加入 `images`；提供 `getImages()`。
+- `FakeRenderTarget implements RenderTarget`：`getSurface()` 返回 null；`renderEncodedImage` 把 `EncodedImageFrame` 加入 `images`；提供 `getImages()`。
 - `FakeCodec`：构造 `(String codecId, int fallbackPriority, boolean surfaceInputRequired, boolean surfaceOutputRequired)`；默认 `fake`/`video/fake`/`ANNEX_B`、无配置部件、`DROP_UNTIL_JOIN_POINT`；`registration()` 返回 `CodecRegistration`；`getLastEncoder()`、`getLastDecoder()`、`setAutoEmitJoinOnRequest(boolean)`、`getRequestCount()`、`emitNonJoin(byte[])`、`emitJoin(byte[])`、`emit(int configEpoch, boolean joinPoint, byte[])`。
 - `FakeEncoder implements Encoder`：`start()`、`stop()`、`getInputSurface()` 返回 null、`updateParameters`、`requestSyncPoint()` 递增 `requestCount`，默认自动 `emitJoin`，可关闭自动发射；`close()`；`emit(...)` 用当前 descriptor epoch 与 epoch 内 sequence 构造 AU；记录 `stopped`、`closed`。
-- `FakeDecoder implements Decoder`：`configure` 保存 descriptor；`decode` 记录 AU，并通过构造时传入的 `RenderTarget.renderImage` 输出 `DecodedImage`；`failNextDecode` 可让下一次 decode 抛 `DecoderException`；`close` 记录。
+- `FakeDecoder implements Decoder`：`configure` 保存 descriptor；`decode` 记录 AU，并通过构造时传入的 `RenderTarget.renderEncodedImage` 输出 `EncodedImageFrame`；`failNextDecode` 可让下一次 decode 抛 `DecoderException`；`close` 记录。
 
 - [ ] **Step 1（测试 agent）：写失败测试**
 
@@ -311,9 +315,9 @@ git commit -m "feat: 添加编码核心数据契约"
 
 `FakeCodecContractTest` 至少包含：
 
-- `fakeRenderTarget_surfaceIsNull_andCapturesImages`：`getSurface()==null`；`renderImage(new DecodedImage(...))` 后 `images.size()==1`。
+- `fakeRenderTarget_surfaceIsNull_andCapturesImages`：`getSurface()==null`；`renderEncodedImage(new EncodedImageFrame(...))` 后 `images.size()==1`。
 - `fakeEncoder_getInputSurfaceIsNull`：非 Surface codec 的输入 Surface 为 null，便于 JVM 测试。
-- `decoderFactory_receivesRenderTarget`：`FakeDecoder` 在 `decode` 时把 `DecodedImage` 送到同一个 `FakeRenderTarget`。
+- `decoderFactory_receivesRenderTarget`：`FakeDecoder` 在 `decode` 时把 `EncodedImageFrame` 送到同一个 `FakeRenderTarget`。
 - `decoder_decodeFailureUsesDecoderException`：`failNextDecode` 后 `decode` 抛 `DecoderException`。
 - `fallbackPriority_isMetadataOnly`：注册表本身不按 codec 名称排序；Hub 将在 Task 7 使用 priority。
 
@@ -325,7 +329,7 @@ Expected: 编译失败，找不到 `CodecRegistry`、`RenderTarget` 等。
 
 - [ ] **Step 3（Pro）：只写生产实现**
 
-实现 RenderTarget/DecodedImage、SPI 与注册表。注册表使用 `ConcurrentHashMap`；`getRegistrations()` 返回不可变副本；未知 codec 显式失败；`getInputSurface` 可以为 null；`DecoderFactory` 必须接收 `RenderTarget`；错误只通过 `DecoderException`。不引入 Packetizer/TransportKind，不引入 Android 实现。Pro 不运行 Gradle。
+实现 RenderTarget/EncodedImageFrame、SPI 与注册表。注册表使用 `ConcurrentHashMap`；`getRegistrations()` 返回不可变副本；未知 codec 显式失败；`getInputSurface` 可以为 null；`DecoderFactory` 必须接收 `RenderTarget`；错误只通过 `DecoderException`。不引入 Packetizer/TransportKind，不引入 Android 实现。Pro 不运行 Gradle。
 
 - [ ] **Step 4（验证 agent）：跑绿测**
 
@@ -363,7 +367,7 @@ git commit -m "feat: 添加 RenderTarget 与静态 Codec SPI"
 - Test support: `app/src/test/java/com/obby/android/localscreenshare/core/support/JpegFixtures.java`
 
 **Interfaces:**
-- Consumes: Task 1 模型；Task 2 的 `CodecRegistration`、`CodecRegistry`、`RenderTarget`、`DecodedImage`、`DecoderException`。
+- Consumes: Task 1 模型；Task 2 的 `CodecRegistration`、`CodecRegistry`、`RenderTarget`、`EncodedImageFrame`、`DecoderException`。
 - Produces:
   - `JpegCodec.MIME = "image/jpeg"`；`JpegCodec.registration()`：codecId `CodecIds.JPEG`、`JPEG_FRAME`、`surfaceInputRequired=false`、`surfaceOutputRequired=false`、`carriesConfigParts=false`、`fallbackPriority=100`、policy/encoder/decoder 为 JPEG 实现。
   - `CodecRegistry.withDefaults()`：只注册 JPEG，返回新 registry。
@@ -371,10 +375,10 @@ git commit -m "feat: 添加 RenderTarget 与静态 Codec SPI"
   - `JpegCodecPolicy`：`KEEP_LATEST_FRAME`；`isJoinPoint` 要求 flag 与完整 payload；`requiresReconfigure` 使用 `sameDecodeConfig`。
   - `JpegEncoder(StreamKey, StreamDescriptor, StreamParameters, EncoderOutput)`；`start`、`stop`、`getInputSurface()` 返回 null、`updateParameters`、`requestSyncPoint()` no-op、`close`、`boolean offerJpegFrame(long ptsUs, byte[] jpegBytes)`。
   - `JpegEncoderFactory.create(...)`：无 Surface 参数；descriptor codecId 非 `jpeg` 抛 `IllegalArgumentException`。
-  - `JpegDecoder(StreamKey, StreamDescriptor, RenderTarget)`；`configure`、`decode`（渲染 `DecodedImage`）、`close`。
+  - `JpegDecoder(StreamKey, StreamDescriptor, RenderTarget)`；`configure`、`decode`（渲染 `EncodedImageFrame`）、`close`。
   - `JpegDecoderFactory.create(StreamKey, StreamDescriptor, RenderTarget)`。
 
-**本批次适配器边界：** JPEG 接收现有采集路径已压缩好的完整帧，不接触 `Bitmap`/`ImageReader`；像素获取迁移需要改 `LssService`，超出本批次。JPEG 的每帧独立语义通过 `KEEP_LATEST_FRAME` 与 `renderImage` 验证；参考帧语义由 fake contract tests 验证，不等于真实 H.264 已验证。
+**本批次适配器边界：** JPEG 接收现有采集路径已压缩好的完整帧，不接触 `Bitmap`/`ImageReader`；像素获取迁移需要改 `LssService`，超出本批次。`JpegDecoder` 不把压缩 JPEG 冒充已解码像素：它只做完整性/epoch 校验，把 `EncodedImageFrame` 交给 `RenderTarget`，由显示侧解码。JPEG 的每帧独立语义通过 `KEEP_LATEST_FRAME` 与 `renderEncodedImage` 验证；参考帧语义由 fake contract tests 验证，不等于真实 H.264 已验证。
 
 - [ ] **Step 1（测试 agent）：写 fixtures 与失败测试**
 
@@ -390,7 +394,7 @@ git commit -m "feat: 添加 RenderTarget 与静态 Codec SPI"
 - `encoder_dropsTruncatedAndEmptyFrames`。
 - `encoder_afterStopOrClose_dropsFrames`。
 - `encoder_getInputSurfaceIsNull`。
-- `decoder_rendersDecodedImageToTarget`：`configure` + `decode` 后 `FakeRenderTarget.getImages()` 有 1 个，尺寸为描述符 visible size，payload 正确。
+- `decoder_rendersEncodedImageFrameToTarget`：`configure` + `decode` 后 `FakeRenderTarget.getImages()` 有 1 个，尺寸为描述符 visible size，payload 正确。
 - `decoder_rejectsMismatchedEpoch`：AU epoch 与 descriptor epoch 不同，抛 `DecoderException`。
 - `decoder_beforeConfigureThrowsDecoderException`。
 
@@ -402,7 +406,7 @@ Expected: 编译失败，找不到 JPEG 类。
 
 - [ ] **Step 3（Pro）：只写生产实现**
 
-实现 JPEG 适配。`JpegEncoder` 只接受完整帧，`sequence` 从 0 开始，AU 带 descriptor epoch 与 JoinInfo；`JpegDecoder` 只通过 `RenderTarget.renderImage` 输出，任何渲染异常包装为 `DecoderException`。`CodecRegistry.withDefaults()` 只注册 JPEG。Pro 不运行 Gradle。
+实现 JPEG 适配。`JpegEncoder` 只接受完整帧，`sequence` 从 0 开始，AU 带 descriptor epoch 与 JoinInfo；`JpegDecoder` 只通过 `RenderTarget.renderEncodedImage` 输出，任何渲染异常包装为 `DecoderException`。`CodecRegistry.withDefaults()` 只注册 JPEG。Pro 不运行 Gradle。
 
 - [ ] **Step 4（验证 agent）：跑绿测**
 
@@ -438,20 +442,21 @@ git commit -m "feat: 添加 JPEG 参考适配"
 **Interfaces:**
 - Consumes: Task 1 的 `EncodedAccessUnit`、`AccessUnitFlags`；Task 2 的 `OverflowAction`。
 - Produces:
-  - `TimeSource`：`long nowMs()`；测试用 `MutableClock implements TimeSource`（`advance(long)`、`set(long)`）。
+  - `TimeSource`：`long nowMs()`；生产默认实现返回 `System.nanoTime() / 1_000_000L`（单调毫秒），测试用 `MutableClock implements TimeSource`（`advance(long)`、`set(long)`）。
   - `StreamQueueLimits(long maxBytes, int maxUnits, long maxAgeMs)`；getters；`StreamQueueLimits.defaults()` 使用 4 MiB、120 个 AU、2000 ms 的临时值（注释说明需实测，不是生产结论）。
   - `QueueOfferResult` 枚举：`ACCEPTED`、`ACCEPTED_KEPT_LATEST`、`ACCEPTED_AFTER_RESYNC`、`REJECTED_NOT_JOIN_POINT`、`REJECTED_TOO_LARGE`、`REJECTED_NOT_READY`、`REJECTED_EPOCH`、`REJECTED_CLOSED`。后三个由 `ClientSendSession` 返回，队列本身只产生前五个。
   - `QueuePollResult`：`@Nullable EncodedAccessUnit getAccessUnit()`、`boolean isResyncRequired()`、静态 `frame(EncodedAccessUnit)`、`resync()`、`empty()`。
   - `BoundedAccessUnitQueue(StreamQueueLimits limits, OverflowAction action)`；`offer(EncodedAccessUnit, long nowMs)`、`poll(long nowMs)`、`size()`、`bytes()`、`droppedUnits()`、`droppedBytes()`、`clear()`、`isResyncRequired()`。
 
 **队列语义（必须由测试固定）：**
-- 同时受字节数、单元数和驻留时间约束；单个 AU 超过 `maxBytes` 时返回 `REJECTED_TOO_LARGE`。
+- 同时受字节数、单元数和驻留时间约束；单个 AU 超过 `maxBytes` 时返回 `REJECTED_TOO_LARGE`，并按下面策略决定是否设置 resync。
 - `KEEP_LATEST_FRAME`（JPEG）：
   - 溢出时清空旧帧，保留最新完整帧，返回 `ACCEPTED_KEPT_LATEST`；**不设置 resync**。
   - 过期时丢弃过期帧，继续返回其余最新帧；**不设置 resync**。
   - 若最新帧本身超限，清空并返回 `REJECTED_TOO_LARGE`，仍不设置 resync。
 - `DROP_UNTIL_JOIN_POINT`（参考帧）：
   - 溢出时清空队列并设置 resync；来者是 join point 则保留并返回 `ACCEPTED_AFTER_RESYNC`，否则返回 `REJECTED_NOT_JOIN_POINT`。
+  - **单个 AU 超过 `maxBytes` 也视为可解码性破坏：清空队列、设置 resync，返回 `REJECTED_TOO_LARGE`；不保留超大 AU。**
   - 任一条目过期即视为可解码性被破坏：清空队列、设置 resync，`poll` 返回 `QueuePollResult.resync()`。
   - resync 后只有 join point 能重新进入队列；`poll` 返回该 join point 时 `isResyncRequired()` 为 false，由会话在发送成功后进入 `STREAMING`。
 - `clear()` 清空队列但不重置丢弃统计；队列的 resync 标志由 `clear()` 重置为 false（新 epoch 会创建新队列）。
@@ -461,7 +466,8 @@ git commit -m "feat: 添加 JPEG 参考适配"
 `BoundedAccessUnitQueueTest` 至少包含：
 
 - `offer_rejectsNull`。
-- `tooLargeAu_isRejected`：单个 payload 超限，`size()==0`。
+- `tooLargeAu_isRejected`：`KEEP_LATEST_FRAME` 下单个 payload 超限，`size()==0`、`isResyncRequired()` false。
+- `referenceTooLargeAu_entersResync`：`DROP_UNTIL_JOIN_POINT` 下单个 payload 超限，返回 `REJECTED_TOO_LARGE`、`size()==0`、`isResyncRequired()` true。
 - `keepLatestOverflow_keepsNewestWithoutResync`：limits 1 单元；先入 join，再入 join；结果 `ACCEPTED_KEPT_LATEST`、size 1、`isResyncRequired()` false。
 - `keepLatestExpiry_dropsOldWithoutResync`：两个帧，推进超过 maxAge，`poll` 丢弃过期并返回最新，`isResyncRequired()` false。
 - `referenceOverflow_nonJoinClearsAndRequiresResync`：action `DROP_UNTIL_JOIN_POINT`；溢出后非 join 返回 `REJECTED_NOT_JOIN_POINT`、size 0、`isResyncRequired()` true。
@@ -526,8 +532,8 @@ git commit -m "feat: 添加有界访问单元队列"
 - 初始 `WAIT_CONFIG`。`onDescriptor` 首次成功：保存描述符、创建新队列、设置 `pendingDescriptor`、进入 `WAIT_RANDOM_ACCESS`，返回 true。
 - `onDescriptor` 旧 epoch 返回 false；同 epoch 同 hash 返回 false；同 epoch 不同 hash 抛 `IllegalArgumentException`；新 epoch：清空旧队列、创建新队列、设置 `pendingDescriptor`、进入 `WAIT_RANDOM_ACCESS`，返回 true。
 - `offer`：detach -> `REJECTED_CLOSED`；null 抛 `IllegalArgumentException`；未收到 descriptor -> `REJECTED_NOT_READY`；AU 的 `streamKey` 或 `configEpoch` 与当前描述符不匹配 -> `REJECTED_EPOCH`，**普通 AU 也检查**；`WAIT_RANDOM_ACCESS`/`RESYNCING` 下非 join point -> `REJECTED_NOT_JOIN_POINT`。
-- JPEG `ACCEPTED_KEPT_LATEST`：会话保持 `STREAMING`/当前状态，不增加 `resyncCount`。
-- 参考帧溢出/过期：队列设置 resync，会话进入 `RESYNCING` 并增加 `resyncCount`；只有 join point 被发送后才回 `STREAMING`。
+- JPEG `ACCEPTED_KEPT_LATEST`：会话保持 `STREAMING`/当前状态，不增加 `resyncCount`；JPEG `REJECTED_TOO_LARGE` 也不进入 `RESYNCING`。
+- 参考帧溢出、单个 AU 超限或过期：队列设置 resync，会话进入 `RESYNCING` 并增加 `resyncCount`；只有 join point 被发送后才回 `STREAMING`。
 - `drainOne`：
   1. 用独立 `drainLock.tryLock()` 保证单 drainer；拿不到返回 false。
   2. 状态锁内取 `pendingDescriptor` 或 poll 队列（poll 在锁内），释放锁。
@@ -547,9 +553,10 @@ git commit -m "feat: 添加有界访问单元队列"
 - `ordinaryOldEpochAu_rejected`：当前 epoch 2，AU epoch 1（非 join）返回 `REJECTED_EPOCH`。
 - `epochChange_clearsQueueAndDescriptorPrecedesNewAu`：新 epoch 后旧队列清空；drain 先新 descriptor，再新 AU。
 - `duplicateAndStaleDescriptorIgnored`、`sameEpochDifferentConfigThrows`。
-- `jpegOverflow_keepsLatestAndDoesNotResync`：`KEEP_LATEST_FRAME` 下溢出，状态不变，`resyncCount` 不增加。
-- `referenceOverflow_entersResyncingUntilJoin`：`DROP_UNTIL_JOIN_POINT` 下溢出，状态 `RESYNCING`、resyncCount 增加；后续 join 发送成功后回 `STREAMING`。
-- `referenceExpiry_entersResyncing`：时钟推进超过 maxAge；循环 `drainOne` 直到 false，随后状态 `RESYNCING`（若首轮只发送了 pending descriptor，下一轮 poll 才触发过期）。
+- `jpegOverflow_keepsLatestAndDoesNotResync`：limits 为 1 个 AU；先 `onDescriptor` + offer join + 循环 `drainOne` 直到 false，确认进入 `STREAMING`；然后停止 drain，offer 非 join 制造溢出；状态仍为 `STREAMING`，`resyncCount` 不增加。
+- `referenceOverflow_entersResyncingUntilJoin`：limits 为 2 个 AU；先 drain 初始 descriptor+join 使会话进入 `STREAMING`；停止 drain，offer 非 join 直到 `DROP_UNTIL_JOIN_POINT` 溢出；状态 `RESYNCING`、resyncCount 增加；后续 offer join，drain 成功后回 `STREAMING`。
+- `referenceTooLargeAu_entersResyncing`：先 drain 初始 descriptor+join 进入 `STREAMING`；再 offer 一个超过 `maxBytes` 的 AU，返回 `REJECTED_TOO_LARGE`，状态 `RESYNCING`、resyncCount 增加。
+- `referenceExpiry_entersResyncing`：先 drain 初始 descriptor+join 进入 `STREAMING`；再 offer 非 join 帧且不 drain，推进时钟超过 maxAge；循环 `drainOne` 直到 false，随后状态 `RESYNCING`。
 - `slowTransport_doesNotBlockOffer`：`BlockingTransport` 阻塞 `sendAccessUnit`；另一线程调用 `offer(join)` 在超时内完成，随后释放 latch。
 - `transportFailure_detachesAndClosesOnce`：`failNextSend` 后 `drainOne` 抛 `IOException`，`isDetached()` true，transport 关闭一次。
 - `detach_isIdempotentAndRejectsNewUnits`。
@@ -598,7 +605,7 @@ git commit -m "feat: 添加媒体传输与客户端发送会话"
 - Consumes: Task 1–2 的模型/SPI；Task 2 `FakeCodec`；Task 4 `TimeSource`、`MutableClock`。
 - Produces:
   - `StreamRuntimeListener`：`void onAccessUnit(EncodedAccessUnit accessUnit)`、`void onDescriptorChanged(StreamDescriptor descriptor)`。
-  - `StreamRuntime(CodecRegistry, StreamKey, StreamDescriptor, StreamParameters)`；测试构造函数额外接收 `TimeSource` 与 `long joinPointMinIntervalMs`。
+  - `StreamRuntime(CodecRegistry, StreamKey, StreamDescriptor, StreamParameters)`：生产默认使用 `System.nanoTime()/1_000_000L` 的 `TimeSource` 与临时 `joinPointMinIntervalMs=100`；测试构造函数额外接收 `TimeSource` 与 `long joinPointMinIntervalMs`。
   - 方法：`start()`、`close()`、`isClosed()`、`getDescriptor()`、`getConfigEpoch()`、`getParameters()`、`@Nullable Surface getInputSurface()`、`updateParameters(StreamParameters)`、`boolean requestJoinPoint()`、`void switchDescriptor(StreamDescriptor next)`、`addListener(StreamRuntimeListener)`、`removeListener(StreamRuntimeListener)`。
 
 **运行时语义（必须由测试固定）：**
@@ -606,7 +613,7 @@ git commit -m "feat: 添加媒体传输与客户端发送会话"
 - `getInputSurface()` 委托当前 encoder；JPEG 为 null；未来 MediaCodec 返回输入 Surface。
 - `updateParameters` 只更新参数，不推进 epoch、不重建 encoder。
 - `requestJoinPoint`：合并并限频。没有 pending 请求且距上次成功 join 超过最小间隔时，设置 pending 并调用 `encoder.requestSyncPoint()`；重复请求在 pending 期间不转发。编码器输出 join point 时清 pending 并记录时间。返回值表示本次是否向 encoder 转发。
-- `switchDescriptor`：只接受同一 stream、`configEpoch == 当前+1`、且解码配置变化的新描述符；重复/跳号抛 `ConfigEpochException`，未变化抛 `IllegalArgumentException`。先创建并启动新 encoder；预热失败抛 `CodecSwitchException` 并保留旧 encoder。成功后 `old.stop()`、替换、generation 递增、通知描述符、重置 join 请求并主动 `requestJoinPoint()`。旧 encoder 的迟到 AU 通过 generation + epoch 双重丢弃；旧 encoder 在新 epoch 首个 join point 广播后 `close()`。
+- `switchDescriptor`：只接受同一 stream、`configEpoch == 当前+1`、且解码配置变化的新描述符；重复/跳号抛 `ConfigEpochException`，未变化抛 `IllegalArgumentException`。先创建并启动新 encoder；预热失败抛 `CodecSwitchException` 并保留旧 encoder。成功后 `old.stop()`、替换、generation 递增、通知描述符、重置 join 请求并主动 `requestJoinPoint()`。旧 encoder 的迟到 AU 通过 generation + epoch 双重丢弃；旧 encoder 在新 epoch 首个 join point 广播后 `close()`。**旧 encoder 等待超时与客户端恢复 ack 明确延后，本批次不实现。**
 - `onAccessUnit`：校验 streamKey、generation、AU `configEpoch == 当前`；**旧 epoch 普通 AU 也丢弃**；listener 异常逐个捕获，不阻断其他 listener。
 - `close()` 幂等，关闭活动 encoder 与尚未释放的 retired encoder。
 
@@ -672,8 +679,8 @@ git commit -m "feat: 添加单活动流运行时"
 - Consumes: Task 1 `ClientSessionKey`；Task 2 registry/registration；Task 5 `ClientSendSession`/`MediaTransport`；Task 6 `StreamRuntime`；Task 4 `StreamQueueLimits`/`TimeSource`。
 - Produces:
   - `ClientCapabilities(Set<String> codecIds)`；`supports(String)`、`getCodecIds()`；集合防御性复制。
-  - `JoinDecision`：`Status` 为 `ACCEPTED`、`REQUIRES_EXPLICIT_FALLBACK`、`REJECTED`；`getSession()`、`getFallbackCodecId()`、`getReason()`；静态 `accepted(ClientSendSession)`、`requiresFallback(String, String)`、`rejected(String)`。
-  - `StreamHub(CodecRegistry)`、`StreamHub(CodecRegistry, StreamQueueLimits, TimeSource)`；`register(StreamRuntime)`、`unregister(StreamKey)`、`activate(StreamKey)`、`getActiveStream()`、`JoinDecision join(ClientSessionKey, ClientCapabilities, MediaTransport)`、`void detach(ClientSessionKey)`、`boolean drainOne(ClientSessionKey) throws IOException`、`ClientSendSession getSession(ClientSessionKey)`、`int getSessionCount()`。
+  - `JoinDecision`：嵌套 `public enum Status { ACCEPTED, REQUIRES_EXPLICIT_FALLBACK, REJECTED }`；`Status getStatus()`、`getSession()`、`getFallbackCodecId()`、`getReason()`；静态 `accepted(ClientSendSession)`、`requiresFallback(String, String)`、`rejected(String)`。测试统一使用 `JoinDecision.Status.*`。
+  - `StreamHub(CodecRegistry)` 使用 `StreamQueueLimits.defaults()` 与生产 `TimeSource`（`System.nanoTime()/1_000_000L`）；`StreamHub(CodecRegistry, StreamQueueLimits, TimeSource)` 供测试注入；方法：`register(StreamRuntime)`、`unregister(StreamKey)`、`activate(StreamKey)`、`getActiveStream()`、`JoinDecision join(ClientSessionKey, ClientCapabilities, MediaTransport)`、`void detach(ClientSessionKey)`、`boolean drainOne(ClientSessionKey) throws IOException`、`ClientSendSession getSession(ClientSessionKey)`、`int getSessionCount()`。
   - `StreamHub` 实现 `StreamRuntimeListener`，只广播活动流 AU；非活动流 AU 忽略。
 
 **Hub 语义（必须由测试固定）：**
@@ -683,12 +690,12 @@ git commit -m "feat: 添加单活动流运行时"
   1. 无活动流 -> 拒绝。
   2. key 的 streamKey 必须等于活动流；重复 key -> 拒绝。
   3. 客户端支持当前 codec -> 创建绑定 transport 的 `ClientSendSession`，调用 `onDescriptor(activeDescriptor)`，加入 session map，**随后调用 `activeRuntime.requestJoinPoint()`**；返回 accepted。新客户端 join 必须触发 runtime 的 join 请求，测试不得只靠手动 emit 让生产代码等待。
-  4. 不支持当前 codec -> 用 `CodecRegistration.fallbackPriority` 与已保存的 `ClientCapabilities` 计算所有客户端共同支持的最低 priority codec；priority 相同时按 `codecId` 字典序稳定选择。存在则返回 `REQUIRES_EXPLICIT_FALLBACK`（不自动切换、不创建 session），否则拒绝。**Hub 不出现 JPEG 或任何具体 codec 名称。**
+  4. 不支持当前 codec -> 用 `CodecRegistration.fallbackPriority` 与已保存的 `ClientCapabilities` 计算所有客户端共同支持的最低 priority codec；priority 相同时按 `codecId` 字典序稳定选择。存在则返回 `JoinDecision.Status.REQUIRES_EXPLICIT_FALLBACK`（不自动切换、不创建 session），否则返回 `JoinDecision.Status.REJECTED`。**Hub 不出现 JPEG 或任何具体 codec 名称。**
 - 第二个客户端 join 时，如果第一个 join 的请求仍未完成，runtime 合并请求；测试断言 fake encoder 只收到一次 `requestSyncPoint`。
-- `drainOne(key)` 调用 session.drainOne；发送失败时 `detach(key)` 后重新抛出，Hub 中不再保留该会话。
-- `detach` 幂等；移除 session 与 capabilities，关闭 transport；同一 key 可在 detach 后重新 join 并绑定新 transport。
+- `drainOne(key)` 调用 session.drainOne；发送失败时会话已自行 detach 并关闭 transport，Hub 只负责从 map 移除该 session，然后重新抛出。
+- `detach` 幂等；移除 session 与 capabilities，并调用 session.detach() 让其关闭 transport；**Hub 不直接调用 `transport.close()`**。同一 key 可在 detach 后重新 join 并绑定新 transport。
 - 广播使用 session map 快照；单个 session 的 `offer` 异常不影响其他 session；不阻塞编码器。
-- `onDescriptorChanged` 通知所有 session 更新描述符；session 对象与 transport 对象不重建。
+- `onDescriptorChanged` 只接受活动 runtime 的通知：`descriptor.getStreamKey()` 必须等于活动流 key，否则忽略；通知所有 session 更新描述符，session 对象与 transport 对象不重建。
 - `getSession` 供测试读取；生产不会通过它修改状态。
 
 - [ ] **Step 1（测试 agent）：写失败测试**
@@ -703,12 +710,13 @@ git commit -m "feat: 添加单活动流运行时"
 - `multipleJoins_coalesceJoinPointRequest`：关闭 fake 自动发射；A、B 先后 join；requestCount 为 1；fake `emitJoin` 后两客户端都能 drain 到该 join。
 - `join_descriptorBeforeFirstAu`：关闭 fake 自动发射；join 后 `hub.drainOne(key)`，事件首项是 `DESCRIPTOR`；fake emit join 后再 drain，事件包含 `ACCESS_UNIT`，顺序固定。
 - `join_duplicateSessionKeyRejected`、`join_streamKeyMismatchRejected`。
-- `join_compatibleClientAttachesSession`。
-- `join_unsupportedClient_rejectedWithoutChangingExisting`。
-- `join_fallbackUsesRegistrationPriorityNotCodecName`：注册 fake（priority 0）、fallbackA（priority 20）、fallbackB（priority 10）；active 为 fake；现有与候选都支持 A/B；返回 fallbackB，证明 Hub 只读元数据。
+- `join_compatibleClientAttachesSession`：`decision.getStatus() == JoinDecision.Status.ACCEPTED`。
+- `join_unsupportedClient_rejectedWithoutChangingExisting`：`getStatus() == JoinDecision.Status.REJECTED`。
+- `join_fallbackUsesRegistrationPriorityNotCodecName`：注册 fake（priority 0）、fallbackA（priority 20）、fallbackB（priority 10）；active 为 fake；现有与候选都支持 A/B；`getStatus() == JoinDecision.Status.REQUIRES_EXPLICIT_FALLBACK` 且 fallback codec 为 B，证明 Hub 只读元数据。
 - `join_fallbackDoesNotAutoSwitch`：返回 fallback 后 active descriptor/epoch 不变，现有 session 引用不变。
-- `broadcast_isolatesSlowClientOverflow`：Hub limits 为 2 个 AU/128 字节；A 不 drain，B 每帧 drain；fake 发 join 后连续发非 join；A 进入 `RESYNCING`，B 全部收到；下一次 join 后 A 恢复。
+- `broadcast_isolatesSlowClientOverflow`：Hub limits 为 2 个 AU/128 字节；A、B 先 drain 初始 descriptor+join，确认两者都进入 `STREAMING`；随后 A 停止 drain，B 继续每帧 drain；fake 连续发非 join，A 队列溢出进入 `RESYNCING`，B 全部收到；下一次 join 后 A 恢复。
 - `descriptorChange_notifiesAllSessionsAndKeepsObjects`。
+- `descriptorChange_fromNonActiveRuntimeIsIgnored`：向 Hub 传入非活动 `streamKey` 的描述符，session 状态/描述符不变。
 - `drainFailure_removesSession`：FakeTransport 抛 IOException，`hub.drainOne` 后 `getSessionCount()==0`。
 - `detach_isIdempotentAndAllowsRejoinWithNewTransport`。
 - `concurrentAttachDetach_doesNotThrowOrLoseSessions`：4 个线程使用各自独立的 `ClientSessionKey`，各 join/detach 100 次，最终 session count 0，异常列表为空。
@@ -850,21 +858,21 @@ git commit -m "feat: 添加客户端媒体状态机"
    - 断言两个 transport 在每个 epoch 的 descriptor 都先于首个 AU；断言 B 没有收到加入前的 AU。
 
 2. `slowClientOverflow_doesNotBlockOtherClient`
-   - Hub limits 为 2 个 AU / 128 字节；A 不 drain，B 每帧 drain。
-   - fake join 后连续发非 join；A 进入 `RESYNCING`、`droppedUnits>0`；B 收到全部帧。
+   - Hub limits 为 2 个 AU / 128 字节；A、B 先 drain 初始 descriptor+join，确认都进入 `STREAMING`。
+   - 随后 A 停止 drain，B 继续每帧 drain；fake 连续发非 join；A 进入 `RESYNCING`、`droppedUnits>0`；B 收到全部帧。
    - fake 再发 join，A drain 后恢复 `STREAMING`；B 不受影响。
    - 断言 Hub 广播无异常；B 的序列连续。
 
 3. `configSwitch_keepsSessionAndTransportObjects`
-   - 记录 A/B 的 `ClientSendSession` 与 `FakeTransport` 引用。
+   - 记录 A/B 的 `ClientSendSession` 与 `FakeTransport` 引用；先 drain 初始 descriptor+join，确认两者都进入 `STREAMING`。
    - `runtime.switchDescriptor` 到 epoch+1、不同 visible size；Hub 通知 session；drain 两个客户端，先出现新 descriptor 事件，再出现新 epoch AU。
    - 断言 runtime/session/transport 引用不变；旧 epoch 普通 AU 不会进入新 session；客户端从 `WAIT_CONFIG`/`WAIT_RANDOM_ACCESS` 恢复到 `STREAMING`。
    - 旧 encoder 在新 join 后释放（通过 fake 的 `closed` 字段或 runtime 测试已覆盖）。
 
 4. `fallbackUsesMetadataAndDoesNotAutoSwitch`
    - 注册 fake（priority 0）、jpeg（priority 100）；active fake；现有 A 支持 fake+jpeg，候选只支持 jpeg。
-   - `hub.join` 返回 `REQUIRES_EXPLICIT_FALLBACK`，codec 为 jpeg；活动流 epoch/descriptor 不变；A 的 session 状态不变。
-   - 另建候选不支持任何共同 codec，返回 `REJECTED`。
+   - `hub.join` 的 `getStatus() == JoinDecision.Status.REQUIRES_EXPLICIT_FALLBACK`，fallback codec 为 jpeg；活动流 epoch/descriptor 不变；A 的 session 状态不变。
+   - 另建候选不支持任何共同 codec，`getStatus() == JoinDecision.Status.REJECTED`。
 
 5. `duplicateEpochSwitch_isRejectedWithoutTouchingSessions`
    - 同 epoch 调用 `switchDescriptor` 抛 `ConfigEpochException`；session/transport 引用与状态不变。
@@ -872,7 +880,7 @@ git commit -m "feat: 添加客户端媒体状态机"
 6. `jpegEmptyConfig_worksEndToEnd`
    - 用 `JpegCodec.registration()` 的 descriptor/decoder/policy + `CapturingJpegEncoderFactory` 构造 registry。
    - join 触发 runtime request（JPEG `requestSyncPoint` 为 no-op，但 Hub 仍必须调用）；随后调用 `JpegEncoder.offerJpegFrame` 产生完整帧。
-   - drain 先 descriptor 后 AU；`ClientMediaSession` 进入 `STREAMING`；`FakeRenderTarget` 收到一个 `DecodedImage`。
+   - drain 先 descriptor 后 AU；`ClientMediaSession` 进入 `STREAMING`；`FakeRenderTarget` 收到一个 `EncodedImageFrame`。
 
 - [ ] **Step 2（测试 agent）：运行并记录红/绿**
 
@@ -880,18 +888,46 @@ Run: `./gradlew :app:testDebugUnitTest --tests "com.obby.android.localscreenshar
 
 Expected: 先出现失败或编译错误；补齐测试支持后，若生产契约有缺陷，记录失败测试名与断言，退回对应 Pro Task 修复并提交 `fix: ...`；修复后重新运行本命令并得到 `BUILD SUCCESSFUL`。
 
-- [ ] **Step 3（集成 agent）：旧路径兼容检查**
-
-Run:
+若 E2E 暴露的是 `core` 生产契约缺陷，修复提交必须同时包含对应的 `app/src/main/java/com/obby/android/localscreenshare/core/...` 生产文件与回归测试，不能只提交测试：
 
 ```bash
-git diff --name-only -- app/src/main/java/com/obby/android/localscreenshare/service \
+git add app/src/main/java/com/obby/android/localscreenshare/core \
+        app/src/test/java/com/obby/android/localscreenshare/core
+git commit -m "fix: 修正编码框架<具体契约问题>"
+```
+
+- [ ] **Step 3（集成 agent）：旧路径兼容检查**
+
+执行**开始时**（Task 1 之前），集成 agent 必须把当时的 `git rev-parse HEAD` 记录到执行记录（例如会话交接记录，不写入仓库）；Task 9 只读取该值，**不得在此处重新取 HEAD**，否则 diff 会假通过：
+
+```bash
+: "${FRAMEWORK_BASE:?must be recorded at execution start}"
+git cat-file -e "$FRAMEWORK_BASE^{commit}"
+```
+
+本 Step 使用该基线，不能只用工作区 diff：
+
+```bash
+git diff --name-only "$FRAMEWORK_BASE"..HEAD -- \
+    app/src/main/java/com/obby/android/localscreenshare/service \
+    app/src/main/java/com/obby/android/localscreenshare/client \
+    app/src/main/java/com/obby/android/localscreenshare/server \
+    app/src/main/proto
+
+git status --porcelain -- \
+    app/src/main/java/com/obby/android/localscreenshare/service \
+    app/src/main/java/com/obby/android/localscreenshare/client \
+    app/src/main/java/com/obby/android/localscreenshare/server \
+    app/src/main/proto
+
+git ls-files --others --exclude-standard -- \
+    app/src/main/java/com/obby/android/localscreenshare/service \
     app/src/main/java/com/obby/android/localscreenshare/client \
     app/src/main/java/com/obby/android/localscreenshare/server \
     app/src/main/proto
 ```
 
-Expected: 输出为空。若不为空，停止并说明是计划外的行为变更，不得提交。
+Expected: 三条命令输出均为空。`git status --porcelain` 与 `git ls-files --others` 用于覆盖未跟踪文件，防止“只跑工作区 diff”造成假通过。若任一输出不为空，停止并说明是计划外的行为变更，不得提交。
 
 Run:
 
@@ -900,7 +936,21 @@ grep -R "Bitmap\|ImageReader\|MediaCodec\|MediaProjection\|android\.graphics\|an
   app/src/main/java/com/obby/android/localscreenshare/core app/src/test/java/com/obby/android/localscreenshare/core || true
 ```
 
-Expected: 生产 `core` 中只允许 `android.view.Surface` 出现在 `Encoder.getInputSurface()` 与 `RenderTarget.getSurface()` 签名；不允许上述实际调用。测试中出现字符串 `MediaCodec` 只允许在文档/断言名称，不允许调用 Android API。
+Expected: 生产 `core` 中只允许下列 Surface 签名：`Encoder.getInputSurface()`、`JpegEncoder.getInputSurface()`（返回 null 的 override）、`RenderTarget.getSurface()`、`StreamRuntime.getInputSurface()`；不允许上述实际调用。测试中出现字符串 `MediaCodec` 只允许在文档/断言名称，不允许调用 Android API。
+
+Run:
+
+```bash
+grep -R -l "android\.view\.Surface" app/src/main/java/com/obby/android/localscreenshare/core | sort
+# Expected exactly:
+# core/codec/Encoder.java
+# core/codec/jpeg/JpegEncoder.java
+# core/render/RenderTarget.java
+# core/stream/StreamRuntime.java
+
+grep -R -n "Surface getInputSurface\|Surface getSurface" app/src/main/java/com/obby/android/localscreenshare/core
+# Expected exactly 4 signature lines in the 4 files above; no other Surface usage.
+```
 
 Run:
 
@@ -929,11 +979,13 @@ Expected: 两条命令均 `BUILD SUCCESSFUL`；没有执行 `connectedAndroidTes
 - 没有 codec 名称分支；JPEG 差异只在 `core.codec.jpeg`；Hub fallback 只读 `fallbackPriority`。
 - 每个 AU 有 `configEpoch`，普通旧 epoch AU 被拒；sequence 是 epoch 内语义。
 - 描述符先于同 epoch 首 AU；transport 事件顺序测试通过。
-- JPEG 溢出不 resync；参考帧溢出/过期 resync；慢 send 不阻塞 offer。
+- JPEG 溢出不 resync；参考帧溢出、单个 AU 超限或过期 resync；慢 send 不阻塞 offer。
+- `transport.close()` 只由 `ClientSendSession` 调用；Hub 只移除 session，不直接关 transport。
+- `StreamHub.onDescriptorChanged` 只接受活动 runtime 的 streamKey；非活动描述符被忽略。
 - 无 Packetizer/RTP 契约；无 MediaCodec/H264/HEVC/AV1 实现；无多流调度。
 - `build.gradle`、`gradle/libs.versions.toml`、proto、`LssService`、`LssClientService`、`LssServer` 无改动。
-- 核心生产代码无 Android Log/OS/图形/媒体实现依赖；无 Java 9+ 便捷 API。
-- 测试只使用 fake codec/fake transport/fake RenderTarget/JVM。
+- 核心生产代码无 Android Log/OS/图形/媒体实现依赖；无 Java 9+ 便捷 API；Surface 白名单与计数检查通过。
+- 测试使用 fake codec/fake transport/fake RenderTarget/JVM，或纯 JVM 的 JPEG 参考适配类；不调用 Android 设备 API。
 
 - [ ] **Step 6（集成 agent）：提交 E2E 测试**
 
@@ -946,21 +998,22 @@ git commit -m "test: 添加编码框架 JVM 端到端测试"
 - [ ] **Step 7（集成 agent）：更新任务看板**
 
 在本 Task 全量验证通过后，更新 `docs/task-board.md`：
-- `TB-FW-001` 至 `TB-FW-008` 中实际完成且验证通过的子项，状态改为“已完成”，证据写明确切的 Gradle 命令、通过测试类与提交号。
-- 未实现项（H.264/HEVC/AV1/RTP/设备验证）保持“待办”或“等待验证”，不得写成已完成。
-- `TB-DOC-008` 保持“计划修订待复审”，直到用户审核；若进入执行，再改为“进行中”。
+- `TB-FW-001` 中实际完成且验证通过的核心契约/静态注册子项，状态改为“已完成”，证据写明确切的 Gradle 命令、通过测试类与提交号。
+- **`TB-FW-002` 只能标为“部分完成”**：本批次只完成 JPEG 独立帧参考适配与 fake/JVM 契约测试；像素获取迁移、Service/UI 接线、真实设备验证与旧路径切换均未完成。
+- `TB-FW-003` 至 `TB-FW-008` 中未实现项（H.264/HEVC/AV1/RTP/设备验证/切换编排）保持“待办”或“等待验证”，不得写成已完成。
+- `TB-DOC-008` 在执行期间改为“进行中”；完成后按其实际验证证据更新，不能因本计划修订自动标记完成。
 - 提交：`git add docs/task-board.md && git commit -m "docs: 更新编码框架执行状态"`。
 
 ## 自审清单
 
 - **范围诚实性：** 本批次只实现隔离核心框架、JPEG 独立帧参考适配、fake/JVM 测试；不接线现有投屏，不宣称 H.264/MediaCodec/RTP/多流或真实设备已验证。
 - **Spec 覆盖：** 覆盖静态 SPI、RenderTarget/DecoderFactory、描述符/参数、AU epoch/sequence、描述符下发顺序、可加入点、六状态、慢客户端、切换、显式 fallback；未覆盖项在各 Task 和 Global Constraints 明确排除。
-- **类型闭合：** 所有测试引用的类型、方法、构造器都在 Task 的 Produces 或测试支持中定义；无 Packetizer/DecoderOutput/TransportKind 残留；`ClientSessionKey`、`QueuePollResult`、`DecodedImage` 等均有明确归属。
+- **类型闭合：** 所有测试引用的类型、方法、构造器都在 Task 的 Produces 或测试支持中定义；无 Packetizer/DecoderOutput/TransportKind 残留；`ClientSessionKey`、`QueuePollResult`、`EncodedImageFrame` 等均有明确归属。
 - **接口返回类型：** `onDescriptor`、`onAccessUnit`、`drainOne`、`requestJoinPoint`、`join` 的返回类型在各 Task 间一致；`drainOne` 的 IOException 由 Hub 捕获并移除会话。
-- **执行可达性：** 每个 Task 都有红测命令、Pro 实现、绿测命令、审查和提交；E2E 的 drain 顺序和 transport 事件顺序明确；生产修复有独立 `fix:` 提交点。
-- **Review Focus：** 空配置、未知 codec、epoch/sequence、描述符顺序、队列分流、null/空 payload、并发/慢发送、RenderTarget/Surface、通用 fallback、核心 JVM 化均有测试或审查步骤。
+- **执行可达性：** 每个 Task 都有红测命令、Pro 实现、绿测命令、审查和提交；E2E 的 drain 顺序和 transport 事件顺序明确；慢客户端测试先 drain 初始 descriptor+join 进入 `STREAMING` 再停止 drain；旧路径检查使用 `FRAMEWORK_BASE..HEAD` + `git status --porcelain` + 未跟踪文件检查；生产修复提交包含 `core` 文件。
+- **Review Focus：** 空配置、未知 codec、epoch/sequence、描述符顺序、队列分流（含参考帧单个 AU 超限 resync）、null/空 payload、并发/慢发送、RenderTarget/Surface 白名单与计数、通用 fallback、核心 JVM 化均有测试或审查步骤。
 - **比例：** 计划给出接口、关键语义、测试名称与命令，不复制生产实现；具体算法留给 Pro。
 
 ## Execution Handoff
 
-计划修订后先等待用户复审。用户已指定执行方式：Pro 写核心生产代码且不编译，当前侧 agent 写测试、fixtures、集成、验证、文档与提交。复审通过后按 Task 1 → Task 9 顺序执行；每个 Task 的失败测试必须先于 Pro 实现，且每个 Task 必须通过审查后才提交。端到端阶段若发现契约缺陷，先在 owning Task 修复并提交 `fix: ...`，不得在测试中绕过。
+计划修订后先等待用户复审。用户已指定执行方式：Pro 写核心生产代码且不编译，当前侧 agent 写测试、fixtures、集成、验证、文档与提交。复审通过后按 Task 1 → Task 9 顺序执行；每个 Task 的失败测试必须先于 Pro 实现，且每个 Task 必须通过审查后才提交。执行开始由集成 agent 记录 `FRAMEWORK_BASE=$(git rev-parse HEAD)` 并在 Task 9 使用；端到端阶段若发现契约缺陷，先在 owning Task 修复并提交包含 `core` 生产文件的 `fix: ...`，不得在测试中绕过。

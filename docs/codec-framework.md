@@ -119,9 +119,9 @@ flowchart LR
 
 | 扩展点 | 输入 | 职责 | 公共层如何使用 |
 | --- | --- | --- | --- |
-| `CodecDescriptor` | 无（静态声明） | 声明 `codecId`、MIME、码流格式、配置部件种类、是否需要 Surface 输入等静态事实 | 用于协商、日志与工厂查找；不包含运行参数，不包含设备能力 |
+| `CodecDescriptor` | 无（静态声明） | 声明 `codecId`、MIME、码流格式、配置部件种类、是否需要 Surface 输入/输出等静态事实 | 用于协商、日志与工厂查找；不包含运行参数，不包含设备能力 |
 | `EncoderFactory` | 描述符、初始参数 | 创建并预热编码器，输出访问单元与配置部件；编码输入 Surface 由 `Encoder.getInputSurface()` 暴露（可为 null） | 由 `StreamRuntime` 调用并获取输入 Surface；公共层不接触 `MediaCodec` 细节 |
-| `DecoderFactory` | 描述符、`RenderTarget`、配置部件 | 创建或重建解码器，接收访问单元；MediaCodec 类解码器输出到 `RenderTarget` 的 Surface，JPEG 类通过 `RenderTarget.renderImage` 输出；解码/渲染错误统一为 `DecoderException` | 由 `ClientMediaSession` 调用；公共层不接触解码器细节，也不把访问单元当作解码帧 |
+| `DecoderFactory` | 描述符、`RenderTarget`、配置部件 | 创建或重建解码器，接收访问单元；MediaCodec 类解码器输出到 `RenderTarget` 的 Surface，JPEG 类通过 `RenderTarget.renderEncodedImage(EncodedImageFrame)` 输出压缩图像帧；解码/渲染错误统一为 `DecoderException` | 由 `ClientMediaSession` 调用；公共层不接触解码器细节，也不把访问单元当作解码帧；显示侧负责解码压缩帧 |
 | `CodecPolicy` | 描述符、访问单元元数据 | 判定可加入点、关键帧请求语义、队列溢出后的重同步方式、epoch 推进条件 | 发送会话与客户端状态机按策略执行，不硬编码 codec 规则 |
 | `PacketizerFactory(codec, transport)` | `codecId`、传输类型 | 为需要封包的传输生成封包器，例如 RTP 分片与时间戳 | 只有需要分片的传输才解析负载；TCP 完整访问单元路径不使用 |
 
@@ -197,6 +197,7 @@ flowchart TB
 - 描述符必须是纯数据；不得持有编码器、解码器、Surface 或线程。
 - 客户端只按描述符配置解码器；不得从 MIME 猜测 profile/level，也不得从分辨率猜测对齐。
 - 描述符与配置部件必须成组缓存、成组发送；不能让客户端拿到新描述符却配旧配置。
+- 本阶段 `visible size` 变化也生成新描述符并推进 `configEpoch`，可能触发客户端重配；**不增加同 epoch 的显示参数更新通道**。是否放宽为纯显示变化，必须由后续实测与 `CodecPolicy` 显式裁决。
 
 ### 5.2 `StreamParameters`
 
@@ -366,7 +367,7 @@ flowchart LR
 
 | codec 类型 | 溢出后的允许动作 | 禁止动作 |
 | --- | --- | --- |
-| 参考帧编码（H.264/HEVC/AV1） | 队列溢出或过期导致可解码性破坏时，清空队列并进入 `RESYNCING`；只从下一个同 epoch 可加入点恢复；按策略等待或断开重连 | 任意丢中间 P/B 帧后继续发送；无限缓存；阻塞编码器 |
+| 参考帧编码（H.264/HEVC/AV1） | 队列溢出、单个 AU 超限或过期导致可解码性破坏时，清空队列并进入 `RESYNCING`；只从下一个同 epoch 可加入点恢复；按策略等待或断开重连 | 任意丢中间 P/B 帧后继续发送；无限缓存；阻塞编码器 |
 | 非参考帧编码（JPEG） | 只保留最新完整帧；丢弃旧帧与不完整帧；溢出或过期后继续发送最新完整帧，**不进入无意义的 `RESYNCING`** | 发送截断帧；为慢客户端积压大量旧帧；把参考帧的 `RESYNCING` 规则套到 JPEG |
 
 - 队列上限按字节数与时间共同约束，具体阈值需实测后确定，本文不预设数值。
@@ -452,7 +453,7 @@ sequenceDiagram
 | 可加入点 | H.264 只从明确 IDR 加入；HEVC 只从明确安全 IDR 加入；CRA/RASL 不被接受；JPEG 每个完整帧可加入；非可加入点不会被当作接入点，客户端不会从 GOP 中间开始解码 |
 | 客户端状态 | 六个状态转换完整；`RESYNCING` 只能通过同 epoch 可加入点或在 `WAIT_CONFIG` 后恢复；每个 AU（含普通 AU）校验 `configEpoch`；客户端超时在本阶段明确延后 |
 | 多客户端 | 新客户端加入不影响已有客户端的描述符、epoch 与队列；关键帧请求合并；不兼容时按通用元数据显式降级或拒绝，不静默降级 |
-| 慢客户端 | 有界队列生效；参考帧溢出或过期进入 `RESYNCING`；JPEG 只保留最新完整帧并继续；编码器不被阻塞 |
+| 慢客户端 | 有界队列生效；参考帧溢出、单个 AU 超限或过期进入 `RESYNCING`；JPEG 只保留最新完整帧并继续；编码器不被阻塞 |
 | 编码切换 | 网络、认证、控制会话不重建；客户端保持最后一帧；新 epoch 描述符先于新 AU；可加入点到达前不显示新流；旧编码器在恢复后释放 |
 | 传输解耦 | TCP 传完整访问单元；媒体传输能下发描述符，且同 epoch 描述符先于首个 AU；RTP 封包器只在 `(codec, transport)` 适配层；WebRTC 不被强行套入自定义管线 |
 | 回退 | 每个阶段都有可用的上一阶段回退路径；协议版本不兼容时明确拒绝或降级，不静默失败 |
