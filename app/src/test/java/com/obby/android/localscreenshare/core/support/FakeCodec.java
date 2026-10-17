@@ -53,6 +53,10 @@ public final class FakeCodec {
 
     private boolean failNextEncoderCreate;
 
+    private boolean failNextEncoderStart;
+
+    private int encoderCreateCount;
+
     public FakeCodec(String codecId, int fallbackPriority, boolean surfaceInputRequired,
                      boolean surfaceOutputRequired) {
         this.codecId = codecId;
@@ -87,6 +91,26 @@ public final class FakeCodec {
         this.failNextEncoderCreate = true;
     }
 
+    public void failNextEncoderStart() {
+        this.failNextEncoderStart = true;
+    }
+
+    public int getEncoderCreateCount() {
+        return encoderCreateCount;
+    }
+
+    public void failNextStop() {
+        requireEncoder().failNextStop();
+    }
+
+    public void failNextRequestSyncPoint() {
+        requireEncoder().failNextRequestSyncPoint(null);
+    }
+
+    public void failNextRequestSyncPoint(Runnable beforeFailure) {
+        requireEncoder().failNextRequestSyncPoint(beforeFailure);
+    }
+
     public int getRequestCount() {
         return lastEncoder == null ? 0 : lastEncoder.getRequestCount();
     }
@@ -119,9 +143,12 @@ public final class FakeCodec {
                     failNextEncoderCreate = false;
                     throw new IllegalStateException("injected encoder creation failure");
                 }
+                boolean failOnStart = failNextEncoderStart;
+                failNextEncoderStart = false;
                 FakeEncoder encoder = new FakeEncoder(streamKey, descriptor, parameters, output,
-                        autoEmitJoinOnRequest);
+                        autoEmitJoinOnRequest, failOnStart);
                 lastEncoder = encoder;
+                encoderCreateCount++;
                 return encoder;
             }
         };
@@ -178,6 +205,14 @@ public final class FakeCodec {
 
         private boolean autoEmitJoinOnRequest;
 
+        private boolean failOnStart;
+
+        private boolean failOnStop;
+
+        private boolean failNextRequestSyncPoint;
+
+        private Runnable beforeNextRequestSyncPointFailure;
+
         private boolean started;
 
         private boolean stopped;
@@ -194,21 +229,30 @@ public final class FakeCodec {
 
         private FakeEncoder(StreamKey streamKey, StreamDescriptor descriptor,
                             StreamParameters parameters, EncoderOutput output,
-                            boolean autoEmitJoinOnRequest) {
+                            boolean autoEmitJoinOnRequest, boolean failOnStart) {
             this.streamKey = streamKey;
             this.descriptor = descriptor;
             this.lastParameters = parameters;
             this.output = output;
             this.autoEmitJoinOnRequest = autoEmitJoinOnRequest;
+            this.failOnStart = failOnStart;
         }
 
         @Override
         public void start() {
+            if (failOnStart) {
+                failOnStart = false;
+                throw new IllegalStateException("injected encoder start failure");
+            }
             started = true;
         }
 
         @Override
         public void stop() {
+            if (failOnStop) {
+                failOnStop = false;
+                throw new IllegalStateException("injected encoder stop failure");
+            }
             stopped = true;
         }
 
@@ -225,6 +269,15 @@ public final class FakeCodec {
         @Override
         public void requestSyncPoint() {
             requestCount++;
+            if (failNextRequestSyncPoint) {
+                failNextRequestSyncPoint = false;
+                Runnable beforeFailure = beforeNextRequestSyncPointFailure;
+                beforeNextRequestSyncPointFailure = null;
+                if (beforeFailure != null) {
+                    beforeFailure.run();
+                }
+                throw new IllegalStateException("injected sync point failure");
+            }
             if (autoEmitJoinOnRequest) {
                 emitJoin(new byte[]{0x01});
             }
@@ -237,6 +290,15 @@ public final class FakeCodec {
 
         public void setAutoEmitJoinOnRequest(boolean autoEmitJoinOnRequest) {
             this.autoEmitJoinOnRequest = autoEmitJoinOnRequest;
+        }
+
+        public void failNextStop() {
+            this.failOnStop = true;
+        }
+
+        public void failNextRequestSyncPoint(Runnable beforeFailure) {
+            this.failNextRequestSyncPoint = true;
+            this.beforeNextRequestSyncPointFailure = beforeFailure;
         }
 
         public int getRequestCount() {

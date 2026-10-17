@@ -89,12 +89,17 @@ public final class StreamRuntime {
             CodecRegistration registration = registry.require(descriptor.getCodecId());
             Encoder encoder = registration.getEncoderFactory().create(streamKey, descriptor,
                     parameters, outputForGeneration(generation));
-            if (registration.getDescriptor().isSurfaceInputRequired()
-                    && encoder.getInputSurface() == null) {
-                throw new IllegalStateException(
-                        "surface input required but encoder returned a null surface");
+            try {
+                if (registration.getDescriptor().isSurfaceInputRequired()
+                        && encoder.getInputSurface() == null) {
+                    throw new IllegalStateException(
+                            "surface input required but encoder returned a null surface");
+                }
+                encoder.start();
+            } catch (RuntimeException e) {
+                encoder.close();
+                throw e;
             }
-            encoder.start();
             activeEncoder = encoder;
         }
     }
@@ -152,6 +157,9 @@ public final class StreamRuntime {
 
     public void updateParameters(StreamParameters newParameters) {
         synchronized (lock) {
+            if (closed) {
+                throw new IllegalStateException("runtime is closed");
+            }
             if (newParameters == null) {
                 throw new IllegalArgumentException("parameters must not be null");
             }
@@ -164,6 +172,7 @@ public final class StreamRuntime {
 
     public boolean requestJoinPoint() {
         Encoder encoder;
+        long requestGeneration;
         synchronized (lock) {
             if (closed || activeEncoder == null) {
                 return false;
@@ -177,8 +186,18 @@ public final class StreamRuntime {
             }
             pendingJoin = true;
             encoder = activeEncoder;
+            requestGeneration = generation;
         }
-        encoder.requestSyncPoint();
+        try {
+            encoder.requestSyncPoint();
+        } catch (RuntimeException e) {
+            synchronized (lock) {
+                if (requestGeneration == generation) {
+                    pendingJoin = false;
+                }
+            }
+            throw e;
+        }
         return true;
     }
 
@@ -188,6 +207,9 @@ public final class StreamRuntime {
         }
         List<StreamRuntimeListener> descriptorSnapshot;
         synchronized (lock) {
+            if (closed) {
+                throw new IllegalStateException("runtime is closed");
+            }
             if (!next.getStreamKey().equals(streamKey)) {
                 throw new IllegalArgumentException("stream key mismatch");
             }
@@ -201,7 +223,7 @@ public final class StreamRuntime {
 
             long nextGeneration = generation + 1;
             CodecRegistration registration = registry.require(next.getCodecId());
-            Encoder newEncoder;
+            Encoder newEncoder = null;
             try {
                 newEncoder = registration.getEncoderFactory().create(streamKey, next, parameters,
                         outputForGeneration(nextGeneration));
@@ -212,14 +234,22 @@ public final class StreamRuntime {
                 }
                 newEncoder.start();
             } catch (RuntimeException e) {
+                if (newEncoder != null) {
+                    newEncoder.close();
+                }
                 throw new CodecSwitchException(
                         "failed to prewarm encoder for epoch " + next.getConfigEpoch(), e);
             }
 
             Encoder old = activeEncoder;
-            if (old != null) {
-                old.stop();
-                retiredEncoders.add(old);
+            try {
+                if (old != null) {
+                    old.stop();
+                    retiredEncoders.add(old);
+                }
+            } catch (RuntimeException e) {
+                newEncoder.close();
+                throw e;
             }
             activeEncoder = newEncoder;
             generation = nextGeneration;

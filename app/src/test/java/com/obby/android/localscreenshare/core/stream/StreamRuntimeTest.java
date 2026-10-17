@@ -388,16 +388,264 @@ public class StreamRuntimeTest {
         assertTrue(runtime.isClosed());
     }
 
+    @Test
+    public void close_switchDescriptorRejectedWithoutCreatingEncoder() {
+        FakeCodec fake = new FakeCodec(FakeCodec.DEFAULT_CODEC_ID, 0, false, false);
+        StreamRuntime runtime = newRuntime(fake, new MutableClock(), descriptor(1, 64, 48));
+        runtime.start();
+        FakeCodec.FakeEncoder activeEncoder = fake.getLastEncoder();
+        int createsBeforeClose = fake.getEncoderCreateCount();
+        runtime.close();
+
+        try {
+            runtime.switchDescriptor(descriptor(2, 32, 24));
+            fail("switchDescriptor after close must be rejected");
+        } catch (IllegalStateException expected) {
+            assertNotNull(expected);
+        }
+
+        assertEquals(createsBeforeClose, fake.getEncoderCreateCount());
+        assertSame(activeEncoder, fake.getLastEncoder());
+        assertEquals(1, runtime.getConfigEpoch());
+        assertTrue(runtime.isClosed());
+    }
+
+    @Test
+    public void close_updateParametersRejectedWithoutChangingState() {
+        FakeCodec fake = new FakeCodec(FakeCodec.DEFAULT_CODEC_ID, 0, false, false);
+        StreamRuntime runtime = newRuntime(fake, new MutableClock(), descriptor(1, 64, 48));
+        runtime.start();
+        FakeCodec.FakeEncoder activeEncoder = fake.getLastEncoder();
+        StreamParameters before = runtime.getParameters();
+        runtime.close();
+
+        try {
+            runtime.updateParameters(new StreamParameters(123_000, 7, 250));
+            fail("updateParameters after close must be rejected");
+        } catch (IllegalStateException expected) {
+            assertNotNull(expected);
+        }
+
+        assertEquals(before.getTargetBitrateBps(),
+                runtime.getParameters().getTargetBitrateBps());
+        assertEquals(before.getFrameRateHint(), runtime.getParameters().getFrameRateHint());
+        assertEquals(before.getKeyFrameIntervalMs(),
+                runtime.getParameters().getKeyFrameIntervalMs());
+        assertEquals(before.getTargetBitrateBps(),
+                activeEncoder.getLastParameters().getTargetBitrateBps());
+    }
+
+    @Test
+    public void requestJoinPoint_syncPointFailureRollsBackPendingAndAllowsRetry() {
+        FakeCodec fake = new FakeCodec(FakeCodec.DEFAULT_CODEC_ID, 0, false, false);
+        fake.setAutoEmitJoinOnRequest(false);
+        StreamRuntime runtime = newRuntime(fake, new MutableClock(), descriptor(1, 64, 48));
+        RecordingListener listener = new RecordingListener();
+        runtime.addListener(listener);
+        runtime.start();
+
+        fake.failNextRequestSyncPoint();
+        try {
+            runtime.requestJoinPoint();
+            fail("requestSyncPoint failure must propagate");
+        } catch (IllegalStateException expected) {
+            assertNotNull(expected);
+        }
+        assertEquals(1, fake.getRequestCount());
+
+        assertTrue(runtime.requestJoinPoint());
+        assertEquals(2, fake.getRequestCount());
+        assertTrue(listener.accessUnits.isEmpty());
+    }
+
+    @Test
+    public void requestJoinPoint_staleSyncPointFailureDoesNotClearNewEpochPending() {
+        FakeCodec fake = new FakeCodec(FakeCodec.DEFAULT_CODEC_ID, 0, false, false);
+        fake.setAutoEmitJoinOnRequest(false);
+        StreamRuntime runtime = newRuntime(fake, new MutableClock(), descriptor(1, 64, 48));
+        runtime.start();
+        FakeCodec.FakeEncoder oldEncoder = fake.getLastEncoder();
+
+        final StreamDescriptor next = descriptor(2, 32, 24);
+        fake.failNextRequestSyncPoint(() -> runtime.switchDescriptor(next));
+        try {
+            runtime.requestJoinPoint();
+            fail("requestSyncPoint failure must propagate");
+        } catch (IllegalStateException expected) {
+            assertNotNull(expected);
+        }
+
+        FakeCodec.FakeEncoder currentEncoder = fake.getLastEncoder();
+        assertNotSame(oldEncoder, currentEncoder);
+        assertEquals(2, runtime.getConfigEpoch());
+        assertTrue(oldEncoder.isStopped());
+        assertEquals(1, currentEncoder.getRequestCount());
+
+        assertFalse(runtime.requestJoinPoint());
+        assertEquals(1, currentEncoder.getRequestCount());
+    }
+
+    @Test
+    public void start_surfaceValidationFailure_closesRejectedEncoder() {
+        FakeCodec fake = new FakeCodec(FakeCodec.DEFAULT_CODEC_ID, 0, true, false);
+        StreamRuntime runtime = newRuntime(fake, new MutableClock(), descriptor(1, 64, 48));
+
+        try {
+            runtime.start();
+            fail("surface validation failure must abort start");
+        } catch (IllegalStateException expected) {
+            assertNotNull(expected);
+        }
+
+        FakeCodec.FakeEncoder encoder = fake.getLastEncoder();
+        assertNotNull(encoder);
+        assertFalse(encoder.isStarted());
+        assertTrue(encoder.isClosed());
+        assertEquals(1, fake.getEncoderCreateCount());
+        assertNull(runtime.getInputSurface());
+    }
+
+    @Test
+    public void start_encoderStartFailure_closesEncoder() {
+        FakeCodec fake = new FakeCodec(FakeCodec.DEFAULT_CODEC_ID, 0, false, false);
+        StreamRuntime runtime = newRuntime(fake, new MutableClock(), descriptor(1, 64, 48));
+        fake.failNextEncoderStart();
+
+        try {
+            runtime.start();
+            fail("encoder start failure must propagate");
+        } catch (IllegalStateException expected) {
+            assertNotNull(expected);
+        }
+
+        FakeCodec.FakeEncoder encoder = fake.getLastEncoder();
+        assertNotNull(encoder);
+        assertFalse(encoder.isStarted());
+        assertTrue(encoder.isClosed());
+        assertNull(runtime.getInputSurface());
+    }
+
+    @Test
+    public void switchDescriptor_surfaceValidationFailure_closesNewEncoderAndKeepsOld() {
+        FakeCodec oldFake = new FakeCodec("fake-old", 0, false, false);
+        FakeCodec newFake = new FakeCodec("fake-new", 0, true, false);
+        CodecRegistry registry = new CodecRegistry();
+        registry.register(oldFake.registration());
+        registry.register(newFake.registration());
+        StreamDescriptor oldDescriptor = descriptor(1, "fake-old", 64, 48);
+        StreamRuntime runtime = newRuntime(registry, new MutableClock(), oldDescriptor);
+        RecordingListener listener = new RecordingListener();
+        runtime.addListener(listener);
+        runtime.start();
+        FakeCodec.FakeEncoder oldEncoder = oldFake.getLastEncoder();
+
+        try {
+            runtime.switchDescriptor(descriptor(2, "fake-new", 32, 24));
+            fail("surface validation failure must abort the switch");
+        } catch (CodecSwitchException expected) {
+            assertNotNull(expected.getCause());
+        }
+
+        FakeCodec.FakeEncoder rejectedEncoder = newFake.getLastEncoder();
+        assertNotNull(rejectedEncoder);
+        assertFalse(rejectedEncoder.isStarted());
+        assertTrue(rejectedEncoder.isClosed());
+        assertSame(oldEncoder, oldFake.getLastEncoder());
+        assertFalse(oldEncoder.isStopped());
+        assertFalse(oldEncoder.isClosed());
+        assertEquals(1, runtime.getConfigEpoch());
+        assertEquals(oldDescriptor.getConfigHash(), runtime.getDescriptor().getConfigHash());
+
+        byte[] payload = new byte[]{0x51};
+        oldEncoder.emitNonJoin(payload);
+        assertEquals(1, listener.accessUnits.size());
+        assertArrayEquals(payload, listener.accessUnits.get(0).getPayload());
+    }
+
+    @Test
+    public void switchDescriptor_newEncoderStartFailure_closesNewAndKeepsOld() {
+        FakeCodec fake = new FakeCodec(FakeCodec.DEFAULT_CODEC_ID, 0, false, false);
+        StreamRuntime runtime = newRuntime(fake, new MutableClock(), descriptor(1, 64, 48));
+        RecordingListener listener = new RecordingListener();
+        runtime.addListener(listener);
+        runtime.start();
+        FakeCodec.FakeEncoder oldEncoder = fake.getLastEncoder();
+        fake.failNextEncoderStart();
+
+        try {
+            runtime.switchDescriptor(descriptor(2, 32, 24));
+            fail("encoder start failure must abort the switch");
+        } catch (CodecSwitchException expected) {
+            assertNotNull(expected.getCause());
+        }
+
+        FakeCodec.FakeEncoder rejectedEncoder = fake.getLastEncoder();
+        assertNotSame(oldEncoder, rejectedEncoder);
+        assertFalse(rejectedEncoder.isStarted());
+        assertTrue(rejectedEncoder.isClosed());
+        assertFalse(oldEncoder.isStopped());
+        assertFalse(oldEncoder.isClosed());
+        assertEquals(1, runtime.getConfigEpoch());
+
+        byte[] payload = new byte[]{0x52};
+        oldEncoder.emitNonJoin(payload);
+        assertEquals(1, listener.accessUnits.size());
+        assertArrayEquals(payload, listener.accessUnits.get(0).getPayload());
+    }
+
+    @Test
+    public void switchDescriptor_oldStopFailure_closesNewEncoderAndKeepsOldActive() {
+        FakeCodec fake = new FakeCodec(FakeCodec.DEFAULT_CODEC_ID, 0, false, false);
+        StreamRuntime runtime = newRuntime(fake, new MutableClock(), descriptor(1, 64, 48));
+        RecordingListener listener = new RecordingListener();
+        runtime.addListener(listener);
+        runtime.start();
+        FakeCodec.FakeEncoder oldEncoder = fake.getLastEncoder();
+        fake.failNextStop();
+
+        try {
+            runtime.switchDescriptor(descriptor(2, 32, 24));
+            fail("old encoder stop failure must abort the switch");
+        } catch (RuntimeException expected) {
+            assertNotNull(expected);
+        }
+
+        FakeCodec.FakeEncoder rejectedEncoder = fake.getLastEncoder();
+        assertNotSame(oldEncoder, rejectedEncoder);
+        assertTrue(rejectedEncoder.isStarted());
+        assertTrue(rejectedEncoder.isClosed());
+        assertFalse(oldEncoder.isStopped());
+        assertFalse(oldEncoder.isClosed());
+        assertEquals(1, runtime.getConfigEpoch());
+
+        byte[] oldPayload = new byte[]{0x53};
+        byte[] stalePayload = new byte[]{0x54};
+        oldEncoder.emitNonJoin(oldPayload);
+        rejectedEncoder.emit(1, false, stalePayload);
+        assertEquals(1, listener.accessUnits.size());
+        assertArrayEquals(oldPayload, listener.accessUnits.get(0).getPayload());
+    }
+
     private static StreamRuntime newRuntime(FakeCodec fake, MutableClock clock,
                                             StreamDescriptor descriptor) {
         CodecRegistry registry = new CodecRegistry();
         registry.register(fake.registration());
+        return newRuntime(registry, clock, descriptor);
+    }
+
+    private static StreamRuntime newRuntime(CodecRegistry registry, MutableClock clock,
+                                            StreamDescriptor descriptor) {
         return new StreamRuntime(registry, STREAM_KEY, descriptor, StreamParameters.DEFAULT,
                 clock, JOIN_INTERVAL_MS);
     }
 
     private static StreamDescriptor descriptor(int configEpoch, int width, int height) {
-        return StreamDescriptor.builder(STREAM_KEY, configEpoch, FakeCodec.DEFAULT_CODEC_ID,
+        return descriptor(configEpoch, FakeCodec.DEFAULT_CODEC_ID, width, height);
+    }
+
+    private static StreamDescriptor descriptor(int configEpoch, String codecId,
+                                               int width, int height) {
+        return StreamDescriptor.builder(STREAM_KEY, configEpoch, codecId,
                 FakeCodec.DEFAULT_MIME, BitstreamFormat.ANNEX_B)
                 .codedSize(width, height)
                 .visibleSize(width, height)
