@@ -57,6 +57,8 @@ public final class FakeCodec {
 
     private int encoderCreateCount;
 
+    private int decoderCreateCount;
+
     public FakeCodec(String codecId, int fallbackPriority, boolean surfaceInputRequired,
                      boolean surfaceOutputRequired) {
         this.codecId = codecId;
@@ -97,6 +99,10 @@ public final class FakeCodec {
 
     public int getEncoderCreateCount() {
         return encoderCreateCount;
+    }
+
+    public int getDecoderCreateCount() {
+        return decoderCreateCount;
     }
 
     public void failNextStop() {
@@ -161,6 +167,7 @@ public final class FakeCodec {
                                   RenderTarget renderTarget) {
                 FakeDecoder decoder = new FakeDecoder(streamKey, descriptor, renderTarget);
                 lastDecoder = decoder;
+                decoderCreateCount++;
                 return decoder;
             }
         };
@@ -368,6 +375,10 @@ public final class FakeCodec {
 
         private boolean closed;
 
+        private int configureCount;
+
+        private int closeCount;
+
         private FakeDecoder(StreamKey streamKey, StreamDescriptor descriptor,
                             RenderTarget renderTarget) {
             this.streamKey = streamKey;
@@ -378,6 +389,7 @@ public final class FakeCodec {
         @Override
         public void configure(StreamDescriptor descriptor) {
             this.descriptor = descriptor;
+            configureCount++;
         }
 
         @Override
@@ -395,6 +407,7 @@ public final class FakeCodec {
         @Override
         public void close() {
             closed = true;
+            closeCount++;
         }
 
         public void failNextDecode() {
@@ -411,6 +424,18 @@ public final class FakeCodec {
 
         public List<EncodedAccessUnit> getDecoded() {
             return Collections.unmodifiableList(decoded);
+        }
+
+        public RenderTarget getRenderTarget() {
+            return renderTarget;
+        }
+
+        public int getConfigureCount() {
+            return configureCount;
+        }
+
+        public int getCloseCount() {
+            return closeCount;
         }
 
         public boolean isClosed() {

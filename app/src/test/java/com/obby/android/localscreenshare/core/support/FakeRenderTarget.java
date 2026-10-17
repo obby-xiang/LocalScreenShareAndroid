@@ -16,6 +16,8 @@ public final class FakeRenderTarget implements RenderTarget {
 
     private final List<EncodedImageFrame> images = new ArrayList<>();
 
+    private int closeCount;
+
     @Override
     public Surface getSurface() {
         return null;
@@ -31,5 +33,13 @@ public final class FakeRenderTarget implements RenderTarget {
 
     public List<EncodedImageFrame> getImages() {
         return Collections.unmodifiableList(images);
+    }
+
+    public void close() {
+        closeCount++;
+    }
+
+    public int getCloseCount() {
+        return closeCount;
     }
 }
