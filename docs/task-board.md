@@ -1,7 +1,7 @@
 # 任务看板
 
 > 用途：让作者和 AI 在开始工作前快速确认“现在做什么、接下来做什么、哪些还没验证”，不替代设计文档和验收标准。
-> 当前基线：文档体系已完成（提交 `7a8a05d`）；CI 依赖仓库顺序问题已修复（提交 `302e604`），CI 修复与验证证据已记录（提交 `2aa5bbf`）；此前已补齐采集与多客户端裁决（提交 `f7c7a5b`）；本轮修订设备能力分档裁决（本次文档提交），明确 API 25 是兼容下限而非能力上限、车机只是场景之一。代码优化尚未开始，当前没有进行中的代码任务。
+> 当前基线：文档体系已完成（提交 `7a8a05d`）；CI 依赖仓库顺序问题已修复（提交 `302e604`），CI 修复与验证证据已记录（提交 `2aa5bbf`）；此前已补齐采集与多客户端裁决（提交 `f7c7a5b`），并修订设备能力分档裁决（提交 `02b2d9f`）。本轮新增编码框架设计（提交 `docs: 添加可扩展编码框架设计`），用户已明确批准，状态为“已批准，待实施/验证”。代码优化尚未开始，当前没有进行中的代码任务；问题 3 仍未由用户明确关闭。
 > 证据口径：“已完成”必须有可核对的交付物或提交；“待办”和“等待验证”只代表计划或待验证条件，不代表已经取得结果。
 
 ## 状态与优先级
@@ -27,9 +27,11 @@
 
 本轮修订明确：API 25/minSdk 只是最低兼容与回退路径，不是能力上限；服务端编码能力与客户端解码能力分别运行时探测，按实际能力和场景选档；H.264 是兼容基线不是上限；车机只是场景之一，手机、平板与其他高性能设备同样适用。问题 3 仍未由用户明确关闭，不能标记完成。
 
-下一步建议按 [渐进优化路线图](optimization-roadmap.md) 的阶段 0 启动可观测性与基线；在确认设备、网络与排期后再把对应任务移入“进行中”。在拿到基线前，不预设任何性能、发热或延迟收益。
+本轮新增 [可扩展编码框架设计](codec-framework.md)：用户已明确批准“静态 Codec SPI + 单活动流核心 + 可扩展 StreamHub”，第一版用 H.264 与 JPEG 两条差异实现验证契约，HEVC 验证 `MediaCodec` 骨架复用，AV1/HDR/B 帧/时域层只预留契约。裁决状态是“已批准，待实施/验证”，没有代码、构建或实机证据；不能把任何组件写成已实现。
 
-## 本轮裁决同步（问题 1 / 问题 3）
+下一步建议按 [渐进优化路线图](optimization-roadmap.md) 的阶段 0 启动可观测性与基线；编码框架的落地顺序以 [编码框架落地顺序](codec-framework.md) 为准，但仍受阶段 0/1 的前置约束。在确认设备、网络与排期后再把对应任务移入“进行中”。在拿到基线前，不预设任何性能、发热或延迟收益。
+
+## 本轮裁决同步（问题 1 / 问题 3 / 编码框架）
 
 “已关闭（裁决完成）”和“裁决已记录，待确认/待实机验证”描述的是讨论与验证状态，不是实施状态。对应实现任务仍在待办或等待验证；裁决不等于实施。
 
@@ -38,6 +40,7 @@
 | 问题 1：采集 API 选择 | 已关闭（裁决完成） | 保留 `MediaProjection`；主链路改为 `VirtualDisplay` 直接输出到 `MediaCodec` 输入 Surface，稳态不经过 `ImageReader`、Bitmap 与软件 JPEG。 | 用户明确关闭，裁决已记录。代码未实施，未实机验证。 | [DB-CAP-001](decision-board.md)、[DB-CAP-002](decision-board.md)、[媒体架构](media-architecture.md) |
 | 问题 3：采集、编码参数与多客户端 | 裁决已记录，待确认/待实机验证 | 一个 MediaProjection/VirtualDisplay，通常一路编码；每客户端独立网络会话、有界队列与解码器；分辨率与编码器尺寸匹配；`KEY_FRAME_RATE` 只是目标提示；码率与 IDR 间隔可配置；HELLO/STREAM_INFO/WAIT_IDR/STREAMING；窗口缩放不省网络与解码；队列溢出进入 WAIT_IDR；多档编码不新建 MediaProjection。 | 用户已给出完整技术回答，但尚未明确关闭；本轮只同步文档，未改代码，未实机验证。 | [DB-CAP-002](decision-board.md)、[DB-CODEC-003](decision-board.md)、[DB-CODEC-004](decision-board.md)、[DB-CODEC-005](decision-board.md)、[DB-SESSION-002](decision-board.md)、[DB-MULTI-002](decision-board.md)、[DB-MULTI-003](decision-board.md) |
 | 问题 3 修订：设备能力分档 | 裁决已修订记录，待确认/待实机验证 | 修正“自动永远只选 H.264”“按低能力车机限制全产品”“API 25 决定能力上限”等保守表述。API 25/minSdk 只决定最低兼容与回退；服务端编码能力与客户端解码能力分别运行时探测，按实际能力和场景选档；H.264 是兼容基线不是上限，HEVC 双方支持时可用，AV1 仅作设备明确支持时的后续高级选项；多客户端分兼容单流与多档流，新客户端不得迫使已有客户端无提示降级；未实测前可回退 H.264，不做盲目自动切换。 | 用户明确指出 API 25 只是下限、车机只是场景之一、Pad 也可能达到旗舰能力，并裁决修正此前表述。旧保守表述保留在决策看板的裁决演进中；问题仍未关闭，未实机验证。 | [DB-CAP-003](decision-board.md)、[DB-CODEC-006](decision-board.md)、[DB-CODEC-007](decision-board.md)、[DB-CODEC-008](decision-board.md)、[DB-MULTI-004](decision-board.md)、[DB-CODEC-001](decision-board.md)、[DB-MULTI-003](decision-board.md) |
+| 编码框架方案 | 已批准，待实施/验证 | 静态 Codec SPI + 单活动流核心 + 可扩展 StreamHub；H.264 与 JPEG 验证契约，HEVC 验证 `MediaCodec` 复用，AV1/HDR/B 帧/时域层仅预留；描述符与运行参数分离；可加入点独立于关键帧标记；第一版编码切换不保证零间隙；传输按 TCP 完整访问单元、RTP 封包器、WebRTC 独立媒体栈解耦。 | 用户已明确“批准”。本轮只新增设计文档并更新看板/入口，未改产品代码或构建配置，未执行构建与实机验证。问题 3 未被用户明确关闭，不因本方案获批而标记关闭。 | [编码框架设计](codec-framework.md)、[DB-CODEC-009](decision-board.md)、[DB-CODEC-010](decision-board.md)、[DB-CODEC-011](decision-board.md)、[DB-CODEC-012](decision-board.md)、[DB-CODEC-013](decision-board.md)、[DB-CODEC-014](decision-board.md)、[DB-MULTI-005](decision-board.md)、[DB-NET-002](decision-board.md) |
 
 ## 进行中
 
@@ -55,12 +58,22 @@
 | TB-SEC-001 | P1 | 待办 | 配对、会话令牌与传输加密：默认拒绝未配对客户端；控制面 TLS；媒体面 TLS 或 DTLS-SRTP；观看、音频、反控分级授权；发现默认不广播设备名。 | 交付：配对流程、令牌校验、加密配置、安全提示。验证：未配对连接被拒绝、传输加密生效、日志脱敏；当前未执行。 | [项目现状安全边界](project-assessment.md)、[媒体架构安全模型](media-architecture.md)、[路线图阶段 2](optimization-roadmap.md) |
 | TB-MEDIA-001 | P1 | 待办 | H.264 硬编硬解（先 TCP）：`VirtualDisplay` 直接输出到 `MediaCodec` 输入 Surface；H.264 Baseline 为兼容基线与回退档；缓存 config 与 IDR；媒体走独立 TCP 帧协议；JPEG 仅保留快照与降级。 | 交付：采集/编码/封装/解码/渲染链路与降级开关。验证：编码器与解码器矩阵、稳态无全尺寸 Bitmap/JPEG、新客户端从 config+IDR 加入、慢客户端隔离；当前未执行。 | [路线图阶段 2](optimization-roadmap.md)、[媒体架构](media-architecture.md) |
 | TB-MEDIA-003 | P1 | 待办 | 运行时能力探测：服务端探测编码器 codec/profile/level/宽高/帧率/码率/硬件实例与热状态；客户端探测解码能力与 adaptive playback；经 HELLO/STREAM_INFO 交换，字段可缺省；旧客户端按 H.264 兼容档处理。 | 交付：能力探测模块、协议字段与降级规则。验证：服务端与客户端能力分别上报且与实际一致；不凭 API 等级或设备形态推断；不可用/未实测组合回退 H.264 且用户可见；当前未执行。 | [媒体架构能力探测](media-architecture.md)、[决策 DB-CODEC-006](decision-board.md)、[路线图阶段 2](optimization-roadmap.md) |
+| TB-FW-001 | P1 | 待办 | 编码契约骨架与静态注册：`CodecDescriptor`、`EncoderFactory`、`DecoderFactory`、`CodecPolicy`、`PacketizerFactory(codec, transport)`；`StreamDescriptor`/`StreamParameters`、`EncodedAccessUnit`、客户端六状态与协议版本；编译期静态表。 | 交付：接口、静态注册、单元测试与契约审查记录。验证：JPEG 与 H.264 共用同一契约；公共层无 NAL/OBU/JPEG 解析、无 codec 特判；当前未实施。 | [编码框架设计](codec-framework.md)、[DB-CODEC-009](decision-board.md)、[DB-CODEC-010](decision-board.md)、[DB-CODEC-011](decision-board.md)、[DB-CODEC-012](decision-board.md)、[DB-CODEC-013](decision-board.md) |
+| TB-FW-002 | P1 | 待办 | JPEG 适配：独立像素路径，只有完整帧可加入；慢客户端只保留最新完整帧；把现有 JPEG 路径接入框架。 | 交付：JPEG 编解码适配与端到端链路。验证：每帧可加入；截断帧被丢弃；描述符与运行参数分离；可回退旧路径；当前未实施。 | [编码框架设计](codec-framework.md)、[DB-CODEC-009](decision-board.md) |
+| TB-FW-003 | P1 | 待办 | H.264 单流 TCP：`MediaCodec` 骨架、Surface 输入、明确 IDR 才可加入、`configEpoch`、配置缓存、有界队列与 `RESYNCING`。 | 交付：H.264 编解码、TCP 完整访问单元传输、重同步。验证：只从明确 IDR 加入；分辨率/旋转切换可恢复；慢客户端不阻塞编码器；当前未实施。 | [编码框架设计](codec-framework.md)、[DB-CODEC-013](decision-board.md)、[DB-MULTI-005](decision-board.md)、[路线图阶段 2](optimization-roadmap.md) |
+| TB-FW-004 | P1 | 待办 | StreamHub 与每客户端有界队列：单活动流注册与查找、订阅关系、独立队列、背压与统计；单流不兼容时只做快照、显式兼容降级或拒绝。 | 交付：`StreamHub`、`ClientSendSession`、队列与策略钩子。验证：已有客户端不受新客户端影响；关键帧请求合并；不兼容有明确结果；当前未实施。 | [编码框架设计](codec-framework.md)、[DB-CODEC-009](decision-board.md)、[DB-MULTI-005](decision-board.md) |
+| TB-FW-005 | P1 | 待办 | 客户端解码状态机：`NEGOTIATING`、`WAIT_CONFIG`、`WAIT_RANDOM_ACCESS`、`STREAMING`、`RESYNCING`、`CLOSED`；描述符应用、解码器重建、epoch 切换与统计。 | 交付：`ClientMediaSession` 状态机与测试。验证：六状态转换完整；同 epoch 可加入点恢复；跨 epoch 先进入 `WAIT_CONFIG`；当前未实施。 | [编码框架设计](codec-framework.md)、[DB-CODEC-013](decision-board.md) |
+| TB-FW-006 | P1 | 待办 | 编码切换编排：新编码器预热、客户端保持最后一帧、切换采集输出 Surface、发布新描述符/配置/可加入点、客户端重配或重建解码器、释放旧编码器；网络、认证与控制会话不重建。 | 交付：切换编排与失败回退。验证：切换不保证零间隙但无花屏；预热失败保留旧编码器；当前未实施。 | [编码框架设计](codec-framework.md)、[DB-CODEC-014](decision-board.md) |
+| TB-FW-007 | P2 | 待办 | HEVC 扩展验证：复用 `MediaCodec` 骨架，只接受明确安全 IDR；CRA/BLA/RASL/RADL 不作为可加入点。 | 交付：HEVC 描述符、工厂、策略与验证记录。验证：新增 HEVC 不改公共层；CRA/RASL 不被接受；当前未实施。 | [编码框架设计](codec-framework.md)、[DB-CODEC-013](decision-board.md)、[DB-CODEC-009](decision-board.md) |
+| TB-FW-008 | P2 | 待办 | 编码框架测试与证据：契约测试、可加入点、epoch 语义、队列溢出、切换、传输适配与回退；补充设备与网络验证记录。 | 交付：测试用例与验证记录。验证：测试可重复运行；未实测项保持待验证；当前未实施。 | [编码框架设计](codec-framework.md)、[路线图阶段 2](optimization-roadmap.md)、[路线图阶段 4](optimization-roadmap.md) |
 | TB-WIN-001 | P1 | 待办 | 窗口切换：第一版用同一悬浮窗展开/收起；`ViewerActivity` 作为需要沉浸式、返回键或输入法时的增强；最后帧快照过渡；`setOutputSurface` 失败只重建解码器。 | 交付：方案 A、方案 B、快照与失败回退。验证：切换前后网络/会话/认证不重建、Service 不停、无长时间黑屏；当前未执行。 | [路线图阶段 3](optimization-roadmap.md)、[窗口与会话设计](windowing-session-design.md) |
 | TB-CLIENT-001 | P2 | 待办 | 客户端画质与多客户端：分辨率、帧率、码率档位；`configEpoch` 与 IDR 刷新；一次编码按客户端扇出；每客户端有界队列与统计；慢客户端隔离。 | 交付：档位协商、扇出队列、客户端统计。验证：阶段 3 的画质、多客户端、慢客户端项通过；当前未执行。 | [路线图阶段 3](optimization-roadmap.md)、[媒体架构多客户端](media-architecture.md) |
 | TB-CLIENT-002 | P2 | 待办 | 兼容单流与多档流策略：默认共同能力交集；多档流让高能力客户端用高规格、其他客户端保留 H.264 档；受编码器实例、功耗与热限制；新客户端不得迫使已有客户端无提示降级；小窗/全屏可选不同档位。 | 交付：选流策略、档位切换与可见回退、多客户端影响评估。验证：多客户端组合下无静默降级；档位切换 configEpoch/IDR 正确；编码器实例与功耗在预算内；无实测收益时保持单流；当前未执行。 | [媒体架构兼容单流与多档编码](media-architecture.md)、[决策 DB-MULTI-004](decision-board.md)、[路线图阶段 3](optimization-roadmap.md) |
 | TB-AUDIO-001 | P2 | 待办 | 音频：API 29+ 使用 `AudioPlaybackCapture`；API 25–28 默认无声或显式麦克风模式；AAC-LC 兼容优先；统一会话单调时钟与客户端 jitter buffer。 | 交付：可选音频链路、权限与拒绝提示、同步策略。验证：阶段 4 的权限、版本降级、音画同步、编码项通过；当前未执行。 | [路线图阶段 4](optimization-roadmap.md)、[媒体架构音频](media-architecture.md) |
 | TB-CTRL-001 | P2 | 待办 | 单客户端反控：`AccessibilityService.dispatchGesture`；默认关闭、用户手动开启；单客户端租约、心跳、epoch fencing；归一化坐标；敏感界面不注入。 | 交付：反控授权、租约、坐标与可见指示。验证：阶段 4 的反控授权、租约、坐标、安全项通过；当前未执行。 | [路线图阶段 4](optimization-roadmap.md)、[媒体架构反控](media-architecture.md) |
 | TB-ENG-001 | P2 | 待办 | 测试与发布工程：补齐状态机、停止幂等、队列、协议、重连与坐标测试；仪器与压力测试；R8/keep 规则；CI 增加独立测试步骤。 | 交付：测试用例、CI 配置、混淆规则。验证：测试可重复运行并阻断回归；当前仅模板测试，未执行新增测试。 | [项目现状工程审查](project-assessment.md)、[路线图阶段 1](optimization-roadmap.md) |
+
+说明：`TB-FW-001` 至 `TB-FW-008` 是 `TB-MEDIA-001`、`TB-CLIENT-001` 与 `TB-CLIENT-002` 的框架分解，实施时合并跟踪，不重复计算完成率。它们目前都是待办，不代表任何契约或组件已经存在。
 
 ## 已完成
 
@@ -70,9 +83,10 @@
 | TB-DOC-002 | — | 已完成 | 任务与决策看板：建立稳定 ID、状态、证据与关联文档；接入文档索引和根 README 文档列表；补充看板维护规则。 | 交付：`docs/task-board.md`、`docs/decision-board.md`、`docs/README.md` 入口与维护规则；根 README 链接。验证：链接、围栏、Mermaid、禁用角色词、敏感信息与行尾空白检查随本次文档提交执行；未运行 Android 构建。 | [决策看板](decision-board.md)、[文档索引](README.md) |
 | TB-DOC-003 | — | 已完成 | 本轮裁决同步：记录问题 1（已关闭）与问题 3（待确认/待实机验证）的采集、编码参数与多客户端裁决，补充协议状态、参数语义与多档编码边界。 | 交付：本次提交 `docs: 记录采集与多客户端裁决` 中的 `docs/media-architecture.md`、`docs/decision-board.md`、`docs/task-board.md`、`docs/README.md`。验证：链接、围栏、Mermaid、角色词、敏感信息与表格列数检查；未修改代码或 CI，未运行 Android 构建，未实机验证。 | [决策看板](decision-board.md)、[媒体架构](media-architecture.md) |
 | TB-DOC-004 | — | 已完成 | 设备能力分档裁决修订：修正“自动永远只选 H.264”“按老车机能力限制全产品”“API 25 决定能力上限”等保守表述；补充服务端/客户端运行时能力探测、HEVC/AV1 边界、分辨率与帧率场景分档、兼容单流与多档流策略；在决策看板保留裁决演进痕迹。 | 交付：本次提交 `docs: 修订设备能力分档裁决` 中的根 `README.md`、`docs/README.md`、`docs/media-architecture.md`、`docs/decision-board.md`、`docs/task-board.md`、`docs/product-context.md`、`docs/project-assessment.md`、`docs/optimization-roadmap.md`、`docs/windowing-session-design.md`。验证：链接、围栏、Mermaid、角色词、敏感信息、表格列数与 `git diff` 检查；未修改代码或 CI，未运行 Android 构建，未实机验证。问题 3 本身仍未由用户关闭，不因本文档任务完成而标记关闭。 | [决策看板](decision-board.md)、[媒体架构](media-architecture.md)、[产品语境](product-context.md) |
+| TB-DOC-005 | — | 已完成 | 可扩展编码框架设计：记录用户已批准的“静态 Codec SPI + 单活动流核心 + 可扩展 StreamHub”；明确责任边界、扩展点、描述符与运行参数、访问单元、可加入点与六状态客户端、慢客户端、非无缝编码切换、传输解耦、落地顺序、验收标准与非目标；同步文档入口与两个看板。 | 交付：`docs/codec-framework.md`，以及根 `README.md`、`docs/README.md`、`docs/media-architecture.md`、`docs/optimization-roadmap.md`、`docs/decision-board.md`、`docs/task-board.md` 的入口与裁决更新（提交 `docs: 添加可扩展编码框架设计`）。验证：链接、围栏、Mermaid、角色词、敏感信息、表格列数、`git diff --check` 与变更范围检查；未修改产品代码或构建配置，未运行 Android 构建，未实机验证。框架裁决为“已批准，待实施/验证”，所有实现任务仍在待办。 | [编码框架设计](codec-framework.md)、[决策看板](decision-board.md) |
 | TB-CI-001 | P0 | 已完成 | CI 构建稳定性：修复依赖仓库顺序。 | 根因：失败 run [39030949452](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39030949452) 在解析 `io.grpc:grpc-context:1.72.0` 时收到阿里云镜像 HTTP 502，Gradle 未回退到后续官方仓库。交付：`settings.gradle` 将 `google()`、`mavenCentral()` 置于镜像之前，镜像保留为后备。验证：本地 `./gradlew build` 成功（113 tasks）；`--refresh-dependencies` 解析日志为 0 次阿里云、70 次 Maven Central、67 次 Google；修复提交 `302e604` 触发的 run [39032521963](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39032521963) 成功。 | [项目现状构建基线](project-assessment.md) |
 
-代码任务完成情况：当前没有已完成的代码优化任务。已完成项涉及文档、看板与构建仓库配置；仓库顺序调整不改变应用行为。
+代码任务完成情况：当前没有已完成的代码优化任务。已完成项涉及文档、看板与构建仓库配置；仓库顺序调整不改变应用行为。编码框架的所有组件与契约仍为待办，未写任何实现代码。
 
 ## 暂缓 / 等待验证
 

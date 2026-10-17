@@ -29,6 +29,7 @@
 | 3 | [媒体链路目标架构](media-architecture.md) | 采集、编码、传输、音频、反控、多客户端应该怎么设计？ | 设计裁决，未实现 |
 | 4 | [悬浮窗与全屏会话设计](windowing-session-design.md) | minSdk 25 下如何互切窗口而不断连？动画与窗口技术怎么选？ | 设计裁决，未实现 |
 | 5 | [渐进优化路线图](optimization-roadmap.md) | 先改什么、后改什么？每阶段如何验收？ | 计划，未执行 |
+| 6 | [可扩展编码框架设计](codec-framework.md) | 编码如何扩展？描述符、运行参数、可加入点与客户端状态如何定义？ | 设计已批准，未实施 |
 
 如果只想快速了解结论，先读本页的“结论速览”，再读第 1 篇和第 5 篇；如果只想了解进展，先读两个看板。
 
@@ -43,6 +44,7 @@
 | [media-architecture.md](media-architecture.md) | MediaProjection 到 MediaCodec 的硬编硬解目标、H.264/HEVC 选择、参数语义、编码缓存、客户端能力协商与多档编码边界、TCP/RTP/WebRTC 裁决、音频、反控、多客户端、Android 权限边界 |
 | [windowing-session-design.md](windowing-session-design.md) | ClientSession 与 RenderTarget 解耦、悬浮窗展开与 Activity 互切、最后帧快照、`setOutputSurface`、TextureView/SurfaceView、窗口技术选型、状态机 |
 | [optimization-roadmap.md](optimization-roadmap.md) | 可观测性、并发与资源清理、Session 解耦、H.264、窗口切换、客户端画质、音频、单客户端反控、传输决策的阶段与验收标准 |
+| [codec-framework.md](codec-framework.md) | 静态 Codec SPI、单活动流核心与 StreamHub、责任边界、描述符与运行参数分离、访问单元、可加入点与客户端状态、慢客户端、编码切换、传输映射、落地顺序、验收标准与非目标 |
 
 ## 结论速览
 
@@ -51,6 +53,7 @@
 - 当前服务端每帧执行 RGBA 到 ARGB Bitmap 拷贝和软件 JPEG 压缩；客户端每帧做全尺寸 JPEG 解码，显示大小只改变悬浮窗尺寸。即使没有客户端，服务端仍持续采集和编码。
 - 发热与卡顿的主要风险来自服务端与客户端的 CPU 图像路径、全尺寸 Bitmap、队列积压与 `CallerRunsPolicy` 反压，以及长临界区与资源清理不完整；这是从代码路径推断的风险，不是实测结论。
 - 媒体裁决是：普通 App 继续使用 MediaProjection，但 VirtualDisplay 直接输出到 MediaCodec 输入 Surface，稳态不经过 Bitmap/JPEG。H.264 是兼容基线而不是能力上限：服务端与客户端分别在运行时探测 codec、profile/level、宽高、帧率、硬件实例等能力，在兼容与可靠性得到保证的前提下按画质、码率、功耗、网络和当前悬浮窗/全屏场景选择更高规格；HEVC 在双方支持时可启用，AV1 等更高级编码只作为设备明确支持时的后续高级选项，第一版未实现。一个 MediaProjection/VirtualDisplay 通常只跑一路编码；多客户端可采用“兼容单流”或受限的“多档流”，高能力客户端用高规格、其他客户端用 H.264 档，但受编码器实例与功耗限制，新客户端不能迫使已有客户端无提示降级。分辨率与帧率同样按能力和场景向上扩展，不对旗舰平板人为设低档上限；未实测前保持可回退 H.264，不做盲目自动切换。每客户端独立网络会话、有界队列与解码器。分辨率由 VirtualDisplay 与编码器共同决定并需匹配；分辨率或旋转变化通常重建编码器与输入 Surface，发布新 configEpoch、SPS/PPS 与 IDR，但不断开网络会话。`KEY_FRAME_RATE` 只是目标提示；客户端以 HELLO/STREAM_INFO 协商，收到 IDR 前处于 WAIT_IDR。gRPC/TCP 保留控制面，媒体第一版可继续独立 TCP；只有在实测发现 TCP 重传拖尾不可接受时，才引入 RTP/UDP 的 jitter、NACK、PLI 与 pacing。WebRTC 用于浏览器、跨网或需要完整栈的场景。
+- 编码框架裁决是：采用静态 Codec SPI + 单活动流核心 + 可扩展 StreamHub；第一版用 H.264 与 JPEG 两条差异实现验证契约，HEVC 验证 `MediaCodec` 骨架复用，AV1/HDR/B 帧/时域层只预留契约。解码配置用 `StreamDescriptor` 表达并只在解码关键变化时推进 `configEpoch`；码率、帧率提示与关键帧间隔属于运行参数。访问单元按解码顺序编号，公共层不解析 NAL/OBU/JPEG。新客户端不假设任意关键帧可加入，按 codec 策略等待明确可加入点。第一版单 VirtualDisplay、无 GPU Fanout，编码切换不保证零间隙，但网络、认证与控制会话不重建。该设计已获用户批准，尚未实施与实测；细节见 [可扩展编码框架设计](codec-framework.md)。
 - 窗口裁决是：由 Service 持有 ClientSession，网络、解码、音频、反控和最后一帧与 RenderTarget 解耦；悬浮窗与全屏 Activity 只是 attach/detach 渲染目标，不停止 Service、不重建连接。优先做“同一悬浮窗展开”的低风险方案；需要沉浸式、返回键和输入法时再做 Activity 方案。
 - 安全现状只适合可信局域网：无认证、无加密，`FLAG_SECURE` 不是加密。签名材料问题只做概括，不在文档中复述任何路径、口令或密钥细节。
 - 路线图顺序是：先做可观测性，再做队列/锁/资源清理与 Session 解耦；随后是 H.264 硬编硬解（先 TCP）、窗口切换与客户端画质、音频与单客户端反控；最后按实测决定 RTP/UDP/WebRTC。
@@ -65,6 +68,7 @@
 ## 验证状态与边界
 
 - 本文档没有执行 `gradle build`、单元测试、仪器测试、安装、投屏、网络抓包或性能采集。
+- 可扩展编码框架已有批准的设计契约，但没有对应代码、构建产物或实测结果；其中的状态机、队列阈值与切换行为都待实施阶段验证。
 - 文中没有性能百分比、帧率提升、发热下降或延迟数字；任何收益都需要在目标设备与目标网络上实测。
 - 安全判断是静态审查结论，不是渗透测试或安全认证。
 - 产品语境是推测，不是作者自述；需要访谈、任务测试和场景验证。

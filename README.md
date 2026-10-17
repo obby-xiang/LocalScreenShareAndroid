@@ -108,6 +108,7 @@ flowchart TB
 - [项目现状与技术审查](docs/project-assessment.md)
 - [产品背景与场景分析](docs/product-context.md)
 - [媒体架构设计](docs/media-architecture.md)
+- [可扩展编码框架设计](docs/codec-framework.md)
 - [窗口化与会话设计](docs/windowing-session-design.md)
 - [渐进优化路线](docs/optimization-roadmap.md)
 
@@ -116,7 +117,7 @@ flowchart TB
 ## 优化方向
 
 1. 解耦会话与显示界面，完善队列、锁和资源释放，补充关键指标与测试。
-2. 使用 MediaCodec Surface 输入/输出替换软件 JPEG 主链路，降低功耗和卡顿；H.264 作为兼容基线与回退档，按服务端/客户端能力探测协商 HEVC 等更高档位。
+2. 使用 MediaCodec Surface 输入/输出替换软件 JPEG 主链路，降低功耗和卡顿；H.264 作为兼容基线与回退档，按服务端/客户端能力探测协商 HEVC 等更高档位。编码扩展点、描述符与客户端状态契约见 [可扩展编码框架设计](docs/codec-framework.md)。
 3. 支持悬浮窗与客户端全屏 Activity 之间不断连切换，并允许小窗与全屏按能力选择不同媒体档位。
 4. 按系统版本增加音频、单客户端反控和能力协商；能力协商以运行时探测为准，不按 API 等级或设备形态推断。
 5. 根据实测结果决定是否引入 RTP/UDP 或 WebRTC。

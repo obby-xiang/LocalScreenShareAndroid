@@ -2,7 +2,7 @@
 
 > 状态：计划，尚未执行。本文的“验收标准”是待验证的通过条件，不是已经取得的结果。
 > 本文不承诺任何性能百分比、帧率提升、发热下降或延迟数字；所有收益必须在目标设备与目标网络上实测。
-> 相关文档：[项目现状](project-assessment.md) · [媒体架构](media-architecture.md) · [窗口与会话](windowing-session-design.md) · [产品语境](product-context.md)
+> 相关文档：[项目现状](project-assessment.md) · [媒体架构](media-architecture.md) · [可扩展编码框架](codec-framework.md) · [窗口与会话](windowing-session-design.md) · [产品语境](product-context.md)
 
 ## 1. 原则
 
@@ -138,6 +138,7 @@ flowchart LR
 - 控制面：能力协商、媒体参数、关键帧请求、统计；保留 gRPC，但不要每帧 protobuf。
 - 降级：编码器不可用/配置失败时回退到 H.264 兼容档或 JPEG 快照/低帧率兼容模式；UI 明确提示。
 - 安全：至少加入配对/令牌；媒体 TCP 使用 TLS 或明确的“可信局域网”提示；不要把 `FLAG_SECURE` 当加密。
+- 契约：编码框架已获批准但未实施，本阶段的 codec 接入应按其静态 SPI、描述符与运行参数分离、可加入点规则执行；见 [可扩展编码框架设计](codec-framework.md)。
 
 ### 5.3 验证标准
 
