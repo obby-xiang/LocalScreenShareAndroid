@@ -175,6 +175,7 @@ public final class ClientSendSession {
             boolean sendDescriptor = false;
             StreamDescriptor descriptorToSend = null;
             EncodedAccessUnit accessUnitToSend = null;
+            int sentEpoch = -1;
 
             synchronized (stateLock) {
                 if (detached) {
@@ -196,6 +197,9 @@ public final class ClientSendSession {
                     }
                     sendDescriptor = false;
                     accessUnitToSend = polled.getAccessUnit();
+                    sentEpoch = currentDescriptor != null
+                            ? currentDescriptor.getConfigEpoch()
+                            : -1;
                 }
             }
 
@@ -211,7 +215,9 @@ public final class ClientSendSession {
                         descriptorSends++;
                     } else {
                         sentUnits++;
-                        if (policy.isJoinPoint(accessUnitToSend)) {
+                        boolean epochStillCurrent = currentDescriptor != null
+                                && currentDescriptor.getConfigEpoch() == sentEpoch;
+                        if (epochStillCurrent && policy.isJoinPoint(accessUnitToSend)) {
                             state = ClientState.STREAMING;
                             resyncEpisodeCounted = false;
                         }

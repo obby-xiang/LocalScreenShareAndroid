@@ -353,6 +353,54 @@ public class ClientSendSessionTest {
     }
 
     @Test
+    public void epochChangeDuringInFlightOldJoin_keepsNewEpochWaiting() throws Exception {
+        BlockingTransport transport = new BlockingTransport();
+        ClientSendSession session = jpegSession(transport, new MutableClock(), 64L, 4);
+        assertTrue(session.onDescriptor(jpegDescriptor(1)));
+        assertTrue(session.drainOne());
+
+        transport.blockNextAccessUnitSend();
+        EncodedAccessUnit oldJoin = jpegJoin(1, 0L);
+        assertEquals(QueueOfferResult.ACCEPTED, session.offer(oldJoin));
+
+        ExecutorService drainExecutor = Executors.newSingleThreadExecutor();
+        try {
+            Future<Boolean> drain = drainExecutor.submit(
+                    (Callable<Boolean>) () -> session.drainOne());
+            assertTrue(transport.awaitSendStarted(2L, TimeUnit.SECONDS));
+
+            StreamDescriptor newDescriptor = jpegDescriptor(2, 48, 36);
+            assertTrue(session.onDescriptor(newDescriptor));
+            assertEquals(ClientState.WAIT_RANDOM_ACCESS, session.getState());
+
+            transport.releaseSend();
+            assertTrue(drain.get(2L, TimeUnit.SECONDS));
+        } finally {
+            transport.releaseSend();
+            drainExecutor.shutdownNow();
+        }
+
+        ClientState stateAfterOldSend = session.getState();
+        QueueOfferResult newEpochPlain = session.offer(jpegPlain(2, 1L));
+        assertTrue("an old in-flight join must not promote the new epoch: state="
+                        + stateAfterOldSend + ", nonJoinOffer=" + newEpochPlain,
+                stateAfterOldSend == ClientState.WAIT_RANDOM_ACCESS
+                        && newEpochPlain == QueueOfferResult.REJECTED_NOT_JOIN_POINT);
+
+        assertTrue(session.drainOne());
+        List<FakeTransport.Event> events = transport.getEvents();
+        assertEquals(3, events.size());
+        assertEquals(FakeTransport.Kind.DESCRIPTOR, events.get(2).getKind());
+        assertEquals(2, events.get(2).getDescriptor().getConfigEpoch());
+
+        EncodedAccessUnit newJoin = jpegJoin(2, 2L);
+        assertEquals(QueueOfferResult.ACCEPTED, session.offer(newJoin));
+        assertTrue(session.drainOne());
+        assertSame(newJoin, lastEvent(transport).getAccessUnit());
+        assertEquals(ClientState.STREAMING, session.getState());
+    }
+
+    @Test
     public void transportFailure_detachesAndClosesOnce() throws Exception {
         FakeTransport transport = new FakeTransport();
         ClientSendSession session = jpegSession(transport, new MutableClock(), 64L, 4);
