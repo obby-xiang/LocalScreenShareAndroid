@@ -61,6 +61,7 @@ public final class BoundedAccessUnitQueue {
             if (!join) {
                 return QueueOfferResult.REJECTED_NOT_JOIN_POINT;
             }
+            clearEntriesCounted();
             enqueue(accessUnit, nowMs);
             return QueueOfferResult.ACCEPTED_AFTER_RESYNC;
         }
@@ -105,7 +106,6 @@ public final class BoundedAccessUnitQueue {
             return QueuePollResult.resync();
         }
         if (entries.isEmpty()) {
-            resyncRequired = false;
             return QueuePollResult.empty();
         }
         Entry head = entries.pollFirst();

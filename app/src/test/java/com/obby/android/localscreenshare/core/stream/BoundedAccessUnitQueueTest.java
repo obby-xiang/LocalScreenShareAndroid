@@ -231,6 +231,111 @@ public class BoundedAccessUnitQueueTest {
         assertEquals(4L, queue.droppedBytes());
     }
 
+    @Test
+    public void referenceResync_emptyPollAfterOverflowKeepsResyncState() {
+        BoundedAccessUnitQueue queue = queue(64L, 1, OverflowAction.DROP_UNTIL_JOIN_POINT);
+        MutableClock clock = new MutableClock();
+        assertEquals(QueueOfferResult.ACCEPTED, queue.offer(joinAu(1, 4), clock.nowMs()));
+        assertEquals(QueueOfferResult.REJECTED_NOT_JOIN_POINT,
+                queue.offer(plainAu(2, 5), clock.nowMs()));
+        assertTrue(queue.isResyncRequired());
+
+        QueuePollResult firstEmpty = queue.poll(clock.nowMs());
+        assertNull(firstEmpty.getAccessUnit());
+        assertTrue("empty poll must preserve reference resync", queue.isResyncRequired());
+        QueuePollResult secondEmpty = queue.poll(clock.nowMs());
+        assertNull(secondEmpty.getAccessUnit());
+        assertTrue("empty poll must preserve reference resync", queue.isResyncRequired());
+
+        assertEquals(QueueOfferResult.REJECTED_NOT_JOIN_POINT,
+                queue.offer(plainAu(3, 5), clock.nowMs()));
+        assertEquals(0, queue.size());
+        assertTrue(queue.isResyncRequired());
+
+        EncodedAccessUnit joinPoint = joinAu(4, 6);
+        assertEquals(QueueOfferResult.ACCEPTED_AFTER_RESYNC,
+                queue.offer(joinPoint, clock.nowMs()));
+        QueuePollResult polled = queue.poll(clock.nowMs());
+        assertSame(joinPoint, polled.getAccessUnit());
+        assertFalse(polled.isResyncRequired());
+        assertFalse(queue.isResyncRequired());
+    }
+
+    @Test
+    public void referenceResync_emptyPollAfterExpiryKeepsResyncState() {
+        BoundedAccessUnitQueue queue = queue(64L, 4, OverflowAction.DROP_UNTIL_JOIN_POINT);
+        MutableClock clock = new MutableClock();
+        queue.offer(joinAu(1, 4), clock.nowMs());
+        clock.advance(80L);
+        queue.offer(plainAu(2, 5), clock.nowMs());
+        clock.advance(70L);
+        QueuePollResult expired = queue.poll(clock.nowMs());
+        assertNull(expired.getAccessUnit());
+        assertTrue(expired.isResyncRequired());
+        assertTrue(queue.isResyncRequired());
+
+        QueuePollResult firstEmpty = queue.poll(clock.nowMs());
+        assertNull(firstEmpty.getAccessUnit());
+        assertTrue("empty poll must preserve reference resync", queue.isResyncRequired());
+        QueuePollResult secondEmpty = queue.poll(clock.nowMs());
+        assertNull(secondEmpty.getAccessUnit());
+        assertTrue("empty poll must preserve reference resync", queue.isResyncRequired());
+
+        assertEquals(QueueOfferResult.REJECTED_NOT_JOIN_POINT,
+                queue.offer(plainAu(3, 5), clock.nowMs()));
+        assertEquals(0, queue.size());
+        assertTrue(queue.isResyncRequired());
+
+        EncodedAccessUnit joinPoint = joinAu(4, 6);
+        assertEquals(QueueOfferResult.ACCEPTED_AFTER_RESYNC,
+                queue.offer(joinPoint, clock.nowMs()));
+        QueuePollResult polled = queue.poll(clock.nowMs());
+        assertSame(joinPoint, polled.getAccessUnit());
+        assertFalse(polled.isResyncRequired());
+        assertFalse(queue.isResyncRequired());
+    }
+
+    @Test
+    public void referenceResync_consecutiveJoinsKeepOnlyLatestWithinLimits() {
+        BoundedAccessUnitQueue queue = queue(8L, 1, OverflowAction.DROP_UNTIL_JOIN_POINT);
+        MutableClock clock = new MutableClock();
+        queue.offer(joinAu(1, 4), clock.nowMs());
+        assertEquals(QueueOfferResult.REJECTED_NOT_JOIN_POINT,
+                queue.offer(plainAu(2, 5), clock.nowMs()));
+        assertTrue(queue.isResyncRequired());
+        assertEquals(0, queue.size());
+        assertEquals(0L, queue.bytes());
+
+        EncodedAccessUnit first = joinAu(3, 3);
+        assertEquals(QueueOfferResult.ACCEPTED_AFTER_RESYNC,
+                queue.offer(first, clock.nowMs()));
+        assertEquals("resync must retain at most one joinable access unit", 1, queue.size());
+        assertEquals(3L, queue.bytes());
+
+        EncodedAccessUnit second = joinAu(4, 5);
+        assertEquals(QueueOfferResult.ACCEPTED_AFTER_RESYNC,
+                queue.offer(second, clock.nowMs()));
+        assertEquals("a newer join must replace the stale join", 1, queue.size());
+        assertEquals("resync replacement must stay within maxBytes", 5L, queue.bytes());
+
+        EncodedAccessUnit third = joinAu(5, 6);
+        assertEquals(QueueOfferResult.ACCEPTED_AFTER_RESYNC,
+                queue.offer(third, clock.nowMs()));
+        assertEquals(1, queue.size());
+        assertEquals(6L, queue.bytes());
+        assertTrue(queue.isResyncRequired());
+
+        QueuePollResult polled = queue.poll(clock.nowMs());
+        assertSame(third, polled.getAccessUnit());
+        assertFalse(polled.isResyncRequired());
+        assertFalse(queue.isResyncRequired());
+        assertEquals(0, queue.size());
+        assertEquals(0L, queue.bytes());
+
+        assertEquals(QueueOfferResult.ACCEPTED,
+                queue.offer(plainAu(6, 5), clock.nowMs()));
+    }
+
     private static BoundedAccessUnitQueue queue(long maxBytes, int maxUnits,
                                                 OverflowAction action) {
         return new BoundedAccessUnitQueue(
