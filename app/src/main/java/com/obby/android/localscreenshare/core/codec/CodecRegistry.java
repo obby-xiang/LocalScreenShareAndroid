@@ -7,6 +7,8 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
+import com.obby.android.localscreenshare.core.codec.jpeg.JpegCodec;
+
 /**
  * Thread-safe, static registry of codec registrations.
  */
@@ -44,5 +46,11 @@ public final class CodecRegistry {
 
     public Set<String> getCodecIds() {
         return Collections.unmodifiableSet(new HashSet<>(registrations.keySet()));
+    }
+
+    public static CodecRegistry withDefaults() {
+        CodecRegistry registry = new CodecRegistry();
+        registry.register(JpegCodec.registration());
+        return registry;
     }
 }
