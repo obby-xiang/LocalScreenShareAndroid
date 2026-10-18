@@ -2,6 +2,7 @@ package com.obby.android.localscreenshare.core.stream;
 
 import com.obby.android.localscreenshare.core.codec.CodecRegistration;
 import com.obby.android.localscreenshare.core.codec.CodecRegistry;
+import com.obby.android.localscreenshare.core.codec.EncoderException;
 import com.obby.android.localscreenshare.core.model.ClientSessionKey;
 import com.obby.android.localscreenshare.core.model.EncodedAccessUnit;
 import com.obby.android.localscreenshare.core.model.StreamDescriptor;
@@ -57,7 +58,7 @@ public final class StreamHub implements StreamRuntimeListener {
         if (runtime == null) {
             throw new IllegalArgumentException("runtime must not be null");
         }
-        StreamKey key = runtime.getDescriptor().getStreamKey();
+        StreamKey key = runtime.getStreamKey();
         synchronized (lock) {
             if (runtimes.containsKey(key)) {
                 throw new IllegalStateException("stream already registered: " + key.getValue());
@@ -129,8 +130,14 @@ public final class StreamHub implements StreamRuntimeListener {
             if (active == null) {
                 return JoinDecision.rejected("no active stream");
             }
+            if (active.getState() != RuntimeState.READY) {
+                return JoinDecision.notReady("active stream is not ready: " + active.getState());
+            }
             StreamDescriptor activeDescriptor = active.getDescriptor();
-            if (!key.getStreamKey().equals(activeDescriptor.getStreamKey())) {
+            if (activeDescriptor == null) {
+                return JoinDecision.notReady("active stream has no published descriptor");
+            }
+            if (!key.getStreamKey().equals(active.getStreamKey())) {
                 return JoinDecision.rejected("stream key mismatch");
             }
             if (sessions.containsKey(key)) {
@@ -221,7 +228,7 @@ public final class StreamHub implements StreamRuntimeListener {
             if (active == null) {
                 return;
             }
-            if (!accessUnit.getStreamKey().equals(active.getDescriptor().getStreamKey())) {
+            if (!accessUnit.getStreamKey().equals(active.getStreamKey())) {
                 return;
             }
             snapshot = new ArrayList<>(sessions.values());
@@ -246,7 +253,7 @@ public final class StreamHub implements StreamRuntimeListener {
             if (active == null) {
                 return;
             }
-            if (!descriptor.getStreamKey().equals(active.getDescriptor().getStreamKey())) {
+            if (!descriptor.getStreamKey().equals(active.getStreamKey())) {
                 return;
             }
             snapshot = new ArrayList<>(sessions.values());
@@ -257,6 +264,26 @@ public final class StreamHub implements StreamRuntimeListener {
             } catch (RuntimeException ignored) {
                 // isolate a single session's failure
             }
+        }
+    }
+
+    @Override
+    public void onEncoderFailed(StreamKey streamKey, EncoderException failure) {
+        if (streamKey == null) {
+            return;
+        }
+        List<ClientSendSession> toDetach;
+        synchronized (lock) {
+            StreamRuntime active = activeRuntime;
+            if (active == null || !streamKey.equals(active.getStreamKey())) {
+                return;
+            }
+            toDetach = new ArrayList<>(sessions.values());
+            sessions.clear();
+            capabilities.clear();
+        }
+        for (ClientSendSession session : toDetach) {
+            session.detach();
         }
     }
 

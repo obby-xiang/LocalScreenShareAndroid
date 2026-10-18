@@ -7,6 +7,7 @@ public final class JoinDecision {
 
     public enum Status {
         ACCEPTED,
+        NOT_READY,
         REQUIRES_EXPLICIT_FALLBACK,
         REJECTED
     }
@@ -50,5 +51,9 @@ public final class JoinDecision {
 
     public static JoinDecision rejected(String reason) {
         return new JoinDecision(Status.REJECTED, null, null, reason);
+    }
+
+    public static JoinDecision notReady(String reason) {
+        return new JoinDecision(Status.NOT_READY, null, null, reason);
     }
 }
