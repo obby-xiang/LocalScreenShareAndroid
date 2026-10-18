@@ -1,0 +1,615 @@
+package com.obby.android.localscreenshare.core.codec.h264;
+
+import android.view.Surface;
+
+import com.obby.android.localscreenshare.core.codec.CodecIds;
+import com.obby.android.localscreenshare.core.codec.Encoder;
+import com.obby.android.localscreenshare.core.codec.EncoderConfig;
+import com.obby.android.localscreenshare.core.codec.EncoderException;
+import com.obby.android.localscreenshare.core.codec.EncoderOutput;
+import com.obby.android.localscreenshare.core.model.AccessUnitFlags;
+import com.obby.android.localscreenshare.core.model.CodecConfigPart;
+import com.obby.android.localscreenshare.core.model.ColorInfo;
+import com.obby.android.localscreenshare.core.model.EncodedAccessUnit;
+import com.obby.android.localscreenshare.core.model.JoinInfo;
+import com.obby.android.localscreenshare.core.model.StreamDescriptor;
+import com.obby.android.localscreenshare.core.model.StreamKey;
+import com.obby.android.localscreenshare.core.model.StreamParameters;
+
+import java.util.Arrays;
+import java.util.List;
+
+/**
+ * H.264 (AVC) encoder adapter over a {@link MediaCodecEncoderBridge}.
+ *
+ * <p><b>Lifecycle split.</b> The constructor validates the requested descriptor, creates the
+ * bridge, {@code configure}s it and creates the input surface. {@link #start()} only calls
+ * {@code bridge.start()} and launches a single daemon drain thread; it never reconfigures the
+ * codec or recreates the surface.</p>
+ *
+ * <p><b>Config gate.</b> The first valid codec configuration (SPS/PPS plus a positive coded size)
+ * wins and is emitted through {@link EncoderOutput#onEncoderConfig} before any access unit. A
+ * later, byte-different configuration is a hard failure because a new decode configuration would
+ * require a new config epoch, which this encoder cannot mint on its own.</p>
+ *
+ * <p><b>First-IDR wait.</b> Once a configuration is published, non-IDR samples are dropped until
+ * the first validated IDR access unit arrives; that IDR is emitted as sequence {@code 0}.</p>
+ *
+ * <p><b>Threading.</b> A private lock guards only counters and state snapshots; bridge calls and
+ * {@code onEncoderConfig}/{@code onAccessUnit}/{@code onEncoderFailure} callbacks are always made
+ * outside the lock.</p>
+ */
+public final class H264Encoder implements Encoder {
+
+    private static final String H264_MIME = "video/avc";
+
+    private static final long DEQUEUE_TIMEOUT_US = 10_000L;
+
+    private static final long DRAIN_JOIN_TIMEOUT_MS = 1_000L;
+
+    private static final String DRAIN_THREAD_NAME = "h264-encoder-drain";
+
+    private final Object lock = new Object();
+
+    private final StreamKey streamKey;
+    private final StreamDescriptor descriptor;
+    private final EncoderOutput output;
+    private final MediaCodecEncoderBridge bridge;
+    private final Surface inputSurface;
+    private final int configEpoch;
+
+    private StreamParameters parameters;
+
+    // Lifecycle state, guarded by lock.
+    private boolean started;
+    private boolean stopRequested;
+    private boolean closed;
+    private boolean failed;
+    private boolean bridgeReleased;
+    private boolean leakDetected;
+    private Thread drainThread;
+
+    // Config / access-unit state, guarded by lock.
+    private List<CodecConfigPart> publishedConfigParts;
+    private boolean awaitingFirstIdr;
+    private boolean auEmitted;
+    private long sequence;
+
+    /**
+     * Creates, configures and surface-initializes the encoder; it is not started.
+     *
+     * @throws EncoderException if bridge creation, configuration or input-surface creation fails
+     */
+    public H264Encoder(StreamKey streamKey, StreamDescriptor requestedDescriptor,
+                       StreamParameters parameters, EncoderOutput output,
+                       MediaCodecBridgeFactory bridgeFactory) {
+        if (streamKey == null) {
+            throw new IllegalArgumentException("streamKey must not be null");
+        }
+        if (requestedDescriptor == null) {
+            throw new IllegalArgumentException("requestedDescriptor must not be null");
+        }
+        if (!CodecIds.H264.equals(requestedDescriptor.getCodecId())) {
+            throw new IllegalArgumentException("requested codec must be " + CodecIds.H264);
+        }
+        if (requestedDescriptor.getConfigParts() != null
+                && !requestedDescriptor.getConfigParts().isEmpty()) {
+            throw new IllegalArgumentException("requested configParts must be empty for H.264");
+        }
+        if (requestedDescriptor.getCodedWidth() <= 0
+                || requestedDescriptor.getCodedHeight() <= 0) {
+            throw new IllegalArgumentException("coded size must be positive");
+        }
+        if (parameters == null) {
+            throw new IllegalArgumentException("parameters must not be null");
+        }
+        if (output == null) {
+            throw new IllegalArgumentException("output must not be null");
+        }
+        if (bridgeFactory == null) {
+            throw new IllegalArgumentException("bridgeFactory must not be null");
+        }
+
+        this.streamKey = streamKey;
+        this.descriptor = requestedDescriptor;
+        this.output = output;
+        this.parameters = parameters;
+        this.configEpoch = requestedDescriptor.getConfigEpoch();
+
+        MediaCodecEncoderBridge created = null;
+        try {
+            created = bridgeFactory.createEncoder(H264_MIME);
+            EncoderFormat format = new EncoderFormat(
+                    requestedDescriptor.getCodedWidth(),
+                    requestedDescriptor.getCodedHeight(),
+                    Math.max(1, parameters.getTargetBitrateBps()),
+                    Math.max(1, parameters.getFrameRateHint()),
+                    keyFrameIntervalSeconds(parameters.getKeyFrameIntervalMs()));
+            created.configure(format);
+            Surface surface = created.createInputSurface();
+            this.bridge = created;
+            this.inputSurface = surface;
+        } catch (RuntimeException e) {
+            releaseQuietly(created);
+            throw new EncoderException("failed to initialize H.264 encoder", e);
+        }
+    }
+
+    /**
+     * Converts a key-frame interval in milliseconds to whole seconds, rounding up, with a floor of
+     * one second. The arithmetic is done in {@code long} and then narrowed to {@code int} so large
+     * millisecond values cannot overflow before the division. Examples: 1000ms -&gt; 1s,
+     * 1001ms -&gt; 2s, 250ms -&gt; 1s, 0ms -&gt; 1s.
+     */
+    private static int keyFrameIntervalSeconds(int keyFrameIntervalMs) {
+        long seconds = Math.max(1L, ((long) keyFrameIntervalMs + 999L) / 1000L);
+        return (int) seconds;
+    }
+
+    /**
+     * Starts the encoder's drain loop. This only calls {@code bridge.start()} and launches the
+     * single daemon drain thread; it does not reconfigure the codec or recreate the input surface,
+     * both of which already happened during construction. Throws {@link IllegalStateException} when
+     * the encoder is already started or already closed; a {@code bridge.start()} failure is wrapped
+     * in an {@link EncoderException}.
+     */
+    @Override
+    public void start() {
+        synchronized (lock) {
+            if (closed) {
+                throw new IllegalStateException("encoder already closed");
+            }
+            if (started) {
+                throw new IllegalStateException("encoder already started");
+            }
+            started = true;
+        }
+        try {
+            bridge.start();
+        } catch (RuntimeException e) {
+            synchronized (lock) {
+                failed = true;
+            }
+            throw new EncoderException("failed to start H.264 encoder", e);
+        }
+        Thread thread = new Thread(this::drain, DRAIN_THREAD_NAME);
+        thread.setDaemon(true);
+        synchronized (lock) {
+            drainThread = thread;
+        }
+        thread.start();
+    }
+
+    /**
+     * Stops the encoder's drain loop. A not-yet-started encoder returns immediately. Otherwise the
+     * stop is requested and the drain thread is joined with a bounded 1000ms wait (skipped when the
+     * caller is the drain thread itself, which must not join itself); the drain thread's
+     * {@code finally} performs a best-effort {@code bridge.stop()}, and this method never releases
+     * the bridge. Idempotent: a subsequent call is a no-op. Throws {@link EncoderException} when
+     * the join times out. After a normal return the drain thread has terminated, so no further
+     * access-unit callback can occur.
+     */
+    @Override
+    public void stop() {
+        Thread thread;
+        synchronized (lock) {
+            if (!started) {
+                return;
+            }
+            if (stopRequested) {
+                return;
+            }
+            stopRequested = true;
+            thread = drainThread;
+        }
+        if (thread != null && thread != Thread.currentThread() && !joinQuietly(thread)) {
+            throw new EncoderException("drain thread did not terminate within "
+                    + DRAIN_JOIN_TIMEOUT_MS + "ms");
+        }
+    }
+
+    @Override
+    public Surface getInputSurface() {
+        synchronized (lock) {
+            if (closed) {
+                return null;
+            }
+        }
+        return inputSurface;
+    }
+
+    @Override
+    public void updateParameters(StreamParameters parameters) {
+        if (parameters == null) {
+            throw new IllegalArgumentException("parameters must not be null");
+        }
+        int previousBitrate = Math.max(1, this.parameters.getTargetBitrateBps());
+        int newBitrate = Math.max(1, parameters.getTargetBitrateBps());
+        // Frame rate and key-frame interval are recorded but not hot-applied: only the bitrate is
+        // changed live. A bridge failure here propagates unchanged.
+        this.parameters = parameters;
+        if (newBitrate != previousBitrate) {
+            bridge.updateBitrate(newBitrate);
+        }
+    }
+
+    @Override
+    public void requestSyncPoint() {
+        try {
+            bridge.requestSyncFrame();
+        } catch (RuntimeException e) {
+            throw new EncoderException("failed to request sync frame", e);
+        }
+    }
+
+    /**
+     * Closes the encoder. The bridge is released exactly once, and only after the drain thread has
+     * been observed to terminate. If the drain thread is still alive after the bounded join, the
+     * close marks a leak, does not release (a live drain thread could still touch the bridge) and
+     * returns without throwing; a later close retries the deferred release once the thread has
+     * terminated. Repeated closes are no-ops.
+     */
+    @Override
+    public void close() {
+        Thread thread;
+        synchronized (lock) {
+            closed = true;
+            stopRequested = true;
+            thread = drainThread;
+        }
+        if (thread != null && thread == Thread.currentThread()) {
+            // Called from the drain thread itself: it cannot join itself and must not release its
+            // own bridge while still running, so mark the leak and return.
+            synchronized (lock) {
+                leakDetected = true;
+            }
+            return;
+        }
+        if (thread != null && !joinQuietly(thread)) {
+            synchronized (lock) {
+                leakDetected = true;
+            }
+            return;
+        }
+        releaseOnce();
+    }
+
+    /** True after the bridge has been released at least once; exposed for tests and diagnostics. */
+    public boolean isBridgeReleased() {
+        synchronized (lock) {
+            return bridgeReleased;
+        }
+    }
+
+    /** True when a close detected that the drain thread did not terminate; tests/diagnostics only. */
+    public boolean isLeakDetected() {
+        synchronized (lock) {
+            return leakDetected;
+        }
+    }
+
+    /** Drains encoded output on the daemon thread; on exit it best-effort stops the bridge. */
+    private void drain() {
+        try {
+            while (!shouldStop()) {
+                EncodedSample sample;
+                try {
+                    sample = bridge.dequeueOutput(DEQUEUE_TIMEOUT_US);
+                } catch (RuntimeException e) {
+                    notifyFailure(new EncoderException("bridge dequeue failed", e));
+                    return;
+                }
+                if (sample == null) {
+                    continue;
+                }
+                try {
+                    if (!processSample(sample)) {
+                        return;
+                    }
+                } catch (RuntimeException e) {
+                    notifyFailure(new EncoderException("encoder listener failed", e));
+                    return;
+                }
+            }
+        } finally {
+            stopBridgeQuietly();
+        }
+    }
+
+    private boolean shouldStop() {
+        synchronized (lock) {
+            return stopRequested || closed || failed;
+        }
+    }
+
+    /**
+     * Handles one dequeued sample. Returns {@code false} when the drain loop must stop (a terminal
+     * failure was reported).
+     */
+    private boolean processSample(EncodedSample sample) {
+        if (sample.isEndOfStream()) {
+            return false;
+        }
+        if (sample.isFormatChanged()) {
+            return handleFormatChange();
+        }
+        if (sample.isCodecConfig()) {
+            return handleCodecConfig(sample.getData());
+        }
+        return handleDisplaySample(sample, sample.getData());
+    }
+
+    private boolean handleFormatChange() {
+        EncoderStreamFormat format = bridge.getOutputFormat();
+        if (format == null) {
+            return true;
+        }
+        if (format.getWidth() <= 0 || format.getHeight() <= 0) {
+            // The requested size must never be used as a fallback; a non-positive coded size is a
+            // terminal configuration failure reported exactly once.
+            fail("encoder format has non-positive coded size");
+            return false;
+        }
+        List<CodecConfigPart> parts;
+        try {
+            parts = extractConfigFromCsd(format.getCsd0(), format.getCsd1());
+        } catch (H264FormatException e) {
+            // Incomplete CSD is not fatal: wait for a codec-config buffer or in-band SPS/PPS.
+            return true;
+        }
+        return acceptConfig(parts, format.getWidth(), format.getHeight(), format.getColorInfo());
+    }
+
+    private boolean handleCodecConfig(byte[] data) {
+        List<CodecConfigPart> parts;
+        try {
+            parts = H264ConfigExtractor.fromInBandPayload(data);
+        } catch (H264FormatException e) {
+            fail("codec config buffer missing SPS/PPS");
+            return false;
+        }
+        return acceptConfig(parts, descriptor.getCodedWidth(), descriptor.getCodedHeight(),
+                requestedColor());
+    }
+
+    private boolean handleDisplaySample(EncodedSample sample, byte[] data) {
+        boolean configReady;
+        synchronized (lock) {
+            configReady = publishedConfigParts != null;
+        }
+
+        H264AccessUnitInfo info = analyzeOrNull(data);
+        if (info == null) {
+            fail("malformed access unit");
+            return false;
+        }
+
+        byte[] displayPayload = data;
+        if (info.hasSps() || info.hasPps()) {
+            List<CodecConfigPart> parts;
+            try {
+                parts = H264ConfigExtractor.fromInBandPayload(data);
+            } catch (H264FormatException e) {
+                fail("in-band config missing SPS/PPS");
+                return false;
+            }
+            if (!acceptConfig(parts, descriptor.getCodedWidth(), descriptor.getCodedHeight(),
+                    requestedColor())) {
+                return false;
+            }
+            try {
+                displayPayload = H264AnnexBParser.stripSpsPps(data);
+            } catch (H264FormatException e) {
+                fail("failed to strip in-band config");
+                return false;
+            }
+        } else if (!configReady) {
+            fail("access unit before config");
+            return false;
+        }
+
+        if (info.hasBSlice()) {
+            fail("B slices are not supported");
+            return false;
+        }
+        if (!info.hasVcl()) {
+            // SPS/PPS-only packet: configuration was already handled, nothing to emit.
+            return true;
+        }
+
+        long pts = sample.getPtsUs();
+        if (pts < 0) {
+            fail("negative presentation timestamp");
+            return false;
+        }
+
+        boolean joinPoint = H264AnnexBParser.isIdrAccessUnit(displayPayload);
+
+        long seq;
+        synchronized (lock) {
+            if (awaitingFirstIdr) {
+                if (!joinPoint) {
+                    return true;
+                }
+                awaitingFirstIdr = false;
+            }
+            seq = sequence++;
+            auEmitted = true;
+        }
+
+        emitAccessUnit(seq, pts, joinPoint, displayPayload);
+        return true;
+    }
+
+    /**
+     * Applies the config gate. The first configuration wins and is emitted before any access unit;
+     * an identical configuration is ignored; a different configuration is a terminal failure.
+     * Returns {@code false} when a failure was reported.
+     */
+    private boolean acceptConfig(List<CodecConfigPart> parts, int width, int height,
+                                 ColorInfo colorInfo) {
+        if (width <= 0 || height <= 0) {
+            fail("encoder config has non-positive coded size");
+            return false;
+        }
+        if (colorInfo == null) {
+            colorInfo = ColorInfo.UNSPECIFIED;
+        }
+
+        EncoderConfig configToEmit = null;
+        boolean changed = false;
+        synchronized (lock) {
+            if (publishedConfigParts == null) {
+                publishedConfigParts = parts;
+                awaitingFirstIdr = true;
+                configToEmit = new EncoderConfig(width, height, colorInfo, parts);
+            } else if (!configsEqual(parts, publishedConfigParts)) {
+                changed = true;
+            }
+        }
+
+        if (changed) {
+            boolean published;
+            synchronized (lock) {
+                published = auEmitted;
+            }
+            fail(published ? "encoder config changed without a new epoch"
+                    : "encoder config changed before first access unit");
+            return false;
+        }
+        if (configToEmit != null) {
+            output.onEncoderConfig(configToEmit);
+        }
+        return true;
+    }
+
+    private void emitAccessUnit(long sequence, long ptsUs, boolean joinPoint, byte[] payload) {
+        List<CodecConfigPart> configParts;
+        synchronized (lock) {
+            if (closed || failed) {
+                return;
+            }
+            configParts = publishedConfigParts;
+        }
+        if (configParts == null) {
+            return;
+        }
+        JoinInfo joinInfo = new JoinInfo(configEpoch, configParts);
+        AccessUnitFlags flags = AccessUnitFlags.of(joinPoint, joinPoint, false);
+        EncodedAccessUnit accessUnit = new EncodedAccessUnit(streamKey, configEpoch, sequence,
+                ptsUs, ptsUs, flags, joinInfo, null, payload);
+        output.onAccessUnit(accessUnit);
+    }
+
+    /** Reports a terminal failure exactly once; subsequent failures are suppressed. */
+    private void fail(String message) {
+        notifyFailure(new EncoderException(message));
+    }
+
+    private void notifyFailure(EncoderException failure) {
+        boolean first;
+        synchronized (lock) {
+            first = !failed;
+            failed = true;
+        }
+        if (first) {
+            output.onEncoderFailure(failure);
+        }
+    }
+
+    private H264AccessUnitInfo analyzeOrNull(byte[] data) {
+        try {
+            return H264AnnexBParser.analyze(data);
+        } catch (H264FormatException e) {
+            return null;
+        }
+    }
+
+    /**
+     * Extracts SPS/PPS from codec-specific data. This batch accepts any of three framings: Annex B,
+     * AVCC (length-prefixed), or a single raw NAL unit. A raw NAL carries no start code, so
+     * {@link H264ConfigExtractor#fromCodecSpecificData(byte[], byte[])} rejects it on the first
+     * attempt; the fallback then wraps each non-empty blob in an Annex B start code and retries.
+     * Both paths must still yield exactly one SPS and one PPS, so the fallback does not relax the
+     * format-failure semantics. Mixed framing across the two blobs and a single unified
+     * normalization in the bridge are left for later evaluation, not handled here.
+     */
+    private static List<CodecConfigPart> extractConfigFromCsd(byte[] csd0, byte[] csd1)
+            throws H264FormatException {
+        try {
+            return H264ConfigExtractor.fromCodecSpecificData(csd0, csd1);
+        } catch (H264FormatException firstAttempt) {
+            return H264ConfigExtractor.fromCodecSpecificData(frameAsAnnexB(csd0),
+                    frameAsAnnexB(csd1));
+        }
+    }
+
+    private static byte[] frameAsAnnexB(byte[] csd) {
+        if (csd == null || csd.length == 0) {
+            return csd;
+        }
+        return H264ConfigExtractor.toAnnexB(csd);
+    }
+
+    private static boolean configsEqual(List<CodecConfigPart> a, List<CodecConfigPart> b) {
+        if (a == null || b == null) {
+            return a == b;
+        }
+        if (a.size() != b.size()) {
+            return false;
+        }
+        for (int i = 0; i < a.size(); i++) {
+            CodecConfigPart partA = a.get(i);
+            CodecConfigPart partB = b.get(i);
+            if (!partA.getId().equals(partB.getId())
+                    || !Arrays.equals(partA.getPayload(), partB.getPayload())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private ColorInfo requestedColor() {
+        ColorInfo color = descriptor.getColorInfo();
+        return color != null ? color : ColorInfo.UNSPECIFIED;
+    }
+
+    private static boolean joinQuietly(Thread thread) {
+        try {
+            thread.join(DRAIN_JOIN_TIMEOUT_MS);
+            return !thread.isAlive();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+    }
+
+    private void stopBridgeQuietly() {
+        try {
+            bridge.stop();
+        } catch (RuntimeException ignored) {
+            // Best-effort stop on the drain thread; a failure here must not break the loop.
+        }
+    }
+
+    private void releaseOnce() {
+        synchronized (lock) {
+            if (bridgeReleased) {
+                return;
+            }
+            bridgeReleased = true;
+        }
+        releaseQuietly(bridge);
+    }
+
+    private static void releaseQuietly(MediaCodecEncoderBridge bridge) {
+        if (bridge == null) {
+            return;
+        }
+        try {
+            bridge.release();
+        } catch (RuntimeException ignored) {
+            // Release is best-effort; close must never throw.
+        }
+    }
+}
