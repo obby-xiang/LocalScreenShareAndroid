@@ -198,6 +198,55 @@ public class H264AnnexBParserTest {
     }
 
     @Test
+    public void analyze_rejectsAuWhoseFirstVclIsNotIdr() {
+        byte[] payload = H264Fixtures.annexB(
+                H264Fixtures.pSlice(), H264Fixtures.idrSlice());
+
+        H264AccessUnitInfo info = parser.analyze(payload);
+
+        assertEquals(2, info.getVclCount());
+        assertEquals(SLICE_TYPE_P, info.getFirstSliceHeader().getSliceType());
+        assertFalse(info.isJoinable());
+        assertFalse(parser.isIdrAccessUnit(payload));
+    }
+
+    @Test
+    public void analyze_rejectsFirstIdrWithZeroRefIdcEvenIfLaterIdrIsValid() {
+        byte[] payload = H264Fixtures.annexB(
+                H264Fixtures.idrWithZeroNalRefIdc(), H264Fixtures.idrSlice());
+
+        H264AccessUnitInfo info = parser.analyze(payload);
+
+        assertEquals(2, info.getVclCount());
+        assertEquals(0, parser.parse(payload).get(0).getRefIdc());
+        assertFalse(info.isJoinable());
+        assertFalse(parser.isIdrAccessUnit(payload));
+    }
+
+    @Test
+    public void analyze_acceptsMultiSliceIdr() {
+        byte[] payload = H264Fixtures.annexB(
+                H264Fixtures.idrSlice(), H264Fixtures.idrWithNonZeroFirstMb());
+
+        H264AccessUnitInfo info = parser.analyze(payload);
+
+        assertEquals(2, info.getVclCount());
+        assertEquals(0, info.getFirstSliceHeader().getFirstMbInSlice());
+        assertTrue(info.isJoinable());
+        assertTrue(parser.isIdrAccessUnit(payload));
+    }
+
+    @Test
+    public void analyze_reportsHasVcl() {
+        H264AccessUnitInfo withVcl = parser.analyze(H264Fixtures.inBandConfigAndIdr());
+        H264AccessUnitInfo configOnly = parser.analyze(
+                H264Fixtures.annexB(H264Fixtures.sps(), H264Fixtures.pps()));
+
+        assertTrue(withVcl.hasVcl());
+        assertFalse(configOnly.hasVcl());
+    }
+
+    @Test
     public void analyze_removesEmulationPreventionBytesForSliceHeader() {
         byte[] rawIdr = H264Fixtures.idrWithEmulationPrevention();
         assertTrue(containsSequence(rawIdr, new byte[]{0, 0, 3}));
@@ -282,6 +331,25 @@ public class H264AnnexBParserTest {
         List<H264NalUnit> units = parser.parse(stripped);
         assertEquals(1, units.size());
         assertEquals(NAL_TYPE_IDR, units.get(0).getType());
+    }
+
+    @Test
+    public void parserMethods_arePublicStatic() throws Exception {
+        assertPublicStatic("parse", byte[].class);
+        assertPublicStatic("analyze", byte[].class);
+        assertPublicStatic("isIdrAccessUnit", byte[].class);
+        assertPublicStatic("stripSpsPps", byte[].class);
+        assertPublicStatic("looksLengthPrefixed", byte[].class);
+    }
+
+    private static void assertPublicStatic(String name, Class<?>... parameterTypes)
+            throws NoSuchMethodException {
+        java.lang.reflect.Method method =
+                H264AnnexBParser.class.getDeclaredMethod(name, parameterTypes);
+        assertTrue(name + " must be public",
+                java.lang.reflect.Modifier.isPublic(method.getModifiers()));
+        assertTrue(name + " must be static",
+                java.lang.reflect.Modifier.isStatic(method.getModifiers()));
     }
 
     private static byte[] startCode(int length) {

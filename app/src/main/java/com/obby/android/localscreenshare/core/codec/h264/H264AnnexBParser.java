@@ -17,7 +17,7 @@ public final class H264AnnexBParser {
     public H264AnnexBParser() {
     }
 
-    public List<H264NalUnit> parse(byte[] annexB) throws H264FormatException {
+    public static List<H264NalUnit> parse(byte[] annexB) throws H264FormatException {
         if (annexB == null || annexB.length == 0) {
             throw new H264FormatException("empty or null Annex B input");
         }
@@ -54,16 +54,16 @@ public final class H264AnnexBParser {
         return units;
     }
 
-    public H264AccessUnitInfo analyze(byte[] annexB) throws H264FormatException {
-        List<H264NalUnit> units = parse(annexB);
+    public static H264AccessUnitInfo analyze(byte[] annexB) throws H264FormatException {
+        List<H264NalUnit> units = H264AnnexBParser.parse(annexB);
 
         int spsCount = 0;
         int ppsCount = 0;
         int vclCount = 0;
         boolean hasIdr = false;
         boolean hasBSlice = false;
-        boolean allIdrFirstMbZero = true;
-        boolean allIdrIntra = true;
+        int firstVclType = -1;
+        int firstVclRefIdc = -1;
         H264SliceHeader firstSliceHeader = null;
 
         for (H264NalUnit unit : units) {
@@ -79,6 +79,8 @@ public final class H264AnnexBParser {
                 H264SliceHeader header = H264SliceHeader.parse(unit);
                 if (firstSliceHeader == null) {
                     firstSliceHeader = header;
+                    firstVclType = type;
+                    firstVclRefIdc = unit.getRefIdc();
                 }
                 int sliceType = header.getSliceType();
                 if (sliceType == 1 || sliceType == 6) {
@@ -87,23 +89,17 @@ public final class H264AnnexBParser {
                 if (type == NAL_TYPE_IDR && unit.getRefIdc() != 0) {
                     hasIdr = true;
                 }
-                if (type == NAL_TYPE_IDR && header.getFirstMbInSlice() != 0) {
-                    allIdrFirstMbZero = false;
-                }
-                if (type == NAL_TYPE_IDR && sliceType % 5 != 2 && sliceType % 5 != 4) {
-                    allIdrIntra = false;
-                }
             }
         }
 
         return new H264AccessUnitInfo(spsCount, ppsCount, vclCount, hasIdr,
-                hasBSlice, allIdrFirstMbZero, allIdrIntra, firstSliceHeader);
+                hasBSlice, firstVclType, firstVclRefIdc, firstSliceHeader);
     }
 
     /** Policy-safe entry point: never throws, returns false on any malformed input. */
-    public boolean isIdrAccessUnit(byte[] payload) {
+    public static boolean isIdrAccessUnit(byte[] payload) {
         try {
-            return analyze(payload).isJoinable();
+            return H264AnnexBParser.analyze(payload).isJoinable();
         } catch (H264FormatException e) {
             return false;
         }
@@ -113,7 +109,7 @@ public final class H264AnnexBParser {
      * True when the buffer is consumed exactly by a sequence of 4-byte
      * big-endian length prefixes, i.e. AVCC framing.
      */
-    public boolean looksLengthPrefixed(byte[] payload) {
+    public static boolean looksLengthPrefixed(byte[] payload) {
         if (payload == null || payload.length < 4) {
             return false;
         }
@@ -136,8 +132,8 @@ public final class H264AnnexBParser {
     }
 
     /** Removes SPS/PPS NAL units, keeps VCL, emits canonical 4-byte start codes. */
-    public byte[] stripSpsPps(byte[] annexB) throws H264FormatException {
-        List<H264NalUnit> units = parse(annexB);
+    public static byte[] stripSpsPps(byte[] annexB) throws H264FormatException {
+        List<H264NalUnit> units = H264AnnexBParser.parse(annexB);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         for (H264NalUnit unit : units) {
             int type = unit.getType();

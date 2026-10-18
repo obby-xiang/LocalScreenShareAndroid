@@ -6,26 +6,28 @@ package com.obby.android.localscreenshare.core.codec.h264;
  */
 public final class H264AccessUnitInfo {
 
+    private static final int NAL_TYPE_IDR = 5;
+
     private final int spsCount;
     private final int ppsCount;
     private final int vclCount;
     private final boolean hasIdr;
     private final boolean hasBSlice;
-    private final boolean allIdrFirstMbZero;
-    private final boolean allIdrIntra;
+    private final int firstVclType;
+    private final int firstVclRefIdc;
     private final H264SliceHeader firstSliceHeader;
 
     H264AccessUnitInfo(int spsCount, int ppsCount, int vclCount,
                        boolean hasIdr, boolean hasBSlice,
-                       boolean allIdrFirstMbZero, boolean allIdrIntra,
+                       int firstVclType, int firstVclRefIdc,
                        H264SliceHeader firstSliceHeader) {
         this.spsCount = spsCount;
         this.ppsCount = ppsCount;
         this.vclCount = vclCount;
         this.hasIdr = hasIdr;
         this.hasBSlice = hasBSlice;
-        this.allIdrFirstMbZero = allIdrFirstMbZero;
-        this.allIdrIntra = allIdrIntra;
+        this.firstVclType = firstVclType;
+        this.firstVclRefIdc = firstVclRefIdc;
         this.firstSliceHeader = firstSliceHeader;
     }
 
@@ -47,8 +49,29 @@ public final class H264AccessUnitInfo {
         return hasBSlice;
     }
 
+    /** True when the access unit contains at least one VCL NAL. */
+    public boolean hasVcl() {
+        return vclCount > 0;
+    }
+
     public boolean isJoinable() {
-        return vclCount >= 1 && hasIdr && !hasBSlice && allIdrFirstMbZero && allIdrIntra;
+        if (!hasVcl()) {
+            return false;
+        }
+        if (firstVclType != NAL_TYPE_IDR) {
+            return false;
+        }
+        if (firstVclRefIdc == 0) {
+            return false;
+        }
+        if (firstSliceHeader == null || firstSliceHeader.getFirstMbInSlice() != 0) {
+            return false;
+        }
+        int sliceType = firstSliceHeader.getSliceType();
+        if (sliceType % 5 != 2 && sliceType % 5 != 4) {
+            return false;
+        }
+        return !hasBSlice;
     }
 
     public int getSpsCount() {
