@@ -13,8 +13,9 @@ import java.nio.ByteBuffer;
  * {@link AndroidMediaCodecBridgeFactory#createDecoder(String)} and handed to this bridge in its
  * constructor. {@link #configure(DecoderFormat)} builds an Annex-B {@link MediaFormat} from the
  * width, height and CSD blobs and configures the codec against the render surface carried by
- * {@link DecoderFormat#getOutputSurface()}. There is no {@code setOutputSurface}: a surface
- * availability change is recovered by re-creating the decoder rather than mutating this bridge.</p>
+ * {@link DecoderFormat#getOutputSurface()}. Output surface is supplied only through
+ * {@link DecoderFormat}; any surface-availability change requires re-creating the decoder rather
+ * than mutating this bridge.</p>
  *
  * <p>{@link #start()}, {@link #stop()} and {@link #release()} are idempotent. The render surface is
  * caller-owned and is never released by this bridge; {@link #release()} releases only the codec.</p>

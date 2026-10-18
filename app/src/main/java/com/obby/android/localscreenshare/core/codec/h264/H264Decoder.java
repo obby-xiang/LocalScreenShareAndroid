@@ -19,9 +19,8 @@ import java.util.List;
  * <p><b>Validation before side effects.</b> {@link #configure(StreamDescriptor)} fully validates the
  * descriptor (codec id, config epoch, exactly one SPS and one PPS) <i>before</i> reading the render
  * target's surface or creating the bridge. The render target's surface is passed through
- * {@link DecoderFormat}; there is no {@code setOutputSurface}, so a surface availability change is
- * recovered by re-creating the decoder through {@code ClientMediaSession.retryConfigure()} rather
- * than by mutating an existing decoder.</p>
+ * {@link DecoderFormat} only; a surface availability change is recovered by re-creating the decoder
+ * through {@code ClientMediaSession.retryConfigure()} rather than by mutating an existing decoder.</p>
  *
  * <p><b>Decode ordering.</b> {@link #decode(EncodedAccessUnit)} validates null/configured/epoch
  * state before any bridge I/O, then parses the access unit and strips in-band SPS/PPS. A
