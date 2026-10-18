@@ -32,7 +32,7 @@
 
 编码框架实施计划已执行至 Task 9（`TB-DOC-008`）；实施在原仓库 `master` 上进行，未新建或切换工作区。Task 1–8 提交范围 `5304a53..86e14a3`，Task 9 的 E2E/支持与看板提交见 `TB-FW-001`、`TB-DOC-008`。未运行 `connectedAndroidTest`、adb、emulator 或实机访问。
 
-**H264 适配计划执行中：Task 1–4 已完成，Task 5–8 待执行。** 当前计划已按两路审查收敛并终审通过为 [H.264 适配器与配置生命周期实施计划（收敛版）](superpowers/plans/2026-10-18-h264-adapter.md)，共 **8 个严格串行任务**：Annex B 工具 → bridge 契约/fake → Runtime 两阶段初始化 → Hub NOT_READY → H.264 encoder → H.264 decoder/注册/客户端恢复 → JVM E2E → Android bridge/编译级 androidTest/最终验证。收敛后的边界：不接现有 `LssService`/`LssServer`/`LssClient`/proto/UI；不新增任何编码切换编排、显示参数 epoch-only 更新、`setOutputSurface` 或显示 Surface 重挂载 API；不做 HEVC/AV1/RTP/GPU Fanout/多活动流/设备验证。已完成 Task 1–4（提交 `8161673`、`fccc955`、`8beb8f1`、`f8b70c7`），最新全量 236 tests 通过，四个提交的 Build CI 均通过；Task 5–8 待执行。执行前 JVM 基线为 13 类 162 tests（`./gradlew :app:testDebugUnitTest --offline` 通过）；仍**未接现有投屏、未做切换编排与设备验证**，问题 3 未关闭。
+**H264 适配计划执行中：Task 1–5 已完成，Task 6–8 待执行。** 当前计划已按两路审查收敛并终审通过为 [H.264 适配器与配置生命周期实施计划（收敛版）](superpowers/plans/2026-10-18-h264-adapter.md)，共 **8 个严格串行任务**：Annex B 工具 → bridge 契约/fake → Runtime 两阶段初始化 → Hub NOT_READY → H.264 encoder → H.264 decoder/注册/客户端恢复 → JVM E2E → Android bridge/编译级 androidTest/最终验证。收敛后的边界：不接现有 `LssService`/`LssServer`/`LssClient`/proto/UI；不新增任何编码切换编排、显示参数 epoch-only 更新、`setOutputSurface` 或显示 Surface 重挂载 API；不做 HEVC/AV1/RTP/GPU Fanout/多活动流/设备验证。已完成 Task 1–5（提交 `8161673`、`fccc955`、`8beb8f1`、`f8b70c7`、`f8a83bf`），最新全量 299 tests 通过，上述提交的 Build CI 均通过；Task 6–8 待执行。执行前 JVM 基线为 13 类 162 tests（`./gradlew :app:testDebugUnitTest --offline` 通过）；仍**未接现有投屏、未做切换编排与设备验证**，问题 3 未关闭。
 
 下一步建议按 [渐进优化路线图](optimization-roadmap.md) 的阶段 0 启动可观测性与基线；编码框架的落地顺序以 [编码框架落地顺序](codec-framework.md) 为准，但仍受阶段 0/1 的前置约束。框架接入现有服务/客户端、H.264 单流与设备/网络验证尚未开始。在拿到基线前，不预设任何性能、发热或延迟收益。
 
@@ -51,7 +51,7 @@
 
 | ID | 优先级 | 状态 | 任务 | 交付物 / 验证证据 | 关联文档 |
 | --- | --- | --- | --- | --- | --- |
-| TB-FW-003 | P1 | 进行中 | H.264 单流 TCP：`MediaCodec` 骨架、Surface 输入、明确 IDR 才可加入、`configEpoch`、配置缓存、有界队列与 `RESYNCING`。 | 交付：H.264 编解码、TCP 完整访问单元传输、重同步。验证：只从明确 IDR 加入；分辨率/旋转切换可恢复；慢客户端不阻塞编码器；当前未完成。**实施计划：[H.264 适配器与配置生命周期实施计划（收敛版）](superpowers/plans/2026-10-18-h264-adapter.md)，8 个严格串行任务；执行中：Task 1–4 已完成，Task 5–8 待执行。Task 1–4 提交：`8161673`（Annex B 解析与配置提取）、`fccc955`（MediaCodec bridge 契约与 JVM fake）、`8beb8f1`（Runtime 两阶段配置发布）、`f8b70c7`（StreamHub 就绪门与失败隔离）；最新全量 236 tests 通过，四个提交的 Build CI 均通过。仍未接现有投屏、未做切换编排与设备验证，问题 3 未关闭，TB-FW-003 不得写成已完成。** | [编码框架设计](codec-framework.md)、[DB-CODEC-013](decision-board.md)、[DB-MULTI-005](decision-board.md)、[路线图阶段 2](optimization-roadmap.md) |
+| TB-FW-003 | P1 | 进行中 | H.264 单流 TCP：`MediaCodec` 骨架、Surface 输入、明确 IDR 才可加入、`configEpoch`、配置缓存、有界队列与 `RESYNCING`。 | 交付：H.264 编解码、TCP 完整访问单元传输、重同步。验证：只从明确 IDR 加入；分辨率/旋转切换可恢复；慢客户端不阻塞编码器；当前未完成。**实施计划：[H.264 适配器与配置生命周期实施计划（收敛版）](superpowers/plans/2026-10-18-h264-adapter.md)，8 个严格串行任务；执行中：Task 1–5 已完成，Task 6–8 待执行。Task 1–5 提交：`8161673`（Annex B 解析与配置提取）、`fccc955`（MediaCodec bridge 契约与 JVM fake）、`8beb8f1`（Runtime 两阶段配置发布）、`f8b70c7`（StreamHub 就绪门与失败隔离）、`f8a83bf`（H.264 编码器适配器）；最新全量 299 tests 通过，上述提交的 Build CI 均通过。仍未接现有投屏、未做切换编排与设备验证，问题 3 未关闭，TB-FW-003 不得写成已完成。** | [编码框架设计](codec-framework.md)、[DB-CODEC-013](decision-board.md)、[DB-MULTI-005](decision-board.md)、[路线图阶段 2](optimization-roadmap.md) |
 
 任务进入“进行中”时，应同时写清范围、交付物和验证方式；完成后先补验证证据，再移入“已完成”。
 
