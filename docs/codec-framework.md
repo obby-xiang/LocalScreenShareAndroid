@@ -1,6 +1,6 @@
 # 可扩展编码框架设计
 
-> 状态：**隔离子集已落地并仅经 JVM 验证；现有投屏和 H.264 等未接线**。静态 Codec SPI、单活动流 Runtime、StreamHub、每客户端有界队列、客户端六状态机与 JPEG 独立帧参考适配已在 `core` 落地，并通过 JVM 单元测试；H.264/MediaCodec/HEVC/AV1、RTP/Packetizer、采集输出 Surface 切换、Service/UI 接线与真实设备验证均未实现。本文是设计契约，不能当作完整 spec 已实现或设备验证通过的证据。
+> 状态：**隔离 H.264 适配器与两阶段配置发布已实现并仅经 JVM/fake 及编译验证；未接现有投屏、未做设备验证**。静态 Codec SPI、单活动流 Runtime、StreamHub、每客户端有界队列、客户端六状态机、JPEG 独立帧参考适配与隔离 H.264 适配器已在 `core` 落地；H.264 与 JPEG 均通过 JVM 单元测试，androidTest 仅编译未运行。HEVC/AV1、RTP/Packetizer、采集输出 Surface 切换、Service/UI 接线与真实设备验证均未实现。本文是设计契约，不能当作完整 spec 已实现或设备验证通过的证据。
 > 适用范围：一个 `MediaProjection` 与一个 `VirtualDisplay` 的采集结果，第一版只跑一条活动流。多流、GPU 分发、RTP 与 WebRTC 只描述扩展位置与触发条件。
 > 相关文档：[媒体链路目标架构](media-architecture.md) · [渐进优化路线图](optimization-roadmap.md) · [窗口与会话设计](windowing-session-design.md) · [决策看板](decision-board.md) · [任务看板](task-board.md)
 
@@ -8,8 +8,8 @@
 
 | 议题 | 已批准裁决 | 状态 |
 | --- | --- | --- |
-| 总体结构 | 静态 Codec SPI + 单活动流核心 + 可扩展 StreamHub；不引入动态插件或通用多媒体引擎 | 隔离子集已落地，JVM 验证 |
-| 第一版验证方式 | 用 H.264 与 JPEG 两条差异最大的实现验证同一契约；HEVC 用于验证 `MediaCodec` 骨架复用 | JPEG 参考适配已落地；H.264/HEVC 未实现 |
+| 总体结构 | 静态 Codec SPI + 单活动流核心 + 可扩展 StreamHub；不引入动态插件或通用多媒体引擎 | 隔离核心与 H.264 适配器已落地，JVM/fake 及编译验证 |
+| 第一版验证方式 | 用 H.264 与 JPEG 两条差异最大的实现验证同一契约；HEVC 用于验证 `MediaCodec` 骨架复用 | JPEG 参考适配与隔离 H.264 适配器已落地；H.264 未接线，HEVC 未实现 |
 | 第一版范围 | 单采集会话、单 VirtualDisplay、单 Surface、单活动流；不做 GPU Fanout、多流与每客户端转码 | 隔离核心已落地；采集/VirtualDisplay 接线未实现 |
 | 契约边界 | 公共层只处理描述符、参数、访问单元、状态与队列；不解析 NAL/OBU/JPEG 负载 | 已落地，JVM 验证 |
 | 解码配置 | `StreamDescriptor` 与 `StreamParameters` 分离，只有解码关键变化才推进 `configEpoch` | 已落地，JVM 验证 |
@@ -18,7 +18,7 @@
 | 传输 | TCP/gRPC 传完整访问单元；RTP 由 `(codec, transport)` 封包器处理；WebRTC 作为独立媒体栈 | 传输接口已落地；TCP/gRPC 接线、RTP Packetizer 未实现 |
 | 高级能力 | AV1、HDR、B 帧、时域层只预留契约，不在本阶段实现 | 未实现 |
 
-本文中的“已批准”只表示设计获得用户确认；当前只有隔离子集的 JVM 代码与测试证据，未接现有投屏，未做 H.264/MediaCodec/RTP 或设备/性能验证。
+本文中的“已批准”只表示设计获得用户确认；当前只有隔离核心与隔离 H.264 适配器的 JVM/fake 及编译证据，未接现有投屏，未做 TCP/RTP 接线或设备/性能验证。
 
 ## 2. 设计目标与不变量
 
@@ -153,7 +153,7 @@ flowchart TB
 
 | codecId | 实现路径 | 第一版状态 | 验证目的 |
 | --- | --- | --- | --- |
-| H.264/AVC | `MediaCodec` 骨架，Surface 输入与输出，明确 IDR 才可加入 | 实现 | 验证参考帧视频的描述符、epoch、可加入点、队列与重同步 |
+| H.264/AVC | `MediaCodec` 骨架，Surface 输入与输出，明确 IDR 才可加入 | 隔离实现（JVM/fake 及编译验证，未接线） | 验证参考帧视频的描述符、epoch、可加入点、队列与重同步 |
 | JPEG/MJPEG | 独立像素路径：自行从采集 Surface 取像素并压缩，每帧独立 | 实现 | 验证非参考帧路径、每帧可加入、不同丢弃策略能否共用同一契约 |
 | HEVC | 复用 `MediaCodec` 骨架，只从明确安全 IDR 加入 | 扩展验证 | 验证新增 codec 不需要改公共层；CRA/RASL 不作为可加入点 |
 | AV1 | 复用 `MediaCodec` 骨架，加入规则由未来策略决定 | 仅契约 | 验证描述符与策略字段足够表达，不写实现 |
