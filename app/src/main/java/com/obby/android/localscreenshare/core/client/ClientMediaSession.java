@@ -83,14 +83,9 @@ public final class ClientMediaSession {
         }
 
         CodecRegistration registration = registry.require(descriptor.getCodecId());
-        if (registration.getDescriptor().isSurfaceOutputRequired()
-                && renderTarget.getSurface() == null) {
-            currentDescriptor = descriptor;
-            policy = registration.getPolicy();
-            setState(ClientState.RESYNCING);
-            return false;
-        }
 
+        // Epoch/hash validation precedes any surface read or decoder side effect, so a stale or
+        // duplicate descriptor cannot disturb an active decoder.
         if (currentDescriptor != null) {
             int currentEpoch = currentDescriptor.getConfigEpoch();
             int newEpoch = descriptor.getConfigEpoch();
@@ -103,6 +98,17 @@ public final class ClientMediaSession {
             if (newEpoch < currentEpoch) {
                 return false;
             }
+        }
+
+        // Record the latest descriptor and policy before the surface gate, so a session that stays
+        // blocked on a missing surface still tracks the newest epoch for a later retryConfigure.
+        currentDescriptor = descriptor;
+        policy = registration.getPolicy();
+
+        if (registration.getDescriptor().isSurfaceOutputRequired()
+                && renderTarget.getSurface() == null) {
+            setState(ClientState.RESYNCING);
+            return false;
         }
 
         return applyDescriptor(descriptor, registration);
@@ -154,6 +160,28 @@ public final class ClientMediaSession {
             decoder = null;
         }
         setState(ClientState.CLOSED);
+    }
+
+    /**
+     * Re-attempts decoder creation for the latest recorded descriptor.
+     *
+     * <p>Only meaningful while {@link ClientState#RESYNCING} with a recorded descriptor. It uses the
+     * <i>latest</i> {@code currentDescriptor}, not the descriptor that first entered RESYNCING, so a
+     * newer epoch received while blocked is what gets configured. When a required surface is still
+     * missing the session stays in RESYNCING and no decoder is created; otherwise the old decoder is
+     * closed and a fresh one is configured, moving to WAIT_RANDOM_ACCESS on success or back to
+     * RESYNCING on failure.</p>
+     */
+    public synchronized boolean retryConfigure() {
+        if (closed || state != ClientState.RESYNCING || currentDescriptor == null) {
+            return false;
+        }
+        CodecRegistration registration = registry.require(currentDescriptor.getCodecId());
+        if (registration.getDescriptor().isSurfaceOutputRequired()
+                && renderTarget.getSurface() == null) {
+            return false;
+        }
+        return applyDescriptor(currentDescriptor, registration);
     }
 
     private boolean applyDescriptor(StreamDescriptor descriptor,
