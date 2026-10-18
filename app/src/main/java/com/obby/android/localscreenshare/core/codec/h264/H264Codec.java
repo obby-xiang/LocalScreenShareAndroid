@@ -15,8 +15,13 @@ import com.obby.android.localscreenshare.core.model.BitstreamFormat;
  * JVM cannot provide, so it must be opted into explicitly rather than added to the JPEG-only
  * default registry.</p>
  *
- * <p>{@code androidRegistration()} is intentionally absent from this batch; the Android-backed
- * registration belongs to a later task.</p>
+ * <p>{@link #registration(MediaCodecBridgeFactory)} is the injected-bridge entry point used by JVM
+ * tests to supply a fake or any custom bridge; {@link #androidRegistration()} is the production
+ * entry point and delegates to the same builder with an {@link AndroidMediaCodecBridgeFactory}, so
+ * both produce registrations with identical fields. {@code CodecRegistry.withDefaults()} still
+ * registers only JPEG, so H.264 is never added by default. This batch does not connect the legacy
+ * screen-share path: {@code MainActivity}, {@code service}, {@code client} and {@code server} are
+ * not modified or integrated.</p>
  */
 public final class H264Codec {
 
@@ -45,5 +50,19 @@ public final class H264Codec {
                 BitstreamFormat.ANNEX_B, true, true, true);
         return new CodecRegistration(descriptor, new H264EncoderFactory(bridgeFactory),
                 new H264DecoderFactory(bridgeFactory), new H264CodecPolicy(), 10);
+    }
+
+    /**
+     * Builds the Android-backed H.264 registration for production use.
+     *
+     * <p>Delegates to {@link #registration(MediaCodecBridgeFactory)} with an
+     * {@link AndroidMediaCodecBridgeFactory}, so the descriptor (codec id, mime, bitstream format,
+     * both surface flags and the config-parts flag), the encoder/decoder factories, the policy and
+     * the fallback priority are identical to an injected-factory registration. As with
+     * {@link #registration(MediaCodecBridgeFactory)}, the result is returned to the caller and is
+     * deliberately <b>not</b> registered into {@code CodecRegistry.withDefaults()}.</p>
+     */
+    public static CodecRegistration androidRegistration() {
+        return registration(new AndroidMediaCodecBridgeFactory());
     }
 }
