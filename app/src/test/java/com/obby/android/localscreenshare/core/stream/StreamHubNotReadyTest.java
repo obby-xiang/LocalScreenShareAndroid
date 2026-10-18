@@ -26,6 +26,7 @@ import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -35,6 +36,7 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 /**
  * Readiness gate and encoder-failure isolation for {@link StreamHub}.
@@ -422,6 +424,132 @@ public class StreamHubNotReadyTest {
     }
 
     @Test
+    public void encoderFailureFirstDetachThrows_othersStillClosedAndJoinNotReady() throws Exception {
+        MutableClock clock = new MutableClock();
+        FakeDeferredCodec codec = new FakeDeferredCodec();
+        CodecRegistry registry = registryOf(codec.registration());
+        StreamRuntime runtime = deferredRuntime(registry, STREAM_KEY, clock);
+        runtime.start();
+        FakeDeferredCodec.FakeEncoder encoder = codec.getLastEncoder();
+        encoder.emitConfig(encoderConfig(1280, 720));
+        StreamHub hub = newHub(registry, clock);
+        hub.register(runtime);
+        hub.activate(STREAM_KEY);
+
+        // Exactly one detach throws: the first close attempt consumes the shared pending failure,
+        // independent of the hub's session iteration order.
+        AtomicBoolean closeFailurePending = new AtomicBoolean(true);
+        CloseFailingTransport transportA = new CloseFailingTransport(closeFailurePending);
+        CloseFailingTransport transportB = new CloseFailingTransport(closeFailurePending);
+        assertEquals(JoinDecision.Status.ACCEPTED,
+                hub.join(CLIENT_A, capabilities(ACTIVE_CODEC_ID), transportA).getStatus());
+        assertEquals(JoinDecision.Status.ACCEPTED,
+                hub.join(CLIENT_B, capabilities(ACTIVE_CODEC_ID), transportB).getStatus());
+        ClientSendSession sessionA = hub.getSession(CLIENT_A);
+        ClientSendSession sessionB = hub.getSession(CLIENT_B);
+        assertNotNull(sessionA);
+        assertNotNull(sessionB);
+        encoder.emit(true, 1, new byte[]{0x31});
+        drainToStreaming(hub, CLIENT_A, transportA);
+        drainToStreaming(hub, CLIENT_B, transportB);
+
+        try {
+            encoder.fail(new EncoderException("injected encoder failure"));
+        } catch (RuntimeException e) {
+            fail("onEncoderFailed must not propagate a detach failure: " + e);
+        }
+
+        assertEquals(RuntimeState.FAILED, runtime.getState());
+        assertSame("the failed runtime must stay active", runtime, hub.getActiveStream());
+        assertEquals(0, hub.getSessionCount());
+        assertNull(hub.getSession(CLIENT_A));
+        assertNull(hub.getSession(CLIENT_B));
+        assertTrue("every session must be detached even when one detach throws",
+                sessionA.isDetached());
+        assertTrue("a failing detach must not stop the remaining sessions",
+                sessionB.isDetached());
+        assertEquals(ClientState.CLOSED, sessionA.getState());
+        assertEquals(ClientState.CLOSED, sessionB.getState());
+        assertEquals("each transport close must be attempted once", 1,
+                transportA.getCloseAttempts());
+        assertEquals("each transport close must be attempted once", 1,
+                transportB.getCloseAttempts());
+        assertEquals(1, transportA.getCloseCount());
+        assertEquals("the transport after the throwing detach must still be closed", 1,
+                transportB.getCloseCount());
+        assertTrue(transportA.isClosed());
+        assertTrue(transportB.isClosed());
+
+        FakeTransport lateTransport = new FakeTransport();
+        JoinDecision decision = hub.join(CLIENT_C, capabilities(ACTIVE_CODEC_ID), lateTransport);
+        assertEquals(JoinDecision.Status.NOT_READY, decision.getStatus());
+        assertNull(decision.getSession());
+        assertEquals(0, hub.getSessionCount());
+        assertTrue(lateTransport.getEvents().isEmpty());
+        assertEquals(0, lateTransport.getCloseCount());
+
+        encoder.fail(new EncoderException("second failure"));
+        assertEquals("a repeated failure must not close transports twice", 1,
+                transportA.getCloseAttempts());
+        assertEquals(1, transportB.getCloseCount());
+    }
+
+    @Test
+    public void encoderFailureMultipleTransportCloseFailures_areIsolated() throws Exception {
+        MutableClock clock = new MutableClock();
+        FakeDeferredCodec codec = new FakeDeferredCodec();
+        CodecRegistry registry = registryOf(codec.registration());
+        StreamRuntime runtime = deferredRuntime(registry, STREAM_KEY, clock);
+        runtime.start();
+        FakeDeferredCodec.FakeEncoder encoder = codec.getLastEncoder();
+        encoder.emitConfig(encoderConfig(1280, 720));
+        StreamHub hub = newHub(registry, clock);
+        hub.register(runtime);
+        hub.activate(STREAM_KEY);
+
+        CloseFailingTransport transportA = new CloseFailingTransport();
+        CloseFailingTransport transportB = new CloseFailingTransport();
+        assertEquals(JoinDecision.Status.ACCEPTED,
+                hub.join(CLIENT_A, capabilities(ACTIVE_CODEC_ID), transportA).getStatus());
+        assertEquals(JoinDecision.Status.ACCEPTED,
+                hub.join(CLIENT_B, capabilities(ACTIVE_CODEC_ID), transportB).getStatus());
+        ClientSendSession sessionA = hub.getSession(CLIENT_A);
+        ClientSendSession sessionB = hub.getSession(CLIENT_B);
+        assertNotNull(sessionA);
+        assertNotNull(sessionB);
+        encoder.emit(true, 1, new byte[]{0x41});
+        drainToStreaming(hub, CLIENT_A, transportA);
+        drainToStreaming(hub, CLIENT_B, transportB);
+
+        try {
+            encoder.fail(new EncoderException("injected encoder failure"));
+        } catch (RuntimeException e) {
+            fail("every detach failure must be isolated: " + e);
+        }
+
+        assertEquals(RuntimeState.FAILED, runtime.getState());
+        assertSame(runtime, hub.getActiveStream());
+        assertEquals(0, hub.getSessionCount());
+        assertNull(hub.getSession(CLIENT_A));
+        assertNull(hub.getSession(CLIENT_B));
+        assertTrue(sessionA.isDetached());
+        assertTrue(sessionB.isDetached());
+        assertEquals(ClientState.CLOSED, sessionA.getState());
+        assertEquals(ClientState.CLOSED, sessionB.getState());
+        assertEquals(1, transportA.getCloseAttempts());
+        assertEquals(1, transportB.getCloseAttempts());
+        assertTrue(transportA.isClosed());
+        assertTrue(transportB.isClosed());
+
+        FakeTransport lateTransport = new FakeTransport();
+        assertEquals(JoinDecision.Status.NOT_READY,
+                hub.join(CLIENT_C, capabilities(ACTIVE_CODEC_ID), lateTransport).getStatus());
+        assertEquals(0, hub.getSessionCount());
+        assertTrue(lateTransport.getEvents().isEmpty());
+        assertEquals(0, lateTransport.getCloseCount());
+    }
+
+    @Test
     public void encoderFailureBeforePublish_hasNoSessionsAndAllowsRetry() throws Exception {
         MutableClock clock = new MutableClock();
         FakeDeferredCodec codec = new FakeDeferredCodec();
@@ -563,6 +691,38 @@ public class StreamHubNotReadyTest {
                         .getStatus());
         assertEquals("the rate limit must allow a request after the interval", 2,
                 encoder.getRequestCount());
+    }
+
+    /**
+     * Transport whose {@link #close()} marks it closed once and then throws, so a detach failure is
+     * observable without changing the shared fake. The throw happens on every call; the session is
+     * expected to attempt the close only once.
+     */
+    private static final class CloseFailingTransport extends FakeTransport {
+
+        private final AtomicBoolean throwPending;
+        private final AtomicInteger closeAttempts = new AtomicInteger();
+
+        CloseFailingTransport() {
+            this(new AtomicBoolean(true));
+        }
+
+        CloseFailingTransport(AtomicBoolean throwPending) {
+            this.throwPending = throwPending;
+        }
+
+        @Override
+        public void close() {
+            closeAttempts.incrementAndGet();
+            super.close();
+            if (throwPending.compareAndSet(true, false)) {
+                throw new RuntimeException("injected transport close failure");
+            }
+        }
+
+        int getCloseAttempts() {
+            return closeAttempts.get();
+        }
     }
 
     private static CodecRegistry registryOf(CodecRegistration registration) {

@@ -283,7 +283,12 @@ public final class StreamHub implements StreamRuntimeListener {
             capabilities.clear();
         }
         for (ClientSendSession session : toDetach) {
-            session.detach();
+            try {
+                session.detach();
+            } catch (RuntimeException ignored) {
+                // A single session's transport close may throw; isolate it so the remaining
+                // sessions are still detached and closed.
+            }
         }
     }
 

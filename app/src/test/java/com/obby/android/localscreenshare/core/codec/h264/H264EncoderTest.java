@@ -6,6 +6,7 @@ import com.obby.android.localscreenshare.core.codec.EncoderException;
 import com.obby.android.localscreenshare.core.codec.EncoderOutput;
 import com.obby.android.localscreenshare.core.model.BitstreamFormat;
 import com.obby.android.localscreenshare.core.model.CodecConfigPart;
+import com.obby.android.localscreenshare.core.model.ColorInfo;
 import com.obby.android.localscreenshare.core.model.EncodedAccessUnit;
 import com.obby.android.localscreenshare.core.model.StreamDescriptor;
 import com.obby.android.localscreenshare.core.model.StreamKey;
@@ -33,6 +34,7 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 /**
  * Behavioural tests for {@link H264Encoder} driven entirely by the JVM encoder bridge fake.
@@ -61,6 +63,16 @@ public class H264EncoderTest {
 
     /** Window that must stay silent when no further callback is expected. */
     private static final long QUIET_WINDOW_MS = 250L;
+
+    /**
+     * Window used to observe a release that must not happen while {@code bridge.start()} is still
+     * blocked. Long enough to defeat scheduling jitter, much shorter than the close timeout.
+     */
+    private static final long RELEASE_HOLD_WINDOW_MS = 300L;
+
+    private static final ColorInfo BT709 = new ColorInfo("BT709", "SDR", false);
+
+    private static final ColorInfo BT2020 = new ColorInfo("BT2020", "PQ", true);
 
     @Test
     public void constructor_configuresBridgeAndCreatesInputSurfaceBeforeStart() {
@@ -311,6 +323,9 @@ public class H264EncoderTest {
         Harness harness = new Harness();
         H264Encoder encoder = harness.newStartedEncoder();
 
+        // Strict config contract: the actual output format must be observed before any config.
+        // The CSD is intentionally empty; the SPS/PPS arrive in-band with the IDR.
+        harness.bridge.enqueueFormatChange(null, null, WIDTH, HEIGHT);
         harness.bridge.enqueueSample(H264Fixtures.inBandConfigAndIdr(), 7_000L, true, false);
 
         EncoderConfig config = harness.output.awaitConfig(AWAIT_TIMEOUT_MS);
@@ -486,6 +501,8 @@ public class H264EncoderTest {
         Harness harness = new Harness();
         H264Encoder encoder = harness.newStartedEncoder();
 
+        // Strict config contract: the actual output format is required even though the CSD is empty.
+        harness.bridge.enqueueFormatChange(null, null, WIDTH, HEIGHT);
         harness.bridge.enqueueSample(H264Fixtures.inBandConfigAndIdr(), 1_000L, true, false);
 
         EncoderConfig config = harness.output.awaitConfig(AWAIT_TIMEOUT_MS);
@@ -508,6 +525,8 @@ public class H264EncoderTest {
         Harness harness = new Harness();
         H264Encoder encoder = harness.newStartedEncoder();
 
+        // Strict config contract: an actual output format must precede the codec-config buffer.
+        harness.bridge.enqueueFormatChange(null, null, WIDTH, HEIGHT);
         harness.bridge.enqueueSample(
                 H264Fixtures.annexB(H264Fixtures.sps(), H264Fixtures.pps()), 0L, false, true);
 
@@ -528,6 +547,8 @@ public class H264EncoderTest {
         Harness harness = new Harness();
         H264Encoder encoder = harness.newStartedEncoder();
 
+        // Strict config contract: an actual output format must precede the codec-config buffer.
+        harness.bridge.enqueueFormatChange(null, null, WIDTH, HEIGHT);
         harness.bridge.enqueueSample(
                 H264Fixtures.annexB(H264Fixtures.sps(), H264Fixtures.pps()), 0L, false, true);
 
@@ -840,15 +861,569 @@ public class H264EncoderTest {
         encoder.close();
     }
 
+    // ---- I1: a codec-config sample that also carries VCL must not lose its first IDR. ----
+
+    @Test
+    public void codecConfigWithVcl_emitsConfigThenFirstIdr() {
+        Harness harness = new Harness();
+        H264Encoder encoder = harness.newStartedEncoder();
+
+        // Incomplete CSD: the format change cannot publish a config on its own.
+        harness.bridge.enqueueFormatChange(new byte[0], new byte[0], WIDTH, HEIGHT);
+        assertNull(harness.output.awaitConfig(QUIET_WINDOW_MS));
+
+        harness.bridge.enqueueSample(H264Fixtures.inBandConfigAndIdr(), 5_000L, true, true);
+
+        EncoderConfig config = harness.output.awaitConfig(AWAIT_TIMEOUT_MS);
+        assertNotNull("the shared config+VCL packet must publish SPS/PPS", config);
+        assertEquals(2, config.getConfigParts().size());
+
+        EncodedAccessUnit accessUnit = harness.output.awaitAccessUnit(AWAIT_TIMEOUT_MS);
+        assertNotNull("the IDR sharing the codec-config packet must be emitted", accessUnit);
+        assertEquals(0L, accessUnit.getSequence());
+        assertEquals(5_000L, accessUnit.getPtsUs());
+        assertTrue(accessUnit.getFlags().isJoinPoint());
+        assertTrue(accessUnit.getFlags().isSyncPoint());
+        assertArrayEquals("in-band SPS/PPS must be stripped from the emitted IDR",
+                idrSample(), accessUnit.getPayload());
+        assertEquals(Collections.singletonList(5), nalTypes(accessUnit.getPayload()));
+        assertEquals(1, harness.output.getConfigCount());
+        assertEquals(1, harness.output.getAccessUnitCount());
+        assertEquals(0, harness.output.getFailureCount());
+        encoder.close();
+    }
+
+    @Test
+    public void codecConfigWithVclWhenConfigAlreadyPublished_doesNotRepublishConfig() {
+        Harness harness = new Harness();
+        H264Encoder encoder = harness.newStartedEncoder();
+
+        harness.bridge.enqueueFormatChange(H264Fixtures.sps(), H264Fixtures.pps(), WIDTH, HEIGHT);
+        assertNotNull(harness.output.awaitConfig(AWAIT_TIMEOUT_MS));
+
+        harness.bridge.enqueueSample(H264Fixtures.inBandConfigAndIdr(), 6_000L, true, true);
+
+        EncodedAccessUnit accessUnit = harness.output.awaitAccessUnit(AWAIT_TIMEOUT_MS);
+        assertNotNull("the IDR in the codec-config packet must be emitted", accessUnit);
+        assertEquals(0L, accessUnit.getSequence());
+        assertEquals(6_000L, accessUnit.getPtsUs());
+        assertTrue(accessUnit.getFlags().isJoinPoint());
+        assertArrayEquals(idrSample(), accessUnit.getPayload());
+        assertEquals("an identical in-band config must not be re-published", 1,
+                harness.output.getConfigCount());
+        assertEquals(0, harness.output.getFailureCount());
+        encoder.close();
+    }
+
+    @Test
+    public void codecConfigWithNonIdrVclBeforeFirstIdr_emitsNoAu() {
+        Harness harness = new Harness();
+        H264Encoder encoder = harness.newStartedEncoder();
+
+        harness.bridge.enqueueFormatChange(new byte[0], new byte[0], WIDTH, HEIGHT);
+        harness.bridge.enqueueSample(
+                H264Fixtures.annexB(H264Fixtures.sps(), H264Fixtures.pps(),
+                        H264Fixtures.pSlice()),
+                1_000L, false, true);
+
+        assertNotNull(harness.output.awaitConfig(AWAIT_TIMEOUT_MS));
+        assertNull("a non-IDR VCL must stay dropped until the first IDR",
+                harness.output.awaitAccessUnit(QUIET_WINDOW_MS));
+        assertEquals(0, harness.output.getAccessUnitCount());
+        assertEquals(0, harness.output.getFailureCount());
+        encoder.close();
+    }
+
+    @Test
+    public void codecConfigWithChangedConfigAndVclAfterPublish_failsWithoutAu() {
+        Harness harness = new Harness();
+        H264Encoder encoder = harness.newStartedEncoder();
+
+        harness.bridge.enqueueFormatChange(H264Fixtures.sps(), H264Fixtures.pps(), WIDTH, HEIGHT);
+        assertNotNull(harness.output.awaitConfig(AWAIT_TIMEOUT_MS));
+        harness.bridge.enqueueSample(idrSample(), 1_000L, true, false);
+        assertNotNull(harness.output.awaitAccessUnit(AWAIT_TIMEOUT_MS));
+
+        harness.bridge.enqueueSample(changedConfigIdrSample(), 2_000L, true, true);
+
+        EncoderException failure = harness.output.awaitFailure(AWAIT_TIMEOUT_MS);
+        assertNotNull(failure);
+        assertEquals("encoder config changed without a new epoch", failure.getMessage());
+        assertEquals(1, harness.output.getConfigCount());
+        assertEquals(1, harness.output.getAccessUnitCount());
+        encoder.close();
+    }
+
+    // ---- I2: requested size/color must never stand in for the actual output format. ----
+
+    @Test
+    public void requestedSizeDiffersFromActual_emitsActualCodedSize() {
+        Harness harness = new Harness();
+        H264Encoder encoder = harness.newStartedEncoder();
+
+        harness.bridge.enqueueFormatChange(H264Fixtures.sps(), H264Fixtures.pps(), 1280, 720);
+
+        EncoderConfig config = harness.output.awaitConfig(AWAIT_TIMEOUT_MS);
+        assertNotNull(config);
+        assertEquals("the requested 640x480 must not replace the actual coded width",
+                1280, config.getCodedWidth());
+        assertEquals("the requested 640x480 must not replace the actual coded height",
+                720, config.getCodedHeight());
+        encoder.close();
+    }
+
+    @Test
+    public void formatChangeWithoutCsd_laterInBandConfigUsesActualSizeAndColor() {
+        FormatHarness harness = new FormatHarness();
+        harness.encoder.start();
+
+        harness.enqueueFormatWithoutCsd(1280, 720, BT709);
+        assertNull(harness.output.awaitConfig(QUIET_WINDOW_MS));
+
+        harness.fake.enqueueSample(H264Fixtures.inBandConfigAndIdr(), 7_000L, true, false);
+
+        EncoderConfig config = harness.output.awaitConfig(AWAIT_TIMEOUT_MS);
+        assertNotNull(config);
+        assertEquals(1280, config.getCodedWidth());
+        assertEquals(720, config.getCodedHeight());
+        assertColor("the actual format color must win over the requested color",
+                BT709, config.getColorInfo());
+        EncodedAccessUnit accessUnit = harness.output.awaitAccessUnit(AWAIT_TIMEOUT_MS);
+        assertNotNull(accessUnit);
+        assertEquals(0L, accessUnit.getSequence());
+        assertEquals(0, harness.output.getFailureCount());
+        harness.encoder.close();
+    }
+
+    @Test
+    public void codecConfigBeforeOutputFormat_failsWithoutConfigOrAu() {
+        Harness harness = new Harness();
+        H264Encoder encoder = harness.newStartedEncoder();
+
+        harness.bridge.enqueueSample(H264Fixtures.inBandConfigAndIdr(), 1_000L, true, true);
+
+        EncoderException failure = harness.output.awaitFailure(AWAIT_TIMEOUT_MS);
+        assertNotNull("a config without any observed output format must fail", failure);
+        assertEquals(1, harness.output.getFailureCount());
+        assertEquals(0, harness.output.getConfigCount());
+        assertEquals(0, harness.output.getAccessUnitCount());
+
+        harness.bridge.enqueueSample(H264Fixtures.inBandConfigAndIdr(), 2_000L, true, true);
+        assertNull(harness.output.awaitConfig(QUIET_WINDOW_MS));
+        assertNull(harness.output.awaitAccessUnit(QUIET_WINDOW_MS));
+        assertEquals(1, harness.output.getFailureCount());
+        encoder.close();
+    }
+
+    @Test
+    public void inBandConfigBeforeOutputFormat_failsWithoutConfigOrAu() {
+        Harness harness = new Harness();
+        H264Encoder encoder = harness.newStartedEncoder();
+
+        harness.bridge.enqueueSample(H264Fixtures.inBandConfigAndIdr(), 1_000L, true, false);
+
+        EncoderException failure = harness.output.awaitFailure(AWAIT_TIMEOUT_MS);
+        assertNotNull("in-band config without an output format must fail", failure);
+        assertEquals(1, harness.output.getFailureCount());
+        assertEquals(0, harness.output.getConfigCount());
+        assertEquals(0, harness.output.getAccessUnitCount());
+        encoder.close();
+    }
+
+    @Test
+    public void configSizeChangeBeforeFirstAu_failsEncoder() {
+        Harness harness = new Harness();
+        H264Encoder encoder = harness.newStartedEncoder();
+
+        harness.bridge.enqueueFormatChange(H264Fixtures.sps(), H264Fixtures.pps(), 1280, 720);
+        assertNotNull(harness.output.awaitConfig(AWAIT_TIMEOUT_MS));
+
+        harness.bridge.enqueueFormatChange(H264Fixtures.sps(), H264Fixtures.pps(), 1920, 1080);
+
+        EncoderException failure = harness.output.awaitFailure(AWAIT_TIMEOUT_MS);
+        assertNotNull("a coded-size change with identical SPS/PPS must fail", failure);
+        assertEquals("encoder config changed before first access unit", failure.getMessage());
+        assertEquals(1, harness.output.getConfigCount());
+        assertEquals(0, harness.output.getAccessUnitCount());
+        encoder.close();
+    }
+
+    @Test
+    public void configSizeChangeAfterPublish_failsEncoder() {
+        Harness harness = new Harness();
+        H264Encoder encoder = harness.newStartedEncoder();
+
+        harness.bridge.enqueueFormatChange(H264Fixtures.sps(), H264Fixtures.pps(), 1280, 720);
+        assertNotNull(harness.output.awaitConfig(AWAIT_TIMEOUT_MS));
+        harness.bridge.enqueueSample(idrSample(), 1_000L, true, false);
+        EncodedAccessUnit first = harness.output.awaitAccessUnit(AWAIT_TIMEOUT_MS);
+        assertNotNull(first);
+        assertEquals(0L, first.getSequence());
+
+        harness.bridge.enqueueFormatChange(H264Fixtures.sps(), H264Fixtures.pps(), 1920, 1080);
+
+        EncoderException failure = harness.output.awaitFailure(AWAIT_TIMEOUT_MS);
+        assertNotNull("a coded-size change after publish must fail", failure);
+        assertEquals("encoder config changed without a new epoch", failure.getMessage());
+        assertEquals(1, harness.output.getConfigCount());
+        assertEquals(1, harness.output.getAccessUnitCount());
+        encoder.close();
+    }
+
+    @Test
+    public void configColorChangeBeforeFirstAu_failsEncoder() {
+        FormatHarness harness = new FormatHarness();
+        harness.encoder.start();
+
+        harness.enqueueFormat(WIDTH, HEIGHT, BT709);
+        EncoderConfig config = harness.output.awaitConfig(AWAIT_TIMEOUT_MS);
+        assertNotNull(config);
+        assertColor("the published config must carry the actual color",
+                BT709, config.getColorInfo());
+
+        harness.enqueueFormat(WIDTH, HEIGHT, BT2020);
+
+        EncoderException failure = harness.output.awaitFailure(AWAIT_TIMEOUT_MS);
+        assertNotNull("a color change with identical SPS/PPS and size must fail", failure);
+        assertEquals("encoder config changed before first access unit", failure.getMessage());
+        assertEquals(1, harness.output.getConfigCount());
+        assertEquals(0, harness.output.getAccessUnitCount());
+        harness.encoder.close();
+    }
+
+    @Test
+    public void configColorChangeAfterPublish_failsEncoder() {
+        FormatHarness harness = new FormatHarness();
+        harness.encoder.start();
+
+        harness.enqueueFormat(WIDTH, HEIGHT, BT709);
+        assertNotNull(harness.output.awaitConfig(AWAIT_TIMEOUT_MS));
+        harness.fake.enqueueSample(idrSample(), 1_000L, true, false);
+        assertNotNull(harness.output.awaitAccessUnit(AWAIT_TIMEOUT_MS));
+
+        harness.enqueueFormat(WIDTH, HEIGHT, BT2020);
+
+        EncoderException failure = harness.output.awaitFailure(AWAIT_TIMEOUT_MS);
+        assertNotNull("a color change after publish must fail", failure);
+        assertEquals("encoder config changed without a new epoch", failure.getMessage());
+        assertEquals(1, harness.output.getConfigCount());
+        assertEquals(1, harness.output.getAccessUnitCount());
+        harness.encoder.close();
+    }
+
+    @Test
+    public void incompleteCsdSizeChangeBeforeFirstAu_failsOnNextAu() {
+        FormatHarness harness = new FormatHarness();
+        harness.encoder.start();
+
+        harness.enqueueFormat(1280, 720, BT709);
+        assertNotNull(harness.output.awaitConfig(AWAIT_TIMEOUT_MS));
+
+        // An empty-CSD format change still reports the actual size; the published config must not
+        // silently keep applying to later access units.
+        harness.enqueueFormatWithoutCsd(1920, 1080, BT709);
+        harness.fake.enqueueSample(idrSample(), 1_000L, true, false);
+
+        EncoderException failure = harness.output.awaitFailure(AWAIT_TIMEOUT_MS);
+        assertNotNull("an empty-CSD format size change must fail instead of reusing the old config"
+                        + evidence(harness.output),
+                failure);
+        assertEquals(1, harness.output.getConfigCount());
+        assertEquals(0, harness.output.getAccessUnitCount());
+        harness.encoder.close();
+    }
+
+    @Test
+    public void incompleteCsdSizeChangeAfterPublish_failsOnNextAu() {
+        FormatHarness harness = new FormatHarness();
+        harness.encoder.start();
+
+        harness.enqueueFormat(1280, 720, BT709);
+        assertNotNull(harness.output.awaitConfig(AWAIT_TIMEOUT_MS));
+        harness.fake.enqueueSample(idrSample(), 1_000L, true, false);
+        assertNotNull(harness.output.awaitAccessUnit(AWAIT_TIMEOUT_MS));
+
+        harness.enqueueFormatWithoutCsd(1920, 1080, BT709);
+        harness.fake.enqueueSample(pSample(), 2_000L, false, false);
+
+        EncoderException failure = harness.output.awaitFailure(AWAIT_TIMEOUT_MS);
+        assertNotNull("an empty-CSD format size change must fail after publish"
+                        + evidence(harness.output),
+                failure);
+        assertEquals(1, harness.output.getConfigCount());
+        assertEquals(1, harness.output.getAccessUnitCount());
+        harness.encoder.close();
+    }
+
+    @Test
+    public void incompleteCsdColorChangeBeforeFirstAu_failsOnNextAu() {
+        FormatHarness harness = new FormatHarness();
+        harness.encoder.start();
+
+        harness.enqueueFormat(1280, 720, BT709);
+        assertNotNull(harness.output.awaitConfig(AWAIT_TIMEOUT_MS));
+
+        harness.enqueueFormatWithoutCsd(1280, 720, BT2020);
+        harness.fake.enqueueSample(idrSample(), 1_000L, true, false);
+
+        EncoderException failure = harness.output.awaitFailure(AWAIT_TIMEOUT_MS);
+        assertNotNull("an empty-CSD format color change must fail instead of reusing the old config"
+                        + evidence(harness.output),
+                failure);
+        assertEquals(1, harness.output.getConfigCount());
+        assertEquals(0, harness.output.getAccessUnitCount());
+        harness.encoder.close();
+    }
+
+    @Test
+    public void incompleteCsdColorChangeAfterPublish_failsOnNextAu() {
+        FormatHarness harness = new FormatHarness();
+        harness.encoder.start();
+
+        harness.enqueueFormat(1280, 720, BT709);
+        assertNotNull(harness.output.awaitConfig(AWAIT_TIMEOUT_MS));
+        harness.fake.enqueueSample(idrSample(), 1_000L, true, false);
+        assertNotNull(harness.output.awaitAccessUnit(AWAIT_TIMEOUT_MS));
+
+        harness.enqueueFormatWithoutCsd(1280, 720, BT2020);
+        harness.fake.enqueueSample(pSample(), 2_000L, false, false);
+
+        EncoderException failure = harness.output.awaitFailure(AWAIT_TIMEOUT_MS);
+        assertNotNull("an empty-CSD format color change must fail after publish"
+                        + evidence(harness.output),
+                failure);
+        assertEquals(1, harness.output.getConfigCount());
+        assertEquals(1, harness.output.getAccessUnitCount());
+        harness.encoder.close();
+    }
+
+    @Test
+    public void duplicateIdenticalConfig_sameSizeAndColor_isIgnored() {
+        FormatHarness harness = new FormatHarness();
+        harness.encoder.start();
+
+        harness.enqueueFormat(1280, 720, BT709);
+        assertNotNull(harness.output.awaitConfig(AWAIT_TIMEOUT_MS));
+        harness.enqueueFormat(1280, 720, BT709);
+        assertNull(harness.output.awaitFailure(QUIET_WINDOW_MS));
+
+        harness.fake.enqueueSample(H264Fixtures.inBandConfigAndIdr(), 9_000L, true, false);
+
+        EncodedAccessUnit accessUnit = harness.output.awaitAccessUnit(AWAIT_TIMEOUT_MS);
+        assertNotNull(accessUnit);
+        assertEquals(0L, accessUnit.getSequence());
+        assertEquals(1, harness.output.getConfigCount());
+        assertEquals(0, harness.output.getFailureCount());
+        harness.encoder.close();
+    }
+
+    @Test
+    public void colorUnspecifiedActualFallsBackToRequested() {
+        FormatHarness harness = new FormatHarness(descriptor(BT709));
+        harness.encoder.start();
+
+        harness.enqueueFormat(WIDTH, HEIGHT, ColorInfo.UNSPECIFIED);
+
+        EncoderConfig config = harness.output.awaitConfig(AWAIT_TIMEOUT_MS);
+        assertNotNull(config);
+        assertColor("an UNSPECIFIED actual color must fall back to the requested color",
+                BT709, config.getColorInfo());
+        harness.encoder.close();
+    }
+
+    // ---- I3: start/close serialization; release must never precede the start transition. ----
+
+    @Test
+    public void closeDuringStart_waitsForStartAndReleasesOnce() throws Exception {
+        FakeMediaCodecEncoderBridge fake = new FakeMediaCodecEncoderBridge();
+        LifecycleProbeBridge bridge = new LifecycleProbeBridge(fake);
+        RecordingOutput output = new RecordingOutput();
+        H264Encoder encoder = new H264Encoder(STREAM_KEY, descriptor(), PARAMETERS, output,
+                new FixedBridgeFactory(bridge));
+        bridge.blockStart();
+        final AtomicReference<Throwable> startFailure = new AtomicReference<>();
+        final CountDownLatch closeCallStarted = new CountDownLatch(1);
+        Thread starter = new Thread(() -> {
+            try {
+                encoder.start();
+            } catch (Throwable failure) {
+                startFailure.set(failure);
+            }
+        }, "encoder-start");
+        Thread closer = new Thread(() -> {
+            closeCallStarted.countDown();
+            encoder.close();
+        }, "encoder-close");
+        starter.setDaemon(true);
+        closer.setDaemon(true);
+        try {
+            starter.start();
+            assertTrue("start must reach bridge.start",
+                    bridge.awaitStartEntered(AWAIT_TIMEOUT_MS));
+            closer.start();
+            assertTrue("close must be attempted",
+                    closeCallStarted.await(AWAIT_TIMEOUT_MS, TimeUnit.MILLISECONDS));
+            assertFalse("close must not release the bridge while start is still on it",
+                    bridge.awaitRelease(RELEASE_HOLD_WINDOW_MS));
+            assertEquals(0, bridge.getReleaseCount());
+        } finally {
+            bridge.releaseStart();
+            starter.join(AWAIT_TIMEOUT_MS);
+            closer.join(AWAIT_TIMEOUT_MS);
+        }
+
+        assertNull("encoder.start must not fail", startFailure.get());
+        assertEquals(1, bridge.getReleaseCount());
+        int startReturn = bridge.indexOfEvent("start-return");
+        int release = bridge.indexOfEvent("release");
+        assertTrue("bridge.start must have returned", startReturn >= 0);
+        assertTrue("the bridge must have been released", release >= 0);
+        assertTrue("release must happen after bridge.start returns", startReturn < release);
+        assertEquals("no drain loop may consume output after a close during start", 0,
+                bridge.getDequeueCount());
+        assertEquals(0, fake.getStopCount());
+        assertEquals(0, output.getAccessUnitCount());
+        encoder.close();
+        assertEquals(1, fake.getReleaseCount());
+        assertEquals(1, bridge.getReleaseCount());
+    }
+
+    @Test
+    public void closeDuringBlockedStart_timesOutWithoutReleaseAndLaterCloseReleasesOnce()
+            throws Exception {
+        FakeMediaCodecEncoderBridge fake = new FakeMediaCodecEncoderBridge();
+        LifecycleProbeBridge bridge = new LifecycleProbeBridge(fake);
+        RecordingOutput output = new RecordingOutput();
+        H264Encoder encoder = new H264Encoder(STREAM_KEY, descriptor(), PARAMETERS, output,
+                new FixedBridgeFactory(bridge));
+        bridge.blockStart();
+        final AtomicReference<Throwable> startFailure = new AtomicReference<>();
+        Thread starter = new Thread(() -> {
+            try {
+                encoder.start();
+            } catch (Throwable failure) {
+                startFailure.set(failure);
+            }
+        }, "encoder-start");
+        starter.setDaemon(true);
+        try {
+            starter.start();
+            assertTrue("start must reach bridge.start",
+                    bridge.awaitStartEntered(AWAIT_TIMEOUT_MS));
+
+            encoder.close();
+
+            assertTrue("a close that times out must record the still-running start as a leak",
+                    encoder.isLeakDetected());
+            assertEquals("the bridge must not be released while start is still on it", 0,
+                    bridge.getReleaseCount());
+            assertFalse(encoder.isBridgeReleased());
+        } finally {
+            bridge.releaseStart();
+            starter.join(AWAIT_TIMEOUT_MS);
+            encoder.close();
+        }
+
+        assertNull("encoder.start must not fail", startFailure.get());
+        assertEquals(1, bridge.getReleaseCount());
+        assertTrue(encoder.isBridgeReleased());
+        assertEquals(0, bridge.getDequeueCount());
+        assertEquals(0, output.getAccessUnitCount());
+        assertEquals(1, fake.getReleaseCount());
+    }
+
+    @Test
+    public void startBridgeFailureWhileCloseWaiting_releasesOnceWithoutDrain() throws Exception {
+        FakeMediaCodecEncoderBridge fake = new FakeMediaCodecEncoderBridge();
+        LifecycleProbeBridge bridge = new LifecycleProbeBridge(fake);
+        RecordingOutput output = new RecordingOutput();
+        H264Encoder encoder = new H264Encoder(STREAM_KEY, descriptor(), PARAMETERS, output,
+                new FixedBridgeFactory(bridge));
+        bridge.blockStart();
+        final AtomicReference<Throwable> startFailure = new AtomicReference<>();
+        final CountDownLatch closeCallStarted = new CountDownLatch(1);
+        Thread starter = new Thread(() -> {
+            try {
+                encoder.start();
+            } catch (Throwable failure) {
+                startFailure.set(failure);
+            }
+        }, "encoder-start");
+        Thread closer = new Thread(() -> {
+            closeCallStarted.countDown();
+            encoder.close();
+        }, "encoder-close");
+        starter.setDaemon(true);
+        closer.setDaemon(true);
+        try {
+            starter.start();
+            assertTrue("start must reach bridge.start",
+                    bridge.awaitStartEntered(AWAIT_TIMEOUT_MS));
+            bridge.failNextStart(new RuntimeException("injected start failure"));
+            closer.start();
+            assertTrue("close must be attempted",
+                    closeCallStarted.await(AWAIT_TIMEOUT_MS, TimeUnit.MILLISECONDS));
+            bridge.releaseStart();
+            starter.join(AWAIT_TIMEOUT_MS);
+            closer.join(AWAIT_TIMEOUT_MS);
+        } finally {
+            bridge.releaseStart();
+            starter.join(AWAIT_TIMEOUT_MS);
+            closer.join(AWAIT_TIMEOUT_MS);
+        }
+
+        assertTrue("a bridge start failure must surface as EncoderException",
+                startFailure.get() instanceof EncoderException);
+        encoder.close();
+        assertEquals(1, bridge.getReleaseCount());
+        assertEquals(1, fake.getReleaseCount());
+        assertEquals(0, bridge.getDequeueCount());
+        assertEquals(0, output.getAccessUnitCount());
+    }
+
+    @Test
+    public void stopAfterClose_doesNotCallBridgeStopAfterRelease() {
+        Harness harness = new Harness();
+        H264Encoder encoder = harness.newStartedEncoder();
+        encoder.close();
+        assertEquals(1, harness.bridge.getReleaseCount());
+        int stopsAfterClose = harness.bridge.getStopCount();
+
+        encoder.stop();
+
+        assertEquals("stop must not touch the bridge after release", stopsAfterClose,
+                harness.bridge.getStopCount());
+        assertEquals(1, harness.bridge.getReleaseCount());
+    }
+
     private static StreamDescriptor descriptor() {
+        return descriptor(ColorInfo.UNSPECIFIED);
+    }
+
+    private static StreamDescriptor descriptor(ColorInfo colorInfo) {
         return StreamDescriptor.builder(STREAM_KEY, CONFIG_EPOCH, "h264", H264_MIME,
                         BitstreamFormat.ANNEX_B)
                 .profile("baseline")
                 .level("3.1")
                 .codedSize(WIDTH, HEIGHT)
                 .visibleSize(WIDTH, HEIGHT)
+                .colorInfo(colorInfo)
                 .configParts(Collections.<CodecConfigPart>emptyList())
                 .build();
+    }
+
+    private static void assertColor(String message, ColorInfo expected, ColorInfo actual) {
+        assertNotNull(actual);
+        assertEquals(message, expected.getColorSpace(), actual.getColorSpace());
+        assertEquals(message, expected.getTransferFunction(), actual.getTransferFunction());
+        assertEquals(message, expected.isFullRange(), actual.isFullRange());
+    }
+
+    /** Renders the callback counters of a failed-expectation message, useful in the RED log. */
+    private static String evidence(RecordingOutput output) {
+        return " (failureCount=" + output.getFailureCount()
+                + ", configCount=" + output.getConfigCount()
+                + ", accessUnitCount=" + output.getAccessUnitCount() + ")";
     }
 
     private static byte[] idrSample() {
@@ -1055,6 +1630,237 @@ public class H264EncoderTest {
 
         @Override
         public EncodedSample dequeueOutput(long timeoutUs) {
+            return delegate.dequeueOutput(timeoutUs);
+        }
+
+        @Override
+        public EncoderStreamFormat getOutputFormat() {
+            return delegate.getOutputFormat();
+        }
+    }
+
+    /**
+     * Harness for tests that need a specific output {@link EncoderStreamFormat}: the shared fake can
+     * only report {@link ColorInfo#UNSPECIFIED} and a size chosen by its enqueue helper. The wrapper
+     * overrides only {@link #getOutputFormat()}; every other call is delegated.
+     */
+    private static final class FormatHarness {
+
+        private final FakeMediaCodecEncoderBridge fake = new FakeMediaCodecEncoderBridge();
+        private final OutputFormatBridge bridge = new OutputFormatBridge(fake);
+        private final RecordingOutput output = new RecordingOutput();
+        private final H264Encoder encoder;
+
+        FormatHarness() {
+            this(descriptor());
+        }
+
+        FormatHarness(StreamDescriptor requestedDescriptor) {
+            this.encoder = new H264Encoder(STREAM_KEY, requestedDescriptor, PARAMETERS, output,
+                    new FixedBridgeFactory(bridge));
+        }
+
+        void enqueueFormat(int width, int height, ColorInfo colorInfo) {
+            bridge.setFormat(new EncoderStreamFormat(
+                    H264Fixtures.sps(), H264Fixtures.pps(), width, height, colorInfo));
+            fake.enqueueSample(new byte[0], 0L, false, false, true, false);
+        }
+
+        void enqueueFormatWithoutCsd(int width, int height, ColorInfo colorInfo) {
+            bridge.setFormat(new EncoderStreamFormat(null, null, width, height, colorInfo));
+            fake.enqueueSample(new byte[0], 0L, false, false, true, false);
+        }
+    }
+
+    /** Delegating bridge that serves a caller-supplied output-format snapshot. */
+    private static final class OutputFormatBridge implements MediaCodecEncoderBridge {
+
+        private final MediaCodecEncoderBridge delegate;
+        private volatile EncoderStreamFormat outputFormat;
+
+        OutputFormatBridge(MediaCodecEncoderBridge delegate) {
+            this.delegate = delegate;
+        }
+
+        void setFormat(EncoderStreamFormat format) {
+            this.outputFormat = format;
+        }
+
+        @Override
+        public EncoderStreamFormat getOutputFormat() {
+            EncoderStreamFormat format = outputFormat;
+            return format != null ? format : delegate.getOutputFormat();
+        }
+
+        @Override
+        public void configure(EncoderFormat format) {
+            delegate.configure(format);
+        }
+
+        @Override
+        public android.view.Surface createInputSurface() {
+            return delegate.createInputSurface();
+        }
+
+        @Override
+        public void start() {
+            delegate.start();
+        }
+
+        @Override
+        public void stop() {
+            delegate.stop();
+        }
+
+        @Override
+        public void release() {
+            delegate.release();
+        }
+
+        @Override
+        public void requestSyncFrame() {
+            delegate.requestSyncFrame();
+        }
+
+        @Override
+        public void updateBitrate(int bitrateBps) {
+            delegate.updateBitrate(bitrateBps);
+        }
+
+        @Override
+        public EncodedSample dequeueOutput(long timeoutUs) {
+            return delegate.dequeueOutput(timeoutUs);
+        }
+    }
+
+    /**
+     * Delegating bridge that can hold {@link #start()} open, fail it on demand, and record the
+     * order of the lifecycle calls that decide the start/close race. Used only to inject failures;
+     * the shared fake is not modified.
+     */
+    private static final class LifecycleProbeBridge implements MediaCodecEncoderBridge {
+
+        private final MediaCodecEncoderBridge delegate;
+        private final List<String> events = Collections.synchronizedList(new ArrayList<String>());
+        private final CountDownLatch startEntered = new CountDownLatch(1);
+        private final CountDownLatch startRelease = new CountDownLatch(1);
+        private final CountDownLatch firstRelease = new CountDownLatch(1);
+        private final AtomicInteger startCount = new AtomicInteger();
+        private final AtomicInteger stopCount = new AtomicInteger();
+        private final AtomicInteger releaseCount = new AtomicInteger();
+        private final AtomicInteger dequeueCount = new AtomicInteger();
+        private volatile boolean blockNextStart;
+        private volatile RuntimeException nextStartFailure;
+
+        LifecycleProbeBridge(MediaCodecEncoderBridge delegate) {
+            this.delegate = delegate;
+        }
+
+        void blockStart() {
+            this.blockNextStart = true;
+        }
+
+        void failNextStart(RuntimeException failure) {
+            this.nextStartFailure = failure;
+        }
+
+        boolean awaitStartEntered(long timeoutMs) {
+            try {
+                return startEntered.await(timeoutMs, TimeUnit.MILLISECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("interrupted while awaiting start", e);
+            }
+        }
+
+        void releaseStart() {
+            startRelease.countDown();
+        }
+
+        boolean awaitRelease(long timeoutMs) {
+            try {
+                return firstRelease.await(timeoutMs, TimeUnit.MILLISECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("interrupted while awaiting release", e);
+            }
+        }
+
+        int getReleaseCount() {
+            return releaseCount.get();
+        }
+
+        int getDequeueCount() {
+            return dequeueCount.get();
+        }
+
+        int indexOfEvent(String event) {
+            synchronized (events) {
+                return events.indexOf(event);
+            }
+        }
+
+        @Override
+        public void start() {
+            events.add("start-enter");
+            startCount.incrementAndGet();
+            if (blockNextStart) {
+                blockNextStart = false;
+                startEntered.countDown();
+                try {
+                    startRelease.await(AWAIT_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            RuntimeException failure = nextStartFailure;
+            if (failure != null) {
+                nextStartFailure = null;
+                events.add("start-throw");
+                throw failure;
+            }
+            delegate.start();
+            events.add("start-return");
+        }
+
+        @Override
+        public void stop() {
+            stopCount.incrementAndGet();
+            events.add("stop");
+            delegate.stop();
+        }
+
+        @Override
+        public void release() {
+            releaseCount.incrementAndGet();
+            events.add("release");
+            firstRelease.countDown();
+            delegate.release();
+        }
+
+        @Override
+        public void configure(EncoderFormat format) {
+            delegate.configure(format);
+        }
+
+        @Override
+        public android.view.Surface createInputSurface() {
+            return delegate.createInputSurface();
+        }
+
+        @Override
+        public void requestSyncFrame() {
+            delegate.requestSyncFrame();
+        }
+
+        @Override
+        public void updateBitrate(int bitrateBps) {
+            delegate.updateBitrate(bitrateBps);
+        }
+
+        @Override
+        public EncodedSample dequeueOutput(long timeoutUs) {
+            dequeueCount.incrementAndGet();
             return delegate.dequeueOutput(timeoutUs);
         }
 

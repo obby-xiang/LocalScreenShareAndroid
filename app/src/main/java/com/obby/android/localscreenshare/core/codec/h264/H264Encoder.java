@@ -18,6 +18,8 @@ import com.obby.android.localscreenshare.core.model.StreamParameters;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 /**
  * H.264 (AVC) encoder adapter over a {@link MediaCodecEncoderBridge}.
@@ -28,16 +30,19 @@ import java.util.List;
  * codec or recreates the surface.</p>
  *
  * <p><b>Config gate.</b> The first valid codec configuration (SPS/PPS plus a positive coded size)
- * wins and is emitted through {@link EncoderOutput#onEncoderConfig} before any access unit. A
- * later, byte-different configuration is a hard failure because a new decode configuration would
- * require a new config epoch, which this encoder cannot mint on its own.</p>
+ * wins and is emitted through {@link EncoderOutput#onEncoderConfig} before any access unit. The
+ * coded size and color always come from the latest observed output format, never from the requested
+ * descriptor; a config arriving before any output format is a failure. A later, different
+ * configuration (different size, color or parts) is a hard failure because a new decode
+ * configuration would require a new config epoch, which this encoder cannot mint on its own.</p>
  *
  * <p><b>First-IDR wait.</b> Once a configuration is published, non-IDR samples are dropped until
  * the first validated IDR access unit arrives; that IDR is emitted as sequence {@code 0}.</p>
  *
  * <p><b>Threading.</b> A private lock guards only counters and state snapshots; bridge calls and
  * {@code onEncoderConfig}/{@code onAccessUnit}/{@code onEncoderFailure} callbacks are always made
- * outside the lock.</p>
+ * outside the lock. The start transition and {@code close()} are serialized so a close cannot
+ * release the bridge underneath an in-progress {@code bridge.start()}.</p>
  */
 public final class H264Encoder implements Encoder {
 
@@ -67,13 +72,28 @@ public final class H264Encoder implements Encoder {
     private boolean failed;
     private boolean bridgeReleased;
     private boolean leakDetected;
+    private boolean startTransitionActive;
     private Thread drainThread;
+
+    // Signals that the start transition (bridge.start() plus the drain-thread launch) has settled,
+    // so a concurrent close() can wait for it without holding the lock or joining on the lock.
+    private final CountDownLatch startComplete = new CountDownLatch(1);
 
     // Config / access-unit state, guarded by lock.
     private List<CodecConfigPart> publishedConfigParts;
+    private int publishedCodedWidth;
+    private int publishedCodedHeight;
+    private ColorInfo publishedColor;
     private boolean awaitingFirstIdr;
     private boolean auEmitted;
     private long sequence;
+
+    // Latest valid output-format snapshot, guarded by lock. Coded size stays zero until a positive
+    // output-format size is observed; color stays null until observed. These are the only
+    // acceptable source for an emitted config's coded size and color.
+    private int observedCodedWidth;
+    private int observedCodedHeight;
+    private ColorInfo observedColor;
 
     /**
      * Creates, configures and surface-initializes the encoder; it is not started.
@@ -149,35 +169,55 @@ public final class H264Encoder implements Encoder {
     /**
      * Starts the encoder's drain loop. This only calls {@code bridge.start()} and launches the
      * single daemon drain thread; it does not reconfigure the codec or recreate the input surface,
-     * both of which already happened during construction. Throws {@link IllegalStateException} when
-     * the encoder is already started or already closed; a {@code bridge.start()} failure is wrapped
-     * in an {@link EncoderException}.
+     * both of which already happened during construction. The start transition is serialized
+     * against {@link #close()}: a close waits, bounded, for the transition to settle before it may
+     * release the bridge. Throws {@link IllegalStateException} when the encoder is already started,
+     * already closed, or close is in progress; a {@code bridge.start()} failure is wrapped in an
+     * {@link EncoderException}.
      */
     @Override
     public void start() {
+        boolean launch;
+        Thread thread;
         synchronized (lock) {
             if (closed) {
                 throw new IllegalStateException("encoder already closed");
             }
-            if (started) {
+            if (started || startTransitionActive) {
                 throw new IllegalStateException("encoder already started");
             }
-            started = true;
+            // Mark the transition before touching the bridge so a concurrent close() knows to wait
+            // for bridge.start() and the drain launch instead of releasing underneath them.
+            startTransitionActive = true;
         }
         try {
             bridge.start();
         } catch (RuntimeException e) {
             synchronized (lock) {
                 failed = true;
+                startTransitionActive = false;
             }
+            startComplete.countDown();
             throw new EncoderException("failed to start H.264 encoder", e);
         }
-        Thread thread = new Thread(this::drain, DRAIN_THREAD_NAME);
+        thread = new Thread(this::drain, DRAIN_THREAD_NAME);
         thread.setDaemon(true);
         synchronized (lock) {
-            drainThread = thread;
+            // Do not launch the drain thread when close() already won the race: the bridge is about
+            // to be released, and a launched drain loop could call stop() after that release.
+            launch = !closed;
+            if (launch) {
+                drainThread = thread;
+            }
+            started = true;
         }
-        thread.start();
+        if (launch) {
+            thread.start();
+        }
+        synchronized (lock) {
+            startTransitionActive = false;
+        }
+        startComplete.countDown();
     }
 
     /**
@@ -243,18 +283,31 @@ public final class H264Encoder implements Encoder {
     }
 
     /**
-     * Closes the encoder. The bridge is released exactly once, and only after the drain thread has
-     * been observed to terminate. If the drain thread is still alive after the bounded join, the
-     * close marks a leak, does not release (a live drain thread could still touch the bridge) and
-     * returns without throwing; a later close retries the deferred release once the thread has
-     * terminated. Repeated closes are no-ops.
+     * Closes the encoder. The bridge is released exactly once, and only after any in-progress start
+     * transition has settled and the drain thread (if any) has been observed to terminate. If the
+     * start transition or the drain thread is still alive after the bounded wait, the close marks a
+     * leak, does not release (the live code could still touch the bridge) and returns without
+     * throwing; a later close retries the deferred release once the transition and thread have
+     * finished. Repeated closes are no-ops. The bounded waits happen outside the lock.
      */
     @Override
     public void close() {
         Thread thread;
+        boolean transitionActive;
         synchronized (lock) {
             closed = true;
             stopRequested = true;
+            transitionActive = startTransitionActive;
+        }
+        if (transitionActive && !awaitStartComplete()) {
+            // The start transition did not settle within the bounded wait. Releasing now could race
+            // with bridge.start(); record the leak and defer release to a later close().
+            synchronized (lock) {
+                leakDetected = true;
+            }
+            return;
+        }
+        synchronized (lock) {
             thread = drainThread;
         }
         if (thread != null && thread == Thread.currentThread()) {
@@ -272,6 +325,16 @@ public final class H264Encoder implements Encoder {
             return;
         }
         releaseOnce();
+    }
+
+    /** Waits, bounded, for the start transition to settle; never blocks while holding the lock. */
+    private boolean awaitStartComplete() {
+        try {
+            return startComplete.await(DRAIN_JOIN_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
     }
 
     /** True after the bridge has been released at least once; exposed for tests and diagnostics. */
@@ -333,10 +396,16 @@ public final class H264Encoder implements Encoder {
         if (sample.isFormatChanged()) {
             return handleFormatChange();
         }
-        if (sample.isCodecConfig()) {
-            return handleCodecConfig(sample.getData());
+        byte[] data = sample.getData();
+        H264AccessUnitInfo info = analyzeOrNull(data);
+        if (info == null) {
+            fail("malformed access unit");
+            return false;
         }
-        return handleDisplaySample(sample, sample.getData());
+        if (sample.isCodecConfig()) {
+            return handleCodecConfigPacket(sample, data, info);
+        }
+        return handleDisplayPacket(sample, data, info);
     }
 
     private boolean handleFormatChange() {
@@ -344,7 +413,23 @@ public final class H264Encoder implements Encoder {
         if (format == null) {
             return true;
         }
-        if (format.getWidth() <= 0 || format.getHeight() <= 0) {
+        int width = format.getWidth();
+        int height = format.getHeight();
+        ColorInfo color = format.getColorInfo();
+
+        boolean nonPositive;
+        synchronized (lock) {
+            nonPositive = width <= 0 || height <= 0;
+            if (!nonPositive) {
+                // Snapshot the latest valid actual size and color even when CSD extraction fails or
+                // no config is published yet: a later codec-config or in-band SPS/PPS must use these
+                // real values, never the requested coded size.
+                observedCodedWidth = width;
+                observedCodedHeight = height;
+                observedColor = color;
+            }
+        }
+        if (nonPositive) {
             // The requested size must never be used as a fallback; a non-positive coded size is a
             // terminal configuration failure reported exactly once.
             fail("encoder format has non-positive coded size");
@@ -354,13 +439,35 @@ public final class H264Encoder implements Encoder {
         try {
             parts = extractConfigFromCsd(format.getCsd0(), format.getCsd1());
         } catch (H264FormatException e) {
-            // Incomplete CSD is not fatal: wait for a codec-config buffer or in-band SPS/PPS.
+            // Even without SPS/PPS a size/color change must still be caught now: the published
+            // config would no longer match this format, so fail instead of silently waiting and
+            // then emitting access units against a stale config. Identical size/color keeps the
+            // existing "wait for in-band SPS/PPS" behavior.
+            ColorInfo resolvedColor = isUnspecifiedColor(color) ? requestedColor() : color;
+            boolean changed;
+            synchronized (lock) {
+                changed = publishedConfigParts != null
+                        && (width != publishedCodedWidth
+                            || height != publishedCodedHeight
+                            || !colorsEqual(resolvedColor, publishedColor));
+            }
+            if (changed) {
+                boolean published;
+                synchronized (lock) {
+                    published = auEmitted;
+                }
+                fail(published ? "encoder config changed without a new epoch"
+                        : "encoder config changed before first access unit");
+                return false;
+            }
+            // Incomplete CSD alone is not fatal: wait for a codec-config buffer or in-band SPS/PPS.
             return true;
         }
-        return acceptConfig(parts, format.getWidth(), format.getHeight(), format.getColorInfo());
+        return acceptConfig(parts);
     }
 
-    private boolean handleCodecConfig(byte[] data) {
+    private boolean handleCodecConfigPacket(EncodedSample sample, byte[] data,
+                                            H264AccessUnitInfo info) {
         List<CodecConfigPart> parts;
         try {
             parts = H264ConfigExtractor.fromInBandPayload(data);
@@ -368,23 +475,18 @@ public final class H264Encoder implements Encoder {
             fail("codec config buffer missing SPS/PPS");
             return false;
         }
-        return acceptConfig(parts, descriptor.getCodedWidth(), descriptor.getCodedHeight(),
-                requestedColor());
-    }
-
-    private boolean handleDisplaySample(EncodedSample sample, byte[] data) {
-        boolean configReady;
-        synchronized (lock) {
-            configReady = publishedConfigParts != null;
-        }
-
-        H264AccessUnitInfo info = analyzeOrNull(data);
-        if (info == null) {
-            fail("malformed access unit");
+        if (!acceptConfig(parts)) {
             return false;
         }
+        if (!info.hasVcl()) {
+            // Config-only packet: the SPS/PPS were accepted above; there is no display AU to emit.
+            return true;
+        }
+        return emitVcl(sample, data, info);
+    }
 
-        byte[] displayPayload = data;
+    private boolean handleDisplayPacket(EncodedSample sample, byte[] data,
+                                        H264AccessUnitInfo info) {
         if (info.hasSps() || info.hasPps()) {
             List<CodecConfigPart> parts;
             try {
@@ -393,21 +495,37 @@ public final class H264Encoder implements Encoder {
                 fail("in-band config missing SPS/PPS");
                 return false;
             }
-            if (!acceptConfig(parts, descriptor.getCodedWidth(), descriptor.getCodedHeight(),
-                    requestedColor())) {
+            if (!acceptConfig(parts)) {
                 return false;
             }
+            return emitVcl(sample, data, info);
+        }
+        boolean configReady;
+        synchronized (lock) {
+            configReady = publishedConfigParts != null;
+        }
+        if (!configReady) {
+            fail("access unit before config");
+            return false;
+        }
+        return emitVcl(sample, data, info);
+    }
+
+    /**
+     * Emits the VCL carried by a packet whose config (if any) has already been accepted. In-band
+     * SPS/PPS are stripped, B slices and negative PTS are rejected, and the first-IDR gate is
+     * applied before emitting the access unit.
+     */
+    private boolean emitVcl(EncodedSample sample, byte[] data, H264AccessUnitInfo info) {
+        byte[] displayPayload = data;
+        if (info.hasSps() || info.hasPps()) {
             try {
                 displayPayload = H264AnnexBParser.stripSpsPps(data);
             } catch (H264FormatException e) {
                 fail("failed to strip in-band config");
                 return false;
             }
-        } else if (!configReady) {
-            fail("access unit before config");
-            return false;
         }
-
         if (info.hasBSlice()) {
             fail("B slices are not supported");
             return false;
@@ -416,15 +534,12 @@ public final class H264Encoder implements Encoder {
             // SPS/PPS-only packet: configuration was already handled, nothing to emit.
             return true;
         }
-
         long pts = sample.getPtsUs();
         if (pts < 0) {
             fail("negative presentation timestamp");
             return false;
         }
-
         boolean joinPoint = H264AnnexBParser.isIdrAccessUnit(displayPayload);
-
         long seq;
         synchronized (lock) {
             if (awaitingFirstIdr) {
@@ -436,15 +551,36 @@ public final class H264Encoder implements Encoder {
             seq = sequence++;
             auEmitted = true;
         }
-
         emitAccessUnit(seq, pts, joinPoint, displayPayload);
         return true;
     }
 
     /**
+     * Resolves the coded size and color from the latest observed output format and applies the
+     * config gate. Fails when no positive output-format size has been observed yet; the requested
+     * coded size is never used as a fallback.
+     */
+    private boolean acceptConfig(List<CodecConfigPart> parts) {
+        int width;
+        int height;
+        ColorInfo observed;
+        synchronized (lock) {
+            width = observedCodedWidth;
+            height = observedCodedHeight;
+            observed = observedColor;
+        }
+        if (width <= 0 || height <= 0) {
+            fail("encoder config received before any output format");
+            return false;
+        }
+        ColorInfo color = isUnspecifiedColor(observed) ? requestedColor() : observed;
+        return acceptConfig(parts, width, height, color);
+    }
+
+    /**
      * Applies the config gate. The first configuration wins and is emitted before any access unit;
-     * an identical configuration is ignored; a different configuration is a terminal failure.
-     * Returns {@code false} when a failure was reported.
+     * an identical configuration (same coded size, color and parts) is ignored; a different
+     * configuration is a terminal failure. Returns {@code false} when a failure was reported.
      */
     private boolean acceptConfig(List<CodecConfigPart> parts, int width, int height,
                                  ColorInfo colorInfo) {
@@ -461,9 +597,12 @@ public final class H264Encoder implements Encoder {
         synchronized (lock) {
             if (publishedConfigParts == null) {
                 publishedConfigParts = parts;
+                publishedCodedWidth = width;
+                publishedCodedHeight = height;
+                publishedColor = colorInfo;
                 awaitingFirstIdr = true;
                 configToEmit = new EncoderConfig(width, height, colorInfo, parts);
-            } else if (!configsEqual(parts, publishedConfigParts)) {
+            } else if (!configsEqual(parts, width, height, colorInfo)) {
                 changed = true;
             }
         }
@@ -551,7 +690,20 @@ public final class H264Encoder implements Encoder {
         return H264ConfigExtractor.toAnnexB(csd);
     }
 
-    private static boolean configsEqual(List<CodecConfigPart> a, List<CodecConfigPart> b) {
+    /** Compares the resolved coded size, color and config parts against the published config. */
+    private boolean configsEqual(List<CodecConfigPart> parts, int width, int height,
+                                 ColorInfo color) {
+        // Called with the lock held; reads the published config snapshot.
+        if (width != publishedCodedWidth || height != publishedCodedHeight) {
+            return false;
+        }
+        if (!colorsEqual(color, publishedColor)) {
+            return false;
+        }
+        return configPartsEqual(parts, publishedConfigParts);
+    }
+
+    private static boolean configPartsEqual(List<CodecConfigPart> a, List<CodecConfigPart> b) {
         if (a == null || b == null) {
             return a == b;
         }
@@ -567,6 +719,33 @@ public final class H264Encoder implements Encoder {
             }
         }
         return true;
+    }
+
+    /** {@link ColorInfo} has no {@code equals}; compare the three fields that describe a color. */
+    private static boolean colorsEqual(ColorInfo a, ColorInfo b) {
+        if (a == null || b == null) {
+            return a == b;
+        }
+        if (a.isFullRange() != b.isFullRange()) {
+            return false;
+        }
+        return equalStrings(a.getColorSpace(), b.getColorSpace())
+                && equalStrings(a.getTransferFunction(), b.getTransferFunction());
+    }
+
+    private static boolean equalStrings(String a, String b) {
+        if (a == null || b == null) {
+            return a == b;
+        }
+        return a.equals(b);
+    }
+
+    /** True when no usable color was observed, so the requested color must be used instead. */
+    private static boolean isUnspecifiedColor(ColorInfo color) {
+        return color == null
+                || (color.getColorSpace() == null
+                    && color.getTransferFunction() == null
+                    && !color.isFullRange());
     }
 
     private ColorInfo requestedColor() {
