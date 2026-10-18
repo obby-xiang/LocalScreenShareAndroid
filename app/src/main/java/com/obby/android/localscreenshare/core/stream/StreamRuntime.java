@@ -7,7 +7,10 @@ import com.obby.android.localscreenshare.core.codec.CodecRegistry;
 import com.obby.android.localscreenshare.core.codec.CodecSwitchException;
 import com.obby.android.localscreenshare.core.codec.ConfigEpochException;
 import com.obby.android.localscreenshare.core.codec.Encoder;
+import com.obby.android.localscreenshare.core.codec.EncoderConfig;
+import com.obby.android.localscreenshare.core.codec.EncoderException;
 import com.obby.android.localscreenshare.core.codec.EncoderOutput;
+import com.obby.android.localscreenshare.core.model.ColorInfo;
 import com.obby.android.localscreenshare.core.model.EncodedAccessUnit;
 import com.obby.android.localscreenshare.core.model.StreamDescriptor;
 import com.obby.android.localscreenshare.core.model.StreamKey;
@@ -22,7 +25,8 @@ import java.util.List;
  * <p>Each encoder instance is tagged with a monotonically increasing generation.
  * Access units from retired encoders are dropped via generation and epoch checks;
  * retired encoders are closed only after the new epoch's first join point is
- * broadcast.</p>
+ * broadcast. Deferred codecs stay in {@link RuntimeState#CONFIGURING} until the
+ * encoder reports its {@link EncoderConfig}.</p>
  */
 public final class StreamRuntime {
 
@@ -37,9 +41,12 @@ public final class StreamRuntime {
     private final List<StreamRuntimeListener> listeners = new ArrayList<>();
     private final List<Encoder> retiredEncoders = new ArrayList<>();
 
-    private StreamDescriptor descriptor;
+    private StreamDescriptor requested;
+    private StreamDescriptor publishedDescriptor;
     private StreamParameters parameters;
     private Encoder activeEncoder;
+    private RuntimeState state = RuntimeState.IDLE;
+    private boolean deferred;
     private long generation;
     private long nextAttemptGeneration;
     private boolean closed;
@@ -72,7 +79,7 @@ public final class StreamRuntime {
         }
         this.registry = registry;
         this.streamKey = streamKey;
-        this.descriptor = descriptor;
+        this.requested = descriptor;
         this.parameters = parameters;
         this.timeSource = timeSource;
         this.joinPointMinIntervalMs = joinPointMinIntervalMs;
@@ -80,30 +87,104 @@ public final class StreamRuntime {
     }
 
     public void start() {
+        final long attempt;
+        final Encoder oldFailed;
+        final StreamDescriptor startDescriptor;
+        final StreamParameters startParameters;
         synchronized (lock) {
             if (closed) {
                 throw new IllegalStateException("runtime is closed");
             }
-            if (activeEncoder != null) {
+            boolean retryable = state == RuntimeState.IDLE
+                    || (state == RuntimeState.FAILED && publishedDescriptor == null);
+            if (!retryable) {
                 throw new IllegalStateException("runtime is already started");
             }
-            CodecRegistration registration = registry.require(descriptor.getCodecId());
-            long attempt = ++nextAttemptGeneration;
-            Encoder encoder = registration.getEncoderFactory().create(streamKey, descriptor,
-                    parameters, outputForGeneration(attempt));
-            try {
-                if (registration.getDescriptor().isSurfaceInputRequired()
-                        && encoder.getInputSurface() == null) {
-                    throw new IllegalStateException(
-                            "surface input required but encoder returned a null surface");
-                }
-                encoder.start();
-            } catch (RuntimeException e) {
-                encoder.close();
-                throw e;
-            }
+            attempt = ++nextAttemptGeneration;
             generation = attempt;
-            activeEncoder = encoder;
+            state = RuntimeState.CONFIGURING;
+            publishedDescriptor = null;
+            oldFailed = activeEncoder;
+            activeEncoder = null;
+            startDescriptor = requested;
+            startParameters = parameters;
+        }
+
+        // Retry path: close the previous failed encoder outside the lock.
+        if (oldFailed != null) {
+            oldFailed.close();
+        }
+
+        final CodecRegistration registration = registry.require(startDescriptor.getCodecId());
+        final boolean deferredCodec = registration.getDescriptor().hasConfigParts();
+        final Encoder encoder;
+        try {
+            encoder = registration.getEncoderFactory().create(streamKey, startDescriptor,
+                    startParameters, outputForGeneration(attempt));
+        } catch (RuntimeException e) {
+            EncoderException failure = new EncoderException(
+                    "encoder factory failed for codec " + startDescriptor.getCodecId(), e);
+            notifyEncoderFailed(markFailed(attempt), failure);
+            throw failure;
+        }
+
+        // Record the active encoder and deferral under the lock, then validate the
+        // input surface outside the lock (surface requirement only, no config-parts
+        // precondition).
+        boolean overtaken;
+        synchronized (lock) {
+            overtaken = generation != attempt
+                    || (state != RuntimeState.CONFIGURING && state != RuntimeState.READY);
+            if (!overtaken) {
+                activeEncoder = encoder;
+                deferred = deferredCodec;
+            }
+        }
+        if (overtaken) {
+            encoder.close();
+            throw new EncoderException("encoder attempt superseded before surface validation");
+        }
+
+        if (registration.getDescriptor().isSurfaceInputRequired()
+                && encoder.getInputSurface() == null) {
+            EncoderException failure = new EncoderException(
+                    "surface input required but encoder returned a null surface");
+            notifyEncoderFailed(markFailed(attempt), failure);
+            encoder.close();
+            throw failure;
+        }
+
+        // Re-check that no asynchronous failure or close overtook the attempt before
+        // starting the encoder.
+        boolean startOvertaken;
+        synchronized (lock) {
+            startOvertaken = generation != attempt
+                    || (state != RuntimeState.CONFIGURING && state != RuntimeState.READY);
+        }
+        if (startOvertaken) {
+            encoder.close();
+            throw new EncoderException("encoder attempt superseded before start");
+        }
+
+        try {
+            encoder.start();
+        } catch (RuntimeException e) {
+            EncoderException failure = new EncoderException("encoder failed to start", e);
+            notifyEncoderFailed(markFailed(attempt), failure);
+            encoder.close();
+            throw failure;
+        }
+
+        // Publish for non-deferred codecs; deferred codecs stay CONFIGURING until the
+        // encoder reports its configuration. Non-deferred start publishes the descriptor
+        // without notifying listeners (existing behavior).
+        synchronized (lock) {
+            if (generation == attempt && !closed && state == RuntimeState.CONFIGURING) {
+                if (!deferredCodec) {
+                    state = RuntimeState.READY;
+                    publishedDescriptor = requested;
+                }
+            }
         }
     }
 
@@ -115,16 +196,25 @@ public final class StreamRuntime {
                 return;
             }
             closed = true;
+            state = RuntimeState.CLOSED;
             activeToClose = activeEncoder;
             activeEncoder = null;
             retiredToClose = new ArrayList<>(retiredEncoders);
             retiredEncoders.clear();
         }
         if (activeToClose != null) {
-            activeToClose.close();
+            try {
+                activeToClose.close();
+            } catch (RuntimeException ignored) {
+                // a single encoder's close failure must not affect the others
+            }
         }
         for (Encoder encoder : retiredToClose) {
-            encoder.close();
+            try {
+                encoder.close();
+            } catch (RuntimeException ignored) {
+                // a single encoder's close failure must not affect the others
+            }
         }
     }
 
@@ -134,15 +224,25 @@ public final class StreamRuntime {
         }
     }
 
+    public RuntimeState getState() {
+        synchronized (lock) {
+            return state;
+        }
+    }
+
+    public StreamKey getStreamKey() {
+        return streamKey;
+    }
+
     public StreamDescriptor getDescriptor() {
         synchronized (lock) {
-            return descriptor;
+            return publishedDescriptor;
         }
     }
 
     public int getConfigEpoch() {
         synchronized (lock) {
-            return descriptor.getConfigEpoch();
+            return requested.getConfigEpoch();
         }
     }
 
@@ -154,6 +254,9 @@ public final class StreamRuntime {
 
     public Surface getInputSurface() {
         synchronized (lock) {
+            if (state != RuntimeState.CONFIGURING && state != RuntimeState.READY) {
+                return null;
+            }
             return activeEncoder != null ? activeEncoder.getInputSurface() : null;
         }
     }
@@ -163,13 +266,16 @@ public final class StreamRuntime {
             if (closed) {
                 throw new IllegalStateException("runtime is closed");
             }
+            if (state != RuntimeState.CONFIGURING && state != RuntimeState.READY) {
+                throw new IllegalStateException("runtime is not running");
+            }
             if (newParameters == null) {
                 throw new IllegalArgumentException("parameters must not be null");
             }
-            parameters = newParameters;
             if (activeEncoder != null) {
                 activeEncoder.updateParameters(newParameters);
             }
+            parameters = newParameters;
         }
     }
 
@@ -177,7 +283,7 @@ public final class StreamRuntime {
         Encoder encoder;
         long requestGeneration;
         synchronized (lock) {
-            if (closed || activeEncoder == null) {
+            if (closed || state != RuntimeState.READY || activeEncoder == null) {
                 return false;
             }
             if (pendingJoin) {
@@ -216,21 +322,29 @@ public final class StreamRuntime {
             if (!next.getStreamKey().equals(streamKey)) {
                 throw new IllegalArgumentException("stream key mismatch");
             }
-            int expectedEpoch = descriptor.getConfigEpoch() + 1;
+            int expectedEpoch = requested.getConfigEpoch() + 1;
             if (next.getConfigEpoch() != expectedEpoch) {
                 throw new ConfigEpochException(expectedEpoch, next.getConfigEpoch());
             }
-            if (descriptor.sameDecodeConfig(next)) {
+
+            CodecRegistration currentRegistration = registry.require(requested.getCodecId());
+            CodecRegistration nextRegistration = registry.require(next.getCodecId());
+            if (currentRegistration.getDescriptor().hasConfigParts()
+                    || nextRegistration.getDescriptor().hasConfigParts()) {
+                throw new CodecSwitchException(
+                        "deferred codec switching is not supported in this batch", null);
+            }
+
+            if (requested.sameDecodeConfig(next)) {
                 throw new IllegalArgumentException("decode config is unchanged");
             }
 
             long attempt = ++nextAttemptGeneration;
-            CodecRegistration registration = registry.require(next.getCodecId());
             Encoder newEncoder = null;
             try {
-                newEncoder = registration.getEncoderFactory().create(streamKey, next, parameters,
-                        outputForGeneration(attempt));
-                if (registration.getDescriptor().isSurfaceInputRequired()
+                newEncoder = nextRegistration.getEncoderFactory().create(streamKey, next,
+                        parameters, outputForGeneration(attempt));
+                if (nextRegistration.getDescriptor().isSurfaceInputRequired()
                         && newEncoder.getInputSurface() == null) {
                     throw new IllegalStateException(
                             "surface input required but encoder returned a null surface");
@@ -256,7 +370,10 @@ public final class StreamRuntime {
             }
             activeEncoder = newEncoder;
             generation = attempt;
-            descriptor = next;
+            requested = next;
+            publishedDescriptor = next;
+            state = RuntimeState.READY;
+            deferred = false;
             pendingJoin = false;
             lastJoinMs = Long.MIN_VALUE;
             descriptorSnapshot = new ArrayList<>(listeners);
@@ -294,12 +411,24 @@ public final class StreamRuntime {
             public void onAccessUnit(EncodedAccessUnit accessUnit) {
                 StreamRuntime.this.onAccessUnit(accessUnit, gen);
             }
+
+            @Override
+            public void onEncoderConfig(EncoderConfig config) {
+                StreamRuntime.this.onEncoderConfig(config, gen);
+            }
+
+            @Override
+            public void onEncoderFailure(EncoderException failure) {
+                StreamRuntime.this.onEncoderFailure(failure, gen);
+            }
         };
     }
 
     private void onAccessUnit(EncodedAccessUnit accessUnit, long generationOfOutput) {
-        List<StreamRuntimeListener> snapshot;
+        List<StreamRuntimeListener> snapshot = null;
         List<Encoder> toClose = null;
+        EncoderException deferredFailure = null;
+        boolean forward = false;
         synchronized (lock) {
             if (closed || accessUnit == null) {
                 return;
@@ -310,29 +439,166 @@ public final class StreamRuntime {
             if (generationOfOutput != generation) {
                 return;
             }
-            if (accessUnit.getConfigEpoch() != descriptor.getConfigEpoch()) {
+            if (accessUnit.getConfigEpoch() != requested.getConfigEpoch()) {
                 return;
             }
-            if (accessUnit.getFlags().isJoinPoint()) {
-                pendingJoin = false;
-                lastJoinMs = timeSource.nowMs();
-                if (!retiredEncoders.isEmpty()) {
-                    toClose = new ArrayList<>(retiredEncoders);
-                    retiredEncoders.clear();
+            if (state == RuntimeState.FAILED) {
+                return;
+            }
+            if (state == RuntimeState.READY && publishedDescriptor != null) {
+                if (accessUnit.getFlags().isJoinPoint()) {
+                    pendingJoin = false;
+                    lastJoinMs = timeSource.nowMs();
+                    if (!retiredEncoders.isEmpty()) {
+                        toClose = new ArrayList<>(retiredEncoders);
+                        retiredEncoders.clear();
+                    }
+                }
+                snapshot = new ArrayList<>(listeners);
+                forward = true;
+            } else if (deferred) {
+                state = RuntimeState.FAILED;
+                deferredFailure = new EncoderException(
+                        "access unit arrived before encoder configuration");
+                snapshot = new ArrayList<>(listeners);
+            } else {
+                // non-deferred access unit before publication: drop silently
+                return;
+            }
+        }
+        if (deferredFailure != null) {
+            notifyEncoderFailed(snapshot, deferredFailure);
+            return;
+        }
+        if (forward) {
+            for (StreamRuntimeListener listener : snapshot) {
+                try {
+                    listener.onAccessUnit(accessUnit);
+                } catch (RuntimeException ignored) {
+                    // isolate listener exceptions
                 }
             }
+            if (toClose != null) {
+                for (Encoder encoder : toClose) {
+                    encoder.close();
+                }
+            }
+        }
+    }
+
+    private void onEncoderConfig(EncoderConfig config, long generationOfOutput) {
+        List<StreamRuntimeListener> snapshot = null;
+        StreamDescriptor published = null;
+        EncoderException failure = null;
+        synchronized (lock) {
+            if (closed) {
+                return;
+            }
+            if (generationOfOutput != generation) {
+                return;
+            }
+            if (state != RuntimeState.CONFIGURING || publishedDescriptor != null) {
+                return;
+            }
+            if (config == null || config.getConfigParts() == null || config.getConfigParts().isEmpty()
+                    || config.getCodedWidth() <= 0 || config.getCodedHeight() <= 0) {
+                state = RuntimeState.FAILED;
+                publishedDescriptor = null;
+                failure = new EncoderException("encoder reported an invalid configuration");
+                snapshot = new ArrayList<>(listeners);
+            } else {
+                published = buildPublishedDescriptor(config);
+                publishedDescriptor = published;
+                state = RuntimeState.READY;
+                snapshot = new ArrayList<>(listeners);
+            }
+        }
+        if (snapshot != null) {
+            if (failure != null) {
+                notifyEncoderFailed(snapshot, failure);
+            } else {
+                notifyDescriptorChanged(snapshot, published);
+            }
+        }
+    }
+
+    private void onEncoderFailure(EncoderException failure, long generationOfOutput) {
+        List<StreamRuntimeListener> snapshot = null;
+        synchronized (lock) {
+            if (closed) {
+                return;
+            }
+            if (state == RuntimeState.IDLE || state == RuntimeState.FAILED
+                    || state == RuntimeState.CLOSED) {
+                return;
+            }
+            if (generationOfOutput != generation) {
+                return;
+            }
+            state = RuntimeState.FAILED;
+            // published descriptor is intentionally left unchanged
             snapshot = new ArrayList<>(listeners);
+        }
+        if (snapshot != null) {
+            notifyEncoderFailed(snapshot, failure);
+        }
+    }
+
+    private StreamDescriptor buildPublishedDescriptor(EncoderConfig config) {
+        StreamDescriptor.Builder builder = StreamDescriptor.builder(
+                        requested.getStreamKey(), requested.getConfigEpoch(),
+                        requested.getCodecId(), requested.getMime(), requested.getBitstreamFormat())
+                .profile(requested.getProfile())
+                .level(requested.getLevel())
+                .codedSize(config.getCodedWidth(), config.getCodedHeight())
+                .visibleSize(requested.getVisibleWidth(), requested.getVisibleHeight())
+                .rotationDegrees(requested.getRotationDegrees())
+                .configParts(config.getConfigParts());
+        ColorInfo color = config.getColorInfo();
+        if (color != ColorInfo.UNSPECIFIED) {
+            builder.colorInfo(color);
+        } else {
+            builder.colorInfo(requested.getColorInfo());
+        }
+        return builder.build();
+    }
+
+    private List<StreamRuntimeListener> markFailed(long attempt) {
+        synchronized (lock) {
+            if (generation == attempt && !closed) {
+                state = RuntimeState.FAILED;
+                publishedDescriptor = null;
+                activeEncoder = null;
+                return new ArrayList<>(listeners);
+            }
+            return null;
+        }
+    }
+
+    private void notifyDescriptorChanged(List<StreamRuntimeListener> snapshot,
+                                         StreamDescriptor descriptor) {
+        if (snapshot == null) {
+            return;
         }
         for (StreamRuntimeListener listener : snapshot) {
             try {
-                listener.onAccessUnit(accessUnit);
+                listener.onDescriptorChanged(descriptor);
             } catch (RuntimeException ignored) {
                 // isolate listener exceptions
             }
         }
-        if (toClose != null) {
-            for (Encoder encoder : toClose) {
-                encoder.close();
+    }
+
+    private void notifyEncoderFailed(List<StreamRuntimeListener> snapshot,
+                                     EncoderException failure) {
+        if (snapshot == null) {
+            return;
+        }
+        for (StreamRuntimeListener listener : snapshot) {
+            try {
+                listener.onEncoderFailed(streamKey, failure);
+            } catch (RuntimeException ignored) {
+                // isolate listener exceptions
             }
         }
     }

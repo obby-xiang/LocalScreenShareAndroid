@@ -9,4 +9,10 @@ import com.obby.android.localscreenshare.core.model.EncodedAccessUnit;
 public interface EncoderOutput {
 
     void onAccessUnit(EncodedAccessUnit accessUnit);
+
+    default void onEncoderConfig(EncoderConfig config) {
+    }
+
+    default void onEncoderFailure(EncoderException failure) {
+    }
 }
