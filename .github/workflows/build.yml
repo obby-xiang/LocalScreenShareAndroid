@@ -4,8 +4,15 @@ on:
   push:
     branches:
       - master
+  pull_request:
+    branches:
+      - master
   workflow_dispatch:
   workflow_call:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -13,6 +20,7 @@ jobs:
     env:
       SIGNING_STORE_FILE: "${{ github.workspace }}/keystore.jks"
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - name: set up JDK 17
@@ -23,6 +31,7 @@ jobs:
           cache: gradle
 
       - name: Create Keystore File
+        if: github.event_name != 'pull_request'
         env:
           SIGNING_STORE_BASE64: ${{ secrets.SIGNING_STORE_BASE64 }}
         run: |
@@ -30,18 +39,42 @@ jobs:
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
+
+      - name: Build with Gradle (pull request)
+        if: github.event_name == 'pull_request'
+        run: |
+          ./gradlew :app:assembleDebug :app:testDebugUnitTest :app:lintDebug \
+            :app:assembleDebugAndroidTest \
+            -Psigning.storeFile=unused.jks \
+            -Psigning.storePassword=unused \
+            -Psigning.keyAlias=unused \
+            -Psigning.keyPassword=unused
+
       - name: Build with Gradle
+        if: github.event_name != 'pull_request'
         env:
           SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
           SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
           SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
         run: |
-          ./gradlew build -Psigning.storeFile="$SIGNING_STORE_FILE" \
+          ./gradlew build :app:assembleDebugAndroidTest \
+            -Psigning.storeFile="$SIGNING_STORE_FILE" \
             -Psigning.storePassword="$SIGNING_STORE_PASSWORD" \
             -Psigning.keyAlias="$SIGNING_KEY_ALIAS" \
             -Psigning.keyPassword="$SIGNING_KEY_PASSWORD"
 
+      - name: Upload Test and Lint Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            app/build/test-results/
+            app/build/reports/
+          retention-days: 30
+
       - name: Upload Build Artifact
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
         with:
           name: build-artifact
