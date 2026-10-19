@@ -1,0 +1,33 @@
+name: Checks
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Resource and Documentation Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check string resources
+        run: python3 scripts/checks/check_strings.py
+
+      - name: Check for CJK in Java and default resources
+        run: python3 scripts/checks/check_cjk.py
+
+      - name: Check documentation
+        run: python3 scripts/checks/check_docs.py

@@ -365,4 +365,4 @@ service ScreenStreamService {
 - 每批完成后按新版式规则（日期降序 + emoji + `<details>` 折叠、概览窄表 + 详情块、证据单源）更新 `docs/task-board.md` 对应条目（TB-FW-003、TB-FW-006、TB-MEDIA-003 等）的状态与证据（独立 docs 提交）。
 - 全部批次完成后的总验收：364+ 新增 JVM 测试全绿、`assembleDebug` 通过、CI 全绿、看板/决策板同步（涉及裁决状态变化的条目更新，问题 3 保持未关闭）。
 - **随后停止，向用户汇报**：完成了什么、每批证据、已知限制（无设备验证）、遗留风险；由用户审视决定是否进入手机测试。
-- 完成后按交接提示词体例撰写下一棒交接提示词（仓库外 `E:\temp\LocalScreenShareAndroid-handoff\`，文件名带日期与主题），并作为独立提示词交给用户。
+- 完成后按交接提示词体例撰写下一棒交接提示词（仓库外 `LocalScreenShareAndroid-handoff/`，文件名带日期与主题），并作为独立提示词交给用户。
