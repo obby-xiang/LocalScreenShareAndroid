@@ -91,9 +91,10 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * {@link #onStartCommand(Intent, int, int)} then, in this order, promotes the service to the
  * foreground with the media-projection type, creates and starts the server, obtains the
  * {@link MediaProjection} from the consent result, builds the capture pipeline and shows the
- * floating chip. A null intent, a second start while the server is running, or a failure during
- * start is rejected with {@code START_NOT_STICKY}; a successful start returns
- * {@code START_STICKY}. {@link #stopService()} tears the pipeline down in reverse order and calls
+ * floating chip. A null intent, a second start while the server is running, or a failure to
+ * promote the service to the foreground or to start the server is rejected with
+ * {@code START_NOT_STICKY}; a successful start returns {@code START_STICKY}.
+ * {@link #stopService()} tears the pipeline down in reverse order and calls
  * {@link #stopSelf()}; {@link #onDestroy()} unregisters the receiver and the preference
  * observer.</p>
  *
@@ -445,8 +446,9 @@ public class LssService extends Service {
      * <p>Requires the consent result in {@link Constants#EXTRA_MEDIA_PROJECTION_RESULT}; a null
      * intent cannot carry it, so a system restart is rejected with {@code START_NOT_STICKY}. A
      * second start while the server is running is ignored for the same reason. The foreground
-     * notification is posted before the projection is used, and every failure path tears the
-     * partially built state down through {@link #stopService()}.</p>
+     * notification is posted before the projection is used, and a failure while promoting the
+     * foreground service or starting the server tears the partially built state down through
+     * {@link #stopService()}.</p>
      */
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {

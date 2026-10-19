@@ -35,11 +35,13 @@ import java.util.concurrent.ConcurrentHashMap;
  * <p><b>Locking and broadcast.</b> A private lock serializes compound changes of the runtime map,
  * the session map, the capabilities map and the active runtime reference; the maps themselves are
  * concurrent for the single-key reads used by {@link #drainOne(ClientSessionKey)},
- * {@link #getSession(ClientSessionKey)} and {@link #getSessionCount()}. Encoder callbacks and
- * joins snapshot the session map under the lock and call session methods outside it, so a slow
- * client transport never blocks the encoder or another client. Per-session failures are isolated
- * during broadcast; a failure while draining removes that session from the hub and is rethrown to
- * the caller that drove the drain.</p>
+ * {@link #getSession(ClientSessionKey)} and {@link #getSessionCount()}. Encoder callbacks snapshot
+ * the session map under the lock and call session methods outside it. A join creates and primes
+ * its new session under the lock before publishing it, then requests a join point from the runtime
+ * outside the lock, so no shared session's transport is touched while the lock is held and a slow
+ * client never blocks the encoder or another client. Per-session failures are isolated during
+ * broadcast; a failure while draining removes that session from the hub and is rethrown to the
+ * caller that drove the drain.</p>
  */
 public final class StreamHub implements StreamRuntimeListener {
 
