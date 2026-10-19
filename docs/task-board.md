@@ -24,6 +24,7 @@
 - 基线参考：`65a34dc`（TB-ENG-004 完成标记）。
 - 编码框架隔离核心批次（Task 1–9，代码范围 `9f650dc..2a95ab2`）见 [TB-DOC-008](#tb-doc-008) 与 [TB-FW-001](#tb-fw-001)；最近完成的条目见 [TB-ENG-004](#tb-eng-004) 与 [TB-ENG-003](#tb-eng-003)。
 - 媒体路径生产接线（批次 A–H）已完成代码层面：双向流协议、StreamRuntime/StreamHub 服务端接线、H.264 采集直通、客户端 ClientMediaSession/Surface 渲染、JPEG 回退、能力选档与切换编排均已落地；仅经 JVM/fake 与编译验证，详见 [TB-FW-003](#tb-fw-003)。
+- 问题 3 代码层面已收官（批次 A–H），三个边角项 [TB-ENG-005](#tb-eng-005)、[TB-ENG-006](#tb-eng-006)、[TB-ENG-007](#tb-eng-007) 已登记遗留；下一步等用户准备好设备后进入设备实测（设备验证未解禁）；问题 3 仍未关闭。
 - 未做设备/真机/模拟器验证：全程未运行 adb、`connectedAndroidTest`、安装或启动 App；编码切换、Surface 恢复与多客户端行为均无实测数据。
 - 编码框架隔离核心（契约、StreamHub、有界队列、六状态机、JPEG 参考适配）已完成并通过 JVM 验证，见 [TB-FW-001](#tb-fw-001)、[TB-FW-004](#tb-fw-004)、[TB-FW-005](#tb-fw-005)、[TB-FW-002](#tb-fw-002)。
 - 问题 3 尚未由用户明确关闭，不能标记完成；代码完成 ≠ 问题关闭，API 25 只是兼容下限，能力按运行时探测分档。
@@ -45,6 +46,9 @@
 
 | ID | 状态 | 优先级 | 标题 | 创建 | 完成 | 关联 |
 | --- | --- | --- | --- | --- | --- | --- |
+| TB-ENG-005 | 📋 待办 | 🟡 P2 | 新偏好设置界面控件 | 2026-10-19 | — | [问题3接线计划](superpowers/plans/2026-10-19-media-path-wiring.md) |
+| TB-ENG-006 | 📋 待办 | 🟡 P2 | JPEG 降级客户端查看器接回 | 2026-10-19 | — | [问题3接线计划](superpowers/plans/2026-10-19-media-path-wiring.md) |
+| TB-ENG-007 | 📋 待办 | 🟡 P2 | 客户端发送统计并入服务端统计 | 2026-10-19 | — | [问题3接线计划](superpowers/plans/2026-10-19-media-path-wiring.md) |
 | TB-CORE-001 | 📋 待办 | 🔴 P0 | 正确性与资源清理 | 2026-10-17 | — | [路线图阶段 1](optimization-roadmap.md) |
 | TB-CORE-002 | 📋 待办 | 🔴 P0 | 会话与渲染目标解耦 | 2026-10-17 | — | [窗口与会话设计](windowing-session-design.md) |
 | TB-OBS-001 | 📋 待办 | 🔴 P0 | 可观测性与基线 | 2026-10-17 | — | [路线图阶段 0](optimization-roadmap.md) |
@@ -118,12 +122,43 @@
 
 ### 📋 待办条目
 
+<a id="tb-eng-005"></a>
+<details><summary>TB-ENG-005 新偏好设置界面控件（📋 待办）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟡 P2 / 2026-10-19 / —
+- **任务**：批次 D 已把码率、IDR 间隔与编码模式（H.264/JPEG）三个偏好落入 `Preferences`（`KEY_PROJECTION_BITRATE`、`KEY_PROJECTION_IDR_INTERVAL`、`KEY_PROJECTION_CODEC`），但 `MainActivity` 设置面板与布局无对应控件，当前只能用默认值；需补设置 UI 并贯通到 `StreamParameters` 与 codec 选择。
+- **交付物 / 验证证据**：交付：设置控件、偏好读写与参数贯通代码、相关单测。验证：改档后 `StreamParameters` 与 codec 选择按新值生效；当前未实施，设备验证未解禁。
+- **关联文档**：[问题3接线计划](superpowers/plans/2026-10-19-media-path-wiring.md)
+
+</details>
+
+<a id="tb-eng-006"></a>
+<details><summary>TB-ENG-006 JPEG 降级客户端查看器接回（📋 待办）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟡 P2 / 2026-10-19 / —
+- **任务**：批次 C 后生产客户端只接 `SurfaceRenderTarget`（H.264 路径），`BitmapRenderTarget` 无生产引用；JPEG 降级模式下客户端无可显示查看器。需在 JPEG 模式接回 Bitmap 查看器（可参考批次 C 前的 `ScreenShareViewer` 实现）。
+- **交付物 / 验证证据**：交付：JPEG 模式查看器接线与降级路径单测。验证：JPEG 降级会话在客户端可见画面；当前未实施，设备验证未解禁。
+- **关联文档**：[问题3接线计划](superpowers/plans/2026-10-19-media-path-wiring.md)
+
+</details>
+
+<a id="tb-eng-007"></a>
+<details><summary>TB-ENG-007 客户端发送统计并入服务端统计（📋 待办）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟡 P2 / 2026-10-19 / —
+- **任务**：`ClientSendSession.getStats()` 产出队列深度、丢弃与重同步计数，但未聚合进 `LssServerStats`，UI 与通知不可见。需把 `ClientSendStats` 并入服务端统计输出。
+- **交付物 / 验证证据**：交付：统计聚合、UI/通知展示与单测。验证：服务端统计包含每客户端队列深度、丢弃与重同步计数；当前未实施，设备验证未解禁。
+- **关联文档**：[问题3接线计划](superpowers/plans/2026-10-19-media-path-wiring.md)
+
+</details>
+
 <a id="tb-core-001"></a>
 <details><summary>TB-CORE-001 正确性与资源清理（📋 待办）</summary>
 
 - **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🔴 P0 / 2026-10-17 / —
 - **任务**：正确性与资源清理：幂等停止、单一生命周期所有者、线程池终止、缩短临界区、媒体路径移除 `CallerRunsPolicy`、resize 代次隔离、权限撤销降级、重连退避、IPv6 地址与 NSD 服务类型修正、服务名隐私。
 - **交付物 / 验证证据**：交付：代码改动与单元/仪器/压力测试。验证：阶段 1 的启动停止、旋转尺寸、网络、慢客户端、权限、回归各项通过；当前未执行。
+- **已观察实例**：`StreamRuntime.start()` 中 `registry.require(...)` 在 try 之外，未注册 codecId 会使 attempt 停在 `CONFIGURING`，且 runtime 无法重试 `start()`（只能 `close()`）；2026-10-19 验收抽审时记录，未改行为。
 - **关联文档**：[路线图阶段 1](optimization-roadmap.md)、[项目现状风险清单](project-assessment.md)
 
 </details>
