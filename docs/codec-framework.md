@@ -9,12 +9,12 @@
 | 议题 | 已批准裁决 | 状态 |
 | --- | --- | --- |
 | 总体结构 | 静态 Codec SPI + 单活动流核心 + 可扩展 StreamHub；不引入动态插件或通用多媒体引擎 | 隔离核心与 H.264 适配器已落地，JVM/fake 及编译验证 |
-| 第一版验证方式 | 用 H.264 与 JPEG 两条差异最大的实现验证同一契约；HEVC 用于验证 `MediaCodec` 骨架复用 | JPEG 参考适配与隔离 H.264 适配器已落地；H.264 未接线，HEVC 未实现 |
-| 第一版范围 | 单采集会话、单 VirtualDisplay、单 Surface、单活动流；不做 GPU Fanout、多流与每客户端转码 | 隔离核心已落地；采集/VirtualDisplay 接线未实现 |
+| 第一版验证方式 | 用 H.264 与 JPEG 两条差异最大的实现验证同一契约；HEVC 用于验证 `MediaCodec` 骨架复用 | JPEG 参考适配、隔离 H.264 适配器与生产接线已落地（批次 B/D）；HEVC 未实现 |
+| 第一版范围 | 单采集会话、单 VirtualDisplay、单 Surface、单活动流；不做 GPU Fanout、多流与每客户端转码 | 隔离核心与采集/VirtualDisplay 接线已落地（批次 B）；多流与 GPU Fanout 未实现 |
 | 契约边界 | 公共层只处理描述符、参数、访问单元、状态与队列；不解析 NAL/OBU/JPEG 负载 | 已落地，JVM 验证 |
 | 解码配置 | `StreamDescriptor` 与 `StreamParameters` 分离，只有解码关键变化才推进 `configEpoch` | 已落地，JVM 验证 |
 | 新客户端加入 | 不假设所有关键帧/RAP 都可加入；按 codec 策略等待明确可加入点 | 已落地，JVM 验证 |
-| 编码切换 | 第一版单 VirtualDisplay、无 GPU Fanout，不能保证零间隙；只保证会话不重建、画面不花屏 | Runtime 预热/切换/旧 encoder 释放已落地并 JVM 验证；采集输出 Surface 切换未接线 |
+| 编码切换 | 第一版单 VirtualDisplay、无 GPU Fanout，不能保证零间隙；只保证会话不重建、画面不花屏 | Runtime 预热/切换/旧 encoder 释放与服务端切换编排已落地（批次 F），客户端重配与 Surface 恢复已落地（批次 C/H），仅 JVM/fake 验证；黑帧时长未实测 |
 | 传输 | 第一版媒体为统一 gRPC 双向流承载完整访问单元（已实现接线）；RTP 由 `(codec, transport)` 封包器处理；WebRTC 作为独立媒体栈 | 传输接口与 gRPC 双向流接线已落地；RTP Packetizer 未实现 |
 | 高级能力 | AV1、HDR、B 帧、时域层只预留契约，不在本阶段实现 | 未实现 |
 
