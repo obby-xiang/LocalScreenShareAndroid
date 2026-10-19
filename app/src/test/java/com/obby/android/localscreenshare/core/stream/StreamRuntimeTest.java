@@ -225,24 +225,19 @@ public class StreamRuntimeTest {
     }
 
     @Test
-    public void switchDescriptor_rejectsUnchangedDecodeConfig() {
+    public void switchDescriptor_allowsEpochOnlyAdvance() {
         FakeCodec fake = new FakeCodec(FakeCodec.DEFAULT_CODEC_ID, 0, false, false);
         StreamRuntime runtime = newRuntime(fake, new MutableClock(), descriptor(1, 64, 48));
         runtime.start();
-        FakeCodec.FakeEncoder encoder = fake.getLastEncoder();
+        FakeCodec.FakeEncoder oldEncoder = fake.getLastEncoder();
 
-        try {
-            runtime.switchDescriptor(descriptor(1, 64, 48).withConfigEpoch(2));
-            fail("unchanged decode config must be rejected");
-        } catch (ConfigEpochException e) {
-            fail("unchanged config must not be reported as an epoch mismatch");
-        } catch (IllegalArgumentException expected) {
-            assertFalse(expected instanceof ConfigEpochException);
-        }
+        runtime.switchDescriptor(descriptor(1, 64, 48).withConfigEpoch(2));
 
-        assertEquals(1, runtime.getConfigEpoch());
-        assertSame(encoder, fake.getLastEncoder());
-        assertFalse(encoder.isStopped());
+        FakeCodec.FakeEncoder newEncoder = fake.getLastEncoder();
+        assertNotSame(oldEncoder, newEncoder);
+        assertEquals(2, runtime.getConfigEpoch());
+        assertEquals(2, runtime.getDescriptor().getConfigEpoch());
+        assertTrue(oldEncoder.isStopped());
     }
 
     @Test

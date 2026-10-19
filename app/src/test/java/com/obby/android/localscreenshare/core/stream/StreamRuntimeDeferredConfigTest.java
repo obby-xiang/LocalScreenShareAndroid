@@ -649,69 +649,79 @@ public class StreamRuntimeDeferredConfigTest {
     }
 
     @Test
-    public void switchDescriptorOnDeferredCodec_throwsGuidance() {
+    public void switchDescriptorOnDeferredCodec_switchesAndRepublishesOnConfig() {
         FakeDeferredCodec codec = new FakeDeferredCodec();
         StreamRuntime runtime = newRuntime(codec, deferredDescriptor(1, 1920, 1080));
         RecordingListener listener = new RecordingListener();
         runtime.addListener(listener);
         runtime.start();
-        FakeDeferredCodec.FakeEncoder encoder = codec.getLastEncoder();
-        encoder.emitConfig(encoderConfig(1920, 1080, ColorInfo.UNSPECIFIED,
+        FakeDeferredCodec.FakeEncoder oldEncoder = codec.getLastEncoder();
+        oldEncoder.emitConfig(encoderConfig(1920, 1080, ColorInfo.UNSPECIFIED,
                 configParts((byte) 0x0C)));
-        StreamDescriptor published = runtime.getDescriptor();
-        assertNotNull(published);
-        int createsBefore = codec.getEncoderCreateCount();
+        assertNotNull(runtime.getDescriptor());
 
-        try {
-            runtime.switchDescriptor(deferredDescriptor(2, 1280, 720));
-            fail("deferred codecs must not support switchDescriptor in this batch");
-        } catch (CodecSwitchException expected) {
-            assertNotNull(expected);
-        }
+        runtime.switchDescriptor(deferredDescriptor(2, 1280, 720));
 
-        assertEquals(1, runtime.getConfigEpoch());
+        FakeDeferredCodec.FakeEncoder newEncoder = codec.getLastEncoder();
+        assertNotSame(oldEncoder, newEncoder);
+        assertTrue(oldEncoder.isStopped());
+        assertTrue(newEncoder.isStarted());
+        assertEquals(RuntimeState.CONFIGURING, runtime.getState());
+        assertEquals(2, runtime.getConfigEpoch());
+        assertNull(runtime.getDescriptor());
+
+        newEncoder.emitConfig(encoderConfig(1280, 720, ColorInfo.UNSPECIFIED,
+                configParts((byte) 0x0D)));
+
         assertEquals(RuntimeState.READY, runtime.getState());
-        assertEquals(published.getConfigHash(), runtime.getDescriptor().getConfigHash());
-        assertEquals(1, runtime.getDescriptor().getConfigEpoch());
-        assertSame(encoder, codec.getLastEncoder());
-        assertFalse(encoder.isStopped());
-        assertFalse(encoder.isClosed());
-        assertEquals(createsBefore, codec.getEncoderCreateCount());
-        assertEquals(1, encoder.getStartCount());
-        assertEquals(1, listener.descriptors.size());
+        assertNotNull(runtime.getDescriptor());
+        assertEquals(2, runtime.getDescriptor().getConfigEpoch());
+        assertEquals(1280, runtime.getDescriptor().getCodedWidth());
     }
 
     @Test
-    public void switchDescriptor_nonDeferredToDeferredNext_isRejected() {
+    public void switchDescriptor_nonDeferredToDeferredNext_switches() {
         FakeCodec fake = new FakeCodec(FakeCodec.DEFAULT_CODEC_ID, 0, false, false);
         FakeDeferredCodec deferred = new FakeDeferredCodec();
         CodecRegistry registry = new CodecRegistry();
         registry.register(fake.registration());
         registry.register(deferred.registration());
         StreamRuntime runtime = newRuntime(registry, fakeDescriptor(1, 64, 48));
-        RecordingListener listener = new RecordingListener();
-        runtime.addListener(listener);
+        runtime.addListener(new RecordingListener());
         runtime.start();
         FakeCodec.FakeEncoder oldEncoder = fake.getLastEncoder();
-        StreamDescriptor published = runtime.getDescriptor();
-        assertNotNull(published);
 
-        try {
-            runtime.switchDescriptor(deferredDescriptor(2, 32, 24));
-            fail("switching to a deferred codec must be rejected in this batch");
-        } catch (CodecSwitchException expected) {
-            assertNotNull(expected);
-        }
+        runtime.switchDescriptor(deferredDescriptor(2, 32, 24));
 
-        assertEquals(0, deferred.getEncoderCreateCount());
-        assertNull(deferred.getLastEncoder());
-        assertSame(oldEncoder, fake.getLastEncoder());
-        assertFalse(oldEncoder.isStopped());
+        assertEquals(1, deferred.getEncoderCreateCount());
+        assertNotNull(deferred.getLastEncoder());
+        assertTrue(oldEncoder.isStopped());
+        assertEquals(2, runtime.getConfigEpoch());
+        assertEquals(RuntimeState.CONFIGURING, runtime.getState());
+    }
+
+    @Test
+    public void deferredSwitch_closesOldEncoderAfterNewJoinPoint() {
+        FakeDeferredCodec codec = new FakeDeferredCodec();
+        StreamRuntime runtime = newRuntime(codec, deferredDescriptor(1, 1920, 1080));
+        runtime.addListener(new RecordingListener());
+        runtime.start();
+        FakeDeferredCodec.FakeEncoder oldEncoder = codec.getLastEncoder();
+        oldEncoder.emitConfig(encoderConfig(1920, 1080, ColorInfo.UNSPECIFIED,
+                configParts((byte) 0x0C)));
+
+        runtime.switchDescriptor(deferredDescriptor(2, 1280, 720));
+        FakeDeferredCodec.FakeEncoder newEncoder = codec.getLastEncoder();
+        newEncoder.emitConfig(encoderConfig(1280, 720, ColorInfo.UNSPECIFIED,
+                configParts((byte) 0x0D)));
+
+        // The old encoder is stopped on the switch but released only after the new join point.
+        assertTrue(oldEncoder.isStopped());
         assertFalse(oldEncoder.isClosed());
-        assertEquals(1, runtime.getConfigEpoch());
-        assertEquals(RuntimeState.READY, runtime.getState());
-        assertEquals(published.getConfigHash(), runtime.getDescriptor().getConfigHash());
-        assertEquals(0, listener.descriptors.size());
+
+        newEncoder.emit(true, 2, new byte[]{0x01});
+
+        assertTrue(oldEncoder.isClosed());
     }
 
     @Test

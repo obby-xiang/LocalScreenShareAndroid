@@ -695,6 +695,19 @@ public class LssService extends Service {
         }
 
         mProjectionSize = size;
+
+        if (mIsH264 && mStreamRuntime != null) {
+            // Rebuild the encoder for the new size, then point the display at its input surface.
+            try {
+                mStreamRuntime.switchDescriptor(
+                    buildRequestedDescriptor(mStreamRuntime.getConfigEpoch() + 1));
+                mVirtualDisplay.setSurface(mStreamRuntime.getInputSurface());
+            } catch (RuntimeException e) {
+                Log.w(mTag, "updateProjectionSize: encoder switch failed", e);
+            }
+            return;
+        }
+
         mVirtualDisplay.resize(mProjectionSize.getWidth(), mProjectionSize.getHeight(),
             getResources().getConfiguration().densityDpi);
 
@@ -813,28 +826,36 @@ public class LssService extends Service {
         }
 
         mStreamKey = new StreamKey(Preferences.get().getServiceId(), "screen");
-        final StreamDescriptor requested = mIsH264
-                ? StreamDescriptor.builder(mStreamKey, 1, CodecIds.H264, H264Codec.MIME,
-                                BitstreamFormat.ANNEX_B)
-                        .codedSize(mProjectionSize.getWidth(), mProjectionSize.getHeight())
-                        .visibleSize(mProjectionSize.getWidth(), mProjectionSize.getHeight())
-                        .build()
-                : StreamDescriptor.builder(mStreamKey, 1, CodecIds.JPEG, "image/jpeg",
-                                BitstreamFormat.JPEG_FRAME)
-                        .codedSize(mProjectionSize.getWidth(), mProjectionSize.getHeight())
-                        .visibleSize(mProjectionSize.getWidth(), mProjectionSize.getHeight())
-                        .build();
-
         final StreamParameters parameters = new StreamParameters(
                 Preferences.get().getProjectionBitrate(),
                 Preferences.get().getProjectionFrameRate(),
                 Preferences.get().getProjectionIdrIntervalMs());
 
-        mStreamRuntime = new StreamRuntime(mCodecRegistry, mStreamKey, requested, parameters);
+        mStreamRuntime = new StreamRuntime(mCodecRegistry, mStreamKey,
+                buildRequestedDescriptor(1), parameters);
         mStreamHub = new StreamHub(mCodecRegistry);
         mStreamHub.register(mStreamRuntime);
         mStreamHub.activate(mStreamKey);
         mStreamRuntime.start();
+    }
+
+    /** Builds the requested descriptor for the current codec mode and capture size. */
+    @NonNull
+    private StreamDescriptor buildRequestedDescriptor(final int configEpoch) {
+        final int width = mProjectionSize.getWidth();
+        final int height = mProjectionSize.getHeight();
+        if (mIsH264) {
+            return StreamDescriptor.builder(mStreamKey, configEpoch, CodecIds.H264,
+                            H264Codec.MIME, BitstreamFormat.ANNEX_B)
+                    .codedSize(width, height)
+                    .visibleSize(width, height)
+                    .build();
+        }
+        return StreamDescriptor.builder(mStreamKey, configEpoch, CodecIds.JPEG, "image/jpeg",
+                        BitstreamFormat.JPEG_FRAME)
+                .codedSize(width, height)
+                .visibleSize(width, height)
+                .build();
     }
 
     // Maximum window bounds of the current display, scaled by the projection scale preference.

@@ -486,12 +486,10 @@ public final class StreamRuntime {
     /**
      * Switches to the next descriptor by prewarming a new encoder and retiring the old one.
      *
-     * <p>The request is validated under the lock before any encoder is created: the stream key
-     * must match, the epoch must be exactly one greater than the current one (otherwise
-     * {@link ConfigEpochException}), neither the current nor the next codec may require
-     * configuration parts (otherwise {@link CodecSwitchException}), and the decode configuration
-     * must actually differ. The new encoder is then created, surface-checked and started, and the
-     * old encoder is stopped, all while the lock is held. This synchronous prewarm is the
+     * <p>The request is validated under the lock before any encoder is created: the stream key must
+     * match and the epoch must be exactly one greater than the current one (otherwise
+     * {@link ConfigEpochException}). The new encoder is then created, surface-checked and started,
+     * and the old encoder is stopped, all while the lock is held. This synchronous prewarm is the
      * deliberate exception to the rule that encoder lifecycle calls happen outside the runtime
      * lock.</p>
      *
@@ -501,25 +499,25 @@ public final class StreamRuntime {
      * propagates with the old encoder still active. In both cases nothing is published and no
      * listener is notified.</p>
      *
-     * <p>On success the runtime adopts {@code next} as both requested and published descriptor,
-     * advances the attempt generation, returns to {@link RuntimeState#READY} and resets the
-     * join-point request state. Listeners receive {@code onDescriptorChanged} outside the lock,
-     * with one failing listener isolated from the others, and a new join point is requested
-     * afterwards so late decoder instances can start on the new epoch. The retired encoder is kept
-     * until the first join point of the new epoch has been forwarded, then closed.</p>
+     * <p>On success the runtime adopts {@code next} as its requested descriptor and advances the
+     * attempt generation. A codec without configuration parts publishes {@code next} immediately,
+     * moves to {@link RuntimeState#READY}, notifies listeners outside the lock and requests a join
+     * point. A codec with configuration parts stays {@link RuntimeState#CONFIGURING} and publishes
+     * the final descriptor when the new encoder reports its configuration, exactly like a first
+     * start. The retired encoder is kept until the first join point of the new epoch has been
+     * forwarded, then closed.</p>
      *
-     * @throws IllegalArgumentException if {@code next} is null, belongs to another stream, or
-     *                                  repeats the current decode configuration
+     * @throws IllegalArgumentException if {@code next} is null or belongs to another stream
      * @throws ConfigEpochException     if the epoch is not exactly one greater than the current
-     * @throws CodecSwitchException     if a codec requires deferred configuration or the new
-     *                                  encoder cannot be prewarmed
+     * @throws CodecSwitchException     if the new encoder cannot be prewarmed
      * @throws IllegalStateException    if the runtime is closed
      */
     public void switchDescriptor(StreamDescriptor next) {
         if (next == null) {
             throw new IllegalArgumentException("next must not be null");
         }
-        List<StreamRuntimeListener> descriptorSnapshot;
+        List<StreamRuntimeListener> descriptorSnapshot = null;
+        boolean requestJoin = false;
         synchronized (lock) {
             if (closed) {
                 throw new IllegalStateException("runtime is closed");
@@ -532,17 +530,8 @@ public final class StreamRuntime {
                 throw new ConfigEpochException(expectedEpoch, next.getConfigEpoch());
             }
 
-            CodecRegistration currentRegistration = registry.require(requested.getCodecId());
             CodecRegistration nextRegistration = registry.require(next.getCodecId());
-            if (currentRegistration.getDescriptor().hasConfigParts()
-                    || nextRegistration.getDescriptor().hasConfigParts()) {
-                throw new CodecSwitchException(
-                        "deferred codec switching is not supported in this batch", null);
-            }
-
-            if (requested.sameDecodeConfig(next)) {
-                throw new IllegalArgumentException("decode config is unchanged");
-            }
+            boolean nextDeferred = nextRegistration.getDescriptor().hasConfigParts();
 
             long attempt = ++nextAttemptGeneration;
             Encoder newEncoder = null;
@@ -576,23 +565,34 @@ public final class StreamRuntime {
             activeEncoder = newEncoder;
             generation = attempt;
             requested = next;
-            publishedDescriptor = next;
-            state = RuntimeState.READY;
-            deferred = false;
+            deferred = nextDeferred;
             pendingJoin = false;
             lastJoinMs = Long.MIN_VALUE;
-            descriptorSnapshot = new ArrayList<>(listeners);
-        }
-
-        for (StreamRuntimeListener listener : descriptorSnapshot) {
-            try {
-                listener.onDescriptorChanged(next);
-            } catch (RuntimeException ignored) {
-                // isolate listener exceptions
+            if (nextDeferred) {
+                // The new descriptor is published when the encoder reports its configuration.
+                state = RuntimeState.CONFIGURING;
+                publishedDescriptor = null;
+            } else {
+                publishedDescriptor = next;
+                state = RuntimeState.READY;
+                descriptorSnapshot = new ArrayList<>(listeners);
+                requestJoin = true;
             }
         }
 
-        requestJoinPoint();
+        if (descriptorSnapshot != null) {
+            for (StreamRuntimeListener listener : descriptorSnapshot) {
+                try {
+                    listener.onDescriptorChanged(next);
+                } catch (RuntimeException ignored) {
+                    // isolate listener exceptions
+                }
+            }
+        }
+
+        if (requestJoin) {
+            requestJoinPoint();
+        }
     }
 
     /**
