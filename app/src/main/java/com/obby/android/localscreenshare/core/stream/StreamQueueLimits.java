@@ -2,6 +2,11 @@ package com.obby.android.localscreenshare.core.stream;
 
 /**
  * Immutable capacity and residency bounds for a bounded access-unit queue.
+ *
+ * <p>All three bounds apply simultaneously: a unit is refused when it alone exceeds the byte
+ * limit, and the queue drops or clears when the unit count, the total bytes or the residency time
+ * would be exceeded. The default values are temporary tuning values pending real-device
+ * measurement and are not a production conclusion.</p>
  */
 public final class StreamQueueLimits {
 
@@ -41,6 +46,12 @@ public final class StreamQueueLimits {
         return maxAgeMs;
     }
 
+    /**
+     * Returns the default limits: 4 MiB, 120 units and 2000 ms of residency.
+     *
+     * <p>These are provisional values used by {@link StreamHub} until real transport measurements
+     * are available; they are not a tuned production setting.</p>
+     */
     public static StreamQueueLimits defaults() {
         return new StreamQueueLimits(DEFAULT_MAX_BYTES, DEFAULT_MAX_UNITS, DEFAULT_MAX_AGE_MS);
     }

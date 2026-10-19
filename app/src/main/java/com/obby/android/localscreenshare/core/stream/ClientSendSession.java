@@ -15,9 +15,27 @@ import java.util.concurrent.locks.ReentrantLock;
  * them to a {@link MediaTransport}. Descriptors are always sent before the
  * first access unit of their epoch.
  *
- * <p>All session state is guarded by a single state lock. Draining takes a
- * separate {@code drainLock} so that a slow send never blocks {@link #offer}.
- * Sends happen outside the state lock.</p>
+ * <p><b>State machine.</b> A session starts in {@link ClientState#WAIT_CONFIG}. Accepting the
+ * first descriptor creates the queue and moves to {@link ClientState#WAIT_RANDOM_ACCESS}; a newer
+ * epoch discards the old queue and its pending units and returns to the same waiting state. While
+ * waiting or resynchronizing, only a validated join point is accepted, and a join point that is
+ * actually sent moves the session to {@link ClientState#STREAMING}. For reference-dependent
+ * codecs an overflow, an expired unit or an oversized unit sets the queue's resync flag, moves the
+ * session to {@link ClientState#RESYNCING} and counts one resync episode; independently decodable
+ * codecs keep the latest frame and never enter resync for throughput reasons. Detaching is
+ * terminal and moves the session to {@link ClientState#CLOSED}.</p>
+ *
+ * <p><b>Locking.</b> All session state is guarded by a single state lock. Draining takes a
+ * separate {@code drainLock} so that a slow send never blocks {@link #offer}: at most one drainer
+ * runs at a time, the queue poll happens under the state lock, the transport send happens outside
+ * every session lock, and counters and state are updated under the state lock afterwards, only if
+ * the session was not detached meanwhile. A blocked transport therefore holds no lock that
+ * {@code offer} needs.</p>
+ *
+ * <p><b>Failure.</b> Any transport failure detaches the session - clearing the queue, moving to
+ * {@code CLOSED} and closing the transport exactly once - and is rethrown so the owning
+ * {@link StreamHub} can drop the session. A detached session accepts no units and never drains
+ * again.</p>
  */
 public final class ClientSendSession {
 
@@ -43,6 +61,16 @@ public final class ClientSendSession {
     private long descriptorSends;
     private long droppedUnits;
 
+    /**
+     * Creates a session that has not received a descriptor yet.
+     *
+     * @param key        client and stream identity; required
+     * @param registry   codec registry used to resolve the per-codec policy; required
+     * @param limits     queue bounds applied to each epoch's queue; required
+     * @param transport  transport owned by this session; required
+     * @param timeSource clock used for queue residency and drops; required
+     * @throws IllegalArgumentException if any argument is null
+     */
     public ClientSendSession(ClientSessionKey key, CodecRegistry registry,
                              StreamQueueLimits limits, MediaTransport transport,
                              TimeSource timeSource) {
@@ -68,32 +96,56 @@ public final class ClientSendSession {
         this.timeSource = timeSource;
     }
 
+    /** Returns the client and stream identity of this session. */
     public ClientSessionKey getKey() {
         return key;
     }
 
+    /** Returns the client id part of the session key. */
     public String getClientId() {
         return key.getClientId();
     }
 
+    /** Returns the current session state, read atomically. */
     public ClientState getState() {
         synchronized (stateLock) {
             return state;
         }
     }
 
+    /** Returns the descriptor of the current epoch, or {@code null} before the first one. */
     public StreamDescriptor getCurrentDescriptor() {
         synchronized (stateLock) {
             return currentDescriptor;
         }
     }
 
+    /** Returns whether the session was detached; a detached session never becomes active again. */
     public boolean isDetached() {
         synchronized (stateLock) {
             return detached;
         }
     }
 
+    /**
+     * Accepts a descriptor and prepares the session for its epoch.
+     *
+     * <p>A descriptor is validated against the current one before anything is replaced: an older
+     * epoch is ignored, the same epoch with the same config hash is a duplicate, and the same epoch
+     * with a different hash is a protocol violation. A newer epoch is always accepted and
+     * discards the old queue and any unit buffered for it; the new descriptor is queued as the
+     * pending descriptor, so {@link #drainOne()} sends it before the first unit of the new epoch.
+     * The codec policy and queue bounds are taken from the registry entry of the descriptor's
+     * codec.</p>
+     *
+     * <p>The codec lookup runs while the state lock is held; an unknown codec id propagates the
+     * registry's exception.</p>
+     *
+     * @return true when the descriptor was applied, false for a duplicate or stale descriptor or a
+     *         detached session
+     * @throws IllegalArgumentException if {@code descriptor} is null or reuses the current epoch
+     *                                  with a different decode configuration
+     */
     public boolean onDescriptor(StreamDescriptor descriptor) {
         synchronized (stateLock) {
             if (detached) {
@@ -137,6 +189,24 @@ public final class ClientSendSession {
         }
     }
 
+    /**
+     * Offers an access unit for transmission.
+     *
+     * <p>Checks run in this order: a detached session returns
+     * {@link QueueOfferResult#REJECTED_CLOSED}; a null unit throws; a session without a descriptor
+     * returns {@link QueueOfferResult#REJECTED_NOT_READY}; a unit from another stream or another
+     * config epoch returns {@link QueueOfferResult#REJECTED_EPOCH}, including ordinary units that
+     * are not join points; while the session waits for a random-access point or resynchronizes a
+     * non-join unit returns {@link QueueOfferResult#REJECTED_NOT_JOIN_POINT}. Accepted units are
+     * passed to the queue, and any resync condition the queue reports moves the session to
+     * {@code RESYNCING} and counts one resync episode.</p>
+     *
+     * <p>The whole operation runs under the state lock and never takes the drain lock, so a
+     * transport blocked in {@link #drainOne()} cannot block this call.</p>
+     *
+     * @return the queue's outcome, or one of the session-level rejections described above
+     * @throws IllegalArgumentException if {@code accessUnit} is null
+     */
     public QueueOfferResult offer(EncodedAccessUnit accessUnit) {
         synchronized (stateLock) {
             if (detached) {
@@ -162,6 +232,25 @@ public final class ClientSendSession {
         }
     }
 
+    /**
+     * Sends at most one item: a pending descriptor first, otherwise one queued access unit.
+     *
+     * <p>Returns {@code false} immediately when another thread already holds the drain lock, so
+     * callers can treat the session as busy rather than blocking. The pending descriptor is taken
+     * under the state lock and always wins over queued units, which is what guarantees that every
+     * epoch's descriptor is sent before its first unit. The transport call is made outside the
+     * state lock. After a successful send the counters are updated under the state lock only if
+     * the session is still attached, and the join-point transition is applied only if additionally
+     * the epoch the unit was polled for is still current.</p>
+     *
+     * <p>When the queue reports that a resync is required without returning a unit, the session
+     * moves to {@code RESYNCING} and false is returned. Any transport failure detaches the session
+     * and is rethrown.</p>
+     *
+     * @return true when something was sent, false when there was nothing to send, the session is
+     *         detached or another thread is draining
+     * @throws IOException in case of transport failure, after the session detached itself
+     */
     public boolean drainOne() throws IOException {
         synchronized (stateLock) {
             if (detached) {
@@ -235,6 +324,14 @@ public final class ClientSendSession {
         }
     }
 
+    /**
+     * Returns a consistent snapshot of the session counters.
+     *
+     * <p>Queued values describe the current queue; the dropped counter includes units dropped by
+     * queues of previous epochs, so the value never decreases across an epoch change.
+     * {@code resyncCount} counts resync episodes, and {@code sentUnits} and
+     * {@code descriptorSends} count successfully completed transport calls.</p>
+     */
     public ClientSendStats getStats() {
         synchronized (stateLock) {
             long queuedUnits = queue != null ? queue.size() : 0L;
@@ -245,12 +342,26 @@ public final class ClientSendSession {
         }
     }
 
+    /**
+     * Detaches the session and closes its transport.
+     *
+     * <p>Idempotent and safe from any thread; repeated calls do not close the transport again.
+     * After this call the state is {@link ClientState#CLOSED}, the queue is cleared, offers are
+     * rejected with {@code REJECTED_CLOSED}, and {@link #drainOne()} returns false. A drain that
+     * is already inside the transport is not interrupted; it updates no counters once it returns,
+     * because the post-send update checks the detached flag.</p>
+     */
     public void detach() {
         synchronized (stateLock) {
             detachInternalLocked();
         }
     }
 
+    /**
+     * Moves the session to {@code RESYNCING} when the queue reports a broken decode chain, at most
+     * once per episode so that the resync counter reflects episodes rather than offers. The caller
+     * must hold the state lock.
+     */
     private void enterResyncIfNeededLocked() {
         if (queue != null && queue.isResyncRequired() && !resyncEpisodeCounted) {
             state = ClientState.RESYNCING;
@@ -259,6 +370,10 @@ public final class ClientSendSession {
         }
     }
 
+    /**
+     * Marks the session closed, clears its queue and closes the transport once. The caller must
+     * hold the state lock.
+     */
     private void detachInternalLocked() {
         detached = true;
         state = ClientState.CLOSED;

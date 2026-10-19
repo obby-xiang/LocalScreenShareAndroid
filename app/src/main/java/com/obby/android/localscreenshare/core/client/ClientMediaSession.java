@@ -15,6 +15,31 @@ import com.obby.android.localscreenshare.core.stream.ClientCapabilities;
 /**
  * Per-client media state machine that drives a {@link Decoder} and forwards its
  * output to the session's {@link RenderTarget}.
+ *
+ * <p><b>State machine.</b> A session starts in {@link ClientState#NEGOTIATING}. A supported
+ * descriptor records the configuration and either configures a decoder
+ * ({@code WAIT_CONFIG -> WAIT_RANDOM_ACCESS}) or, when a required output surface is missing,
+ * enters {@link ClientState#RESYNCING}. Units are decoded only in {@code STREAMING}, which is
+ * entered from {@code WAIT_RANDOM_ACCESS} or {@code RESYNCING} on a validated join point of the
+ * current epoch; units before that point are dropped. A unit from a future epoch, a decode
+ * failure, or a decoder configuration failure moves the session to {@code RESYNCING}, while a
+ * unit from an older epoch is dropped without a state change. {@link ClientState#CLOSED} is
+ * terminal and is reached through an unsupported codec or an explicit close.</p>
+ *
+ * <p><b>Descriptor validation.</b> For an already known descriptor the epochs are compared first:
+ * an older epoch is ignored, the same epoch with the same config hash is a duplicate, and the same
+ * epoch with a different hash is a protocol violation that throws. This validation happens before
+ * any surface read or decoder side effect, so a stale or duplicate descriptor cannot disturb an
+ * active decoder. The latest descriptor and codec policy are recorded before the surface gate, so
+ * a session blocked on a missing surface still tracks the newest epoch for a later
+ * {@link #retryConfigure()}. A newer epoch is applied even when its config hash equals the
+ * previous one.</p>
+ *
+ * <p><b>Threading.</b> Every method synchronizes on the session instance, so state, descriptor
+ * and decoder always change together. State listeners are invoked synchronously on the calling
+ * thread while the monitor is held, and only on real transitions; a listener must therefore not
+ * block or call into code that could try to enter another session. The session never closes the
+ * {@link RenderTarget}, which is owned by the display side.</p>
  */
 public final class ClientMediaSession {
 
@@ -30,6 +55,16 @@ public final class ClientMediaSession {
     private CodecPolicy policy;
     private boolean closed;
 
+    /**
+     * Creates a session that has not received a descriptor yet.
+     *
+     * @param key          client and stream identity; required
+     * @param registry     codec registry used to resolve decoder factories and policies; required
+     * @param capabilities codecs this client can decode; required
+     * @param renderTarget output target, owned by the caller; required
+     * @param listener     optional state listener; may be null
+     * @throws IllegalArgumentException if any required argument is null
+     */
     public ClientMediaSession(ClientSessionKey key, CodecRegistry registry,
                               ClientCapabilities capabilities, RenderTarget renderTarget,
                               ClientStateListener listener) {
@@ -52,18 +87,38 @@ public final class ClientMediaSession {
         this.listener = listener;
     }
 
+    /** Returns the current state, read atomically. */
     public synchronized ClientState getState() {
         return state;
     }
 
+    /** Returns the descriptor of the current epoch, or {@code null} before the first one. */
     public synchronized StreamDescriptor getCurrentDescriptor() {
         return currentDescriptor;
     }
 
+    /** Returns whether the session is closed; a closed session never reopens. */
     public synchronized boolean isClosed() {
         return closed;
     }
 
+    /**
+     * Applies a descriptor received from the server.
+     *
+     * <p>The processing order is fixed: closed check, null check, capability check, registry
+     * lookup, epoch and hash validation, recording of the latest descriptor and policy, surface
+     * check, then decoder creation and configuration. An unsupported codec closes the session
+     * instead of leaving it waiting forever. An older epoch returns false with no side effect, a
+     * same-epoch duplicate returns false, and a same-epoch descriptor with a different config hash
+     * throws because a decode configuration cannot change without a new epoch. A newer epoch is
+     * recorded and applied; if the codec requires an output surface that the render target does
+     * not provide, the session stays in {@code RESYNCING} without creating a decoder and the
+     * caller is expected to call {@link #retryConfigure()} once the surface exists.</p>
+     *
+     * @return true when a decoder was configured for the descriptor
+     * @throws IllegalArgumentException if {@code descriptor} is null or reuses the current epoch
+     *                                  with a different decode configuration
+     */
     public synchronized boolean onDescriptor(StreamDescriptor descriptor) {
         if (closed) {
             return false;
@@ -114,6 +169,21 @@ public final class ClientMediaSession {
         return applyDescriptor(descriptor, registration);
     }
 
+    /**
+     * Decodes one unit if the current state allows it.
+     *
+     * <p>A null unit always throws, even when the session is closed. Units from an older epoch are
+     * dropped without a state change, because they belong to a configuration that was already
+     * replaced; units from a future epoch move the session to {@code RESYNCING} and are dropped,
+     * because the descriptor for them has not arrived yet. In {@code WAIT_CONFIG} and while no
+     * decoder exists units are dropped. In {@code WAIT_RANDOM_ACCESS} and {@code RESYNCING} only a
+     * validated join point is accepted, and accepting it moves the session to {@code STREAMING}
+     * before decoding. A {@link DecoderException} moves the session back to {@code RESYNCING};
+     * other unchecked failures from a decoder are not swallowed.</p>
+     *
+     * @return true when the unit was handed to the decoder successfully
+     * @throws IllegalArgumentException if {@code accessUnit} is null
+     */
     public synchronized boolean onAccessUnit(EncodedAccessUnit accessUnit) {
         if (accessUnit == null) {
             throw new IllegalArgumentException("access unit must not be null");
@@ -150,6 +220,13 @@ public final class ClientMediaSession {
         return decode(accessUnit);
     }
 
+    /**
+     * Closes the session and its decoder.
+     *
+     * <p>Idempotent. The decoder is closed but the {@link RenderTarget} is left open because it is
+     * owned by the display side. The state moves to {@link ClientState#CLOSED} through the regular
+     * transition path, so a listener observes it; later descriptors and units are ignored.</p>
+     */
     public synchronized void close() {
         if (closed) {
             return;
@@ -184,6 +261,14 @@ public final class ClientMediaSession {
         return applyDescriptor(currentDescriptor, registration);
     }
 
+    /**
+     * Creates and configures a decoder for the descriptor, replacing any previous decoder.
+     *
+     * <p>The state moves to {@code WAIT_CONFIG} first, so listeners see the reconfiguration before
+     * the old decoder is closed. Configuration failure closes the newly created decoder (if any),
+     * records the descriptor and policy, and leaves the session in {@code RESYNCING} so the caller
+     * can retry; success installs the decoder and waits for a random-access point.</p>
+     */
     private boolean applyDescriptor(StreamDescriptor descriptor,
                                     CodecRegistration registration) {
         setState(ClientState.WAIT_CONFIG);
@@ -213,6 +298,10 @@ public final class ClientMediaSession {
         return true;
     }
 
+    /**
+     * Decodes one unit and maps the single decoder error channel to a resync. Other unchecked
+     * exceptions are implementation defects and propagate unchanged.
+     */
     private boolean decode(EncodedAccessUnit accessUnit) {
         try {
             decoder.decode(accessUnit);
@@ -223,6 +312,10 @@ public final class ClientMediaSession {
         }
     }
 
+    /**
+     * Applies a state change and notifies the listener only when the state actually changes, so a
+     * listener observes each transition exactly once and never a no-op assignment.
+     */
     private void setState(ClientState newState) {
         if (state != newState) {
             ClientState previous = state;

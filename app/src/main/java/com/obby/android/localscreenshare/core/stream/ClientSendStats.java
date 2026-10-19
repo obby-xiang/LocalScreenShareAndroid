@@ -2,6 +2,12 @@ package com.obby.android.localscreenshare.core.stream;
 
 /**
  * Immutable snapshot of a client send session's counters.
+ *
+ * <p>{@code queuedUnits} and {@code queuedBytes} describe the current epoch's queue.
+ * {@code droppedUnits} accumulates for the session's lifetime, including units dropped by previous
+ * epochs' queues. {@code resyncCount} counts resynchronization episodes rather than rejected
+ * offers, and {@code sentUnits} and {@code descriptorSends} count successfully completed transport
+ * calls.</p>
  */
 public final class ClientSendStats {
 

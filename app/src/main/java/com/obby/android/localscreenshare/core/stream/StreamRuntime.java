@@ -20,13 +20,45 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Runtime that owns a single active encoder for one stream.
+ * Runtime that owns the single active encoder for one stream.
  *
- * <p>Each encoder instance is tagged with a monotonically increasing generation.
- * Access units from retired encoders are dropped via generation and epoch checks;
- * retired encoders are closed only after the new epoch's first join point is
- * broadcast. Deferred codecs stay in {@link RuntimeState#CONFIGURING} until the
- * encoder reports its {@link EncoderConfig}.</p>
+ * <p><b>Ownership.</b> A runtime is created for one {@link StreamKey} and one requested
+ * {@link StreamDescriptor}, and is registered with a {@link StreamHub} that activates it and fans
+ * its output out to client sessions. The runtime, not the caller, owns every encoder it creates:
+ * encoders are created in {@link #start()} or {@link #switchDescriptor(StreamDescriptor)} and are
+ * closed by the runtime when they are replaced or when it is closed.</p>
+ *
+ * <p><b>Attempt generations.</b> Every {@code start()} and every descriptor switch allocates a new
+ * attempt generation from a counter that only increases. Each encoder output callback is bound to
+ * the generation of the attempt that created its encoder, and access units are forwarded only
+ * while that generation is still current. A superseded or retired encoder therefore cannot inject
+ * units into the current epoch even while its drain thread is still winding down, and units from
+ * an older config epoch are dropped as well, including ordinary units that are not join
+ * points.</p>
+ *
+ * <p><b>Two-phase configuration.</b> Codecs whose registration reports configuration parts stay in
+ * {@link RuntimeState#CONFIGURING} after {@link #start()} and remain unpublished until the encoder
+ * reports an {@link EncoderConfig}. The runtime then builds the final descriptor for the same
+ * config epoch, publishes it exactly once and moves to {@link RuntimeState#READY}. Codecs without
+ * configuration parts publish the requested descriptor inside {@code start()} without notifying
+ * listeners. {@link #getDescriptor()} returns only the published descriptor and is {@code null}
+ * before publication.</p>
+ *
+ * <p><b>State machine.</b> {@code IDLE -> CONFIGURING -> READY}, with failure from
+ * {@code CONFIGURING} or {@code READY} back to {@code FAILED}, and any state to {@code CLOSED}.
+ * A failed attempt can be retried with {@link #start()} only while nothing was ever published;
+ * once a descriptor has been published, a failure is terminal for this runtime instance and the
+ * owner has to close and rebuild it.</p>
+ *
+ * <p><b>Locking and callbacks.</b> Internal state is guarded by a private lock. Outside a
+ * descriptor switch, encoder creation, close and start happen outside that lock, and every
+ * listener notification is always delivered outside it. The deliberate exception is
+ * {@link #switchDescriptor(StreamDescriptor)}, which prewarms, starts and stops encoders while
+ * holding the lock. Listener callbacks run on the thread that produced the event - an encoder
+ * drain thread for access units, deferred configuration and encoder failures, the caller's thread
+ * for a descriptor switch - so listeners must not call back into blocking runtime methods. An
+ * exception thrown by one listener is isolated and does not prevent the remaining listeners from
+ * running.</p>
  */
 public final class StreamRuntime {
 
@@ -53,12 +85,31 @@ public final class StreamRuntime {
     private boolean pendingJoin;
     private long lastJoinMs;
 
+    /**
+     * Creates a runtime with the production monotonic {@link TimeSource} and the default
+     * join-point minimum interval.
+     */
     public StreamRuntime(CodecRegistry registry, StreamKey streamKey,
                          StreamDescriptor descriptor, StreamParameters parameters) {
         this(registry, streamKey, descriptor, parameters, TimeSource.MONOTONIC,
                 DEFAULT_JOIN_POINT_MIN_INTERVAL_MS);
     }
 
+    /**
+     * Creates a runtime with an injected clock and join-point interval.
+     *
+     * <p>Construction validates references only; no encoder is created and no codec is resolved
+     * until {@link #start()}.</p>
+     *
+     * @param registry                codec registry used to resolve factories and policies
+     * @param streamKey               identity of the stream this runtime serves
+     * @param descriptor              requested descriptor for the first config epoch
+     * @param parameters              initial rate and cadence hints
+     * @param timeSource              clock used for join-point rate limiting
+     * @param joinPointMinIntervalMs  minimum delay between join-point requests forwarded to the
+     *                                encoder; zero disables rate limiting
+     * @throws IllegalArgumentException if any reference is null
+     */
     public StreamRuntime(CodecRegistry registry, StreamKey streamKey,
                          StreamDescriptor descriptor, StreamParameters parameters,
                          TimeSource timeSource, long joinPointMinIntervalMs) {
@@ -86,6 +137,35 @@ public final class StreamRuntime {
         this.lastJoinMs = Long.MIN_VALUE;
     }
 
+    /**
+     * Creates and starts the encoder for the current requested descriptor.
+     *
+     * <p>Allowed from {@link RuntimeState#IDLE}, or from {@link RuntimeState#FAILED} when no
+     * descriptor was ever published. A runtime that already started, or that failed after
+     * publishing, cannot be restarted and is rejected with {@link IllegalStateException}. The call
+     * allocates a new attempt generation, marks the runtime {@code CONFIGURING} and clears the
+     * published descriptor before the encoder factory is invoked, so observers never see the
+     * previous attempt's {@code READY} state while the new encoder is still being created. A
+     * previous failed encoder is closed outside the lock; an unregistered codec id propagates the
+     * registry's exception after the attempt was recorded.</p>
+     *
+     * <p>The factory is expected to finish codec configuration itself. This method only checks
+     * that a surface-input codec returned an input surface, based on
+     * {@code CodecDescriptor.isSurfaceInputRequired()} alone and without a configuration-parts
+     * precondition, and then starts the encoder outside the lock. A synchronous factory, surface
+     * or start failure marks the attempt {@code FAILED}, notifies
+     * {@link StreamRuntimeListener#onEncoderFailed(StreamKey, EncoderException)} outside the lock,
+     * closes that encoder and throws {@link EncoderException}.</p>
+     *
+     * <p>Codecs without configuration parts publish the requested descriptor and become
+     * {@link RuntimeState#READY} inside this call without a descriptor notification. Codecs with
+     * configuration parts stay {@code CONFIGURING} until the encoder reports its configuration
+     * through {@link EncoderOutput#onEncoderConfig(EncoderConfig)}; access units that arrive
+     * before publication are dropped.</p>
+     *
+     * @throws IllegalStateException if the runtime is closed or is not in a retryable state
+     * @throws EncoderException      if the encoder cannot be created, validated or started
+     */
     public void start() {
         final long attempt;
         final Encoder oldFailed;
@@ -188,6 +268,16 @@ public final class StreamRuntime {
         }
     }
 
+    /**
+     * Closes the runtime and every encoder it owns.
+     *
+     * <p>Idempotent and non-throwing. The runtime moves to {@link RuntimeState#CLOSED} and drops
+     * its references before closing the active encoder and any encoders retired by a descriptor
+     * switch. The close calls happen outside the lock and a failing close is ignored so the
+     * remaining encoders are still closed. The last published descriptor is intentionally kept
+     * readable for diagnostics; after this call no access unit, configuration or failure callback
+     * is delivered.</p>
+     */
     public void close() {
         Encoder activeToClose;
         List<Encoder> retiredToClose;
@@ -218,40 +308,65 @@ public final class StreamRuntime {
         }
     }
 
+    /** Returns whether {@link #close()} has been called; a closed runtime never reopens. */
     public boolean isClosed() {
         synchronized (lock) {
             return closed;
         }
     }
 
+    /** Returns the current lifecycle state, read atomically with the rest of the runtime state. */
     public RuntimeState getState() {
         synchronized (lock) {
             return state;
         }
     }
 
+    /** Returns the stream identity this runtime serves; never null and never changes. */
     public StreamKey getStreamKey() {
         return streamKey;
     }
 
+    /**
+     * Returns the published descriptor, or {@code null} before anything was published.
+     *
+     * <p>A deferred codec has no descriptor between {@link #start()} and the encoder's
+     * configuration report, and a failed attempt that never published stays {@code null}. Callers
+     * that need the stream identity must use {@link #getStreamKey()} instead of this method.</p>
+     */
     public StreamDescriptor getDescriptor() {
         synchronized (lock) {
             return publishedDescriptor;
         }
     }
 
+    /**
+     * Returns the config epoch of the current requested descriptor. It advances only through a
+     * successful {@link #switchDescriptor(StreamDescriptor)}; publishing deferred configuration for
+     * the same epoch does not change it.
+     */
     public int getConfigEpoch() {
         synchronized (lock) {
             return requested.getConfigEpoch();
         }
     }
 
+    /** Returns the rate and cadence hints last accepted by {@link #updateParameters}. */
     public StreamParameters getParameters() {
         synchronized (lock) {
             return parameters;
         }
     }
 
+    /**
+     * Returns the input surface of the active encoder, or {@code null}.
+     *
+     * <p>Returns {@code null} unless the runtime is {@code CONFIGURING} or {@code READY}, and for
+     * codecs that do not consume surface input. For a surface-input codec the value is non-null
+     * from encoder creation until the runtime is closed or the encoder is replaced. The active
+     * encoder is queried while the runtime lock is held, so implementations must return promptly
+     * and must not call back into the runtime from this method.</p>
+     */
     public Surface getInputSurface() {
         synchronized (lock) {
             if (state != RuntimeState.CONFIGURING && state != RuntimeState.READY) {
@@ -261,6 +376,17 @@ public final class StreamRuntime {
         }
     }
 
+    /**
+     * Applies new rate and cadence hints to the active encoder.
+     *
+     * <p>Allowed only while {@code CONFIGURING} or {@code READY}. The encoder is updated first,
+     * under the runtime lock, and the cached parameters are replaced only when that call returns,
+     * so an encoder failure leaves the previous value in place and propagates to the caller. The
+     * config epoch, descriptor and encoder instance are unchanged.</p>
+     *
+     * @throws IllegalStateException    if the runtime is closed or not running
+     * @throws IllegalArgumentException if {@code newParameters} is null
+     */
     public void updateParameters(StreamParameters newParameters) {
         synchronized (lock) {
             if (closed) {
@@ -279,6 +405,20 @@ public final class StreamRuntime {
         }
     }
 
+    /**
+     * Asks the active encoder for a random-access point, coalescing and rate-limiting requests.
+     *
+     * <p>Requests are forwarded only from {@link RuntimeState#READY}. While a request is still
+     * pending, or while the last delivered join point is younger than the configured minimum
+     * interval, the call returns {@code false} without reaching the encoder; concurrent callers
+     * therefore cause at most one outstanding request. A forwarded request sets the pending flag,
+     * which is cleared when the encoder emits the next join point. If {@code requestSyncPoint()}
+     * throws, the pending flag is rolled back only when the runtime generation is still the one
+     * the request was made for, and the exception is rethrown.</p>
+     *
+     * @return {@code true} when this call reached the encoder, {@code false} when it was
+     *         coalesced, rate-limited or the runtime is not ready
+     */
     public boolean requestJoinPoint() {
         Encoder encoder;
         long requestGeneration;
@@ -310,6 +450,38 @@ public final class StreamRuntime {
         return true;
     }
 
+    /**
+     * Switches to the next descriptor by prewarming a new encoder and retiring the old one.
+     *
+     * <p>The request is validated under the lock before any encoder is created: the stream key
+     * must match, the epoch must be exactly one greater than the current one (otherwise
+     * {@link ConfigEpochException}), neither the current nor the next codec may require
+     * configuration parts (otherwise {@link CodecSwitchException}), and the decode configuration
+     * must actually differ. The new encoder is then created, surface-checked and started, and the
+     * old encoder is stopped, all while the lock is held. This synchronous prewarm is the
+     * deliberate exception to the rule that encoder lifecycle calls happen outside the runtime
+     * lock.</p>
+     *
+     * <p>If creating, validating or starting the new encoder fails, it is closed and the old
+     * encoder, descriptor, epoch and state are kept, wrapped in {@link CodecSwitchException}. If
+     * stopping the old encoder throws, the new encoder is closed and the original exception
+     * propagates with the old encoder still active. In both cases nothing is published and no
+     * listener is notified.</p>
+     *
+     * <p>On success the runtime adopts {@code next} as both requested and published descriptor,
+     * advances the attempt generation, returns to {@link RuntimeState#READY} and resets the
+     * join-point request state. Listeners receive {@code onDescriptorChanged} outside the lock,
+     * with one failing listener isolated from the others, and a new join point is requested
+     * afterwards so late decoder instances can start on the new epoch. The retired encoder is kept
+     * until the first join point of the new epoch has been forwarded, then closed.</p>
+     *
+     * @throws IllegalArgumentException if {@code next} is null, belongs to another stream, or
+     *                                  repeats the current decode configuration
+     * @throws ConfigEpochException     if the epoch is not exactly one greater than the current
+     * @throws CodecSwitchException     if a codec requires deferred configuration or the new
+     *                                  encoder cannot be prewarmed
+     * @throws IllegalStateException    if the runtime is closed
+     */
     public void switchDescriptor(StreamDescriptor next) {
         if (next == null) {
             throw new IllegalArgumentException("next must not be null");
@@ -390,6 +562,13 @@ public final class StreamRuntime {
         requestJoinPoint();
     }
 
+    /**
+     * Adds a listener.
+     *
+     * <p>Callbacks are delivered in registration order and outside the runtime lock. A listener
+     * that throws does not prevent the remaining listeners from being invoked; it also does not
+     * change the runtime state.</p>
+     */
     public void addListener(StreamRuntimeListener listener) {
         if (listener == null) {
             throw new IllegalArgumentException("listener must not be null");
@@ -399,12 +578,17 @@ public final class StreamRuntime {
         }
     }
 
+    /** Removes a listener; removing one that was never added is a no-op. */
     public void removeListener(StreamRuntimeListener listener) {
         synchronized (lock) {
             listeners.remove(listener);
         }
     }
 
+    /**
+     * Creates the output sink handed to one encoder instance, binding every callback to the
+     * generation of the attempt that created the encoder so late callbacks can be discarded.
+     */
     private EncoderOutput outputForGeneration(final long gen) {
         return new EncoderOutput() {
             @Override
@@ -424,6 +608,18 @@ public final class StreamRuntime {
         };
     }
 
+    /**
+     * Handles one encoded unit from a specific attempt.
+     *
+     * <p>Under the lock the unit is discarded when the runtime is closed, the stream key differs,
+     * the attempt is no longer current, the unit's config epoch differs from the current one, or
+     * the runtime failed. In the ready state a join point clears the pending join request, records
+     * the join time and schedules every retired encoder for closing; the unit is then forwarded to
+     * a listener snapshot outside the lock, and the retired encoders are closed after forwarding.
+     * For a deferred codec an early unit fails the attempt (and is not forwarded) instead of being
+     * silently dropped; for a non-deferred codec an early unit is dropped without changing the
+     * state, as publication happens inside {@link #start()}.</p>
+     */
     private void onAccessUnit(EncodedAccessUnit accessUnit, long generationOfOutput) {
         List<StreamRuntimeListener> snapshot = null;
         List<Encoder> toClose = null;
@@ -486,6 +682,18 @@ public final class StreamRuntime {
         }
     }
 
+    /**
+     * Publishes the final descriptor for a deferred codec, or fails the attempt.
+     *
+     * <p>Only the current attempt may publish, only once, and only while still
+     * {@code CONFIGURING}. Missing configuration parts or a non-positive coded size fail the
+     * attempt instead of falling back to the requested sizes. On success the descriptor is built
+     * for the same config epoch, stored as published and the runtime becomes {@code READY}; the
+     * notification is then delivered outside the lock, after every runtime state that gates unit
+     * forwarding has been updated. Ordering between the notification and the first unit relies on
+     * the encoder contract that reports its configuration before the first access unit on the same
+     * output path.</p>
+     */
     private void onEncoderConfig(EncoderConfig config, long generationOfOutput) {
         List<StreamRuntimeListener> snapshot = null;
         StreamDescriptor published = null;
@@ -522,6 +730,15 @@ public final class StreamRuntime {
         }
     }
 
+    /**
+     * Asynchronous encoder failure.
+     *
+     * <p>Only the current attempt can fail the runtime, and only while it is not idle, already
+     * failed or closed; callbacks from a superseded attempt are ignored. The published descriptor
+     * is intentionally kept, because the descriptor still describes the last valid configuration
+     * while the failure is reported. The notification is delivered outside the lock, and no
+     * encoder lifecycle call is made from inside the callback.</p>
+     */
     private void onEncoderFailure(EncoderException failure, long generationOfOutput) {
         List<StreamRuntimeListener> snapshot = null;
         synchronized (lock) {
@@ -544,6 +761,14 @@ public final class StreamRuntime {
         }
     }
 
+    /**
+     * Combines the requested descriptor with the configuration reported by a deferred codec.
+     *
+     * <p>Stream identity, epoch, codec id, MIME type, bitstream format, profile, level, visible
+     * size and rotation come from the request; the coded size and configuration parts come from
+     * the encoder; the color comes from the encoder unless it is unspecified. The resulting config
+     * hash therefore covers the actual configuration, while the epoch stays unchanged.</p>
+     */
     private StreamDescriptor buildPublishedDescriptor(EncoderConfig config) {
         StreamDescriptor.Builder builder = StreamDescriptor.builder(
                         requested.getStreamKey(), requested.getConfigEpoch(),
@@ -563,6 +788,13 @@ public final class StreamRuntime {
         return builder.build();
     }
 
+    /**
+     * Marks the attempt failed if it is still current, and returns the listeners to notify.
+     *
+     * <p>Used by the synchronous start paths, which must clear the published descriptor as well.
+     * Returns {@code null} when a concurrent failure or close already took over the attempt, so
+     * the caller silently skips the notification.</p>
+     */
     private List<StreamRuntimeListener> markFailed(long attempt) {
         synchronized (lock) {
             if (generation == attempt && !closed) {
