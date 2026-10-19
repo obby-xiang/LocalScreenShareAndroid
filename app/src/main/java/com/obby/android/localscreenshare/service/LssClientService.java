@@ -73,31 +73,67 @@ import org.apache.commons.lang3.mutable.MutableBoolean;
 import java.text.NumberFormat;
 import java.util.Objects;
 
+/**
+ * Foreground service that connects to one discovered server and shows the received frames in a
+ * floating viewer.
+ *
+ * <p><b>Lifecycle.</b> Started by {@link MainActivity} with
+ * {@link Constants#EXTRA_SERVICE_INFO} after the notification and overlay permissions have been
+ * granted. {@link #onStartCommand(Intent, int, int)} creates the notification channel, promotes
+ * the service to the foreground with the remote-messaging type, resets any previous session,
+ * creates an {@link LssClient} and shows the loading overlay before the client connects. A
+ * repeated start for the same target leaves the running session alone; a start for a different
+ * target replaces it. {@link #stopService()} tears down the client, the overlays and the
+ * foreground notification and calls {@link #stopSelf()}; {@link #onDestroy()} only unregisters the
+ * stop receiver.</p>
+ *
+ * <p><b>Connection state.</b> Until the first frame arrives the loading overlay is shown. The
+ * first frame is reported as {@code onConnected}, which swaps the loading overlay for the viewer;
+ * a later disconnect, or a failed first connection, closes the client, shows a floating
+ * confirmation and offers a retry. The retry creates a new client because an {@link LssClient} is
+ * single-use. Cancelling the confirmation broadcasts
+ * {@link Constants#ACTION_STOP_CLIENT_SERVICE}.</p>
+ *
+ * <p><b>Threading and ownership.</b> All service callbacks and {@link LssClientObserver}
+ * callbacks run on the main thread; {@link LssClient} decodes frames on its own executor and
+ * delivers them on the main thread. A received frame arrives as a {@link Reference} owned by the
+ * viewer, which clears the previous frame when it stores a new one. All overlay windows are added
+ * and removed on the main thread and require the overlay permission checked by
+ * {@link MainActivity}.</p>
+ */
 public class LssClientService extends Service {
     private static final String NOTIFICATION_CHANNEL_ID = "lss-client-service";
 
     private static final int NOTIFICATION_ID = 2;
 
+    // Target of the current session; null while stopped.
     @Nullable
     private LssServiceInfo mServiceInfo;
 
+    // Single-use client; replaced by a new instance on retry and nulled on stop.
     @Nullable
     private LssClient mClient;
 
+    // Last stats sample received on the main thread.
     @Nullable
     private LssClientStats mClientStats;
 
+    // Overlay shown while connecting; the same instance is reused across retries.
     @Nullable
     private ScreenShareLoading mScreenShareLoading;
 
+    // Overlay shown once frames arrive; created on the first connect.
     @Nullable
     private ScreenShareViewer mScreenShareViewer;
 
+    // Disconnect confirmation; created on demand and dismissed on stop.
     @Nullable
     private AlertDialog mDialog;
 
+    // Distinguishes a lost connection from a failed first connection when choosing the message.
     private boolean mIsConnected;
 
+    // Last rate rendered into the notification; the notification is rebuilt only on change.
     private long mInboundDataRate;
 
     private final String mTag = "LssClientService@" + hashCode();
@@ -105,10 +141,13 @@ public class LssClientService extends Service {
     @NonNull
     private final LssClientStatsListener mClientStatsListener = this::onClientStatsChanged;
 
+    // Client callbacks are delivered on the main thread; see LssClient.
     @NonNull
     private final LssClientObserver mClientObserver = new LssClientObserver() {
         @Override
         public void onConnected() {
+            // The first frame doubles as the connect signal, so the viewer exists before the
+            // first setFrame call.
             mIsConnected = true;
 
             if (mScreenShareLoading != null) {
@@ -125,6 +164,8 @@ public class LssClientService extends Service {
         @SuppressWarnings("DataFlowIssue")
         @Override
         public void onDisconnected() {
+            // A session that was connected reports a reconnect prompt; a failed first connection
+            // reports a retry prompt.
             final int messageResId = mIsConnected ? R.string.reconnect_screen_share_confirm
                 : R.string.retry_connect_screen_share_confirm;
             mIsConnected = false;
@@ -149,6 +190,9 @@ public class LssClientService extends Service {
                 mClient = null;
             }
 
+            // An LssClient cannot be restarted, so a retry builds a new instance and shows the
+            // loading overlay again. The confirmation is a floating window because the activity
+            // may not be visible.
             final Context themedContext = new ContextThemeWrapper(LssClientService.this, R.style.AppTheme);
             mDialog = new MaterialAlertDialogBuilder(themedContext)
                 .setMessage(HtmlCompat.fromHtml(getString(messageResId, mServiceInfo.getName()),
@@ -169,12 +213,14 @@ public class LssClientService extends Service {
 
         @Override
         public void onScreenFrameReceived(@NonNull Reference<Bitmap> frame, boolean isSecure) {
+            // Ownership of the reference passes to the viewer, which clears the previous frame.
             if (mScreenShareViewer != null) {
                 mScreenShareViewer.setFrame(frame, isSecure);
             }
         }
     };
 
+    // Stops the session when the notification action or a floating confirmation broadcasts it.
     @NonNull
     private final BroadcastReceiver mBroadcastReceiver = new BroadcastReceiver() {
         @Override
@@ -185,6 +231,10 @@ public class LssClientService extends Service {
         }
     };
 
+    /**
+     * Registers the receiver that backs the stop action of the notification and of the floating
+     * confirmations.
+     */
     @Override
     public void onCreate() {
         super.onCreate();
@@ -195,6 +245,10 @@ public class LssClientService extends Service {
         ContextCompat.registerReceiver(this, mBroadcastReceiver, intentFilter, ContextCompat.RECEIVER_NOT_EXPORTED);
     }
 
+    /**
+     * Unregisters the stop receiver; the session itself was already released by
+     * {@link #stopService()}.
+     */
     @Override
     public void onDestroy() {
         super.onDestroy();
@@ -203,12 +257,23 @@ public class LssClientService extends Service {
         unregisterReceiver(mBroadcastReceiver);
     }
 
+    /**
+     * Returns {@code null}: the client service is start-only and is never bound.
+     */
     @Nullable
     @Override
     public IBinder onBind(Intent intent) {
         return null;
     }
 
+    /**
+     * Starts or replaces the viewing session.
+     *
+     * <p>A null intent carries no target (for example after a system restart) and a repeated start
+     * for the same running target is ignored; both return {@code START_NOT_STICKY}. A new target
+     * tears the previous session down and starts a fresh client. The service is promoted to the
+     * foreground before any overlay is created, and a foreground-start failure stops it.</p>
+     */
     @SuppressWarnings("DataFlowIssue")
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
@@ -245,6 +310,7 @@ public class LssClientService extends Service {
             return START_NOT_STICKY;
         }
 
+        // Replace the previous session only after the foreground notification succeeded.
         if (mDialog != null) {
             mDialog.dismiss();
             mDialog = null;
@@ -272,6 +338,13 @@ public class LssClientService extends Service {
         return START_STICKY;
     }
 
+    /**
+     * Releases the client, the overlays and the foreground notification, then stops the service.
+     *
+     * <p>Every step null-checks its target so a partially started session can take this path as
+     * well. The client is stopped before it is dropped, and {@link #stopSelf()} delivers
+     * {@link #onDestroy()} afterwards.</p>
+     */
     private void stopService() {
         mServiceInfo = null;
         mIsConnected = false;
@@ -302,11 +375,14 @@ public class LssClientService extends Service {
         stopSelf();
     }
 
+    // Stats are sampled every three seconds on the main thread; the rate is mirrored into the
+    // notification.
     private void onClientStatsChanged(@NonNull final LssClientStats clientStats) {
         mClientStats = clientStats;
         updateInboundDataRate(mClientStats.getInboundDataRate());
     }
 
+    // Rebuilds the notification only when the displayed value changes.
     @SuppressLint("MissingPermission")
     private void updateInboundDataRate(final long inboundDataRate) {
         if (mInboundDataRate == inboundDataRate) {
@@ -345,6 +421,13 @@ public class LssClientService extends Service {
             .build();
     }
 
+    /**
+     * Non-focusable overlay shown while the client connects.
+     *
+     * <p>Created and used on the main thread. A tap opens the disconnect confirmation as a
+     * floating window; {@link #show()} is idempotent, so the same view can be shown again after a
+     * retry.</p>
+     */
     private static class ScreenShareLoading {
         @Nullable
         private AlertDialog mDialog;
@@ -406,6 +489,17 @@ public class LssClientService extends Service {
         }
     }
 
+    /**
+     * Floating, draggable viewer for received frames.
+     *
+     * <p>Created and used on the main thread. The first {@link #show()} applies the stored
+     * opacity, scale and normalized location; later frames only replace the bitmap and, when the
+     * frame size or the secure flag changes, the window layout. A long press starts dragging, a
+     * single tap opens the disconnect confirmation and a double tap opens the settings sheet.
+     * Settings are applied live and persisted when a slider is released. The frame reference
+     * passed to {@link #setFrame} is owned by the viewer until the next frame or
+     * {@link #dismiss()} clears it.</p>
+     */
     private static class ScreenShareViewer {
         private static final float CORNER_SIZE_RATIO = 1 / 16f;
 
@@ -421,22 +515,28 @@ public class LssClientService extends Service {
 
         private static final int SCALE_STEP = 1;
 
+        // Live copies of the persisted viewer settings; the slider listeners update them.
         private int mOpacity;
 
         private int mScale;
 
+        // Current frame; owned by this viewer until it is replaced or cleared.
         @Nullable
         private Reference<Bitmap> mFrame;
 
+        // Pixel size of the current frame; null before the first frame and after dismiss().
         @Nullable
         private Size mFrameSize;
 
+        // Last matrix applied to the frame view; compared before touching the view.
         @Nullable
         private Matrix mMatrix;
 
+        // Disconnect confirmation, created on demand as a floating window.
         @Nullable
         private AlertDialog mDialog;
 
+        // Settings sheet, created on demand and dismissed with the viewer.
         @Nullable
         private BottomSheetDialog mSettingsDialog;
 
@@ -458,12 +558,15 @@ public class LssClientService extends Service {
         @NonNull
         private final GestureDetector mGestureDetector;
 
+        // Normalized position within the allowed bounds, in the range [0, 1].
         @NonNull
         private final PointF mLocation = new PointF();
 
+        // Scratch rectangle reused by the bounds calculations.
         @NonNull
         private final Rect mBounds = new Rect();
 
+        // Difference between the window origin and the touch point while dragging.
         @NonNull
         private final PointF mDragOffset = new PointF();
 
@@ -532,6 +635,13 @@ public class LssClientService extends Service {
             mGestureDetector = new GestureDetector(mContext, mOnGestureListener);
         }
 
+        /**
+         * Stores a new frame and updates the overlay only when its geometry or security changes.
+         *
+         * <p>Takes ownership of the reference and clears the previous frame. The bitmap is shown
+         * immediately; the window layout is touched only when the frame size or the secure flag
+         * differs from the previous frame.</p>
+         */
         @SuppressWarnings("DataFlowIssue")
         public void setFrame(@NonNull final Reference<Bitmap> frame, boolean isSecure) {
             final Reference<Bitmap> oldFrame = mFrame;
@@ -541,6 +651,7 @@ public class LssClientService extends Service {
             mFrameView.setImageBitmap(bitmap);
 
             final MutableBoolean shouldUpdate = new MutableBoolean();
+            // A size change invalidates the fit scale, the image matrix and the corner radius.
             if (mFrameSize == null || mFrameSize.getWidth() != bitmap.getWidth()
                 || mFrameSize.getHeight() != bitmap.getHeight()) {
                 shouldUpdate.setTrue();
@@ -550,6 +661,8 @@ public class LssClientService extends Service {
                 updateShape();
             }
 
+            // Mirrors the frame's secure flag onto the window; a secure window is excluded from
+            // screenshots and screen recordings.
             if ((mLayoutParams.flags & WindowManager.LayoutParams.FLAG_SECURE) == 0 == isSecure) {
                 shouldUpdate.setTrue();
                 if (isSecure) {
@@ -563,11 +676,17 @@ public class LssClientService extends Service {
                 mWindowManager.updateViewLayout(mFrameView, mLayoutParams);
             }
 
+            // Clearing the previous reference offers its bitmap back to the client's reuse pool,
+            // or recycles it when the pool is full or the client is stopped.
             if (oldFrame != null) {
                 oldFrame.clear();
             }
         }
 
+        /**
+         * Adds the overlay window the first time it is called and loads the persisted viewer
+         * settings at that moment. Later calls are no-ops while the view is attached.
+         */
         public void show() {
             if (mFrameView.getParent() == null) {
                 mOpacity = Preferences.get().getViewerOpacity();
@@ -580,6 +699,10 @@ public class LssClientService extends Service {
             }
         }
 
+        /**
+         * Removes the overlay, closes its dialogs and clears the current frame. Safe to call when
+         * the view is not attached.
+         */
         public void dismiss() {
             mFrameSize = null;
             mLayoutParams.flags &= ~WindowManager.LayoutParams.FLAG_SECURE;
@@ -646,6 +769,8 @@ public class LssClientService extends Service {
             mFrameView.setForeground(foreground);
         }
 
+        // Fits the frame into the visible display bounds at the user scale, never below the
+        // minimum viewer size, then maps the normalized location onto the allowed center range.
         private void updateLayoutParams() {
             mLayoutParams.alpha = mOpacity / 100f;
 
@@ -675,6 +800,7 @@ public class LssClientService extends Service {
             mLayoutParams.y = (int) (mBounds.top + mBounds.height() * mLocation.y);
         }
 
+        // Clamps the window position to the allowed center range and stores it normalized.
         private void updateLocation(final int x, final int y) {
             getLocationBounds(mBounds);
 
@@ -690,6 +816,7 @@ public class LssClientService extends Service {
             }
         }
 
+        // The rectangle describes allowed window centers, so it is inset by half the window size.
         private void getLocationBounds(@NonNull final Rect rect) {
             getMaxLayoutBounds(rect);
             rect.left += mLayoutParams.width / 2;
@@ -698,12 +825,20 @@ public class LssClientService extends Service {
             rect.bottom -= mLayoutParams.height / 2;
         }
 
+        // Visible display frame with the origin moved to its center.
         private void getMaxLayoutBounds(@NonNull final Rect rect) {
             mFrameView.getWindowVisibleDisplayFrame(rect);
             rect.offsetTo(0, 0);
             rect.offset(-rect.width() / 2, -rect.height() / 2);
         }
 
+        /**
+         * Builds the viewer settings sheet.
+         *
+         * <p>Opacity, scale and the switches apply immediately; slider values are persisted when
+         * the finger is released. The current values are loaded when the sheet is shown, because
+         * the same instance is reused.</p>
+         */
         @SuppressWarnings("DataFlowIssue")
         @NonNull
         private BottomSheetDialog createSettingsDialog() {
@@ -790,9 +925,17 @@ public class LssClientService extends Service {
             return settingsDialog;
         }
 
+        /**
+         * Builds the frame view: bitmap filtering, re-layout on display configuration changes and
+         * the drag gesture on top of the tap gestures detected by the gesture detector.
+         *
+         * <p>Dragging is armed by a long press; releasing the finger persists the normalized
+         * position.</p>
+         */
         @NonNull
         private ShapeableImageView createFrameView() {
             final ShapeableImageView frameView = new ShapeableImageView(mContext) {
+                // Smooths the bitmap when it is scaled to the window size.
                 @NonNull
                 private final DrawFilter mDrawFilter =
                     new PaintFlagsDrawFilter(0, Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
@@ -806,9 +949,13 @@ public class LssClientService extends Service {
                 @Override
                 protected void onConfigurationChanged(Configuration newConfig) {
                     super.onConfigurationChanged(newConfig);
+                    // Bounds change with rotation and multi-window; re-fit after the new
+                    // configuration has been applied.
                     post(() -> updateView());
                 }
 
+                // Drag uses raw screen coordinates because the window itself moves under the
+                // finger.
                 @SuppressLint("ClickableViewAccessibility")
                 @Override
                 public boolean onTouchEvent(@NonNull MotionEvent event) {

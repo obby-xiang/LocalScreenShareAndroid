@@ -81,6 +81,46 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
 
+/**
+ * Foreground service that captures the screen and serves it to clients through {@link LssServer}.
+ *
+ * <p><b>Lifecycle.</b> The service is started, not bound, by {@link MainActivity} right after the
+ * user grants screen capture; the consent result travels in
+ * {@link Constants#EXTRA_MEDIA_PROJECTION_RESULT}. {@link #onCreate()} registers the stop-command
+ * receiver, snapshots the projection preferences and subscribes the preference observer.
+ * {@link #onStartCommand(Intent, int, int)} then, in this order, promotes the service to the
+ * foreground with the media-projection type, creates and starts the server, obtains the
+ * {@link MediaProjection} from the consent result, builds the capture pipeline and shows the
+ * floating chip. A null intent, a second start while the server is running, or a failure during
+ * start is rejected with {@code START_NOT_STICKY}; a successful start returns
+ * {@code START_STICKY}. {@link #stopService()} tears the pipeline down in reverse order and calls
+ * {@link #stopSelf()}; {@link #onDestroy()} unregisters the receiver and the preference
+ * observer.</p>
+ *
+ * <p><b>Capture pipeline.</b> The projection renders into a {@link VirtualDisplay} backed by an
+ * {@link ImageReader} surface. The image-available listener runs on the dedicated
+ * {@code lss-service-image-reader} thread, keeps only the newest image, throttles frames to the
+ * configured frame rate using the image timestamp, copies the RGBA plane into a reusable
+ * {@link Bitmap}, compresses it to JPEG with the configured quality and hands the
+ * {@link ScreenFrame} to {@link LssServer#postScreenFrame}. The security flag travels with each
+ * frame.</p>
+ *
+ * <p><b>Threading.</b> Service callbacks, server listeners, preference changes and all state
+ * except the capture state run on the main thread. The capture listener runs on the image reader
+ * thread; {@code mImageReaderLock} serializes image acquisition, reader replacement and teardown
+ * so no frame is posted once the reader has been closed. Apart from the capture thread's
+ * {@code postScreenFrame} call, {@code mServer} is accessed only on the main thread.</p>
+ *
+ * <p><b>Clients.</b> Activities bind to the service with {@code BIND_AUTO_CREATE} and register a
+ * {@link Messenger} as {@code replyTo}; the service keeps the registered messengers in a
+ * copy-on-write list and replays the current server state on registration. Notifications are sent
+ * from the main thread and a {@link RemoteException} means the client is gone, so it is
+ * ignored.</p>
+ *
+ * <p><b>Overlay.</b> While running, a {@link ScreenShareChip} shows the elapsed time and offers
+ * stop and open-app actions. It is added during start and removed during teardown and needs the
+ * overlay permission that {@link MainActivity} checks before starting the service.</p>
+ */
 public class LssService extends Service {
     private static final String NOTIFICATION_CHANNEL_ID = "lss-service";
 
@@ -92,44 +132,61 @@ public class LssService extends Service {
 
     private static final int IMAGE_READER_MAX_IMAGES = 2;
 
+    // Main-thread state; non-null only between a successful start and stopService().
     @Nullable
     private LssServer mServer;
 
+    // Main-thread handle on the projection; released by stopService().
     @Nullable
     private MediaProjection mMediaProjection;
 
+    // Current capture size in pixels; null while stopped.
     @Nullable
     private Size mProjectionSize;
 
+    // Dedicated thread for image-available callbacks; started before the reader and quit during
+    // teardown.
     @Nullable
     private HandlerThread mImageReaderHandlerThread;
 
     @Nullable
     private Handler mImageReaderHandler;
 
+    // Volatile because the capture thread compares it before taking mImageReaderLock; replaced
+    // under that lock on resize and teardown.
     private volatile ImageReader mImageReader;
 
+    // Timestamp of the last accepted frame in nanoseconds, or -1 to accept the next frame without
+    // throttling; guarded by mImageReaderLock.
     private volatile long mFrameTimestamp;
 
+    // Main-thread state; resized on configuration changes.
     @Nullable
     private VirtualDisplay mVirtualDisplay;
 
+    // Floating duration chip; added on start and removed on teardown.
     @Nullable
     private ScreenShareChip mScreenShareChip;
 
+    // Reused ARGB_8888 buffer for the current capture size; guarded by mImageReaderLock.
     @Nullable
     private Bitmap mScreenFrameBitmap;
 
+    // Last values received from the server on the main thread; replayed to newly registered
+    // clients.
     @Nullable
     private LssServerInfo mServerInfo;
 
     @Nullable
     private LssServerStats mServerStats;
 
+    // Last values rendered into the notification; used to skip redundant notification updates.
     private int mConnectionCount;
 
     private long mOutboundDataRate;
 
+    // Projection settings, written on the main thread by the preference observer. The capture
+    // thread reads the quality, security and frame-rate values while encoding each frame.
     private boolean mIsProjectionSecure;
 
     private int mProjectionScale;
@@ -140,12 +197,17 @@ public class LssService extends Service {
 
     private final String mTag = "LssService@" + hashCode();
 
+    // Serializes image acquisition with reader replacement and teardown. It also guards
+    // mScreenFrameBitmap and mFrameTimestamp.
     @NonNull
     private final Object mImageReaderLock = new Object();
 
+    // Registered client messengers; copy-on-write so fan-out can iterate while a client removes
+    // itself. Mutated on the main thread only.
     @NonNull
     private final List<Messenger> mClientMessengers = new CopyOnWriteArrayList<>();
 
+    // Receives client registrations on the main thread.
     @NonNull
     private final Messenger mMessenger = new Messenger(new Handler(Looper.getMainLooper(), msg -> {
         switch (msg.what) {
@@ -160,12 +222,15 @@ public class LssService extends Service {
         }
     }));
 
+    // LssServer invokes both listeners on the main thread.
     @NonNull
     private final LssServerInfoListener mServerInfoListener = this::onServerInfoChanged;
 
     @NonNull
     private final LssServerStatsListener mServerStatsListener = this::onServerStatsChanged;
 
+    // Registered on the main looper. onStop is reported when the user revokes capture or the
+    // system ends it; the resize and visibility callbacks are informational only.
     @NonNull
     private final MediaProjection.Callback mMediaProjectionCallback = new MediaProjection.Callback() {
         @Override
@@ -187,6 +252,8 @@ public class LssService extends Service {
         }
     };
 
+    // Runs on the image reader thread. The identity check is repeated under the lock so a callback
+    // for a reader that has already been replaced becomes a no-op.
     @NonNull
     private final ImageReader.OnImageAvailableListener mOnImageAvailableListener =
         new ImageReader.OnImageAvailableListener() {
@@ -209,6 +276,8 @@ public class LssService extends Service {
                             return;
                         }
 
+                        // Frame-rate throttle: drop images that arrive before the configured
+                        // interval since the last accepted frame. Timestamps are nanoseconds.
                         if (mFrameTimestamp >= 0L
                             && image.getTimestamp() - mFrameTimestamp < mNanosPerSecond / mProjectionFrameRate) {
                             return;
@@ -216,6 +285,7 @@ public class LssService extends Service {
 
                         mFrameTimestamp = image.getTimestamp();
 
+                        // Reuse the buffer; only a size change allocates a new bitmap.
                         if (mScreenFrameBitmap == null || mScreenFrameBitmap.getWidth() != image.getWidth()
                             || mScreenFrameBitmap.getHeight() != image.getHeight()) {
                             Optional.ofNullable(mScreenFrameBitmap).ifPresent(Bitmap::recycle);
@@ -223,11 +293,15 @@ public class LssService extends Service {
                                 Bitmap.createBitmap(image.getWidth(), image.getHeight(), Bitmap.Config.ARGB_8888);
                         }
 
+                        // Plane 0 holds the packed RGBA data; the row stride can be wider than the
+                        // image width.
                         final Image.Plane plane = image.getPlanes()[0];
                         plane.getBuffer().rewind();
                         ImageProcessingUtil.copyByteBufferToBitmap(mScreenFrameBitmap, plane.getBuffer(),
                             plane.getRowStride());
 
+                        // The legacy protocol carries JPEG frames; the quality comes from the
+                        // current preference snapshot.
                         final byte[] data;
                         try (final ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
                             mScreenFrameBitmap.compress(Bitmap.CompressFormat.JPEG, mProjectionQuality, outputStream);
@@ -236,6 +310,8 @@ public class LssService extends Service {
                             return;
                         }
 
+                        // Holding mImageReaderLock keeps this call ahead of teardown, which closes
+                        // the reader under the same lock. LssServer accepts calls from any thread.
                         mServer.postScreenFrame(ScreenFrame.newBuilder()
                             .setTimestamp(mFrameTimestamp)
                             .setData(ByteString.copyFrom(data))
@@ -246,6 +322,7 @@ public class LssService extends Service {
             }
         };
 
+    // Display state notifications only; the capture state is driven by the image reader.
     @NonNull
     private final VirtualDisplay.Callback mVirtualDisplayCallback = new VirtualDisplay.Callback() {
         @Override
@@ -264,6 +341,8 @@ public class LssService extends Service {
         }
     };
 
+    // Stops the service when the notification action, the chip confirmation or the activity
+    // broadcasts it.
     @NonNull
     private final BroadcastReceiver mBroadcastReceiver = new BroadcastReceiver() {
         @Override
@@ -274,6 +353,9 @@ public class LssService extends Service {
         }
     };
 
+    // Applies projection settings changed from the UI. A null key refreshes every projection
+    // value and the capture size; a single key updates only what it affects. Quality, security
+    // and frame rate are read by the next encoded frame, while the scale also resizes the display.
     @NonNull
     private final Preferences.Observer mPreferencesObserver = key -> {
         if (key == null) {
@@ -304,6 +386,10 @@ public class LssService extends Service {
         }
     };
 
+    /**
+     * Registers the stop receiver, snapshots the projection preferences and subscribes the
+     * preference observer that applies later changes.
+     */
     @Override
     public void onCreate() {
         super.onCreate();
@@ -320,6 +406,10 @@ public class LssService extends Service {
         Preferences.get().addObserver(mPreferencesObserver);
     }
 
+    /**
+     * Unregisters the receiver and the preference observer; the capture pipeline was already
+     * released by {@link #stopService()}.
+     */
     @Override
     public void onDestroy() {
         super.onDestroy();
@@ -329,12 +419,19 @@ public class LssService extends Service {
         Preferences.get().removeObserver(mPreferencesObserver);
     }
 
+    /**
+     * Re-applies the capture size after a rotation or a window size change.
+     */
     @Override
     public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
         updateProjectionSize();
     }
 
+    /**
+     * Exposes the client messenger. Binding does not start the server: a bound-only instance
+     * reports the stopped state.
+     */
     @Nullable
     @Override
     public IBinder onBind(Intent intent) {
@@ -342,6 +439,15 @@ public class LssService extends Service {
         return mMessenger.getBinder();
     }
 
+    /**
+     * Starts the server and the capture pipeline, then shows the floating chip.
+     *
+     * <p>Requires the consent result in {@link Constants#EXTRA_MEDIA_PROJECTION_RESULT}; a null
+     * intent cannot carry it, so a system restart is rejected with {@code START_NOT_STICKY}. A
+     * second start while the server is running is ignored for the same reason. The foreground
+     * notification is posted before the projection is used, and every failure path tears the
+     * partially built state down through {@link #stopService()}.</p>
+     */
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         Log.i(mTag, String.format("onStartCommand: startId = %d", startId));
@@ -371,6 +477,8 @@ public class LssService extends Service {
             return START_NOT_STICKY;
         }
 
+        // The server binds the configured port and starts advertising over NSD; its listeners
+        // are invoked on the main thread.
         mServer = new LssServer(this);
         mServer.setServerInfoListener(mServerInfoListener);
         mServer.setServerStatsListener(mServerStatsListener);
@@ -384,10 +492,14 @@ public class LssService extends Service {
             return START_NOT_STICKY;
         }
 
+        // The consent result is used once; the callback is registered on the main looper so
+        // teardown triggered by the system stays on the main thread.
         mMediaProjection = getMediaProjection(intent);
         mMediaProjection.registerCallback(mMediaProjectionCallback, new Handler(Looper.getMainLooper()));
         mProjectionSize = getProjectionSize();
 
+        // Image callbacks run on a background thread. The reader is created before the display so
+        // the first frame always has a destination.
         mImageReaderHandlerThread =
             new HandlerThread(IMAGE_READER_HANDLER_THREAD_NAME, Process.THREAD_PRIORITY_BACKGROUND);
         mImageReaderHandlerThread.start();
@@ -398,19 +510,31 @@ public class LssService extends Service {
         mFrameTimestamp = -1L;
         mImageReader.setOnImageAvailableListener(mOnImageAvailableListener, mImageReaderHandler);
 
+        // The virtual display renders the captured screen into the reader surface.
         mVirtualDisplay = mMediaProjection.createVirtualDisplay(VIRTUAL_DISPLAY_NAME, mProjectionSize.getWidth(),
             mProjectionSize.getHeight(), getResources().getConfiguration().densityDpi,
             DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC | DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY,
             mImageReader.getSurface(), mVirtualDisplayCallback, new Handler(Looper.getMainLooper()));
 
+        // The chip is only shown once the pipeline is complete.
         mScreenShareChip = new ScreenShareChip(this);
         mScreenShareChip.show();
 
+        // Bound activities learn about the new state only after everything is in place.
         mClientMessengers.forEach(this::notifyServerStarted);
 
         return START_STICKY;
     }
 
+    /**
+     * Releases the capture pipeline, the server and the foreground notification, then stops the
+     * service.
+     *
+     * <p>Runs on the main thread and is reachable from the stop broadcast, the chip and the system
+     * projection callback. The order matters: the overlay and the display stop first, then the
+     * image reader and its thread, then the projection, and the server last, so no frame is
+     * accepted while the server is going away.</p>
+     */
     private void stopService() {
         Log.i(mTag, "stopService: stop service");
 
@@ -420,6 +544,7 @@ public class LssService extends Service {
         mConnectionCount = 0;
         mOutboundDataRate = 0L;
 
+        // Stop producing UI first so the chip never outlives the running session.
         if (mScreenShareChip != null) {
             mScreenShareChip.dismiss();
             mScreenShareChip = null;
@@ -430,6 +555,7 @@ public class LssService extends Service {
             mVirtualDisplay = null;
         }
 
+        // Closing the reader under the lock waits for an in-flight capture and rejects later ones.
         synchronized (mImageReaderLock) {
             mFrameTimestamp = -1L;
 
@@ -454,6 +580,7 @@ public class LssService extends Service {
             mImageReaderHandlerThread = null;
         }
 
+        // Unregister first so the stop callback does not re-enter this method.
         if (mMediaProjection != null) {
             mMediaProjection.unregisterCallback(mMediaProjectionCallback);
             mMediaProjection.stop();
@@ -471,11 +598,13 @@ public class LssService extends Service {
         stopSelf();
     }
 
+    // Replays the latest server info to every registered client.
     private void onServerInfoChanged(@NonNull final LssServerInfo serverInfo) {
         mServerInfo = serverInfo;
         mClientMessengers.forEach(this::notifyServerInfoChanged);
     }
 
+    // Forwards stats and updates the notification only when the displayed counters change.
     @SuppressLint("MissingPermission")
     private void onServerStatsChanged(@NonNull final LssServerStats serverStats) {
         mServerStats = serverStats;
@@ -491,6 +620,9 @@ public class LssService extends Service {
         NotificationManagerCompat.from(this).notify(NOTIFICATION_ID, buildNotification());
     }
 
+    // Recomputes the capture size from the window bounds and the scale preference. An ImageReader
+    // size is fixed at creation, so the reader is recreated under the lock and the display is
+    // pointed at the new surface. Does nothing while stopped.
     private void updateProjectionSize() {
         if (mProjectionSize == null || mVirtualDisplay == null) {
             return;
@@ -510,6 +642,7 @@ public class LssService extends Service {
                 return;
             }
 
+            // Recreate the reader at the new size, then hand the display the new surface.
             mImageReader.close();
             mImageReader = ImageReader.newInstance(mProjectionSize.getWidth(), mProjectionSize.getHeight(),
                 PixelFormat.RGBA_8888, IMAGE_READER_MAX_IMAGES);
@@ -519,6 +652,8 @@ public class LssService extends Service {
         }
     }
 
+    // Called on the main thread. The current state is replayed so a new client never has to wait
+    // for the next server event.
     private void registerServiceClient(@NonNull final Messenger messenger) {
         Log.i(mTag, "registerServiceClient: register service client");
 
@@ -551,6 +686,8 @@ public class LssService extends Service {
         }
     }
 
+    // Notifications are sent from the main thread; a dead client drops the message, so the
+    // failure is ignored.
     private void notifyServerStarted(@NonNull final Messenger messenger) {
         try {
             messenger.send(Message.obtain(null, Constants.MSG_SERVER_STARTED));
@@ -583,6 +720,12 @@ public class LssService extends Service {
         }
     }
 
+    /**
+     * Consumes the consent result carried by the start intent.
+     *
+     * <p>The extra is required and must come from a positive consent; the start path only reaches
+     * here after {@link MainActivity} received {@code RESULT_OK}.</p>
+     */
     @SuppressWarnings("DataFlowIssue")
     @NonNull
     private MediaProjection getMediaProjection(@NonNull final Intent intent) {
@@ -592,6 +735,7 @@ public class LssService extends Service {
             mediaProjectionResult.getData());
     }
 
+    // Maximum window bounds of the current display, scaled by the projection scale preference.
     @NonNull
     private Size getProjectionSize() {
         final Rect windowBounds = WindowUtils.getMaximumWindowBounds(this);
@@ -625,11 +769,24 @@ public class LssService extends Service {
             .build();
     }
 
+    /**
+     * Floating chip that reports the capture duration while the service runs.
+     *
+     * <p>All members run on the main thread. {@link #show()} records the start time, applies the
+     * stored normalized position, adds the overlay window and starts the one-second ticker;
+     * {@link #dismiss()} removes the window and unsubscribes the preference observer. The chip
+     * snaps to the nearest horizontal edge after a drag and persists its normalized position. A
+     * single tap opens the stop confirmation, a double tap brings {@link MainActivity} to the
+     * front.</p>
+     */
     private static class ScreenShareChip {
+        // elapsedRealtime() when the chip was shown; the duration is derived from it.
         private long mStartTimestamp;
 
+        // Snapshot of the keep-screen-on preference; also updated by the preference observer.
         private boolean mIsKeepScreenOn;
 
+        // Stop confirmation, created on demand as a floating window.
         @Nullable
         private AlertDialog mDialog;
 
@@ -645,15 +802,18 @@ public class LssService extends Service {
         @NonNull
         private final WindowManager.LayoutParams mLayoutParams;
 
+        // Animates the snap to the nearest horizontal edge.
         @NonNull
         private final OverScroller mOverScroller;
 
         @NonNull
         private final GestureDetector mGestureDetector;
 
+        // Scratch rectangle reused by the bounds calculations.
         @NonNull
         private final Rect mLocationBounds = new Rect();
 
+        // Re-aligns itself to the next whole second so the displayed duration ticks steadily.
         @NonNull
         private final Runnable mTickRunnable = new Runnable() {
             @Override
@@ -667,6 +827,7 @@ public class LssService extends Service {
         @NonNull
         private final Runnable mAdjustLocationRunnable = this::adjustLocation;
 
+        // Only the keep-screen-on preference affects the chip.
         @NonNull
         private final Preferences.Observer mPreferencesObserver = new Preferences.Observer() {
             @Override
@@ -726,6 +887,10 @@ public class LssService extends Service {
             mGestureDetector = new GestureDetector(mContext, mOnGestureListener);
         }
 
+        /**
+         * Adds the overlay window and starts the ticker. Must be called on the main thread after
+         * the overlay permission has been granted.
+         */
         public void show() {
             mStartTimestamp = SystemClock.elapsedRealtime();
             mIsKeepScreenOn = Preferences.get().isProjectionKeepScreenOn();
@@ -740,6 +905,9 @@ public class LssService extends Service {
             Preferences.get().addObserver(mPreferencesObserver);
         }
 
+        /**
+         * Stops the ticker, removes the window and unsubscribes the preference observer.
+         */
         public void dismiss() {
             mChipView.removeCallbacks(mTickRunnable);
             mChipView.removeCallbacks(mAdjustLocationRunnable);
@@ -752,6 +920,8 @@ public class LssService extends Service {
             }
         }
 
+        // Animates the chip to the nearest horizontal edge and stores the normalized position once
+        // the scroll settles. Each pass re-posts itself while a scroll is active or is started.
         private void adjustLocation() {
             mChipView.removeCallbacks(mAdjustLocationRunnable);
 
@@ -779,6 +949,7 @@ public class LssService extends Service {
             mChipView.post(mAdjustLocationRunnable);
         }
 
+        // Maps the stored normalized position onto the current bounds and applies keep-screen-on.
         private void updateLayoutParams() {
             if (mIsKeepScreenOn) {
                 mLayoutParams.flags |= WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON;
@@ -791,12 +962,14 @@ public class LssService extends Service {
             mLayoutParams.y = location.y;
         }
 
+        // Re-applies the stored normalized position after the bounds change.
         private void updateLocation() {
             final Point location = getLocation();
             updateLocation(location.x, location.y);
             adjustLocation();
         }
 
+        // Clamps the window position to the allowed center range.
         private void updateLocation(final int x, final int y) {
             getLocationBounds(mLocationBounds);
 
@@ -814,6 +987,7 @@ public class LssService extends Service {
                 "[HH:]mm:ss"));
         }
 
+        // Maps the normalized preference to window coordinates for the current bounds.
         @NonNull
         private Point getLocation() {
             getLocationBounds(mLocationBounds);
@@ -822,6 +996,9 @@ public class LssService extends Service {
                 (int) (mLocationBounds.top + mLocationBounds.height() * location.y));
         }
 
+        // Returns the allowed window centers: the visible display frame moved to its center and
+        // inset by half the measured chip size plus the configured margins. Before the first layout
+        // the chip is measured with unspecified specs.
         private void getLocationBounds(@NonNull final Rect rect) {
             mChipView.getWindowVisibleDisplayFrame(rect);
             rect.offsetTo(0, 0);
@@ -849,6 +1026,10 @@ public class LssService extends Service {
             rect.bottom -= height / 2 + verticalMargin;
         }
 
+        /**
+         * Builds the chip view and wires its drag handling: movement follows the finger, release
+         * snaps to the nearest edge, and taps are delegated to the gesture detector.
+         */
         @NonNull
         private Chip createChipView() {
             final Chip chipView = new Chip(mContext) {
@@ -858,6 +1039,8 @@ public class LssService extends Service {
                 @Override
                 protected void onConfigurationChanged(Configuration newConfig) {
                     super.onConfigurationChanged(newConfig);
+                    // Bounds change with rotation and multi-window; re-clamp after the new
+                    // configuration has been applied.
                     post(() -> updateLocation());
                 }
 
@@ -868,11 +1051,13 @@ public class LssService extends Service {
                     updateLocation();
                 }
 
+                // Raw coordinates are used because the window moves under the finger.
                 @SuppressLint("ClickableViewAccessibility")
                 @Override
                 public boolean onTouchEvent(@NonNull MotionEvent event) {
                     switch (event.getActionMasked()) {
                         case MotionEvent.ACTION_DOWN:
+                            // Cancel any pending snap so the drag starts from the current position.
                             mChipView.removeCallbacks(mAdjustLocationRunnable);
                             mOverScroller.forceFinished(true);
                             mTouchOffset.set(mLayoutParams.x - event.getRawX(), mLayoutParams.y - event.getRawY());

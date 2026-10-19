@@ -77,7 +77,34 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.IntStream;
 
+/**
+ * Single-activity UI: starts and stops the screen-share service and lists discovered servers.
+ *
+ * <p><b>Lifecycle.</b> {@link #onCreate(Bundle)} installs the splash screen, inflates the layout,
+ * wires the toolbars and the discovery list and renders the initial state. {@link #onStart()}
+ * binds to {@link LssService} with {@code BIND_AUTO_CREATE} and starts discovery when it is
+ * enabled; the service connection registers this activity's {@link Messenger} as a client, so the
+ * current server state is replayed on registration. {@link #onStop()} unregisters the client,
+ * clears the bound flag, unbinds and stops discovery; {@link #onDestroy()} only dismisses dialogs
+ * that are still on screen. Binding alone does not start the server, so a bound-only service
+ * reports the stopped state.</p>
+ *
+ * <p><b>Screen capture flow.</b> Starting the share first passes {@link #requestScreenShare()},
+ * which checks the notification permission, whether notifications are enabled, and the overlay
+ * permission. When a check fails, it starts the system prompt or shows a dialog and returns
+ * {@code false}, so the capture consent is requested only after the user retries the action. The
+ * consent activity returns through {@link #mScreenCaptureLauncher}; a positive result starts
+ * {@link LssService} in the foreground with the consent result as an extra. Viewing a discovered
+ * server follows the same gate and starts {@link LssClientService} with the service info.</p>
+ *
+ * <p><b>Threading.</b> Everything here runs on the main thread: service messages arrive through a
+ * {@link Handler} bound to the main looper and discovery callbacks are already main-thread
+ * callbacks. The activity only renders the last received state; the services own the server, the
+ * capture pipeline and the client.</p>
+ */
 public class MainActivity extends AppCompatActivity {
+    // Tri-state summary of the bound service: unknown before the first event, online while the
+    // server runs, offline after it stops or after the binding is lost.
     private static final int SERVICE_STATUS_UNKNOWN = 0;
 
     private static final int SERVICE_STATUS_ONLINE = 1;
@@ -106,22 +133,29 @@ public class MainActivity extends AppCompatActivity {
 
     private static final int MAX_SERVER_PORT = 65535;
 
+    // True between onStart() and onStop(); a late onServiceConnected callback after unbinding is
+    // ignored.
     private boolean mIsServiceBound;
 
+    // Binder of the bound service; null until connected and after unbinding.
     @Nullable
     private Messenger mServiceMessenger;
 
+    // Last state received from the service, rendered by updateServiceView().
     private int mServiceStatus = SERVICE_STATUS_UNKNOWN;
 
+    // Last values received from the service; null while the server is not running.
     @Nullable
     private LssServerInfo mServerInfo;
 
     @Nullable
     private LssServerStats mServerStats;
 
+    // Last confirmation or permission dialog shown; dismissed when replaced and in onDestroy().
     @Nullable
     private AlertDialog mDialog;
 
+    // Created on first use and reused while the activity lives.
     @Nullable
     private BottomSheetDialog mServiceSettingsDialog;
 
@@ -143,6 +177,7 @@ public class MainActivity extends AppCompatActivity {
 
     private final String mTag = "MainActivity@" + hashCode();
 
+    // Discovery entries; a click starts the client service for that server.
     @NonNull
     private final DiscoveryListAdapter mDiscoveryListAdapter = new DiscoveryListAdapter() {
         @Override
@@ -158,6 +193,8 @@ public class MainActivity extends AppCompatActivity {
 
         @Override
         public void submitList(@Nullable List<LssServiceInfo> list, @Nullable Runnable commitCallback) {
+            // The commit callback runs after the diff is applied; the placeholder mirrors the
+            // committed list rather than the pending one, and only while discovery is enabled.
             super.submitList(list, () -> {
                 if (Preferences.get().isDiscoveryEnabled()) {
                     if (getCurrentList().isEmpty()) {
@@ -174,6 +211,7 @@ public class MainActivity extends AppCompatActivity {
         }
     };
 
+    // Receives server state from the bound service; the handler is bound to the main looper.
     @NonNull
     private final Messenger mMessenger = new Messenger(new Handler(Looper.getMainLooper(), msg -> {
         switch (msg.what) {
@@ -194,6 +232,8 @@ public class MainActivity extends AppCompatActivity {
         }
     }));
 
+    // Registers this activity as a service client once the binding is established. The callback
+    // can still arrive after onStop() has unbound, so mIsServiceBound guards it.
     @NonNull
     private final ServiceConnection mServiceConnection = new ServiceConnection() {
         @Override
@@ -204,11 +244,13 @@ public class MainActivity extends AppCompatActivity {
 
             Log.i(mTag, String.format("mServiceConnection.onServiceConnected: service connected, name = %s", name));
             mServiceMessenger = new Messenger(service);
+            // Registration makes the service replay the current state to mMessenger.
             registerServiceClient();
         }
 
         @Override
         public void onServiceDisconnected(ComponentName name) {
+            // Only reported when the service process dies, not on a normal unbind.
             Log.i(mTag, String.format("mServiceConnection.onServiceDisconnected: service disconnected, name = %s",
                 name));
             mServiceMessenger = null;
@@ -219,6 +261,8 @@ public class MainActivity extends AppCompatActivity {
         }
     };
 
+    // A permanently denied permission cannot be requested again, so point the user to the app
+    // notification settings instead.
     @NonNull
     private final ActivityResultLauncher<String> mNotificationPermissionLauncher =
         registerForActivityResult(new ActivityResultContracts.RequestPermission(), isGranted -> {
@@ -238,6 +282,8 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
+    // Only RESULT_OK carries a usable projection grant; a cancelled consent leaves everything
+    // unchanged. The service is started in the foreground because it immediately captures.
     @NonNull
     private final ActivityResultLauncher<Intent> mScreenCaptureLauncher = registerForActivityResult(
         new ActivityResultContracts.StartActivityForResult(),
@@ -249,9 +295,17 @@ public class MainActivity extends AppCompatActivity {
         }
     );
 
+    // Discovery snapshots are delivered on the main thread and replace the list wholesale.
     @NonNull
     private final LssServiceDiscoveryListener mServiceDiscoveryListener = mDiscoveryListAdapter::submitList;
 
+    /**
+     * Inflates the layout, wires the toolbars and the discovery list and renders the initial
+     * state.
+     *
+     * <p>The splash screen must be installed before {@code super.onCreate} so it covers the first
+     * frame. The service is not bound here; that happens in {@link #onStart()}.</p>
+     */
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         SplashScreen.installSplashScreen(this);
@@ -288,6 +342,7 @@ public class MainActivity extends AppCompatActivity {
                 .forEach(menuItem -> MenuItemCompat.setIconTintList(menuItem,
                     MaterialColors.getColorStateListOrNull(this, androidx.appcompat.R.attr.colorPrimary))));
 
+        // The settings sheet is created lazily and reused; every change is written to Preferences.
         mServiceToolbarView.getMenu().findItem(R.id.settings).setOnMenuItemClickListener(item -> {
             if (mServiceSettingsDialog == null) {
                 mServiceSettingsDialog = createServiceSettingsDialog();
@@ -295,6 +350,7 @@ public class MainActivity extends AppCompatActivity {
             mServiceSettingsDialog.show();
             return true;
         });
+        // The toggle acts on the last reported state, not on the last user intent.
         mServiceToolbarView.getMenu().findItem(R.id.service).setOnMenuItemClickListener(item -> {
             if (mServiceStatus == SERVICE_STATUS_ONLINE) {
                 stopScreenShareService();
@@ -303,6 +359,7 @@ public class MainActivity extends AppCompatActivity {
             }
             return true;
         });
+        // The discovery toggle persists the preference and subscribes or unsubscribes immediately.
         mDiscoveryToolbarView.getMenu().findItem(R.id.search).setOnMenuItemClickListener(item -> {
             final boolean isEnabled = !Preferences.get().isDiscoveryEnabled();
             Preferences.get().setDiscoveryEnabled(isEnabled);
@@ -315,10 +372,18 @@ public class MainActivity extends AppCompatActivity {
             return true;
         });
 
+        // Render before the first service callback arrives so no stale state is shown.
         updateServiceView();
         updateDiscoveryView();
     }
 
+    /**
+     * Binds to the share service and subscribes to discovery.
+     *
+     * <p>{@code BIND_AUTO_CREATE} creates the service if it is not running but does not start the
+     * server; the connection callback registers this activity, and the service immediately
+     * replays its current state. Subscribing to discovery likewise replays the cached snapshot.</p>
+     */
     @Override
     protected void onStart() {
         super.onStart();
@@ -332,6 +397,12 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    /**
+     * Releases the service client and the discovery subscription.
+     *
+     * <p>The client is unregistered while the binding is still usable; the bound flag is cleared
+     * before unbinding so a late connection callback becomes a no-op.</p>
+     */
     @Override
     protected void onStop() {
         super.onStop();
@@ -346,6 +417,10 @@ public class MainActivity extends AppCompatActivity {
         mDiscoveryListAdapter.submitList(null);
     }
 
+    /**
+     * Dismisses dialogs still attached to this activity; the service binding was already released
+     * in {@link #onStop()}.
+     */
     @Override
     protected void onDestroy() {
         super.onDestroy();
@@ -360,6 +435,7 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    // Server events forwarded by LssService through mMessenger.
     private void onServerStarted() {
         mServiceStatus = SERVICE_STATUS_ONLINE;
         updateServiceView();
@@ -395,6 +471,7 @@ public class MainActivity extends AppCompatActivity {
         updateServiceStatsView();
     }
 
+    // Falls back to the stored name and port while no server info is available.
     @SuppressLint("StringFormatMatches")
     private void updateServiceInfoView() {
         mServiceNameView.setText(Optional.ofNullable(mServerInfo)
@@ -416,6 +493,7 @@ public class MainActivity extends AppCompatActivity {
         mServiceStatsView.setEnabled(mServiceStatus == SERVICE_STATUS_ONLINE);
     }
 
+    // Mirrors the persisted discovery preference; disabling also clears the list.
     private void updateDiscoveryView() {
         final MenuItem searchMenuItem = mDiscoveryToolbarView.getMenu().findItem(R.id.search);
         if (Preferences.get().isDiscoveryEnabled()) {
@@ -437,6 +515,13 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    /**
+     * Passes the permission gate and launches the system screen-capture consent.
+     *
+     * <p>Nothing starts until the consent activity returns; on Android 14 and newer the request is
+     * restricted to the default display, which matches the single virtual display of the capture
+     * pipeline.</p>
+     */
     private void startScreenShareService() {
         if (requestScreenShare()) {
             final MediaProjectionManager mediaProjectionManager = getSystemService(MediaProjectionManager.class);
@@ -451,6 +536,12 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    /**
+     * Asks for confirmation and then broadcasts the stop action.
+     *
+     * <p>The broadcast is the same path used by the service notification and the floating chip.
+     * A previously shown dialog is dismissed before the new one is displayed.</p>
+     */
     private void stopScreenShareService() {
         if (mDialog != null) {
             mDialog.dismiss();
@@ -466,6 +557,9 @@ public class MainActivity extends AppCompatActivity {
         mDialog.show();
     }
 
+    /**
+     * Passes the permission gate and starts the client service for the selected server.
+     */
     private void startScreenShareViewer(@NonNull final LssServiceInfo serviceInfo) {
         if (requestScreenShare()) {
             ContextCompat.startForegroundService(this, new Intent(this, LssClientService.class)
@@ -473,6 +567,14 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    /**
+     * Checks the notification and overlay prerequisites shared by both services.
+     *
+     * <p>Returns {@code false} after launching the notification permission request or showing a
+     * dialog that sends the user to the relevant settings screen; the requested action is not
+     * resumed automatically, so the user repeats it after granting. Returns {@code true} only when
+     * every prerequisite is already satisfied.</p>
+     */
     private boolean requestScreenShare() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
             && ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
@@ -514,6 +616,8 @@ public class MainActivity extends AppCompatActivity {
         return true;
     }
 
+    // Sends the activity's reply messenger to the service. A dead service drops the message, so
+    // the failure is ignored.
     private void registerServiceClient() {
         if (mServiceMessenger == null) {
             return;
@@ -542,6 +646,15 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    /**
+     * Builds the service settings sheet.
+     *
+     * <p>Every control writes its value to {@link Preferences} as soon as it changes, and the
+     * running service applies it through its preference observer. The port is the exception: it
+     * is read when {@code LssServer} is constructed, so a changed port applies to the next server
+     * start. Current preference values are loaded when the sheet is shown, not when it is built,
+     * because the same instance is reused.</p>
+     */
     @SuppressWarnings("DataFlowIssue")
     @NonNull
     private BottomSheetDialog createServiceSettingsDialog() {
@@ -637,6 +750,12 @@ public class MainActivity extends AppCompatActivity {
         return settingsDialog;
     }
 
+    /**
+     * List adapter for discovered servers.
+     *
+     * <p>Item identity is the stable service id, so a re-resolved entry with a new address is
+     * rebound instead of replaced; content equality comes from the immutable info object.</p>
+     */
     private static class DiscoveryListAdapter extends ListAdapter<LssServiceInfo, DiscoveryListViewHolder> {
         private DiscoveryListAdapter() {
             super(new DiffUtil.ItemCallback<>() {
