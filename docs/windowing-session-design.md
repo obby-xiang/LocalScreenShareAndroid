@@ -1,7 +1,7 @@
 # 悬浮窗与全屏会话设计
 
 > 状态：目标设计，尚未实现；当前代码只有悬浮窗客户端，没有全屏 Activity。
-> 验证状态：未在设备上验证窗口切换、Surface 切换或动画；本文给出方案与验收标准，不声称已经可用。
+> 验证状态：未在设备上验证窗口切换、渲染目标 attach/detach、解码器重建或动画；本文给出方案与验收标准，不声称已经可用。
 > 相关文档：[项目现状](project-assessment.md) · [媒体架构](media-architecture.md) · [路线图](optimization-roadmap.md)
 
 ## 1. 问题
@@ -92,11 +92,11 @@ flowchart TB
 | --- | --- | --- |
 | 主线程 | WindowManager/Activity、View、动画、权限 UI | 不阻塞；不等待网络/解码 |
 | 网络线程 | 控制面/媒体读取、解包、队列 | 不直接操作 View；不持有 UI 锁 |
-| 解码线程 | MediaCodec 输入/输出、Surface 切换 | `setOutputSurface` 与解码在同一线程；不持有会话锁 |
+| 解码线程 | MediaCodec 输入/输出、解码器重建 | 解码器配置（含 `retryConfigure()`）与解码在同一线程；不持有会话锁 |
 | 音频线程 | AudioRecord/AudioTrack/编码 | 独立队列；不阻塞视频 |
 | 编码线程（服务端） | MediaCodec 输出、缓存、扇出 | 不直接写每个慢客户端 |
 
-`ClientSession` 的内部锁只保护状态字段；不要在锁内调用 `setOutputSurface`、`addView`、`removeView`、`Surface.release` 或网络写。
+`ClientSession` 的内部锁只保护状态字段；不要在锁内调用解码器重建（`retryConfigure()`）、`addView`、`removeView`、`Surface.release` 或网络写。
 
 ## 3. 当前实现为什么不能直接复用
 
@@ -168,19 +168,19 @@ flowchart LR
 
 ### 5.1 思路
 
-用 `ViewerActivity` 承载全屏 Surface；悬浮窗和 Activity 之间通过 `ClientSession` 切换解码器输出 Surface：
+用 `ViewerActivity` 承载全屏 Surface；悬浮窗和 Activity 都只是 `RenderTarget`，在 `ClientSession` 内 attach/detach：
 
 ```mermaid
 flowchart LR
-    O[悬浮窗 Surface] -->|进入全屏：setOutputSurface| A[Activity Surface]
-    A -->|返回：setOutputSurface| O
+    O[悬浮窗 RenderTarget] -->|进入全屏：detach / attach| A[Activity RenderTarget]
+    A -->|返回：detach / attach| O
 ```
 
 关键点：
 
 - **没有跨 WindowManager/Activity 的原生共享元素**。Shared Element Transition 作用于同一 Activity 窗口内的 View；悬浮窗是独立的 WindowManager window，不能直接共享。
 - 用**最后帧快照 + 过渡层**做视觉连续性。
-- 用 `MediaCodec.setOutputSurface`（API 23+）切换解码输出；失败时只重建解码器，不重建连接。
+- 客户端通过 `RenderTarget.getSurface()` 提供解码输出 Surface；需要切换输出 Surface 时，在新目标 attach 后调用 `ClientMediaSession.retryConfigure()` 重建解码器（config + IDR），不重建网络会话。
 
 ### 5.2 切换流程
 
@@ -195,24 +195,24 @@ sequenceDiagram
     S->>O: 取最后一帧快照
     S->>A: 启动 ViewerActivity（带快照/会话句柄）
     A->>A: 显示快照，执行进入动画
-    A->>S: Surface 就绪，attach
-    S->>D: setOutputSurface(Activity Surface)
-    alt 成功
+    A->>S: Surface 就绪，attach 新的 RenderTarget
+    S->>S: retryConfigure() 重建解码器（config + IDR）
+    alt 配置成功
         D-->>A: 首帧解码输出
         A->>A: 淡出快照
-        S->>O: 隐藏/解绑悬浮窗 Surface
-    else 失败
-        S->>D: 重建解码器（config + IDR）
-        D-->>A: 首帧
-        A->>A: 淡出快照
+        S->>O: detach 悬浮窗渲染目标
+    else Surface 不可用或配置失败
+        S-->>A: 保持 RESYNCING，等待下次 retryConfigure
+        A->>A: 保持快照/占位
     end
 
     A->>S: 用户返回
     S->>A: 取最后一帧快照
-    S->>O: 显示悬浮窗，attach
-    S->>D: setOutputSurface(Overlay Surface)
+    S->>O: 显示悬浮窗，attach 悬浮窗渲染目标
+    A->>A: 保留快照至首帧到达
+    S->>S: retryConfigure() 重建解码器（不重连）
     O->>O: 收起动画
-    S->>A: 解绑并结束 Activity
+    S->>A: detach 并结束 Activity
 ```
 
 ### 5.3 最后帧快照
@@ -221,7 +221,7 @@ sequenceDiagram
 
 - Activity 启动/表面就绪前，避免黑屏。
 - 悬浮窗收起/展开时，提供视觉连续性。
-- 解码器切换失败时，作为占位。
+- 解码器重建失败时，作为占位。
 
 实现选项：
 
@@ -239,15 +239,15 @@ sequenceDiagram
 - 快照不是“第二路解码”；不要为了过渡维持第二个解码器。
 - 如果拿不到快照，显示占位/品牌色，不要卡住切换。
 
-### 5.4 `MediaCodec.setOutputSurface`
+### 5.4 渲染目标切换与解码器恢复
 
-- API 23+，minSdk 25 可用。
-- 在解码器处于执行状态时调用；建议在解码线程调用，避免与 `dequeueOutputBuffer`/callback 并发。
-- 切换前确保旧 Surface 上的输出 buffer 已释放；切换后可能短暂没有新帧，用快照覆盖。
+- 框架不支持 `MediaCodec.setOutputSurface`，不能把执行中的解码器热切换到另一个 Surface。
+- 会话只通过 `RenderTarget.getSurface()` 取得当前输出 Surface；Surface 为 null 时 `ClientMediaSession` 进入 `RESYNCING`，不配置解码器。
+- 窗口切换 = 同一会话内 attach/detach 渲染目标，不停 Service、不重连；需要切换输出 Surface 时，新目标 attach 后调用 `ClientMediaSession.retryConfigure()`。
+- `retryConfigure()` 是 Surface 失效后的唯一恢复入口：关闭旧解码器，按最新 descriptor 重新 configure（config + IDR）；网络会话、认证、音频和反控不受影响。
 - 新 Surface 必须有效；`SurfaceView` 要等 `surfaceCreated`，`TextureView` 要等 `SurfaceTexture` 可用。
-- `setOutputSurface` 可能抛 `IllegalStateException`/`IllegalArgumentException`；捕获后走“重建解码器”路径。
-- 重建解码器时使用缓存的 `MediaFormat`/csd（config）+ 请求 IDR；网络连接、会话令牌、音频和反控不受影响。
-- 不要把“Surface 切换失败”升级为“断开连接”；这是两个不同的故障域。
+- Surface 仍不可用或配置失败时，`retryConfigure()` 返回 false，会话保持 `RESYNCING`；调用方在 Surface 重新可用时再次调用，不要绕过它自行创建解码器。
+- 重建期间可能短暂没有新帧，用最后帧快照覆盖；不要把“Surface 失效/解码器重建”升级为“断开连接”；这是两个不同的故障域。
 
 ### 5.5 过渡动画
 
@@ -256,8 +256,8 @@ sequenceDiagram
 1. 点击全屏时，悬浮窗先抓取最后一帧。
 2. 启动透明/无标题的 `ViewerActivity`，把快照作为全屏 `ImageView` 显示。
 3. Activity 在快照上执行 scale/translate/fade 动画；同时悬浮窗淡出。
-4. Activity Surface 就绪后 `setOutputSurface`；首帧到达后淡出快照。
-5. 返回时反向：Activity 抓取快照，显示悬浮窗，切换 Surface，执行收起动画，结束 Activity。
+4. Activity Surface 就绪后 attach 新的渲染目标并调用 `retryConfigure()` 重建解码器；首帧到达后淡出快照。
+5. 返回时反向：Activity 抓取快照，显示悬浮窗，attach 悬浮窗渲染目标并调用 `retryConfigure()`，执行收起动画，结束 Activity。
 
 不建议依赖“跨窗口共享元素”：平台没有提供 WindowManager overlay 与 Activity 之间的 shared element 通道；自己用 snapshot 层更可控。
 
@@ -267,7 +267,7 @@ sequenceDiagram
 - 用 `ViewPropertyAnimator`/`ValueAnimator`，避免每帧分配大量对象。
 - 动画时长按设备调优；本文不给出未经验证的固定数值。
 - 首帧到达前不要移除快照，否则会出现黑屏/闪烁。
-- 如果 Surface 切换失败，保持快照并提示，不要直接黑屏。
+- 如果 Surface 不可用或解码器重建失败，保持快照并提示，不要直接黑屏。
 
 ### 5.6 Activity 设计
 
@@ -285,14 +285,14 @@ sequenceDiagram
 
 | 维度 | A：同一悬浮窗展开 | B：悬浮窗与 Activity |
 | --- | --- | --- |
-| 连接连续性 | 最好，完全不碰 Surface | 好，但依赖 `setOutputSurface` |
+| 连接连续性 | 最好，完全不碰 Surface | 好，但需 attach 新渲染目标并 `retryConfigure()` 重建解码器（不重连） |
 | 动画顺畅度 | 最顺，同一窗口 | 需要快照/过渡，复杂但可控 |
 | 系统栏/沉浸式 | 弱 | 强 |
 | 返回键/输入法 | 弱 | 强 |
 | Activity 生命周期 | 无 | 需要处理旋转/后台/重建 |
 | 实现风险 | 低 | 中 |
 | 适用 | 快速全屏播放、监看放大 | 沉浸式观看、需要标准 Activity 行为 |
-| minSdk 25 | 可用 | 可用（`setOutputSurface` API 23+） |
+| minSdk 25 | 可用 | 可用（解码器重建不依赖额外 API） |
 
 裁决：
 
@@ -316,7 +316,7 @@ sequenceDiagram
 ### 7.1 保持 minSdk 25（兼容下限）
 
 - `Constants.FLOATING_WINDOW_TYPE` 已经在 API 25 用 `TYPE_SYSTEM_ALERT`、API 26+ 用 `TYPE_APPLICATION_OVERLAY`（`.../support/Constants.java:35-36`）；继续沿用这个门控。
-- `MediaCodec.setOutputSurface` 是 API 23+，minSdk 25 可用。
+- 解码输出经 `RenderTarget.getSurface()` 获取；Surface 失效后由 `retryConfigure()` 重建解码器，不依赖 `setOutputSurface`，minSdk 25 可用。
 - `PixelCopy` 是 API 24+，minSdk 25 可用。
 - `AudioPlaybackCapture`、PiP 等能力要按版本降级；不要为了它们抬高 minSdk。
 - 新窗口 API（如桌面窗口化）只能作为可选增强，不能成为基础路径。
@@ -354,7 +354,7 @@ stateDiagram-v2
 - UI 状态只在主线程改；网络/解码状态由 `ClientSession` 串行化。
 - `attach`/`detach` 带 generation/epoch；旧 Surface 回调、旧 Activity、旧动画的回调一律忽略。
 - 切换期间只允许一个显示目标拥有解码 Surface；过渡快照层不算显示目标。
-- `setOutputSurface` 在解码线程执行；主线程只发命令/收状态。
+- `retryConfigure()`（解码器重建）在解码线程执行；主线程只发命令/收状态。
 - 不在锁内做 Surface/Window 操作；不在主线程等待解码首帧。
 - 旋转/尺寸变化提升 `configEpoch`；旧 epoch 的帧、坐标、快照丢弃。
 - 停止顺序：先停止接收新帧，再 detach 渲染目标、释放解码器、释放音频、关闭网络，最后停止 Service；任何一步失败都继续清理。
@@ -377,10 +377,10 @@ stateDiagram-v2
 
 | 验收项 | 通过条件 |
 | --- | --- |
-| 会话连续性 | 悬浮窗与全屏切换前后，网络连接/会话令牌/解码配置不重建；没有新的认证/握手 |
+| 会话连续性 | 悬浮窗与全屏切换前后，网络连接/会话令牌不重建；需要切换输出 Surface 时只重建解码器并从 config+IDR 恢复；没有新的认证/握手 |
 | 不停止 Service | 切换过程中 Service 不停、通知不闪断、其他客户端不受影响 |
 | 视觉连续 | 切换时显示最后帧/快照，无黑屏、无长时间闪烁；首帧到达后平滑过渡 |
-| Surface 切换 | 成功路径正常；强制失败时只重建解码器并从 config+IDR 恢复，网络不断 |
+| Surface 恢复 | Surface 失效时进入 `RESYNCING`，唯一恢复入口是 `retryConfigure()`；强制失败时只重建解码器并从 config+IDR 恢复，网络不断 |
 | 旋转 | 悬浮窗/Activity 布局正确；画面比例正确；坐标/租约 epoch 更新 |
 | 生命周期 | Home/Back/最近任务/权限撤销/进程死亡均有明确行为，不崩溃、不泄漏 |
 | API 矩阵 | API 25/26/29/33/34/35 上分别验证窗口类型、权限、Surface、动画 |
@@ -392,7 +392,7 @@ stateDiagram-v2
 - 方案 A 在目标 OEM/车机上能否真正最大化到全屏？系统栏/挖孔/圆角如何裁剪？
 - 全屏 overlay 是否需要焦点？如果需要，如何避免抢走其他 App 的输入？
 - 方案 B 的 Activity 启动动画与悬浮窗淡出如何同步，才不会出现两层画面重叠？
-- `setOutputSurface` 在目标厂商解码器上的可靠性如何？失败率、恢复时间需要实测。
+- Surface 失效后 `retryConfigure()` 在目标厂商解码器上的失败率与恢复时间如何？需要实测。
 - 旋转时是重建 Activity，还是 `configChanges` 自行处理？两者对 Surface 生命周期的影响需要验证。
 - 多显示器/车机副屏是否在产品范围内？如果是，窗口模型需要重新评估。
 - 关闭悬浮窗后，会话应继续后台运行、进入通知，还是立即结束？这是产品决策，不是纯技术问题。

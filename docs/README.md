@@ -44,7 +44,7 @@
 | [project-assessment.md](project-assessment.md) | 构建基线、代码结构、当前采集/传输/显示流程、并发与生命周期风险、安全边界、工程成熟度判断 |
 | [product-context.md](product-context.md) | 产品意图推测、目标用户与任务、悬浮窗差异化、手机/平板/车机等场景边界、与会议 PiP、远程桌面、厂商多屏协同等形态的对比 |
 | [media-architecture.md](media-architecture.md) | MediaProjection 到 MediaCodec 的硬编硬解目标、H.264/HEVC 选择、参数语义、编码缓存、客户端能力协商与多档编码边界、TCP/RTP/WebRTC 裁决、音频、反控、多客户端、Android 权限边界 |
-| [windowing-session-design.md](windowing-session-design.md) | ClientSession 与 RenderTarget 解耦、悬浮窗展开与 Activity 互切、最后帧快照、`setOutputSurface`、TextureView/SurfaceView、窗口技术选型、状态机 |
+| [windowing-session-design.md](windowing-session-design.md) | ClientSession 与 RenderTarget 解耦、悬浮窗展开与 Activity 互切、最后帧快照、`RenderTarget.getSurface()` 与 `retryConfigure()` 恢复、TextureView/SurfaceView、窗口技术选型、状态机 |
 | [optimization-roadmap.md](optimization-roadmap.md) | 可观测性、并发与资源清理、Session 解耦、H.264、窗口切换、客户端画质、音频、单客户端反控、传输决策的阶段与验收标准 |
 | [codec-framework.md](codec-framework.md) | 静态 Codec SPI、单活动流核心与 StreamHub、责任边界、描述符与运行参数分离、访问单元、可加入点与客户端状态、慢客户端、编码切换、传输映射、落地顺序、验收标准与非目标 |
 

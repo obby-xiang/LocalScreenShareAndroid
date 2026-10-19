@@ -20,6 +20,8 @@ public final class SurfaceRenderTarget implements RenderTarget {
 
     private final TextureView textureView;
 
+    private final Runnable onSurfaceAvailable;
+
     private SurfaceTexture lastTexture;
 
     private Surface surface;
@@ -27,13 +29,37 @@ public final class SurfaceRenderTarget implements RenderTarget {
     /**
      * Creates a target over {@code textureView}.
      *
+     * @param onSurfaceAvailable optional callback, run on the main thread each time the view's
+     *                           surface texture becomes available again
      * @throws IllegalArgumentException if {@code textureView} is null
      */
-    public SurfaceRenderTarget(TextureView textureView) {
+    public SurfaceRenderTarget(TextureView textureView, Runnable onSurfaceAvailable) {
         if (textureView == null) {
             throw new IllegalArgumentException("textureView must not be null");
         }
         this.textureView = textureView;
+        this.onSurfaceAvailable = onSurfaceAvailable;
+        textureView.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
+            @Override
+            public void onSurfaceTextureAvailable(SurfaceTexture surface, int width, int height) {
+                if (onSurfaceAvailable != null) {
+                    onSurfaceAvailable.run();
+                }
+            }
+
+            @Override
+            public void onSurfaceTextureSizeChanged(SurfaceTexture surface, int width, int height) {
+            }
+
+            @Override
+            public boolean onSurfaceTextureDestroyed(SurfaceTexture surface) {
+                return false;
+            }
+
+            @Override
+            public void onSurfaceTextureUpdated(SurfaceTexture surface) {
+            }
+        });
     }
 
     @Override

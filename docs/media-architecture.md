@@ -11,7 +11,7 @@
 | --- | --- | --- | --- |
 | 屏幕采集 | MediaProjection 经 VirtualDisplay 到 ImageReader（RGBA_8888） | 继续使用 MediaProjection；一个 MediaProjection/VirtualDisplay 采集，VirtualDisplay 直接输出到 MediaCodec 输入 Surface | 普通 App 没有更合规的屏幕采集入口；去掉从 RGBA 到 Bitmap 的 CPU 路径；不建立多个采集会话 |
 | 视频编码 | 软件 JPEG，每帧压缩 | 硬件 H.264/AVC 为兼容基线，不是上限；服务端与客户端分别探测编码/解码能力后选档，HEVC 可在双方支持时启用，AV1 等仅作为设备明确支持时的后续高级选项；通常跑一路编码，多档受实例与功耗限制；稳态不经过 Bitmap/JPEG | 硬件编码器通常比软件 JPEG 更省 CPU；H.264 兼容性最好；更高编码的收益依赖双方能力与实测；多档编码的成本高 |
-| 编码缓存 | 无编码帧缓存；JPEG 即帧 | 缓存 config、最近 IDR 与其后 AU；不缓存大量 RGBA | 新客户端快速加入、重连、Surface 切换都从 config+IDR 开始 |
+| 编码缓存 | 无编码帧缓存；JPEG 即帧 | 缓存 config、最近 IDR 与其后 AU；不缓存大量 RGBA | 新客户端快速加入、重连、Surface 失效后重建解码器都从 config+IDR 开始 |
 | 参数语义 | 帧率、质量参数按固定值使用 | `KEY_FRAME_RATE` 是目标提示，不是严格上限；码率通常可运行时调整；IDR 间隔可配置，同步请求合并限频 | 静态画面/VFR 不保证满帧；minSdk 25 不能依赖高版本参数；频繁 IDR 会放大码率 |
 | 配置切换 | resize 只改采集或显示尺寸 | 分辨率或旋转变化通常重建编码器与输入 Surface，发布新 `configEpoch`、SPS/PPS 与 IDR；网络会话不断开 | 只 resize VirtualDisplay 不改变编码输出尺寸，还可能引入隐式缩放 |
 | 控制面 | gRPC/OkHttp，明文，无认证 | 保留 gRPC/TCP 作为控制面；增加认证、能力协商、配置、统计、反控消息 | 控制消息量小，gRPC 的流和超时语义合适 |
@@ -118,7 +118,7 @@ H.264 是兼容基线，不是产品上限。API 等级、minSdk 和“手机/�
 客户端解码侧至少探测：
 
 - 可解码 MIME、profile/level、最大宽高与帧率、硬件/软件。
-- 是否支持 `setOutputSurface`、adaptive playback 与分辨率切换。
+- Surface 输出（`RenderTarget.getSurface()`）的可用性、adaptive playback 与分辨率切换。
 - 当前窗口形态（悬浮小窗/全屏）与实际渲染尺寸。
 - 当前热/电状态与后台限制。
 
@@ -584,7 +584,7 @@ flowchart LR
 | 内录音频 | 不可用 | 不可用 | 可用（受 App 策略） | 同左 | 同左 |
 | 通知运行时权限 | 不需要 | 不需要 | 不需要 | 需要 | 需要 |
 | MediaProjection 默认显示配置 | 旧 API | 旧 API | 旧 API | 旧 API | `MediaProjectionConfig` 可用 |
-| `MediaCodec.setOutputSurface` | 可用（API 23+） | 可用 | 可用 | 可用 | 可用 |
+| 解码器 Surface 输出与重建（`RenderTarget.getSurface()` + `retryConfigure()`） | 可用 | 可用 | 可用 | 可用 | 可用 |
 | `PixelCopy` | 可用（API 24+） | 可用 | 可用 | 可用 | 可用 |
 | `dispatchGesture` | 可用（API 24+） | 可用 | 可用 | 可用 | 可用 |
 
@@ -613,7 +613,7 @@ flowchart LR
 | 高能力客户端请求高档但编码器实例/功耗不足 | 保持兼容单流或现有档位；不牺牲已有客户端，不强行启用第二路编码 | 提示当前无法使用高档位，不静默降级他人 |
 | 能力探测失败或字段缺省 | 按旧客户端处理，使用 H.264 兼容档；记录探测失败原因 | 可正常观看，不因探测失败阻断会话 |
 | 解码器初始化失败 | 重建解码器；换 Profile/分辨率；失败则断开并提示 | 明确错误，不无限重试 |
-| Surface 切换失败 | 重建解码器，从 config+IDR 开始；保持网络连接 | 短暂黑屏/占位，不重连 |
+| Surface 失效或解码器重建失败 | 进入 `RESYNCING`，唯一恢复入口是 `retryConfigure()`：重建解码器并从 config+IDR 开始；保持网络连接 | 短暂黑屏/占位，不重连 |
 | TCP 重传拖尾严重 | 降低码率/帧率；评估 RTP/UDP | 统计可见；不在未测量前切换 |
 | 慢客户端 / 客户端队列溢出 | 该客户端进入 WAIT_IDR，跳到下一个 IDR 恢复；持续跟不上则断开；不丢中间 P 帧后继续，不阻塞其他客户端 | 该客户端短暂停帧或重连，不影响他人 |
 | 分辨率或旋转变化 | 重建编码器与输入 Surface，提升 `configEpoch`，发布 SPS/PPS 与 IDR；网络会话保持 | 客户端短暂黑屏/占位后恢复，不重连 |
@@ -660,7 +660,7 @@ flowchart LR
 - 分辨率或旋转切换：只重建编码器与输入 Surface，网络会话不断开；客户端经新 `configEpoch`、SPS/PPS 与 IDR 恢复。
 - `KEY_FRAME_RATE` 在静态/VFR 场景的实际输出与目标差异；严格限帧方案的设备覆盖。
 - 客户端窗口缩放不改变网络与解码负载；分辨率切换的解码器重配与 adaptive playback 支持矩阵。
-- 窗口切换不重连（见 [windowing-session-design.md](windowing-session-design.md)）。
+- 窗口切换 = 同会话内 attach/detach 渲染目标，不重连；Surface 失效经 `retryConfigure()` 重建解码器恢复（见 [windowing-session-design.md](windowing-session-design.md)）。
 - 音频权限、App 拒绝内录、API 25–28 降级。
 - 反控授权、租约、epoch、旋转坐标。
 - TCP 重传/延迟指标；只有数据支持时才评估 RTP/UDP。

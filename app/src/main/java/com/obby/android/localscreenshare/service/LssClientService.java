@@ -473,7 +473,14 @@ public class LssClientService extends Service {
         if (mSurfaceShareViewer == null) {
             mSurfaceShareViewer = new SurfaceShareViewer(this, mServiceInfo);
         }
-        mSurfaceRenderTarget = new SurfaceRenderTarget(mSurfaceShareViewer.getTextureView());
+        mSurfaceRenderTarget = new SurfaceRenderTarget(mSurfaceShareViewer.getTextureView(),
+                () -> {
+                    // A (re)available surface lets a resynchronizing session retry its decoder.
+                    final ClientMediaSession session = mClientMediaSession;
+                    if (session != null) {
+                        session.retryConfigure();
+                    }
+                });
         final ClientMediaSession session = new ClientMediaSession(
                 new ClientSessionKey(mStreamKey, "local"), mCodecRegistry,
                 new ClientCapabilities(Collections.singleton(CodecIds.H264)),

@@ -212,7 +212,7 @@
 <details><summary>TB-WIN-001 窗口切换（📋 待办）</summary>
 
 - **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟠 P1 / 2026-10-17 / —
-- **任务**：窗口切换：第一版用同一悬浮窗展开/收起；`ViewerActivity` 作为需要沉浸式、返回键或输入法时的增强；最后帧快照过渡；`setOutputSurface` 失败只重建解码器。
+- **任务**：窗口切换：第一版用同一悬浮窗展开/收起；`ViewerActivity` 作为需要沉浸式、返回键或输入法时的增强；最后帧快照过渡；Surface 失效后经 `retryConfigure()` 重建解码器恢复。
 - **交付物 / 验证证据**：交付：方案 A、方案 B、快照与失败回退。验证：切换前后网络/会话/认证不重建、Service 不停、无长时间黑屏；当前未执行。
 - **关联文档**：[路线图阶段 3](optimization-roadmap.md)、[窗口与会话设计](windowing-session-design.md)
 

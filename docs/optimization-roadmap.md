@@ -170,7 +170,7 @@ flowchart LR
 ### 6.2 改造内容
 
 - 方案 A：同一悬浮窗展开/收起；`ValueAnimator` 动画 `WindowManager.LayoutParams`；同一 Surface，不切解码器。
-- 方案 B（可选）：`ViewerActivity` + 最后帧快照 + 过渡层 + `MediaCodec.setOutputSurface`；失败只重建解码器，不重建连接。
+- 方案 B（可选）：`ViewerActivity` + 最后帧快照 + 过渡层；attach 新渲染目标后由 `ClientMediaSession.retryConfigure()` 重建解码器（不重建网络会话）；失败只重建解码器，不重连。
 - 小窗优先 `TextureView`（透明度/圆角/动画）；全屏可用 `SurfaceView`（稳定层）。
 - 客户端画质：分辨率/帧率/码率档位；服务端能力探测、客户端解码能力与多客户端策略共同决定；变更时提升 configEpoch 并请求 IDR。
 - 场景档位：悬浮小窗与全屏可以选择不同档位；小窗优先码率/功耗，全屏可请求更高分辨率/帧率；不按 API 等级或设备形态预设上限。
@@ -184,7 +184,7 @@ flowchart LR
 | --- | --- |
 | 会话连续 | 悬浮窗与全屏切换前后，网络/会话/认证不重建；Service 不停 |
 | 视觉连续 | 最后帧/快照可见；无长时间黑屏/闪烁；首帧后平滑过渡 |
-| Surface 切换 | 成功路径正常；强制失败时只重建解码器，网络不断 |
+| Surface 恢复 | Surface 失效时进入 `RESYNCING`，唯一恢复入口 `retryConfigure()`；强制失败时只重建解码器并从 config+IDR 恢复，网络不断 |
 | 旋转/生命周期 | Home/Back/最近任务/旋转/权限撤销行为明确，不崩溃、不泄漏 |
 | 客户端画质 | 档位变更生效；configEpoch/IDR 正确；不出现花屏 |
 | 场景档位 | 悬浮小窗与全屏可选择不同档位；高档位需要能力探测与实测依据，不能按 API 等级或设备形态预设上限 |
