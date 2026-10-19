@@ -20,7 +20,9 @@ import android.graphics.PixelFormat;
 import android.graphics.PointF;
 import android.graphics.Rect;
 import android.os.Build;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import android.text.format.Formatter;
 import android.util.Log;
 import android.util.Size;
@@ -28,6 +30,7 @@ import android.view.GestureDetector;
 import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
+import android.view.TextureView;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
@@ -57,11 +60,23 @@ import com.google.android.material.slider.LabelFormatter;
 import com.google.android.material.slider.Slider;
 import com.obby.android.localscreenshare.MainActivity;
 import com.obby.android.localscreenshare.R;
+import com.obby.android.localscreenshare.client.ClientMediaReceiver;
+import com.obby.android.localscreenshare.client.ClientSecureListener;
 import com.obby.android.localscreenshare.client.LssClient;
 import com.obby.android.localscreenshare.client.LssClientObserver;
 import com.obby.android.localscreenshare.client.LssClientStats;
 import com.obby.android.localscreenshare.client.LssClientStatsListener;
+import com.obby.android.localscreenshare.core.client.ClientMediaSession;
+import com.obby.android.localscreenshare.core.client.ClientStateListener;
+import com.obby.android.localscreenshare.core.codec.CodecIds;
+import com.obby.android.localscreenshare.core.codec.CodecRegistry;
+import com.obby.android.localscreenshare.core.codec.h264.H264Codec;
+import com.obby.android.localscreenshare.core.model.ClientSessionKey;
+import com.obby.android.localscreenshare.core.model.ClientState;
+import com.obby.android.localscreenshare.core.model.StreamKey;
+import com.obby.android.localscreenshare.core.stream.ClientCapabilities;
 import com.obby.android.localscreenshare.discovery.LssServiceInfo;
+import com.obby.android.localscreenshare.render.SurfaceRenderTarget;
 import com.obby.android.localscreenshare.support.Constants;
 import com.obby.android.localscreenshare.support.Preferences;
 import com.obby.android.localscreenshare.support.Reference;
@@ -71,6 +86,7 @@ import org.apache.commons.lang3.math.NumberUtils;
 import org.apache.commons.lang3.mutable.MutableBoolean;
 
 import java.text.NumberFormat;
+import java.util.Collections;
 import java.util.Objects;
 
 /**
@@ -126,6 +142,27 @@ public class LssClientService extends Service {
     @Nullable
     private ScreenShareViewer mScreenShareViewer;
 
+    // Media session wiring: the registry resolves the H.264 decoder, the session drives it, and
+    // the receiver feeds it from the wire on the client's dedicated decode thread.
+    @Nullable
+    private CodecRegistry mCodecRegistry;
+
+    @Nullable
+    private StreamKey mStreamKey;
+
+    @Nullable
+    private SurfaceRenderTarget mSurfaceRenderTarget;
+
+    @Nullable
+    private ClientMediaSession mClientMediaSession;
+
+    @Nullable
+    private ClientMediaReceiver mClientMediaReceiver;
+
+    // Surface viewer shown once the session streams; created on the first STREAMING transition.
+    @Nullable
+    private SurfaceShareViewer mSurfaceShareViewer;
+
     // Disconnect confirmation; created on demand and dismissed on stop.
     @Nullable
     private AlertDialog mDialog;
@@ -138,6 +175,10 @@ public class LssClientService extends Service {
 
     private final String mTag = "LssClientService@" + hashCode();
 
+    // Main-thread delivery for decode-thread callbacks that touch the UI.
+    @NonNull
+    private final Handler mMainHandler = new Handler(Looper.getMainLooper());
+
     @NonNull
     private final LssClientStatsListener mClientStatsListener = this::onClientStatsChanged;
 
@@ -146,19 +187,7 @@ public class LssClientService extends Service {
     private final LssClientObserver mClientObserver = new LssClientObserver() {
         @Override
         public void onConnected() {
-            // The first frame doubles as the connect signal, so the viewer exists before the
-            // first setFrame call.
             mIsConnected = true;
-
-            if (mScreenShareLoading != null) {
-                mScreenShareLoading.dismiss();
-            }
-
-            if (mScreenShareViewer == null) {
-                mScreenShareViewer = new ScreenShareViewer(LssClientService.this, mServiceInfo);
-            }
-
-            mScreenShareViewer.show();
         }
 
         @SuppressWarnings("DataFlowIssue")
@@ -177,13 +206,15 @@ public class LssClientService extends Service {
                 mDialog.dismiss();
             }
 
-            if (mScreenShareViewer != null) {
-                mScreenShareViewer.dismiss();
+            if (mSurfaceShareViewer != null) {
+                mSurfaceShareViewer.dismiss();
             }
 
             if (mScreenShareLoading != null) {
                 mScreenShareLoading.dismiss();
             }
+
+            teardownMediaSession();
 
             if (mClient != null) {
                 mClient.stop();
@@ -198,10 +229,11 @@ public class LssClientService extends Service {
                 .setMessage(HtmlCompat.fromHtml(getString(messageResId, mServiceInfo.getName()),
                     HtmlCompat.FROM_HTML_MODE_LEGACY))
                 .setPositiveButton(android.R.string.ok, (dialog, which) -> {
+                    final ClientMediaReceiver receiver = startMediaSession();
                     mClient = new LssClient(mServiceInfo.getHostAddress(), mServiceInfo.getPort());
                     mClient.setClientStatsListener(mClientStatsListener);
                     mScreenShareLoading.show();
-                    mClient.start(mClientObserver);
+                    mClient.start(mClientObserver, receiver);
                 })
                 .setNegativeButton(android.R.string.cancel, (dialog, which) -> sendBroadcast(
                     new Intent(Constants.ACTION_STOP_CLIENT_SERVICE).setPackage(getPackageName())))
@@ -210,13 +242,37 @@ public class LssClientService extends Service {
             mDialog.getWindow().setType(Constants.FLOATING_WINDOW_TYPE);
             mDialog.show();
         }
+    };
 
+    // Runs on the client's decode thread; UI work is posted back to the main thread.
+    @NonNull
+    private final ClientStateListener mClientStateListener = new ClientStateListener() {
         @Override
-        public void onScreenFrameReceived(@NonNull Reference<Bitmap> frame, boolean isSecure) {
-            // Ownership of the reference passes to the viewer, which clears the previous frame.
-            if (mScreenShareViewer != null) {
-                mScreenShareViewer.setFrame(frame, isSecure);
+        public void onStateChanged(@NonNull ClientState previous, @NonNull ClientState current) {
+            if (current != ClientState.STREAMING) {
+                return;
             }
+            mMainHandler.post(() -> {
+                if (mScreenShareLoading != null) {
+                    mScreenShareLoading.dismiss();
+                }
+                if (mSurfaceShareViewer != null) {
+                    mSurfaceShareViewer.show();
+                }
+            });
+        }
+    };
+
+    // Runs on the client's decode thread; applies the secure flag on the main thread.
+    @NonNull
+    private final ClientSecureListener mClientSecureListener = new ClientSecureListener() {
+        @Override
+        public void onSecureChanged(final boolean secure) {
+            mMainHandler.post(() -> {
+                if (mSurfaceShareViewer != null) {
+                    mSurfaceShareViewer.setSecure(secure);
+                }
+            });
         }
     };
 
@@ -316,9 +372,9 @@ public class LssClientService extends Service {
             mDialog = null;
         }
 
-        if (mScreenShareViewer != null) {
-            mScreenShareViewer.dismiss();
-            mScreenShareViewer = null;
+        if (mSurfaceShareViewer != null) {
+            mSurfaceShareViewer.dismiss();
+            mSurfaceShareViewer = null;
         }
 
         if (mScreenShareLoading != null) {
@@ -329,11 +385,14 @@ public class LssClientService extends Service {
             mClient.stop();
         }
 
+        teardownMediaSession();
+
+        final ClientMediaReceiver receiver = startMediaSession();
         mClient = new LssClient(mServiceInfo.getHostAddress(), mServiceInfo.getPort());
         mClient.setClientStatsListener(mClientStatsListener);
         mScreenShareLoading = new ScreenShareLoading(this, mServiceInfo);
         mScreenShareLoading.show();
-        mClient.start(mClientObserver);
+        mClient.start(mClientObserver, receiver);
 
         return START_STICKY;
     }
@@ -356,15 +415,17 @@ public class LssClientService extends Service {
             mDialog = null;
         }
 
-        if (mScreenShareViewer != null) {
-            mScreenShareViewer.dismiss();
-            mScreenShareViewer = null;
+        if (mSurfaceShareViewer != null) {
+            mSurfaceShareViewer.dismiss();
+            mSurfaceShareViewer = null;
         }
 
         if (mScreenShareLoading != null) {
             mScreenShareLoading.dismiss();
             mScreenShareLoading = null;
         }
+
+        teardownMediaSession();
 
         if (mClient != null) {
             mClient.stop();
@@ -391,6 +452,48 @@ public class LssClientService extends Service {
 
         mInboundDataRate = inboundDataRate;
         NotificationManagerCompat.from(LssClientService.this).notify(NOTIFICATION_ID, buildNotification());
+    }
+
+    /**
+     * Builds the client media session for the current target.
+     *
+     * <p>The registry resolves the H.264 decoder; capabilities are pinned to H.264 until runtime
+     * probing and JPEG fallback land. The surface render target wraps the viewer's texture view,
+     * and the receiver drives the session from wire messages on the client's decode thread.</p>
+     */
+    @NonNull
+    private ClientMediaReceiver startMediaSession() {
+        if (mCodecRegistry == null) {
+            mCodecRegistry = CodecRegistry.withDefaults();
+            mCodecRegistry.register(H264Codec.androidRegistration());
+        }
+        if (mStreamKey == null) {
+            mStreamKey = new StreamKey("remote", "screen");
+        }
+        if (mSurfaceShareViewer == null) {
+            mSurfaceShareViewer = new SurfaceShareViewer(this, mServiceInfo);
+        }
+        mSurfaceRenderTarget = new SurfaceRenderTarget(mSurfaceShareViewer.getTextureView());
+        final ClientMediaSession session = new ClientMediaSession(
+                new ClientSessionKey(mStreamKey, "local"), mCodecRegistry,
+                new ClientCapabilities(Collections.singleton(CodecIds.H264)),
+                mSurfaceRenderTarget, mClientStateListener);
+        mClientMediaSession = session;
+        mClientMediaReceiver = new ClientMediaReceiver(mStreamKey, session, mClientSecureListener);
+        return mClientMediaReceiver;
+    }
+
+    /** Closes the media session and releases the surface target; idempotent. */
+    private void teardownMediaSession() {
+        if (mClientMediaReceiver != null) {
+            mClientMediaReceiver.close();
+            mClientMediaReceiver = null;
+        }
+        mClientMediaSession = null;
+        if (mSurfaceRenderTarget != null) {
+            mSurfaceRenderTarget.release();
+            mSurfaceRenderTarget = null;
+        }
     }
 
     private void createNotificationChannel() {
@@ -500,6 +603,210 @@ public class LssClientService extends Service {
      * passed to {@link #setFrame} is owned by the viewer until the next frame or
      * {@link #dismiss()} clears it.</p>
      */
+    /**
+     * Floating, draggable surface viewer for H.264 frames.
+     *
+     * <p>Hosts a {@link TextureView} that the decoder renders into directly, so no per-frame
+     * callback is needed. Created and used on the main thread. A long press starts dragging and a
+     * single tap opens the disconnect confirmation. Opacity, scale and the normalized location come
+     * from the persisted viewer settings; the secure flag maps to {@code FLAG_SECURE}. Stream-aspect
+     * sizing and the settings sheet are refined with the window-surface work.</p>
+     */
+    private static class SurfaceShareViewer {
+        @NonNull
+        private final Context mContext;
+
+        @NonNull
+        private final LssServiceInfo mServiceInfo;
+
+        @NonNull
+        private final WindowManager mWindowManager;
+
+        @NonNull
+        private final TextureView mTextureView;
+
+        @NonNull
+        private final WindowManager.LayoutParams mLayoutParams;
+
+        @NonNull
+        private final GestureDetector mGestureDetector;
+
+        @NonNull
+        private final PointF mLocation = new PointF();
+
+        @NonNull
+        private final Rect mBounds = new Rect();
+
+        @NonNull
+        private final PointF mDragOffset = new PointF();
+
+        @Nullable
+        private AlertDialog mDialog;
+
+        private int mOpacity;
+
+        private int mScale;
+
+        private SurfaceShareViewer(@NonNull final Context context,
+                                   @NonNull final LssServiceInfo serviceInfo) {
+            mContext = new ContextThemeWrapper(context, R.style.AppTheme);
+            mServiceInfo = serviceInfo;
+            mWindowManager = mContext.getSystemService(WindowManager.class);
+            mTextureView = new TextureView(mContext);
+            mTextureView.setOpaque(false);
+            mLayoutParams = new WindowManager.LayoutParams(0, 0, 0, 0, Constants.FLOATING_WINDOW_TYPE,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+                PixelFormat.TRANSLUCENT);
+            mLayoutParams.gravity = Gravity.CENTER;
+            mGestureDetector = new GestureDetector(mContext, new GestureDetector.SimpleOnGestureListener() {
+                @Override
+                public boolean onDown(@NonNull MotionEvent e) {
+                    return true;
+                }
+
+                @Override
+                public boolean onSingleTapConfirmed(@NonNull MotionEvent e) {
+                    showDisconnectDialog();
+                    return true;
+                }
+
+                @Override
+                public void onLongPress(@NonNull MotionEvent e) {
+                    mTextureView.setActivated(true);
+                    mDragOffset.set(mLayoutParams.x - e.getRawX(), mLayoutParams.y - e.getRawY());
+                }
+            });
+            mTextureView.setOnTouchListener((v, event) -> {
+                switch (event.getActionMasked()) {
+                    case MotionEvent.ACTION_MOVE:
+                        if (mTextureView.isActivated()) {
+                            updateLocation((int) (event.getRawX() + mDragOffset.x),
+                                (int) (event.getRawY() + mDragOffset.y));
+                        }
+                        break;
+                    case MotionEvent.ACTION_UP:
+                    case MotionEvent.ACTION_CANCEL:
+                        if (mTextureView.isActivated()) {
+                            mTextureView.setActivated(false);
+                            Preferences.get().setViewerLocation(mLocation);
+                        }
+                        break;
+                    default:
+                        break;
+                }
+                mGestureDetector.onTouchEvent(event);
+                return true;
+            });
+        }
+
+        @NonNull
+        TextureView getTextureView() {
+            return mTextureView;
+        }
+
+        void show() {
+            if (mTextureView.getParent() == null) {
+                mOpacity = Preferences.get().getViewerOpacity();
+                mScale = Preferences.get().getViewerScale();
+                mLocation.set(Preferences.get().getViewerLocation());
+                updateLayoutParams();
+                mWindowManager.addView(mTextureView, mLayoutParams);
+            }
+        }
+
+        void dismiss() {
+            mLayoutParams.flags &= ~WindowManager.LayoutParams.FLAG_SECURE;
+            if (mDialog != null) {
+                mDialog.dismiss();
+                mDialog = null;
+            }
+            if (mTextureView.getParent() != null) {
+                mWindowManager.removeViewImmediate(mTextureView);
+            }
+        }
+
+        void setSecure(final boolean secure) {
+            final boolean currentlySecure =
+                (mLayoutParams.flags & WindowManager.LayoutParams.FLAG_SECURE) != 0;
+            if (currentlySecure == secure) {
+                return;
+            }
+            if (secure) {
+                mLayoutParams.flags |= WindowManager.LayoutParams.FLAG_SECURE;
+            } else {
+                mLayoutParams.flags &= ~WindowManager.LayoutParams.FLAG_SECURE;
+            }
+            if (mTextureView.getParent() != null) {
+                mWindowManager.updateViewLayout(mTextureView, mLayoutParams);
+            }
+        }
+
+        private void showDisconnectDialog() {
+            if (mDialog == null) {
+                mDialog = new MaterialAlertDialogBuilder(mContext)
+                    .setMessage(HtmlCompat.fromHtml(mContext.getString(
+                            R.string.disconnect_screen_share_confirm, mServiceInfo.getName()),
+                        HtmlCompat.FROM_HTML_MODE_LEGACY))
+                    .setPositiveButton(android.R.string.ok, (dialog, which) -> mContext.sendBroadcast(
+                        new Intent(Constants.ACTION_STOP_CLIENT_SERVICE).setPackage(mContext.getPackageName())))
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .setCancelable(false)
+                    .create();
+                mDialog.getWindow().setType(Constants.FLOATING_WINDOW_TYPE);
+            }
+            mDialog.show();
+        }
+
+        private void updateLayoutParams() {
+            mLayoutParams.alpha = mOpacity / 100f;
+
+            if (Preferences.get().isViewerKeepScreenOn()) {
+                mLayoutParams.flags |= WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON;
+            } else {
+                mLayoutParams.flags &= ~WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON;
+            }
+
+            getMaxLayoutBounds(mBounds);
+            final int minSize = mContext.getResources()
+                .getDimensionPixelSize(R.dimen.screen_share_viewer_min_size);
+            mLayoutParams.width = Math.max(minSize, (int) (mBounds.width() * mScale / 100f));
+            mLayoutParams.height = Math.max(minSize, (int) (mBounds.height() * mScale / 100f));
+
+            getLocationBounds(mBounds);
+            mLayoutParams.x = (int) (mBounds.left + mBounds.width() * mLocation.x);
+            mLayoutParams.y = (int) (mBounds.top + mBounds.height() * mLocation.y);
+        }
+
+        private void updateLocation(final int x, final int y) {
+            getLocationBounds(mBounds);
+
+            final int finalX = Math.max(mBounds.left, Math.min(x, mBounds.right));
+            final int finalY = Math.max(mBounds.top, Math.min(y, mBounds.bottom));
+            mLocation.set(mBounds.width() <= 0 ? 0f : (float) (finalX - mBounds.left) / mBounds.width(),
+                mBounds.height() <= 0 ? 0f : (float) (finalY - mBounds.top) / mBounds.height());
+
+            if (mLayoutParams.x != finalX || mLayoutParams.y != finalY) {
+                mLayoutParams.x = finalX;
+                mLayoutParams.y = finalY;
+                mWindowManager.updateViewLayout(mTextureView, mLayoutParams);
+            }
+        }
+
+        private void getLocationBounds(@NonNull final Rect rect) {
+            getMaxLayoutBounds(rect);
+            rect.left += mLayoutParams.width / 2;
+            rect.top += mLayoutParams.height / 2;
+            rect.right -= mLayoutParams.width / 2;
+            rect.bottom -= mLayoutParams.height / 2;
+        }
+
+        private void getMaxLayoutBounds(@NonNull final Rect rect) {
+            mTextureView.getWindowVisibleDisplayFrame(rect);
+            rect.offsetTo(0, 0);
+            rect.offset(-rect.width() / 2, -rect.height() / 2);
+        }
+    }
+
     private static class ScreenShareViewer {
         private static final float CORNER_SIZE_RATIO = 1 / 16f;
 

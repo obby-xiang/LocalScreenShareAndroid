@@ -1,34 +1,30 @@
 package com.obby.android.localscreenshare.client;
 
-import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Process;
 import android.os.SystemClock;
 import android.util.Log;
-import android.util.Size;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
-import androidx.core.util.Pools;
 
-import com.google.protobuf.Empty;
-import com.obby.android.localscreenshare.grpc.screenstream.ScreenFrame;
+import com.obby.android.localscreenshare.grpc.screenstream.ClientMessage;
+import com.obby.android.localscreenshare.grpc.screenstream.Hello;
+import com.obby.android.localscreenshare.grpc.screenstream.RequestKeyframe;
 import com.obby.android.localscreenshare.grpc.screenstream.ScreenStreamServiceGrpc;
+import com.obby.android.localscreenshare.grpc.screenstream.ServerMessage;
 import com.obby.android.localscreenshare.support.Constants;
-import com.obby.android.localscreenshare.support.Reference;
-import com.obby.android.localscreenshare.utils.ThreadUtils;
 
 import org.apache.commons.lang3.concurrent.BasicThreadFactory;
 
-import java.io.IOException;
-import java.io.InputStream;
 import java.time.Duration;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
@@ -48,30 +44,27 @@ import lombok.Setter;
 import lombok.experimental.Accessors;
 
 /**
- * Legacy client endpoint for one remote screen stream over gRPC.
+ * Client endpoint for one remote screen stream over the bidirectional gRPC stream.
  *
- * <p>Each instance owns an OkHttp-backed {@link ManagedChannel} created by the constructor. The
- * channel is not connected until {@link #start(LssClientObserver)} opens the server-streaming call;
- * {@link #stop()} shuts the channel and the private executor down permanently, so an instance is
- * single-use and cannot be started again after it has been stopped.</p>
+ * <p>Each instance owns an OkHttp-backed {@link ManagedChannel}. {@link #start(LssClientObserver,
+ * ClientMediaReceiver)} opens the stream, announces the client with a HELLO and hands every server
+ * message to a dedicated single-thread decode executor that drives the {@link ClientMediaReceiver}.
+ * Decoding therefore never runs on the gRPC executor. {@link #requestKeyframe()} asks the server for
+ * a random-access point. {@link #stop()} shuts the channel and both executors down permanently, so
+ * an instance is single-use.</p>
  *
- * <p><b>Threading.</b> {@link #start(LssClientObserver)} and {@link #stop()} are expected on the
- * main thread. The gRPC transport invokes the stream observer on threads of the private
- * {@code lss-grpc-client-*} executor, where each JPEG frame is decoded; the decoded bitmap is then
- * handed to the main thread. {@link LssClientObserver} and {@link LssClientStatsListener} callbacks
- * are always delivered on the main thread.</p>
- *
- * <p><b>Frame ownership.</b> A frame is passed to the observer as a {@link Reference}; the observer
- * owns it until it calls {@link Reference#clear()}, which returns the bitmap to a small reuse pool
- * or recycles it. Frames whose timestamp does not increase are dropped before delivery.</p>
- *
- * <p><b>Stats.</b> Inbound wire bytes are accumulated per gRPC call by a stream tracer and sampled
- * every 3 seconds on the main thread; the listener is only invoked when the sampled values
- * change.</p>
+ * <p><b>Threading.</b> {@link #start} and {@link #stop} are expected on the main thread. gRPC
+ * transport invokes the response observer on threads of the private {@code lss-grpc-client-*}
+ * executor; that observer only enqueues work onto the {@code lss-client-decode} thread. Observer
+ * callbacks are always delivered on the main thread.</p>
  */
 @Accessors(prefix = "m")
 public final class LssClient {
     private static final long UPDATE_CLIENT_STATS_INTERVAL_MS = 3000L;
+
+    // Bounds the decode queue so a catastrophically slow decoder cannot grow it without limit;
+    // a rejected message is dropped and the session recovers on the next join point.
+    private static final int DECODE_QUEUE_CAPACITY = 256;
 
     // Lifecycle flag, written and read on the main thread; once set, callbacks become no-ops.
     private boolean mIsStopped;
@@ -99,10 +92,7 @@ public final class LssClient {
     @NonNull
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
 
-    // Holds up to four decoded bitmaps for inBitmap reuse; drained by stop().
-    @NonNull
-    private final Pools.Pool<Bitmap> mScreenFrameCache = new Pools.SynchronizedPool<>(4);
-
+    // Handles gRPC transport callbacks only; media decoding never runs here.
     @NonNull
     private final ExecutorService mGrpcClientExecutor = new ThreadPoolExecutor(Constants.CPU_COUNT,
         Constants.CPU_COUNT * 2, 30L, TimeUnit.SECONDS, new LinkedBlockingQueue<>(10), new BasicThreadFactory.Builder()
@@ -114,7 +104,25 @@ public final class LssClient {
                 super.run();
             }
         })
-        .build(), new ThreadPoolExecutor.CallerRunsPolicy());
+        .build(), new ThreadPoolExecutor.AbortPolicy());
+
+    // Dedicated single thread that drives the media session; serializes all decoding.
+    @NonNull
+    private final ExecutorService mDecodeExecutor = new ThreadPoolExecutor(1, 1, 30L,
+        TimeUnit.SECONDS, new LinkedBlockingQueue<>(DECODE_QUEUE_CAPACITY),
+        new BasicThreadFactory.Builder().namingPattern("lss-client-decode-%d")
+            .wrappedFactory(runnable -> new Thread(runnable) {
+                @Override
+                public void run() {
+                    Process.setThreadPriority(Process.THREAD_PRIORITY_DISPLAY);
+                    super.run();
+                }
+            })
+            .build(), new ThreadPoolExecutor.AbortPolicy());
+
+    // Outbound side of the bidirectional stream; non-null between start() and stop().
+    @Nullable
+    private StreamObserver<ClientMessage> mRequestObserver;
 
     // Accounts inbound wire bytes of every call in the current profile; runs on gRPC transport
     // threads.
@@ -187,99 +195,49 @@ public final class LssClient {
     }
 
     /**
-     * Opens the server-streaming call and starts the periodic stats sampling.
+     * Opens the bidirectional stream, announces the client and starts the periodic stats sampling.
      *
      * <p>Returns immediately. {@link LssClientObserver#onConnected()} is reported on the main thread
-     * when the first frame is accepted, immediately before that frame is delivered through
-     * {@link LssClientObserver#onScreenFrameReceived(Reference, boolean)}; it does not mean that
-     * the transport has finished connecting.</p>
+     * when the first server message arrives, which means the transport is established; the session's
+     * own state listener reports the transition to streaming. A HELLO carries this client's id; the
+     * capability set is left empty until runtime probing lands, which the server treats as the
+     * H.264 baseline.</p>
      *
      * <p>Call once, on the main thread. The observer is retained until the stream terminates or
      * {@link #stop()} is called, and it is never called after {@code stop()} returns.</p>
      *
-     * @param observer receiver of connection and frame callbacks
+     * @param observer receiver of connection-state callbacks
+     * @param receiver media session driver; every server message is handed to it on the decode thread
      */
-    public void start(@NonNull final LssClientObserver observer) {
-        ScreenStreamServiceGrpc.newStub(mGrpcChannel)
-            .getScreenStream(Empty.getDefaultInstance(), new StreamObserver<>() {
+    public void start(@NonNull final LssClientObserver observer,
+                      @NonNull final ClientMediaReceiver receiver) {
+        mRequestObserver = ScreenStreamServiceGrpc.newStub(mGrpcChannel)
+            .stream(new StreamObserver<ServerMessage>() {
                 private boolean mIsConnected;
 
-                private long mScreenFrameTimestamp = -1L;
-
                 @Override
-                public void onNext(ScreenFrame value) {
-                    // First pass only measures the encoded frame, so the destination bitmap can be
-                    // sized before the real decode.
-                    final BitmapFactory.Options options = new BitmapFactory.Options();
-                    options.inJustDecodeBounds = true;
-
-                    try (final InputStream input = value.getData().newInput()) {
-                        BitmapFactory.decodeStream(input, null, options);
-                    } catch (IOException e) {
+                public void onNext(ServerMessage value) {
+                    if (mIsStopped) {
                         return;
                     }
-
-                    // Reuse a pooled bitmap of the same size through inBitmap; a mismatched entry is
-                    // recycled and replaced by a fresh destination.
-                    final Size size = new Size(options.outWidth, options.outHeight);
-                    final Bitmap cachedBitmap = mScreenFrameCache.acquire();
-                    if (cachedBitmap == null || cachedBitmap.getWidth() != size.getWidth()
-                        || cachedBitmap.getHeight() != size.getHeight()) {
-                        Optional.ofNullable(cachedBitmap).ifPresent(Bitmap::recycle);
-                        options.inBitmap = Bitmap.createBitmap(size.getWidth(), size.getHeight(),
-                            Bitmap.Config.ARGB_8888);
-                    } else {
-                        options.inBitmap = cachedBitmap;
-                    }
-                    options.inJustDecodeBounds = false;
-
-                    final Bitmap bitmap;
-                    try (final InputStream input = value.getData().newInput()) {
-                        bitmap = BitmapFactory.decodeStream(input, null, options);
-                        if (bitmap == null) {
-                            options.inBitmap.recycle();
-                            return;
-                        }
-                    } catch (IOException e) {
-                        options.inBitmap.recycle();
-                        return;
-                    }
-
-                    // Decoding runs on the gRPC thread; connection state and delivery belong to the
-                    // main thread.
-                    ThreadUtils.runOnMainThread(() -> {
-                        if (mIsStopped) {
-                            bitmap.recycle();
-                            return;
-                        }
-
-                        // The first accepted frame doubles as the connect signal for the observer.
-                        if (!mIsConnected) {
-                            mIsConnected = true;
-                            observer.onConnected();
-                        }
-
-                        // Ownership passes to the observer; clear() returns the bitmap to the
-                        // cache unless the client was stopped in the meantime.
-                        final Reference<Bitmap> reference = new Reference<>(bitmap) {
-                            @Override
-                            public void clear() {
-                                super.clear();
-                                if (mIsStopped || !mScreenFrameCache.release(bitmap)) {
-                                    bitmap.recycle();
-                                }
+                    // Decoding runs on the dedicated decode thread, never on the gRPC executor.
+                    try {
+                        mDecodeExecutor.execute(() -> {
+                            if (!mIsStopped) {
+                                receiver.onServerMessage(value);
                             }
-                        };
-                        // Drop frames that do not advance the timestamp; clearing releases the
-                        // bitmap immediately.
-                        if (mScreenFrameTimestamp >= value.getTimestamp()) {
-                            reference.clear();
-                            return;
-                        }
-
-                        mScreenFrameTimestamp = value.getTimestamp();
-                        observer.onScreenFrameReceived(reference, value.getSecure());
-                    });
+                        });
+                    } catch (RejectedExecutionException e) {
+                        Log.w(mTag, "onNext: decode queue full, dropping a message");
+                    }
+                    if (!mIsConnected) {
+                        mIsConnected = true;
+                        mMainHandler.post(() -> {
+                            if (!mIsStopped) {
+                                observer.onConnected();
+                            }
+                        });
+                    }
                 }
 
                 @Override
@@ -293,8 +251,6 @@ public final class LssClient {
                 }
 
                 private void onDisconnected() {
-                    // Error and completion share the same notification path; it is suppressed after
-                    // a local stop().
                     mMainHandler.post(() -> {
                         if (!mIsStopped) {
                             observer.onDisconnected();
@@ -303,34 +259,44 @@ public final class LssClient {
                 }
             });
 
+        mRequestObserver.onNext(ClientMessage.newBuilder()
+            .setHello(Hello.newBuilder()
+                .setProtocolVersion(1)
+                .setClientId("client-" + UUID.randomUUID())
+                .build())
+            .build());
+
         mClientProfile = new ClientProfile();
         mMainHandler.postDelayed(mUpdateClientStatsRunnable, UPDATE_CLIENT_STATS_INTERVAL_MS);
+    }
+
+    /** Asks the server for a random-access point; a no-op before start or after stop. */
+    public void requestKeyframe() {
+        final StreamObserver<ClientMessage> observer = mRequestObserver;
+        if (observer == null || mIsStopped) {
+            return;
+        }
+        observer.onNext(ClientMessage.newBuilder()
+            .setRequestKeyframe(RequestKeyframe.getDefaultInstance())
+            .build());
     }
 
     /**
      * Stops the stream and releases every resource owned by this client.
      *
-     * <p>Marks the client stopped first, so frame tasks already queued on the main thread become
-     * no-ops, then clears the stats profile, removes pending main-thread callbacks, shuts the gRPC
-     * channel and its executor down, and drains the bitmap pool. Must be called on the main thread;
+     * <p>Marks the client stopped first, then clears the stats profile, removes pending main-thread
+     * callbacks, shuts the gRPC channel and both executors down. Must be called on the main thread;
      * the instance cannot be restarted afterwards.</p>
      */
     public void stop() {
         mIsStopped = true;
         mClientProfile = null;
         mClientStats = null;
+        mRequestObserver = null;
         mMainHandler.removeCallbacksAndMessages(null);
         mGrpcChannel.shutdownNow();
         mGrpcClientExecutor.shutdownNow();
-
-        // Drain and recycle the pool so no bitmap outlives the client.
-        while (true) {
-            final Bitmap bitmap = mScreenFrameCache.acquire();
-            if (bitmap == null) {
-                break;
-            }
-            bitmap.recycle();
-        }
+        mDecodeExecutor.shutdownNow();
     }
 
     /**
