@@ -29,24 +29,50 @@ import java.util.concurrent.Executor;
 import lombok.AccessLevel;
 import lombok.NoArgsConstructor;
 
+/**
+ * Process-wide NSD discovery manager that publishes the LAN screen-stream servers it can reach.
+ *
+ * <p>Discovery follows the NSD discovery/resolve chain: {@link NsdManager} reports a found service,
+ * the manager resolves it asynchronously and converts the service attributes into an
+ * {@link LssServiceInfo}. Entries are keyed by NSD service name; services that do not expose the
+ * required attributes or that belong to this device (same service id) are dropped, and entries
+ * with the same server id are collapsed to the most recent resolve. Every state change re-sorts
+ * the snapshot by host address, port, name and id before notifying listeners.</p>
+ *
+ * <p><b>Threading.</b> All manager state is confined to the main thread: raw NSD callbacks are
+ * marshaled by the listener wrapper, the resolver delivers its result on the main thread, and
+ * {@link LssServiceDiscoveryListener} callbacks are therefore main-thread callbacks. The public
+ * methods must be called on the main thread. Listener notifications carry an unmodifiable snapshot
+ * that is replaced, never mutated, on change.</p>
+ *
+ * <p><b>Lifecycle.</b> Discovery starts when the first listener subscribes with
+ * {@link #discoverServices(LssServiceDiscoveryListener)} and stops when the last listener leaves
+ * through {@link #stopServiceDiscovery(LssServiceDiscoveryListener)}. Subscribing does not clear
+ * cached results: a new listener immediately receives the current snapshot.</p>
+ */
 @NoArgsConstructor(access = AccessLevel.PRIVATE)
 public final class LssServiceDiscoveryManager {
     private static final String TAG = "LssServiceDiscoveryManager";
 
+    // Main-thread state: true while NsdManager discovery is running.
     private boolean mIsDiscovering;
 
+    // Main-thread snapshot; unmodifiable and replaced whenever the discovered set changes.
     @NonNull
     private List<LssServiceInfo> mServiceInfoList = Collections.emptyList();
 
     @NonNull
     private final NsdManager mNsdManager = App.get().getSystemService(NsdManager.class);
 
+    // NSD service name -> last observed raw service, used to detect losses during resolution.
     @NonNull
     private final Map<String, NsdServiceInfo> mNsdServiceInfoMap = new ConcurrentHashMap<>();
 
+    // NSD service name -> resolved service; duplicates by service id are collapsed here.
     @NonNull
     private final Map<String, LssServiceInfo> mServiceInfoMap = new ConcurrentHashMap<>();
 
+    // Copy-on-write so dispatch can iterate while a listener removes itself.
     @NonNull
     private final List<LssServiceDiscoveryListener> mServiceDiscoveryListeners = new CopyOnWriteArrayList<>();
 
@@ -89,9 +115,11 @@ public final class LssServiceDiscoveryManager {
                 final String serviceName = serviceInfo.getServiceName();
                 mNsdServiceInfoMap.put(serviceName, serviceInfo);
 
+                // Resolve asynchronously; NsdUtils returns the result on the main thread.
                 NsdUtils.resolveService(mNsdManager, serviceInfo, new NsdManager.ResolveListener() {
                     @Override
                     public void onResolveFailed(NsdServiceInfo serviceInfo, int errorCode) {
+                        // The service may have been lost while resolving; ignore a stale result.
                         if (!mNsdServiceInfoMap.containsKey(serviceName)) {
                             return;
                         }
@@ -101,6 +129,7 @@ public final class LssServiceDiscoveryManager {
 
                     @Override
                     public void onServiceResolved(NsdServiceInfo serviceInfo) {
+                        // The service may have been lost while resolving; ignore a stale result.
                         if (!mNsdServiceInfoMap.containsKey(serviceName)) {
                             return;
                         }
@@ -111,6 +140,8 @@ public final class LssServiceDiscoveryManager {
 
                         mNsdServiceInfoMap.put(serviceName, serviceInfo);
 
+                        // Ignore the device's own advertisement and stale entries for the same
+                        // service id (for example after a re-registration with a new NSD name).
                         if (lssServiceInfo == null
                             || Objects.equals(lssServiceInfo.getId(), Preferences.get().getServiceId())) {
                             mServiceInfoMap.remove(serviceName);
@@ -130,6 +161,8 @@ public final class LssServiceDiscoveryManager {
 
             @Override
             public void onServiceLost(NsdServiceInfo serviceInfo) {
+                // Removing the raw entry first makes any in-flight resolve callback for this service
+                // stale, so it cannot resurrect the lost entry.
                 Log.i(TAG, String.format("mNsdDiscoveryListener.onServiceLost: service lost, serviceInfo = %s",
                     serviceInfo));
                 if (!TextUtils.isEmpty(serviceInfo.getServiceName())) {
@@ -145,6 +178,13 @@ public final class LssServiceDiscoveryManager {
         return InstanceHolder.INSTANCE;
     }
 
+    /**
+     * Subscribes a listener and starts NSD discovery if it was not running.
+     *
+     * <p>Must be called on the main thread. A listener that is already subscribed is ignored.
+     * Otherwise the listener receives the current snapshot synchronously before this method
+     * returns, whether or not discovery was just started.</p>
+     */
     public void discoverServices(@NonNull final LssServiceDiscoveryListener listener) {
         Log.i(TAG, "discoverServices: discover services");
 
@@ -162,6 +202,13 @@ public final class LssServiceDiscoveryManager {
         listener.onServicesChanged(mServiceInfoList);
     }
 
+    /**
+     * Unsubscribes a listener and stops NSD discovery once no listener remains.
+     *
+     * <p>Must be called on the main thread. Stopping discovery clears both internal maps; the
+     * resulting empty snapshot is not broadcast because the listener list is empty at that
+     * point.</p>
+     */
     public void stopServiceDiscovery(@NonNull final LssServiceDiscoveryListener listener) {
         Log.i(TAG, "stopServiceDiscovery: stop service discovery");
 
@@ -176,11 +223,23 @@ public final class LssServiceDiscoveryManager {
         }
     }
 
+    /**
+     * Starts NSD discovery and leaves it running until the last listener unsubscribes.
+     *
+     * <p>Must be called on the main thread; the discovery callbacks are marshaled back to it by
+     * {@link NsdDiscoveryListenerWrapper}.</p>
+     */
     private void startDiscovery() {
         Log.i(TAG, "startDiscovery: start discovery");
         mNsdManager.discoverServices(Constants.NSD_SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, mNsdDiscoveryListener);
     }
 
+    /**
+     * Stops NSD discovery and clears cached services. The resulting empty snapshot is dispatched
+     * while the listener list is already empty, so no listener observes it.
+     *
+     * <p>Must be called on the main thread, after the last listener has been removed.</p>
+     */
     private void stopDiscovery() {
         Log.i(TAG, "stopDiscovery: stop discovery");
         mNsdManager.stopServiceDiscovery(mNsdDiscoveryListener);
@@ -189,6 +248,10 @@ public final class LssServiceDiscoveryManager {
         updateServiceInfoList();
     }
 
+    /**
+     * Rebuilds the sorted snapshot and notifies listeners only when it differs from the previous
+     * one. Equality relies on the value semantics of {@link LssServiceInfo}.
+     */
     private void updateServiceInfoList() {
         final List<LssServiceInfo> serviceInfoList = new ArrayList<>(mServiceInfoMap.values());
         Collections.sort(serviceInfoList);
@@ -204,6 +267,12 @@ public final class LssServiceDiscoveryManager {
         mServiceDiscoveryListeners.forEach(listener -> listener.onServicesChanged(mServiceInfoList));
     }
 
+    /**
+     * Converts a resolved NSD service into a value object.
+     *
+     * @return the converted service, or {@code null} when the {@code id} or {@code name} TXT
+     * attribute or the resolved host address is missing
+     */
     @Nullable
     private LssServiceInfo buildServiceInfo(@NonNull final NsdServiceInfo serviceInfo) {
         final Map<String, byte[]> attributes = serviceInfo.getAttributes();
@@ -228,6 +297,10 @@ public final class LssServiceDiscoveryManager {
             .build();
     }
 
+    /**
+     * Forwards every {@link NsdManager.DiscoveryListener} callback onto the given executor; the
+     * manager uses the main-thread executor so its state stays confined to the main thread.
+     */
     private static class NsdDiscoveryListenerWrapper implements NsdManager.DiscoveryListener {
         @NonNull
         private final NsdManager.DiscoveryListener mListener;
@@ -272,6 +345,7 @@ public final class LssServiceDiscoveryManager {
         }
     }
 
+    // Holds the process-wide instance; initialized on the first call to get().
     private static class InstanceHolder {
         private static final LssServiceDiscoveryManager INSTANCE = new LssServiceDiscoveryManager();
     }

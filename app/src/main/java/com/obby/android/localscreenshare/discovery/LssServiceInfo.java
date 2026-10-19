@@ -13,6 +13,14 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.experimental.Accessors;
 
+/**
+ * Immutable description of one discovered screen-stream server.
+ *
+ * <p>Carries the identity advertised over NSD (service id and display name) together with the
+ * resolved host address and gRPC port. Instances are {@link Parcelable} so they can cross process
+ * boundaries, and are ordered by host address, then port, name and id, which gives the discovery
+ * list a stable order regardless of NSD callback order.</p>
+ */
 @Accessors(prefix = "m")
 @Data
 @AllArgsConstructor(access = AccessLevel.PRIVATE)
@@ -36,15 +44,27 @@ public class LssServiceInfo implements Comparable<LssServiceInfo>, Parcelable {
             .thenComparing(LssServiceInfo::getName)
             .thenComparing(LssServiceInfo::getId));
 
+    /**
+     * Stable service identity, generated per installation and also used as the NSD service name.
+     */
     @NonNull
     private final String mId;
 
+    /**
+     * User-visible server name advertised over NSD.
+     */
     @NonNull
     private final String mName;
 
+    /**
+     * Resolved host address literal used to open the gRPC channel.
+     */
     @NonNull
     private final String mHostAddress;
 
+    /**
+     * Resolved gRPC port.
+     */
     private final int mPort;
 
     @SuppressWarnings("DataFlowIssue")
@@ -55,6 +75,9 @@ public class LssServiceInfo implements Comparable<LssServiceInfo>, Parcelable {
         mPort = in.readInt();
     }
 
+    /**
+     * Orders by host address, port, name and id.
+     */
     @Override
     public int compareTo(LssServiceInfo serviceInfo) {
         return COMPARATOR.compare(this, serviceInfo);

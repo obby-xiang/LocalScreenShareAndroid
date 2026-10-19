@@ -60,19 +60,53 @@ import lombok.Getter;
 import lombok.Setter;
 import lombok.experimental.Accessors;
 
+/**
+ * Legacy gRPC server that advertises itself over NSD and streams JPEG frames to connected clients.
+ *
+ * <p><b>Lifecycle.</b> The constructor builds the gRPC server object and its executor but does not
+ * bind a port. {@link #start()} binds the configured port, registers the NSD service, the
+ * default-network callback and the Wi-Fi AP state receiver, publishes an initial
+ * {@link LssServerInfo} with a placeholder host address, and starts the periodic stats sampling.
+ * {@link #stop()} releases all of them in reverse order and shuts the gRPC executor down; late
+ * NSD, network and gRPC callbacks then observe nulled state and become no-ops.</p>
+ *
+ * <p><b>Host address discovery.</b> The host address is not known when the gRPC port is bound. The
+ * server resolves its own NSD registration and re-resolves it whenever the default network
+ * changes, a network capability changes or the Wi-Fi AP state changes; resolve failures are
+ * retried. {@link LssServerInfoListener} is notified whenever the resulting address changes.</p>
+ *
+ * <p><b>Threading.</b> {@link #start()}, {@link #stop()}, the info and stats listeners and all
+ * state changes run on the main thread; NSD and connectivity callbacks are posted to the main
+ * thread first. gRPC service methods and client send handlers run on the private
+ * {@code lss-grpc-server-*} executor, while transport filters and stream tracers run on gRPC
+ * transport threads. {@link #postScreenFrame} may be called from any thread, typically the capture
+ * thread.</p>
+ *
+ * <p><b>Fan-out and conflation.</b> Each connected client gets its own stream observer. Only the
+ * newest frame is kept: a client that is not ready for more data receives the latest frame once it
+ * becomes ready, and frames with a non-increasing timestamp are never sent twice.</p>
+ *
+ * <p><b>Stats.</b> Outbound wire bytes are accounted per remote transport by a stream tracer and
+ * sampled every 3 seconds on the main thread; the stats listener is only invoked when the sampled
+ * values change.</p>
+ */
 @Accessors(prefix = "m")
 public final class LssServer {
     private static final long UPDATE_SERVER_STATS_INTERVAL_MS = 3000L;
 
+    // Published identity; null while stopped.
     @Nullable
     private LssServerInfo mServerInfo;
 
+    // Registration used for resolve and re-register attempts; null while stopped.
     @Nullable
     private NsdServiceInfo mNsdServiceInfo;
 
+    // Per-transport accounting; null while stopped.
     @Nullable
     private ServerProfile mServerProfile;
 
+    // Last sampled value; used to suppress duplicate listener calls.
     @Nullable
     private LssServerStats mServerStats;
 
@@ -98,6 +132,8 @@ public final class LssServer {
     @NonNull
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
 
+    // Serves gRPC callbacks and also runs the per-client send handlers; CallerRunsPolicy applies
+    // backpressure by running rejected work on the calling thread.
     @NonNull
     private final ExecutorService mGrpcServerExecutor = new ThreadPoolExecutor(Constants.CPU_COUNT,
         Constants.CPU_COUNT * 2, 30L, TimeUnit.SECONDS, new LinkedBlockingQueue<>(10), new BasicThreadFactory.Builder()
@@ -114,6 +150,7 @@ public final class LssServer {
     @NonNull
     private final ScreenStreamService mScreenStreamService = new ScreenStreamService(mGrpcServerExecutor);
 
+    // Records each open transport as a per-remote-address entry; called on gRPC transport threads.
     @NonNull
     private final ServerTransportFilter mServerTransportFilter = new ServerTransportFilter() {
         @SuppressWarnings("DataFlowIssue")
@@ -122,6 +159,7 @@ public final class LssServer {
             Log.i(mTag, String.format("mServerTransportFilter.transportReady: transport ready, transportAttrs = %s",
                 transportAttrs));
 
+            // Registers one profile per remote address when its first transport becomes ready.
             final InetSocketAddress remoteAddress =
                 (InetSocketAddress) transportAttrs.get(Grpc.TRANSPORT_ATTR_REMOTE_ADDR);
             Optional.ofNullable(mServerProfile).ifPresent(serverProfile -> serverProfile.addTransport(remoteAddress));
@@ -137,6 +175,7 @@ public final class LssServer {
                 + ", transportAttrs = %s", transportAttrs));
 
             if (transportAttrs != null) {
+                // Drops the profile for the terminated transport's remote address.
                 final InetSocketAddress remoteAddress =
                     (InetSocketAddress) transportAttrs.get(Grpc.TRANSPORT_ATTR_REMOTE_ADDR);
                 Optional.ofNullable(mServerProfile)
@@ -145,6 +184,8 @@ public final class LssServer {
         }
     };
 
+    // Captures the transport profile when the call starts and adds outbound wire bytes to it; runs
+    // on gRPC transport threads.
     @NonNull
     private final ServerStreamTracer.Factory mServerStreamTracerFactory = new ServerStreamTracer.Factory() {
         @Override
@@ -174,6 +215,7 @@ public final class LssServer {
         }
     };
 
+    // Built by the constructor; bound by start() and shut down by stop().
     @NonNull
     private final Server mGrpcServer =
         OkHttpServerBuilder.forPort(Preferences.get().getServerPort(), InsecureServerCredentials.create())
@@ -185,6 +227,8 @@ public final class LssServer {
             .addService(mScreenStreamService)
             .build();
 
+    // Re-resolves the own registration. Every caller goes through postResolveNsdServiceRunnable(),
+    // which coalesces pending requests into one main-thread run.
     @NonNull
     private final Runnable mResolveNsdServiceRunnable = new Runnable() {
         @Override
@@ -195,6 +239,7 @@ public final class LssServer {
         }
     };
 
+    // Reschedules itself every 3 seconds and reports only sampled changes; runs on the main thread.
     @NonNull
     private final Runnable mUpdateServerStatsRunnable = new Runnable() {
         @Override
@@ -221,6 +266,8 @@ public final class LssServer {
         }
     };
 
+    // Re-registers on every failure while a registration is still wanted; callbacks arrive on an
+    // NSD thread, so the retry is posted to the main thread.
     @NonNull
     private final NsdManager.RegistrationListener mNsdRegistrationListener = new NsdManager.RegistrationListener() {
         @Override
@@ -258,6 +305,8 @@ public final class LssServer {
         }
     };
 
+    // Applies a resolved host address to the published info, or schedules another attempt while the
+    // address is still unknown. NsdUtils already delivers these callbacks on the main thread.
     @NonNull
     private final NsdManager.ResolveListener mNsdResolveListener = new NsdManager.ResolveListener() {
         @Override
@@ -287,6 +336,8 @@ public final class LssServer {
         }
     };
 
+    // Any connectivity change can change the address the advertisement resolves to, so every event
+    // simply schedules a debounced re-resolve on the main thread.
     @NonNull
     private final ConnectivityManager.NetworkCallback mNetworkCallback = new ConnectivityManager.NetworkCallback() {
         @Override
@@ -309,6 +360,7 @@ public final class LssServer {
         }
     };
 
+    // The Wi-Fi AP state affects which local address is reachable, so it also triggers a re-resolve.
     @NonNull
     private final BroadcastReceiver mBroadcastReceiver = new BroadcastReceiver() {
         @Override
@@ -325,6 +377,16 @@ public final class LssServer {
         mConnectivityManager = mContext.getSystemService(ConnectivityManager.class);
     }
 
+    /**
+     * Binds the gRPC port and starts advertising the service.
+     *
+     * <p>Must be called once on the main thread. When this method returns, the gRPC server is
+     * accepting calls and the info listener, if any, has already been notified with the initial
+     * {@link LssServerInfo}. The host address in that first notification is
+     * {@link Constants#UNKNOWN_HOST_ADDRESS} until NSD resolution succeeds.</p>
+     *
+     * @throws IOException if the port cannot be bound or the server cannot start
+     */
     public void start() throws IOException {
         mGrpcServer.start();
 
@@ -350,6 +412,15 @@ public final class LssServer {
         mMainHandler.postDelayed(mUpdateServerStatsRunnable, UPDATE_SERVER_STATS_INTERVAL_MS);
     }
 
+    /**
+     * Stops advertising, stops the gRPC server and releases the executor.
+     *
+     * <p>Must be called on the main thread. State is nulled first, so pending callbacks turn into
+     * no-ops; then pending main-thread callbacks are removed, the broadcast receiver, the network
+     * callback and the NSD registration are unregistered, and finally the gRPC server is shut down,
+     * active client observers are released and the executor is terminated. Unregistering callbacks
+     * that Android already released is tolerated by the surrounding {@code try} blocks.</p>
+     */
     public void stop() {
         mServerInfo = null;
         mNsdServiceInfo = null;
@@ -380,6 +451,15 @@ public final class LssServer {
         mGrpcServerExecutor.shutdownNow();
     }
 
+    /**
+     * Publishes the latest captured frame to every connected client.
+     *
+     * <p>Typically called from the capture thread; safe to call from any thread. The frame replaces
+     * the previous one until a client is ready to receive it, so a slow client drops intermediate
+     * frames instead of queueing them.</p>
+     *
+     * @param frame newest frame; the server does not mutate it
+     */
     public void postScreenFrame(@NonNull final ScreenFrame frame) {
         mScreenStreamService.postScreenFrame(frame);
     }
@@ -414,6 +494,15 @@ public final class LssServer {
         return nsdServiceInfo;
     }
 
+    /**
+     * gRPC service implementation that fans the newest frame out to all connected clients.
+     *
+     * <p>Service calls run on the gRPC server executor. Registration and frame publication are
+     * serialized by {@code mLock}; {@link #stop()} marks the service stopped, releases every client
+     * observer and clears the frame while holding the same lock, so no frame is published after
+     * shutdown starts. Observers remove themselves through their release callback, which re-enters
+     * the same monitor from the releasing thread.</p>
+     */
     private static class ScreenStreamService extends ScreenStreamServiceGrpc.ScreenStreamServiceImplBase {
         private volatile boolean mIsStopped;
 
@@ -425,6 +514,7 @@ public final class LssServer {
         @NonNull
         private final Object mLock = new Object();
 
+        // Copy-on-write so fan-out can iterate while an observer removes itself on release.
         @NonNull
         private final List<ScreenStreamResponseObserver> mScreenStreamResponseObservers = new CopyOnWriteArrayList<>();
 
@@ -432,6 +522,10 @@ public final class LssServer {
             mExecutor = executor;
         }
 
+        /**
+         * Registers a client and immediately sends the latest frame, if one is already available.
+         * Runs on the gRPC server executor.
+         */
         @Override
         public void getScreenStream(Empty request, StreamObserver<ScreenFrame> responseObserver) {
             if (mIsStopped) {
@@ -458,6 +552,9 @@ public final class LssServer {
             }
         }
 
+        /**
+         * Stores the newest frame and offers it to every connected client; called from any thread.
+         */
         public void postScreenFrame(@NonNull final ScreenFrame frame) {
             if (mIsStopped) {
                 return;
@@ -473,6 +570,10 @@ public final class LssServer {
             }
         }
 
+        /**
+         * Marks the service stopped, releases every client and drops the retained frame. Called by
+         * the server's stop() after the gRPC server has been shut down.
+         */
         public void stop() {
             synchronized (mLock) {
                 mIsStopped = true;
@@ -483,6 +584,15 @@ public final class LssServer {
         }
     }
 
+    /**
+     * Per-client stream state. At most one frame is queued: a newer frame replaces the queued one,
+     * and the handler sends only when the gRPC call is ready. The timestamp check prevents sending
+     * the same frame again when readiness is signalled more than once.
+     *
+     * <p>The ready handler and {@link #postScreenFrame} are serialized by {@code mLock}; the gRPC
+     * close and cancel callbacks, as well as {@link #release()}, may arrive on gRPC threads.
+     * Release changes state only once and is also invoked when the enclosing service stops.</p>
+     */
     @Accessors(prefix = "m")
     private static class ScreenStreamResponseObserver {
         private volatile boolean mIsReleased;
@@ -504,6 +614,7 @@ public final class LssServer {
         @NonNull
         private final Object mLock = new Object();
 
+        // Sends the queued frame if it is newer than the last one sent; runs on mExecutor.
         @NonNull
         private final Runnable mOnReadyHandler = new Runnable() {
             @Override
@@ -536,6 +647,10 @@ public final class LssServer {
             mObserver.setOnCancelHandler(this::release);
         }
 
+        /**
+         * Offers a frame to this client. Only the newest frame is kept; when the call is ready the
+         * send is scheduled on the executor, otherwise the frame waits for the ready callback.
+         */
         public void postScreenFrame(@NonNull final ScreenFrame frame) {
             if (mIsReleased) {
                 return;
@@ -553,6 +668,10 @@ public final class LssServer {
             }
         }
 
+        /**
+         * Marks this client released and notifies the enclosing service, which removes it from the
+         * fan-out list. State changes once; extra calls only repeat the notification.
+         */
         public void release() {
             synchronized (mLock) {
                 mIsReleased = true;
@@ -569,6 +688,13 @@ public final class LssServer {
         }
     }
 
+    /**
+     * Aggregated transport accounting while the server is running.
+     *
+     * <p>{@code mLock} guards the transport list and the collection timestamp; byte counters are
+     * atomics updated from gRPC transport threads. {@link #collect()} runs on the main thread,
+     * resets per-transport counters and derives rates over the elapsed interval.</p>
+     */
     @Accessors(prefix = "m")
     private static class ServerProfile {
         @NonNull
@@ -577,6 +703,7 @@ public final class LssServer {
         @NonNull
         private final AtomicLong mCollectionTimestamp = new AtomicLong(SystemClock.elapsedRealtimeNanos());
 
+        // Copy-on-write; the stream tracer reads this without taking mLock.
         @NonNull
         private final List<TransportProfile> mTransports = new CopyOnWriteArrayList<>();
 
@@ -608,6 +735,7 @@ public final class LssServer {
         @NonNull
         public LssServerStats collect() {
             synchronized (mLock) {
+                // getAndSet closes the current interval and opens the next one.
                 final long startTimestamp = mCollectionTimestamp.getAndSet(SystemClock.elapsedRealtimeNanos());
                 final long endTimestamp = mCollectionTimestamp.get();
                 final List<LssServerStats.TransportStats> transports = mTransports.stream()
@@ -636,6 +764,9 @@ public final class LssServer {
             }
         }
 
+        /**
+         * Counters for one remote address seen while the server is running.
+         */
         @Accessors(prefix = "m")
         private static class TransportProfile {
             @Getter(AccessLevel.PRIVATE)

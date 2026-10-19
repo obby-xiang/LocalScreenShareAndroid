@@ -14,6 +14,13 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.experimental.Accessors;
 
+/**
+ * Immutable snapshot of the server's outbound traffic for one collection interval.
+ *
+ * <p>{@link Parcelable} because the service forwards it to activities. The aggregate values cover
+ * the interval since the previous collection; {@link #getTransports()} contains one entry per
+ * transport present when the snapshot was collected.</p>
+ */
 @Accessors(prefix = "m")
 @Data
 @AllArgsConstructor(access = AccessLevel.PRIVATE)
@@ -31,10 +38,19 @@ public class LssServerStats implements Parcelable {
         }
     };
 
+    /**
+     * Total outbound wire bytes over the interval.
+     */
     private final long mOutboundDataSize;
 
+    /**
+     * Total outbound wire bytes per second over the interval.
+     */
     private final long mOutboundDataRate;
 
+    /**
+     * Per-remote-address breakdown for the same interval.
+     */
     @NonNull
     private final List<TransportStats> mTransports;
 
@@ -57,6 +73,12 @@ public class LssServerStats implements Parcelable {
         dest.writeTypedList(mTransports);
     }
 
+    /**
+     * Outbound traffic of one remote transport.
+     *
+     * <p>Ordered by remote address, then by descending data rate, so equal addresses list their
+     * busiest transport first.</p>
+     */
     @Accessors(prefix = "m")
     @Data
     @AllArgsConstructor(access = AccessLevel.PRIVATE)
@@ -78,11 +100,20 @@ public class LssServerStats implements Parcelable {
             Comparator.nullsLast(Comparator.comparing(TransportStats::getRemoteAddress)
                 .thenComparing(TransportStats::getOutboundDataRate, Comparator.reverseOrder()));
 
+        /**
+         * Remote address as reported by the gRPC transport, in socket address form.
+         */
         @NonNull
         private final String mRemoteAddress;
 
+        /**
+         * Outbound wire bytes over the interval.
+         */
         private final long mOutboundDataSize;
 
+        /**
+         * Outbound wire bytes per second over the interval.
+         */
         private final long mOutboundDataRate;
 
         @SuppressWarnings("DataFlowIssue")
@@ -92,6 +123,9 @@ public class LssServerStats implements Parcelable {
             mOutboundDataRate = in.readLong();
         }
 
+        /**
+         * Orders by remote address, then by descending outbound data rate.
+         */
         @Override
         public int compareTo(TransportStats transportStats) {
             return COMPARATOR.compare(this, transportStats);
