@@ -21,9 +21,15 @@ import androidx.annotation.Nullable;
 import androidx.core.content.ContextCompat;
 
 import com.google.protobuf.Empty;
+import com.obby.android.localscreenshare.core.codec.CodecRegistry;
+import com.obby.android.localscreenshare.core.stream.StreamHub;
+import com.obby.android.localscreenshare.core.stream.StreamRuntime;
+import com.obby.android.localscreenshare.grpc.screenstream.ClientMessage;
 import com.obby.android.localscreenshare.grpc.screenstream.ScreenFrame;
 import com.obby.android.localscreenshare.grpc.screenstream.ScreenStreamServiceGrpc;
+import com.obby.android.localscreenshare.grpc.screenstream.ServerMessage;
 import com.obby.android.localscreenshare.support.Constants;
+import com.obby.android.localscreenshare.transport.GrpcMediaTransport;
 import com.obby.android.localscreenshare.support.Preferences;
 import com.obby.android.localscreenshare.utils.NetUtils;
 import com.obby.android.localscreenshare.utils.NsdUtils;
@@ -43,6 +49,7 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.LockSupport;
 import java.util.stream.Collectors;
 
 import io.grpc.Attributes;
@@ -52,6 +59,7 @@ import io.grpc.Metadata;
 import io.grpc.Server;
 import io.grpc.ServerStreamTracer;
 import io.grpc.ServerTransportFilter;
+import io.grpc.Status;
 import io.grpc.okhttp.OkHttpServerBuilder;
 import io.grpc.stub.ServerCallStreamObserver;
 import io.grpc.stub.StreamObserver;
@@ -118,6 +126,20 @@ public final class LssServer {
     @Nullable
     private LssServerStatsListener mServerStatsListener;
 
+    // Media stream wiring: the hub owns per-client send sessions and the runtime owns the encoder.
+    // Both are assembled and started by LssService before the server accepts streams.
+    @Nullable
+    private StreamHub mStreamHub;
+
+    @Nullable
+    private StreamRuntime mStreamRuntime;
+
+    // Session-level secure flag applied to every descriptor; set by LssService.
+    private volatile boolean mSecure;
+
+    // Set by stop(); late stream calls become no-ops.
+    private volatile boolean mIsStopped;
+
     private final String mTag = "LssServer@" + hashCode();
 
     @NonNull
@@ -132,8 +154,8 @@ public final class LssServer {
     @NonNull
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
 
-    // Serves gRPC callbacks and also runs the per-client send handlers; CallerRunsPolicy applies
-    // backpressure by running rejected work on the calling thread.
+    // Serves gRPC callbacks only. Media fan-out now runs on per-client drain threads driven by the
+    // stream hub, so rejected work is aborted instead of running on the caller's thread.
     @NonNull
     private final ExecutorService mGrpcServerExecutor = new ThreadPoolExecutor(Constants.CPU_COUNT,
         Constants.CPU_COUNT * 2, 30L, TimeUnit.SECONDS, new LinkedBlockingQueue<>(10), new BasicThreadFactory.Builder()
@@ -145,10 +167,13 @@ public final class LssServer {
                 super.run();
             }
         })
-        .build(), new ThreadPoolExecutor.CallerRunsPolicy());
+        .build(), new ThreadPoolExecutor.AbortPolicy());
 
     @NonNull
     private final ScreenStreamService mScreenStreamService = new ScreenStreamService(mGrpcServerExecutor);
+
+    @NonNull
+    private final StreamService mStreamService = new StreamService();
 
     // Records each open transport as a per-remote-address entry; called on gRPC transport threads.
     @NonNull
@@ -225,6 +250,7 @@ public final class LssServer {
             .addTransportFilter(mServerTransportFilter)
             .addStreamTracerFactory(mServerStreamTracerFactory)
             .addService(mScreenStreamService)
+            .addService(mStreamService)
             .build();
 
     // Re-resolves the own registration. Every caller goes through postResolveNsdServiceRunnable(),
@@ -378,6 +404,23 @@ public final class LssServer {
     }
 
     /**
+     * Attaches the media stream wiring owned by the capture side.
+     *
+     * <p>Must be called on the main thread before {@link #start()}. The hub and runtime are shared
+     * with {@link com.obby.android.localscreenshare.service.LssService}; this server only reads
+     * them to serve stream calls and never owns their lifecycle.</p>
+     */
+    public void setStream(@NonNull final StreamHub hub, @NonNull final StreamRuntime runtime) {
+        mStreamHub = hub;
+        mStreamRuntime = runtime;
+    }
+
+    /** Sets the session-level secure flag applied to every descriptor. */
+    public void setSecure(final boolean secure) {
+        mSecure = secure;
+    }
+
+    /**
      * Binds the gRPC port and starts advertising the service.
      *
      * <p>Must be called once on the main thread. When this method returns, the gRPC server is
@@ -422,6 +465,7 @@ public final class LssServer {
      * that Android already released is tolerated by the surrounding {@code try} blocks.</p>
      */
     public void stop() {
+        mIsStopped = true;
         mServerInfo = null;
         mNsdServiceInfo = null;
         mServerProfile = null;
@@ -581,6 +625,95 @@ public final class LssServer {
                 mScreenStreamResponseObservers.forEach(ScreenStreamResponseObserver::release);
                 mScreenStreamResponseObservers.clear();
             }
+        }
+    }
+
+    /**
+     * gRPC service implementation for the bidirectional media stream.
+     *
+     * <p>Each call creates a {@link StreamCallHandler} that joins the shared stream hub and drives
+     * one per-client drain thread. The inbound observer only forwards client control messages to
+     * the handler; media is pushed out by the drain thread through the handler's transport, so a
+     * slow client never blocks gRPC callbacks or the encoder.</p>
+     */
+    private final class StreamService extends ScreenStreamServiceGrpc.ScreenStreamServiceImplBase {
+        @Override
+        public StreamObserver<ClientMessage> stream(StreamObserver<ServerMessage> responseObserver) {
+            if (mIsStopped || mStreamHub == null || mStreamRuntime == null) {
+                responseObserver.onCompleted();
+                return new NoopClientObserver();
+            }
+            final StreamCallHandler handler = new StreamCallHandler(mStreamHub, mStreamRuntime,
+                    new GrpcMediaTransport(responseObserver, mSecure));
+            final Thread drain = new Thread(() -> drainLoop(handler, responseObserver),
+                    "lss-stream-drain-" + handler.hashCode());
+            drain.setDaemon(true);
+            drain.start();
+            return new ClientObserver(handler);
+        }
+
+        private void drainLoop(StreamCallHandler handler,
+                               StreamObserver<ServerMessage> responseObserver) {
+            while (!handler.isClosed()) {
+                try {
+                    if (!handler.drainOnce()) {
+                        LockSupport.parkNanos(5_000_000L);
+                    }
+                } catch (IOException | RuntimeException e) {
+                    handler.close();
+                    try {
+                        responseObserver.onError(Status.INTERNAL
+                                .withDescription(e.getMessage())
+                                .asRuntimeException());
+                    } catch (RuntimeException ignored) {
+                        // the observer was already completed
+                    }
+                    return;
+                }
+            }
+        }
+    }
+
+    /** Forwards client control messages to a handler and closes it when the call ends. */
+    private static final class ClientObserver implements StreamObserver<ClientMessage> {
+        private final StreamCallHandler handler;
+
+        ClientObserver(StreamCallHandler handler) {
+            this.handler = handler;
+        }
+
+        @Override
+        public void onNext(ClientMessage message) {
+            try {
+                handler.onClientMessage(message);
+            } catch (RuntimeException e) {
+                handler.close();
+            }
+        }
+
+        @Override
+        public void onError(Throwable t) {
+            handler.close();
+        }
+
+        @Override
+        public void onCompleted() {
+            handler.close();
+        }
+    }
+
+    /** Discards every client message; used once the server has stopped. */
+    private static final class NoopClientObserver implements StreamObserver<ClientMessage> {
+        @Override
+        public void onNext(ClientMessage value) {
+        }
+
+        @Override
+        public void onError(Throwable t) {
+        }
+
+        @Override
+        public void onCompleted() {
         }
     }
 

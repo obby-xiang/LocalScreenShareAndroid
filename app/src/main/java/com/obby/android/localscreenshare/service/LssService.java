@@ -61,6 +61,15 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.protobuf.ByteString;
 import com.obby.android.localscreenshare.MainActivity;
 import com.obby.android.localscreenshare.R;
+import com.obby.android.localscreenshare.core.codec.CodecIds;
+import com.obby.android.localscreenshare.core.codec.CodecRegistry;
+import com.obby.android.localscreenshare.core.codec.h264.H264Codec;
+import com.obby.android.localscreenshare.core.model.BitstreamFormat;
+import com.obby.android.localscreenshare.core.model.StreamDescriptor;
+import com.obby.android.localscreenshare.core.model.StreamKey;
+import com.obby.android.localscreenshare.core.model.StreamParameters;
+import com.obby.android.localscreenshare.core.stream.StreamHub;
+import com.obby.android.localscreenshare.core.stream.StreamRuntime;
 import com.obby.android.localscreenshare.grpc.screenstream.ScreenFrame;
 import com.obby.android.localscreenshare.server.LssServer;
 import com.obby.android.localscreenshare.server.LssServerInfo;
@@ -136,6 +145,20 @@ public class LssService extends Service {
     // Main-thread state; non-null only between a successful start and stopService().
     @Nullable
     private LssServer mServer;
+
+    // Media stream wiring: the runtime owns the encoder and the hub owns per-client sessions. All
+    // are assembled on start and torn down before the capture resources are released.
+    @Nullable
+    private CodecRegistry mCodecRegistry;
+
+    @Nullable
+    private StreamRuntime mStreamRuntime;
+
+    @Nullable
+    private StreamHub mStreamHub;
+
+    @Nullable
+    private StreamKey mStreamKey;
 
     // Main-thread handle on the projection; released by stopService().
     @Nullable
@@ -479,11 +502,30 @@ public class LssService extends Service {
             return START_NOT_STICKY;
         }
 
+        // The consent result is used once; the callback is registered on the main looper so
+        // teardown triggered by the system stays on the main thread.
+        mMediaProjection = getMediaProjection(intent);
+        mMediaProjection.registerCallback(mMediaProjectionCallback, new Handler(Looper.getMainLooper()));
+        mProjectionSize = getProjectionSize();
+
+        // Assemble the media stream: an H.264 runtime feeding a shared hub that the server fans out
+        // to per-client sessions. The encoder starts before the display renders into its surface.
+        try {
+            startStreamPipeline();
+        } catch (RuntimeException e) {
+            Log.e(mTag, "onStartCommand: start stream pipeline failed", e);
+            Toast.makeText(this, R.string.start_service_failed, Toast.LENGTH_LONG).show();
+            stopService();
+            return START_NOT_STICKY;
+        }
+
         // The server binds the configured port and starts advertising over NSD; its listeners
         // are invoked on the main thread.
         mServer = new LssServer(this);
         mServer.setServerInfoListener(mServerInfoListener);
         mServer.setServerStatsListener(mServerStatsListener);
+        mServer.setStream(mStreamHub, mStreamRuntime);
+        mServer.setSecure(mIsProjectionSecure);
 
         try {
             mServer.start();
@@ -494,29 +536,11 @@ public class LssService extends Service {
             return START_NOT_STICKY;
         }
 
-        // The consent result is used once; the callback is registered on the main looper so
-        // teardown triggered by the system stays on the main thread.
-        mMediaProjection = getMediaProjection(intent);
-        mMediaProjection.registerCallback(mMediaProjectionCallback, new Handler(Looper.getMainLooper()));
-        mProjectionSize = getProjectionSize();
-
-        // Image callbacks run on a background thread. The reader is created before the display so
-        // the first frame always has a destination.
-        mImageReaderHandlerThread =
-            new HandlerThread(IMAGE_READER_HANDLER_THREAD_NAME, Process.THREAD_PRIORITY_BACKGROUND);
-        mImageReaderHandlerThread.start();
-        mImageReaderHandler = new Handler(mImageReaderHandlerThread.getLooper());
-
-        mImageReader = ImageReader.newInstance(mProjectionSize.getWidth(), mProjectionSize.getHeight(),
-            PixelFormat.RGBA_8888, IMAGE_READER_MAX_IMAGES);
-        mFrameTimestamp = -1L;
-        mImageReader.setOnImageAvailableListener(mOnImageAvailableListener, mImageReaderHandler);
-
-        // The virtual display renders the captured screen into the reader surface.
+        // The virtual display renders the captured screen into the encoder's input surface.
         mVirtualDisplay = mMediaProjection.createVirtualDisplay(VIRTUAL_DISPLAY_NAME, mProjectionSize.getWidth(),
             mProjectionSize.getHeight(), getResources().getConfiguration().densityDpi,
             DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC | DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY,
-            mImageReader.getSurface(), mVirtualDisplayCallback, new Handler(Looper.getMainLooper()));
+            mStreamRuntime.getInputSurface(), mVirtualDisplayCallback, new Handler(Looper.getMainLooper()));
 
         // The chip is only shown once the pipeline is complete.
         mScreenShareChip = new ScreenShareChip(this);
@@ -551,6 +575,19 @@ public class LssService extends Service {
             mScreenShareChip.dismiss();
             mScreenShareChip = null;
         }
+
+        // Stop the encoder before releasing the capture surface, so no frame is produced while the
+        // display is being torn down. Detaching the hub's sessions closes their transports.
+        if (mStreamRuntime != null) {
+            mStreamRuntime.close();
+            mStreamRuntime = null;
+        }
+        if (mStreamHub != null && mStreamKey != null) {
+            mStreamHub.unregister(mStreamKey);
+            mStreamHub = null;
+        }
+        mStreamKey = null;
+        mCodecRegistry = null;
 
         if (mVirtualDisplay != null) {
             mVirtualDisplay.release();
@@ -735,6 +772,33 @@ public class LssService extends Service {
         final MediaProjectionManager mediaProjectionManager = getSystemService(MediaProjectionManager.class);
         return mediaProjectionManager.getMediaProjection(mediaProjectionResult.getResultCode(),
             mediaProjectionResult.getData());
+    }
+
+    /**
+     * Builds the codec registry, the stream runtime and the stream hub, then starts the encoder.
+     *
+     * <p>The registry registers JPEG by default and adds H.264 explicitly; H.264 is the primary
+     * capture mode and requires an input surface, which the virtual display is pointed at once this
+     * method returns. The stream identity uses the configured service id as its session instance.
+     * Parameters use {@link StreamParameters#DEFAULT} until the preference wiring lands.</p>
+     */
+    private void startStreamPipeline() {
+        mCodecRegistry = CodecRegistry.withDefaults();
+        mCodecRegistry.register(H264Codec.androidRegistration());
+
+        mStreamKey = new StreamKey(Preferences.get().getServiceId(), "screen");
+        StreamDescriptor requested = StreamDescriptor.builder(mStreamKey, 1, CodecIds.H264,
+                        H264Codec.MIME, BitstreamFormat.ANNEX_B)
+                .codedSize(mProjectionSize.getWidth(), mProjectionSize.getHeight())
+                .visibleSize(mProjectionSize.getWidth(), mProjectionSize.getHeight())
+                .build();
+
+        mStreamRuntime = new StreamRuntime(mCodecRegistry, mStreamKey, requested,
+                StreamParameters.DEFAULT);
+        mStreamHub = new StreamHub(mCodecRegistry);
+        mStreamHub.register(mStreamRuntime);
+        mStreamHub.activate(mStreamKey);
+        mStreamRuntime.start();
     }
 
     // Maximum window bounds of the current display, scaled by the projection scale preference.
