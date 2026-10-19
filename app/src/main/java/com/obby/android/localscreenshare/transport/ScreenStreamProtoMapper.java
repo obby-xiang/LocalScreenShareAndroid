@@ -7,14 +7,15 @@ import com.obby.android.localscreenshare.core.model.EncodedAccessUnit;
 import com.obby.android.localscreenshare.core.model.JoinInfo;
 import com.obby.android.localscreenshare.core.model.StreamDescriptor;
 import com.obby.android.localscreenshare.core.model.StreamKey;
+import com.obby.android.localscreenshare.core.stream.ClientCapabilities;
+import com.obby.android.localscreenshare.core.stream.CodecCapability;
 import com.obby.android.localscreenshare.grpc.screenstream.Capabilities;
-import com.obby.android.localscreenshare.grpc.screenstream.CodecCapability;
 import com.obby.android.localscreenshare.grpc.screenstream.ClientMessage;
 
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Set;
+import java.util.Map;
 
 /**
  * Stateless mapper between the framework's stream model and the wire protocol.
@@ -173,34 +174,67 @@ public final class ScreenStreamProtoMapper {
     }
 
     /**
-     * Maps a set of codec ids to a wire capabilities message.
+     * Maps client capabilities to a wire capabilities message.
      *
-     * <p>This is the interim codec-id-only form; the full per-codec capability model replaces it
-     * once runtime capability detection lands.</p>
+     * <p>Each per-codec capability carries its profile, level and size/rate bounds; a zero bound or
+     * a null profile/level means "unconstrained" and is simply omitted on the wire.</p>
      */
-    public static Capabilities toProtoCapabilities(Set<String> codecIds) {
+    public static Capabilities toProtoCapabilities(ClientCapabilities capabilities) {
         Capabilities.Builder builder = Capabilities.newBuilder();
-        if (codecIds != null) {
-            for (String codecId : codecIds) {
-                builder.addCodecs(CodecCapability.newBuilder().setCodecId(codecId).build());
+        if (capabilities != null) {
+            for (CodecCapability capability : capabilities.getCapabilities().values()) {
+                builder.addCodecs(toProtoCodecCapability(capability));
             }
         }
         return builder.build();
     }
 
     /**
-     * Extracts the codec-id set from a wire capabilities message, or an empty set when null.
+     * Rebuilds client capabilities from a wire capabilities message, or empty capabilities when
+     * null.
      */
-    public static Set<String> toCodecIds(Capabilities capabilities) {
-        Set<String> codecIds = new LinkedHashSet<>();
+    public static ClientCapabilities toClientCapabilities(Capabilities capabilities) {
+        Map<String, CodecCapability> map = new LinkedHashMap<>();
         if (capabilities != null) {
-            for (CodecCapability codec : capabilities.getCodecsList()) {
-                if (codec.getCodecId() != null && !codec.getCodecId().isEmpty()) {
-                    codecIds.add(codec.getCodecId());
+            for (com.obby.android.localscreenshare.grpc.screenstream.CodecCapability proto
+                    : capabilities.getCodecsList()) {
+                if (proto.getCodecId() != null && !proto.getCodecId().isEmpty()) {
+                    map.put(proto.getCodecId(), toCodecCapability(proto));
                 }
             }
         }
-        return codecIds;
+        return new ClientCapabilities(map);
+    }
+
+    private static com.obby.android.localscreenshare.grpc.screenstream.CodecCapability
+            toProtoCodecCapability(CodecCapability capability) {
+        com.obby.android.localscreenshare.grpc.screenstream.CodecCapability.Builder builder =
+                com.obby.android.localscreenshare.grpc.screenstream.CodecCapability.newBuilder()
+                        .setCodecId(capability.getCodecId())
+                        .setMaxWidth(capability.getMaxWidth())
+                        .setMaxHeight(capability.getMaxHeight())
+                        .setMaxFrameRate(capability.getMaxFrameRate())
+                        .setMaxBitrateBps(capability.getMaxBitrateBps())
+                        .setSurfaceOutput(capability.isSurfaceOutput())
+                        .setAdaptive(capability.isAdaptive());
+        if (capability.getMime() != null) {
+            builder.setMime(capability.getMime());
+        }
+        if (capability.getProfile() != null) {
+            builder.setProfile(capability.getProfile());
+        }
+        if (capability.getLevel() != null) {
+            builder.setLevel(capability.getLevel());
+        }
+        return builder.build();
+    }
+
+    private static CodecCapability toCodecCapability(
+            com.obby.android.localscreenshare.grpc.screenstream.CodecCapability proto) {
+        return new CodecCapability(proto.getCodecId(), nullIfEmpty(proto.getMime()),
+                nullIfEmpty(proto.getProfile()), nullIfEmpty(proto.getLevel()),
+                proto.getMaxWidth(), proto.getMaxHeight(), proto.getMaxFrameRate(),
+                proto.getMaxBitrateBps(), proto.getSurfaceOutput(), proto.getAdaptive());
     }
 
     /**

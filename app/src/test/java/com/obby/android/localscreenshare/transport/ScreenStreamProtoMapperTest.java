@@ -16,6 +16,8 @@ import com.obby.android.localscreenshare.core.model.EncodedAccessUnit;
 import com.obby.android.localscreenshare.core.model.JoinInfo;
 import com.obby.android.localscreenshare.core.model.StreamDescriptor;
 import com.obby.android.localscreenshare.core.model.StreamKey;
+import com.obby.android.localscreenshare.core.stream.ClientCapabilities;
+import com.obby.android.localscreenshare.core.stream.CodecCapability;
 import com.obby.android.localscreenshare.grpc.screenstream.Capabilities;
 import com.obby.android.localscreenshare.grpc.screenstream.ClientMessage;
 import com.obby.android.localscreenshare.grpc.screenstream.Hello;
@@ -25,9 +27,9 @@ import com.obby.android.localscreenshare.grpc.screenstream.RequestKeyframe;
 import org.junit.Test;
 
 import java.util.Arrays;
-import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Set;
+import java.util.Map;
 
 /** Unit tests for {@link ScreenStreamProtoMapper}. */
 public class ScreenStreamProtoMapperTest {
@@ -141,15 +143,32 @@ public class ScreenStreamProtoMapperTest {
     }
 
     @Test
-    public void capabilitiesRoundTripCodecIds() {
-        Set<String> ids = new LinkedHashSet<>(Arrays.asList("h264", "jpeg"));
-        Capabilities wire = ScreenStreamProtoMapper.toProtoCapabilities(ids);
-        assertEquals(ids, ScreenStreamProtoMapper.toCodecIds(wire));
+    public void capabilitiesRoundTripFullModel() {
+        Map<String, CodecCapability> caps = new LinkedHashMap<>();
+        caps.put("h264", new CodecCapability("h264", "video/avc", "baseline", "3.1",
+                1920, 1080, 60, 8_000_000, true, false));
+        caps.put("jpeg", CodecCapability.any("jpeg"));
+        ClientCapabilities clientCaps = new ClientCapabilities(caps);
+
+        Capabilities wire = ScreenStreamProtoMapper.toProtoCapabilities(clientCaps);
+        ClientCapabilities rebuilt = ScreenStreamProtoMapper.toClientCapabilities(wire);
+
+        assertEquals(clientCaps.getCodecIds(), rebuilt.getCodecIds());
+        CodecCapability h264 = rebuilt.getCapability("h264");
+        assertEquals("video/avc", h264.getMime());
+        assertEquals("baseline", h264.getProfile());
+        assertEquals("3.1", h264.getLevel());
+        assertEquals(1920, h264.getMaxWidth());
+        assertEquals(1080, h264.getMaxHeight());
+        assertEquals(60, h264.getMaxFrameRate());
+        assertEquals(8_000_000, h264.getMaxBitrateBps());
+        assertTrue(h264.isSurfaceOutput());
+        assertFalse(h264.isAdaptive());
     }
 
     @Test
-    public void capabilitiesNullMapsToEmptySet() {
-        assertTrue(ScreenStreamProtoMapper.toCodecIds(null).isEmpty());
+    public void capabilitiesNullMapsToEmptyCapabilities() {
+        assertTrue(ScreenStreamProtoMapper.toClientCapabilities(null).getCodecIds().isEmpty());
     }
 
     @Test

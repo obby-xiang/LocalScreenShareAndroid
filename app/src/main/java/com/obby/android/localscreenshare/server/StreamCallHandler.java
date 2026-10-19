@@ -132,8 +132,7 @@ public final class StreamCallHandler {
             clientId = "client-" + UUID.randomUUID();
         }
         pendingClientId = clientId;
-        pendingCapabilities = new ClientCapabilities(
-                ScreenStreamProtoMapper.toCodecIds(hello.getCapabilities()));
+        pendingCapabilities = ScreenStreamProtoMapper.toClientCapabilities(hello.getCapabilities());
         if (pendingCapabilities.getCodecIds().isEmpty()) {
             // Old clients that declare nothing are assumed to support the H.264 baseline.
             pendingCapabilities = new ClientCapabilities(

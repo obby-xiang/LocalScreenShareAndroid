@@ -14,7 +14,9 @@ import com.obby.android.localscreenshare.grpc.screenstream.Hello;
 import com.obby.android.localscreenshare.grpc.screenstream.RequestKeyframe;
 import com.obby.android.localscreenshare.grpc.screenstream.ScreenStreamServiceGrpc;
 import com.obby.android.localscreenshare.grpc.screenstream.ServerMessage;
+import com.obby.android.localscreenshare.support.CodecCapabilityProbe;
 import com.obby.android.localscreenshare.support.Constants;
+import com.obby.android.localscreenshare.transport.ScreenStreamProtoMapper;
 
 import org.apache.commons.lang3.concurrent.BasicThreadFactory;
 
@@ -263,6 +265,8 @@ public final class LssClient {
             .setHello(Hello.newBuilder()
                 .setProtocolVersion(1)
                 .setClientId("client-" + UUID.randomUUID())
+                .setCapabilities(ScreenStreamProtoMapper.toProtoCapabilities(
+                    CodecCapabilityProbe.probeClientDecoders()))
                 .build())
             .build());
 
