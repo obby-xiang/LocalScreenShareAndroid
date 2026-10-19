@@ -8,10 +8,98 @@ import "google/protobuf/empty.proto";
 
 service ScreenStreamService {
   rpc GetScreenStream(google.protobuf.Empty) returns (stream ScreenFrame) {}
+  rpc Stream(stream ClientMessage) returns (stream ServerMessage) {}
 }
 
 message ScreenFrame {
   int64 timestamp = 1;
   bytes data = 2;
   bool secure = 3;
+}
+
+message ClientMessage {
+  oneof payload {
+    Hello hello = 1;
+    Ready ready = 2;
+    RequestKeyframe request_keyframe = 3;
+  }
+}
+
+message Hello {
+  int32 protocol_version = 1;
+  string client_id = 2;
+  Capabilities capabilities = 3;
+}
+
+message Ready {}
+
+message RequestKeyframe {}
+
+message Capabilities {
+  repeated CodecCapability codecs = 1;
+}
+
+message CodecCapability {
+  string codec_id = 1;
+  string mime = 2;
+  string profile = 3;
+  string level = 4;
+  int32 max_width = 5;
+  int32 max_height = 6;
+  int32 max_frame_rate = 7;
+  int32 max_bitrate_bps = 8;
+  bool surface_output = 9;
+  bool adaptive = 10;
+}
+
+message ServerMessage {
+  oneof payload {
+    Descriptor descriptor = 1;
+    AccessUnit access_unit = 2;
+  }
+}
+
+message Descriptor {
+  int32 protocol_version = 1;
+  int32 config_epoch = 2;
+  string codec_id = 3;
+  string mime = 4;
+  string profile = 5;
+  string level = 6;
+  int32 coded_width = 7;
+  int32 coded_height = 8;
+  int32 visible_width = 9;
+  int32 visible_height = 10;
+  int32 rotation_degrees = 11;
+  string bitstream_format = 12;
+  repeated ConfigPart config_parts = 13;
+  ColorInfo color = 14;
+  string config_hash = 15;
+  bool secure = 16;
+}
+
+message ConfigPart {
+  string id = 1;
+  bytes payload = 2;
+}
+
+message ColorInfo {
+  string color_space = 1;
+  string transfer_function = 2;
+  bool full_range = 3;
+}
+
+message AccessUnit {
+  int32 config_epoch = 1;
+  int64 sequence = 2;
+  int64 pts_us = 3;
+  int64 dts_us = 4;
+  bool has_dts = 5;
+  bool sync_point = 6;
+  bool join_point = 7;
+  bool config = 8;
+  bytes payload = 9;
+  repeated ConfigPart join_config_parts = 10;
+  int32 temporal_layer_id = 11;
+  bool has_temporal_layer_id = 12;
 }
