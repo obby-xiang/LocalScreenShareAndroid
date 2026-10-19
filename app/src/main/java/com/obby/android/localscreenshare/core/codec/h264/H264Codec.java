@@ -41,6 +41,10 @@ public final class H264Codec {
      * on the encode side, samples are produced from an input {@code Surface}. The codec carries its
      * decode configuration as SPS/PPS config parts (rather than deriving it lazily), which is why
      * {@code carriesConfigParts} is set.</p>
+     *
+     * <p>The fallback priority is {@code 10}, lower than the JPEG registration's {@code 100}, so a
+     * hub proposing an explicit common fallback prefers H.264 when both are registered. The priority
+     * is metadata for that proposal only; it never switches an active stream by itself.</p>
      */
     public static CodecRegistration registration(MediaCodecBridgeFactory bridgeFactory) {
         if (bridgeFactory == null) {

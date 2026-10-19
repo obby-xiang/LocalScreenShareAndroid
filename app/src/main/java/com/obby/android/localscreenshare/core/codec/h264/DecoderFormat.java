@@ -2,6 +2,22 @@ package com.obby.android.localscreenshare.core.codec.h264;
 
 import android.view.Surface;
 
+/**
+ * Immutable decoder configuration handed to
+ * {@link MediaCodecDecoderBridge#configure(DecoderFormat)}.
+ *
+ * <p>The two CSD blobs are Annex B parameter-set NAL units, start code included, produced by
+ * {@link H264ConfigExtractor#toAnnexB(byte[])}. Config parts themselves are stored without start
+ * codes, but the platform decoder expects Annex B here. The sizes are the descriptor's coded size,
+ * not its visible size.</p>
+ *
+ * <p>The output surface is the render target's current surface; it is never owned or released by
+ * the decoder. It may be {@code null} only for JVM fakes: the Android bridge rejects a null surface
+ * at configure time, so a missing surface must be resolved by re-creating the decoder rather than by
+ * mutating this format.</p>
+ *
+ * <p>Byte arrays are copied on the way in and on the way out.</p>
+ */
 public final class DecoderFormat {
 
     private final int width;

@@ -2,6 +2,18 @@ package com.obby.android.localscreenshare.core.codec.h264;
 
 import com.obby.android.localscreenshare.core.model.ColorInfo;
 
+/**
+ * Snapshot of the encoder's output format, returned by
+ * {@link MediaCodecEncoderBridge#getOutputFormat()}.
+ *
+ * <p>This is a data carrier only: it deliberately does not validate the size, so a fake can produce
+ * a non-positive size and let {@code H264Encoder} treat it as a terminal configuration failure
+ * instead of silently falling back to the requested coded size. The CSD blobs are the platform's
+ * {@code csd-0}/{@code csd-1} bytes, which may be absent or use AVCC framing; the config extractor
+ * normalizes them. Color may be {@link ColorInfo#UNSPECIFIED} when the platform reports none.</p>
+ *
+ * <p>Byte arrays are copied defensively and the instance is immutable.</p>
+ */
 public final class EncoderStreamFormat {
 
     private final byte[] csd0;

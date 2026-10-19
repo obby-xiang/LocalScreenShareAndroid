@@ -54,6 +54,25 @@ public final class H264AccessUnitInfo {
         return vclCount > 0;
     }
 
+    /**
+     * Whether this access unit is a validated random-access point a new decoder can start from.
+     *
+     * <p>All of the following must hold:</p>
+     * <ul>
+     *   <li>the access unit contains at least one VCL unit;</li>
+     *   <li>the first VCL unit is a type 5 (IDR) NAL unit;</li>
+     *   <li>that unit has {@code nal_ref_idc != 0};</li>
+     *   <li>its {@code first_mb_in_slice} is {@code 0}, so the slice starts the picture;</li>
+     *   <li>its {@code slice_type % 5} is 2 (I) or 4 (SI).</li>
+     * </ul>
+     *
+     * <p>The per-slice conditions are evaluated on the first VCL unit only, while the B-slice rule
+     * covers every VCL unit: an access unit carrying a B slice anywhere is not joinable, because
+     * this adapter rejects B slices on both the encode and the decode side.</p>
+     *
+     * <p>An encoder's keyframe flag is never consulted; the decision comes from the payload alone.
+     * This is the predicate behind {@link H264AnnexBParser#isIdrAccessUnit(byte[])}.</p>
+     */
     public boolean isJoinable() {
         if (!hasVcl()) {
             return false;

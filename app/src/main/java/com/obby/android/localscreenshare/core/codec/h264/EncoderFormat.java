@@ -1,5 +1,18 @@
 package com.obby.android.localscreenshare.core.codec.h264;
 
+/**
+ * Immutable encoder configuration handed to
+ * {@link MediaCodecEncoderBridge#configure(EncoderFormat)}.
+ *
+ * <p>Values are already normalized by the caller: bitrate and frame rate are at least 1, and
+ * {@link #getKeyFrameIntervalSeconds()} is the millisecond interval rounded up to whole seconds with
+ * a floor of 1, because the platform key is expressed in seconds. The size is the requested coded
+ * size; the actual coded size is only known once the codec reports its output format, which is why
+ * the adapter publishes configuration after starting rather than before.</p>
+ *
+ * <p>No profile, level or B-frame field is carried here; the bridge supplies the remaining platform
+ * keys itself, so the codec's own defaults apply to everything not listed above.</p>
+ */
 public final class EncoderFormat {
 
     private final int width;
