@@ -23,11 +23,11 @@
 
 - 基线参考：`65a34dc`（TB-ENG-004 完成标记）。
 - 编码框架隔离核心批次（Task 1–9，代码范围 `9f650dc..2a95ab2`）见 [TB-DOC-008](#tb-doc-008) 与 [TB-FW-001](#tb-fw-001)；最近完成的条目见 [TB-ENG-004](#tb-eng-004) 与 [TB-ENG-003](#tb-eng-003)。
-- H.264：适配器与两阶段配置发布已落地，仅经 JVM/fake 与编译级 androidTest 验证，详见 [TB-FW-003](#tb-fw-003)。
-- H.264 仍是隔离实现：**未接现有投屏**，无编码切换编排、无 TCP 或设备验证。
+- 媒体路径生产接线（批次 A–H）已完成代码层面：双向流协议、StreamRuntime/StreamHub 服务端接线、H.264 采集直通、客户端 ClientMediaSession/Surface 渲染、JPEG 回退、能力选档与切换编排均已落地；仅经 JVM/fake 与编译验证，详见 [TB-FW-003](#tb-fw-003)。
+- 未做设备/真机/模拟器验证：全程未运行 adb、`connectedAndroidTest`、安装或启动 App；编码切换、Surface 恢复与多客户端行为均无实测数据。
 - 编码框架隔离核心（契约、StreamHub、有界队列、六状态机、JPEG 参考适配）已完成并通过 JVM 验证，见 [TB-FW-001](#tb-fw-001)、[TB-FW-004](#tb-fw-004)、[TB-FW-005](#tb-fw-005)、[TB-FW-002](#tb-fw-002)。
-- 问题 3 尚未由用户明确关闭，不能标记完成；API 25 只是兼容下限，能力按运行时探测分档。
-- 编码框架待收尾：TB-FW-002 与 TB-FW-003 部分完成，TB-FW-006、TB-FW-007、TB-FW-008 未完成。
+- 问题 3 尚未由用户明确关闭，不能标记完成；代码完成 ≠ 问题关闭，API 25 只是兼容下限，能力按运行时探测分档。
+- 编码框架待收尾：TB-FW-003、TB-FW-006、TB-MEDIA-001、TB-MEDIA-003 等待设备验证；TB-FW-002 仍部分完成；TB-FW-007、TB-FW-008 未完成。
 - 阶段 0/1 的代码优化尚未开始，当前没有进行中的代码任务。
 - 下一步：按 [渐进优化路线图](optimization-roadmap.md) 的阶段 0 启动可观测性与基线，落地顺序以 [编码框架](codec-framework.md) 为准。
 - 前置约束：拿到基线前，不预设任何性能、发热或延迟收益。
@@ -49,10 +49,6 @@
 | TB-CORE-002 | 📋 待办 | 🔴 P0 | 会话与渲染目标解耦 | 2026-10-17 | — | [窗口与会话设计](windowing-session-design.md) |
 | TB-OBS-001 | 📋 待办 | 🔴 P0 | 可观测性与基线 | 2026-10-17 | — | [路线图阶段 0](optimization-roadmap.md) |
 | TB-FW-002 | 🔶 部分完成 | 🟠 P1 | JPEG 适配 | 2026-10-17 | — | [编码框架设计](codec-framework.md) |
-| TB-FW-003 | 🔶 部分完成 | 🟠 P1 | H.264 单流 TCP | 2026-10-17 | — | [H.264 实施计划](superpowers/plans/2026-10-18-h264-adapter.md) |
-| TB-FW-006 | 📋 待办 | 🟠 P1 | 编码切换编排 | 2026-10-17 | — | [编码框架设计](codec-framework.md) |
-| TB-MEDIA-001 | 📋 待办 | 🟠 P1 | H.264 硬编硬解 | 2026-10-17 | — | [媒体架构](media-architecture.md) |
-| TB-MEDIA-003 | 📋 待办 | 🟠 P1 | 运行时能力探测 | 2026-10-17 | — | [媒体架构](media-architecture.md) |
 | TB-SEC-001 | 📋 待办 | 🟠 P1 | 配对与传输加密 | 2026-10-17 | — | [媒体架构](media-architecture.md) |
 | TB-WIN-001 | 📋 待办 | 🟠 P1 | 窗口切换 | 2026-10-17 | — | [窗口与会话设计](windowing-session-design.md) |
 | TB-AUDIO-001 | 📋 待办 | 🟡 P2 | 音频链路 | 2026-10-17 | — | [媒体架构](media-architecture.md) |
@@ -64,7 +60,7 @@
 | TB-FW-007 | 📋 待办 | 🟡 P2 | HEVC 扩展验证 | 2026-10-17 | — | [编码框架设计](codec-framework.md) |
 | TB-FW-008 | 📋 待办 | 🟡 P2 | 框架测试与证据 | 2026-10-17 | — | [编码框架设计](codec-framework.md) |
 
-> 说明：`TB-FW-001` 至 `TB-FW-008` 是 `TB-MEDIA-001`、`TB-CLIENT-001` 与 `TB-CLIENT-002` 的框架分解，实施时合并跟踪，不重复计算完成率。`TB-FW-001`、`TB-FW-004`、`TB-FW-005` 已完成（隔离契约、Hub/队列与客户端状态机的 JVM 验证）；`TB-FW-002` 部分完成（JPEG 参考适配与 JVM E2E）；`TB-FW-003` 部分完成（H.264 适配器与两阶段配置发布、JVM/fake 验证；未接现有投屏、未做切换编排与 TCP/设备验证）；`TB-FW-006`、`TB-FW-007`、`TB-FW-008` 仍未完成，不代表 H.264 投屏接入、RTP 或设备验证已经存在。
+> 说明：`TB-FW-001` 至 `TB-FW-008` 是 `TB-MEDIA-001`、`TB-CLIENT-001` 与 `TB-CLIENT-002` 的框架分解，实施时合并跟踪，不重复计算完成率。`TB-FW-001`、`TB-FW-004`、`TB-FW-005` 已完成（隔离契约、Hub/队列与客户端状态机的 JVM 验证）；`TB-FW-002` 部分完成（JPEG 参考适配与 JVM E2E，批次 D 已接入生产降级路径）；`TB-FW-003`、`TB-FW-006`、`TB-MEDIA-001`、`TB-MEDIA-003` 已转「⏳ 等待验证」（批次 A–H 完成生产接线、切换编排、H.264 硬编硬解与能力选档，仅 JVM/fake 与编译验证）；`TB-FW-007`、`TB-FW-008` 仍未完成。代码完成不代表设备验证、RTP 或问题关闭已经存在。
 
 ## ✅ 已完成
 
@@ -85,12 +81,16 @@
 | TB-DOC-006 | ✅ 已完成 | — | 启动与签名清单 | 2026-10-17 | 2026-10-17 | [启动与签名清单](startup-checklist.md) |
 | TB-DOC-007 | ✅ 已完成 | — | 签名包与三设备安装 | 2026-10-17 | 2026-10-17 | [启动与签名清单](startup-checklist.md) |
 
-> 说明：编码框架的隔离核心契约、静态注册、单活动流 Runtime、StreamHub、每客户端有界队列、客户端六状态机与 JPEG 独立帧参考适配已完成并通过 JVM 验证（Task 1–9）；已完成项不接现有投屏。另有 H.264 适配器与两阶段配置发布已落地（仅经 JVM/fake 及编译验证），同样未接现有投屏、未做切换编排与设备验证；RTP/HEVC/AV1 未实现。其余代码优化任务（TB-CORE、TB-MEDIA、TB-WIN、TB-CLIENT、TB-AUDIO、TB-CTRL 等）仍未开始。
+> 说明：编码框架的隔离核心契约、静态注册、单活动流 Runtime、StreamHub、每客户端有界队列、客户端六状态机与 JPEG 独立帧参考适配已完成并通过 JVM 验证（Task 1–9）；这些条目完成时尚未接入生产投屏，后续批次 A–H 已把框架接入 `LssService`/`LssServer`/`LssClient`（H.264 采集直通、客户端 Surface 渲染、JPEG 降级、能力选档与切换编排，仅经 JVM/fake 及编译验证），设备验证仍未执行；RTP/HEVC/AV1 未实现。其余代码优化任务（TB-CORE、TB-WIN、TB-CLIENT、TB-AUDIO、TB-CTRL 等）仍未开始。
 
 ## ⏳ 等待验证
 
 | ID | 状态 | 优先级 | 标题 | 创建 | 完成 | 关联 |
 | --- | --- | --- | --- | --- | --- | --- |
+| TB-FW-003 | ⏳ 等待验证 | 🟠 P1 | H.264 单流 TCP | 2026-10-17 | — | [H.264 实施计划](superpowers/plans/2026-10-18-h264-adapter.md) |
+| TB-FW-006 | ⏳ 等待验证 | 🟠 P1 | 编码切换编排 | 2026-10-17 | — | [编码框架设计](codec-framework.md) |
+| TB-MEDIA-001 | ⏳ 等待验证 | 🟠 P1 | H.264 硬编硬解 | 2026-10-17 | — | [媒体架构](media-architecture.md) |
+| TB-MEDIA-003 | ⏳ 等待验证 | 🟠 P1 | 运行时能力探测 | 2026-10-17 | — | [媒体架构](media-architecture.md) |
 | TB-CODEC-001 | ⏳ 等待验证 | ⚪ P3 | HEVC 可选档位 | 2026-10-17 | — | [媒体架构](media-architecture.md) |
 | TB-NET-001 | ⏳ 等待验证 | ⚪ P3 | RTP/UDP 传输 | 2026-10-17 | — | [路线图阶段 5](optimization-roadmap.md) |
 | TB-NET-002 | ⏳ 等待验证 | ⚪ P3 | WebRTC 互操作 | 2026-10-17 | — | [路线图阶段 5](optimization-roadmap.md) |
@@ -153,48 +153,8 @@
 
 - **状态 / 优先级 / 创建 / 完成**：🔶 部分完成 / 🟠 P1 / 2026-10-17 / —
 - **任务**：JPEG 适配：独立像素路径，只有完整帧可加入；慢客户端只保留最新完整帧；把现有 JPEG 路径接入框架。
-- **交付物 / 验证证据**：已完成：`core/codec/jpeg` 的独立帧参考适配（完整性校验、完整帧才可加入、`KEEP_LATEST_FRAME`）、`JpegCodec` 静态注册与 JPEG 空配置端到端（descriptor 先于 AU、客户端 `STREAMING`、`FakeRenderTarget` 收到完整帧）；`StreamFrameworkEndToEndTest.jpegEmptyConfig_worksEndToEnd` 与 `JpegCodecTest` 通过，全量 155 tests。未完成：像素获取迁移、Service/UI 接线、旧 JPEG 路径切换、真实设备验证。**不得宣称已接入现有投屏。**
+- **交付物 / 验证证据**：已完成：`core/codec/jpeg` 的独立帧参考适配（完整性校验、完整帧才可加入、`KEEP_LATEST_FRAME`）、`JpegCodec` 静态注册与 JPEG 空配置端到端；批次 D `8a9c921` 新增 `FrameInputEncoder` 与 `StreamRuntime.submitFrame`，JPEG 回退经框架运行，Service/UI 参数贯通，旧 JPEG RPC 移除。验证：`StreamFrameworkEndToEndTest.jpegEmptyConfig_worksEndToEnd`、`JpegCodecTest`、`StreamRuntimeSubmitFrameTest` 通过，全量 JVM **396 tests / 0 failures / 0 errors / 0 skipped**。未完成：真实设备验证；JPEG 降级模式仍走 ImageReader→Bitmap→压缩（设计路径）。**不得宣称已完成设备验证或关闭问题 3。**
 - **关联文档**：[编码框架设计](codec-framework.md)、[DB-CODEC-009](decision-board.md)
-
-</details>
-
-<a id="tb-fw-003"></a>
-<details><summary>TB-FW-003 H.264 单流 TCP（🔶 部分完成）</summary>
-
-- **状态 / 优先级 / 创建 / 完成**：🔶 部分完成 / 🟠 P1 / 2026-10-17 / —
-- **任务**：H.264 单流 TCP：`MediaCodec` 骨架、Surface 输入、明确 IDR 才可加入、`configEpoch`、配置缓存、有界队列与 `RESYNCING`。
-- **交付物 / 验证证据**：已完成：H.264 适配器与两阶段配置发布，覆盖 Annex B 解析、MediaCodec bridge 契约/fake、Runtime 两阶段配置、StreamHub 就绪门、H.264 encoder/decoder、Android bridge 与 JVM E2E；代码提交范围 `8161673..9cb8af9`，关键提交 `8161673`、`fccc955`、`8beb8f1`、`f8b70c7`、`2764fec`、`f8a83bf`、`9ea81fa`、`e607249`、`a4d94ea`、`4f98d0a`、`9cb8af9`（最终集中修复）。验证：JVM **364 tests / 0 failures / 0 errors / 0 skipped** 通过；`:app:assembleDebug` 与 `:app:assembleDebugAndroidTest` 成功，androidTest **仅编译、未运行**；各提交 Build CI 通过。未完成：未接现有投屏、未做切换编排、未做 TCP/设备验证。**不得宣称已接入现有投屏或已完成问题 3。**
-- **关联文档**：[H.264 实施计划](superpowers/plans/2026-10-18-h264-adapter.md)、[编码框架设计](codec-framework.md)、[DB-CODEC-013](decision-board.md)、[DB-MULTI-005](decision-board.md)、[路线图阶段 2](optimization-roadmap.md)
-
-</details>
-
-<a id="tb-fw-006"></a>
-<details><summary>TB-FW-006 编码切换编排（📋 待办）</summary>
-
-- **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟠 P1 / 2026-10-17 / —
-- **任务**：编码切换编排：新编码器预热、客户端保持最后一帧、切换采集输出 Surface、发布新描述符/配置/可加入点、客户端重配或重建解码器、释放旧编码器；网络、认证与控制会话不重建。
-- **交付物 / 验证证据**：交付：切换编排与失败回退。验证：切换不保证零间隙但无花屏；预热失败保留旧编码器；当前未实施。
-- **关联文档**：[编码框架设计](codec-framework.md)、[DB-CODEC-014](decision-board.md)
-
-</details>
-
-<a id="tb-media-001"></a>
-<details><summary>TB-MEDIA-001 H.264 硬编硬解（📋 待办）</summary>
-
-- **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟠 P1 / 2026-10-17 / —
-- **任务**：H.264 硬编硬解（先 TCP）：`VirtualDisplay` 直接输出到 `MediaCodec` 输入 Surface；H.264 Baseline 为兼容基线与回退档；缓存 config 与 IDR；媒体走独立 TCP 帧协议；JPEG 仅保留快照与降级。
-- **交付物 / 验证证据**：交付：采集/编码/封装/解码/渲染链路与降级开关。验证：编码器与解码器矩阵、稳态无全尺寸 Bitmap/JPEG、新客户端从 config+IDR 加入、慢客户端隔离；当前未执行。
-- **关联文档**：[路线图阶段 2](optimization-roadmap.md)、[媒体架构](media-architecture.md)
-
-</details>
-
-<a id="tb-media-003"></a>
-<details><summary>TB-MEDIA-003 运行时能力探测（📋 待办）</summary>
-
-- **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟠 P1 / 2026-10-17 / —
-- **任务**：运行时能力探测：服务端探测编码器 codec/profile/level/宽高/帧率/码率/硬件实例与热状态；客户端探测解码能力与 adaptive playback；经 HELLO/STREAM_INFO 交换，字段可缺省；旧客户端按 H.264 兼容档处理。
-- **交付物 / 验证证据**：交付：能力探测模块、协议字段与降级规则。验证：服务端与客户端能力分别上报且与实际一致；不凭 API 等级或设备形态推断；不可用/未实测组合回退 H.264 且用户可见；当前未执行。
-- **关联文档**：[媒体架构能力探测](media-architecture.md)、[决策 DB-CODEC-006](decision-board.md)、[路线图阶段 2](optimization-roadmap.md)
 
 </details>
 
@@ -293,7 +253,7 @@
 
 - **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟡 P2 / 2026-10-17 / —
 - **任务**：编码框架测试与证据：契约测试、可加入点、epoch 语义、队列溢出、切换、传输适配与回退；补充设备与网络验证记录。
-- **交付物 / 验证证据**：已具备 JVM 证据：`StreamFrameworkEndToEndTest`、`StreamHubTest`、`StreamRuntimeTest`、`ClientSendSessionTest`、`ClientMediaSessionTest`、`JpegCodecTest` 等 13 类 155 tests / 0 failures；H.264 最终集中修复（`9cb8af9`）后全量 364 tests / 0 failures，覆盖 H.264 JVM E2E，`:app:assembleDebug` 与 `:app:assembleDebugAndroidTest` 成功（androidTest 未运行），Build CI 通过；设备与网络验证记录仍未执行，因此本任务仍未完成。
+- **交付物 / 验证证据**：已具备 JVM 证据：`StreamFrameworkEndToEndTest`、`StreamHubTest`、`StreamRuntimeTest`、`ClientSendSessionTest`、`ClientMediaSessionTest`、`JpegCodecTest` 等 13 类 155 tests / 0 failures；H.264 最终集中修复（`9cb8af9`）后全量 364 tests / 0 failures，覆盖 H.264 JVM E2E，`:app:assembleDebug` 与 `:app:assembleDebugAndroidTest` 成功（androidTest 未运行），Build CI 通过；批次 A–H 后全量 **396 tests / 0 failures**（新增 32），覆盖协议映射、服务端接线、客户端接收、能力选档与 deferred 切换，各批 Build CI success；设备与网络验证记录仍未执行，因此本任务仍未完成。
 - **关联文档**：[编码框架设计](codec-framework.md)、[路线图阶段 2](optimization-roadmap.md)、[路线图阶段 4](optimization-roadmap.md)
 
 </details>
@@ -441,6 +401,46 @@
 </details>
 
 ### ⏳ 等待验证条目
+
+<a id="tb-fw-003"></a>
+<details><summary>TB-FW-003 H.264 单流 TCP（⏳ 等待验证）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：⏳ 等待验证 / 🟠 P1 / 2026-10-17 / —
+- **任务**：H.264 单流 TCP 与生产接线：`MediaCodec` 骨架、Surface 输入、明确 IDR 才可加入、`configEpoch`、配置缓存、有界队列与 `RESYNCING`；`StreamRuntime`/`StreamHub` 接入 `LssService`/`LssServer`，`VirtualDisplay` 直通编码器输入 Surface，移除旧 JPEG RPC。
+- **交付物 / 验证证据**：已完成（代码层面）：计划 `4a3e3da`；批次 A `4ceab10`（双向流协议 + `GrpcMediaTransport`/`ScreenStreamProtoMapper`）、B `c027651`（服务端接入 StreamHub 与 H.264 采集直通）、D `8a9c921`（参数贯通、JPEG 回退经框架、移除旧 JPEG RPC）、F `a4d4bc8`（deferred 编码切换编排）；连同此前 H.264 适配器提交范围 `8161673..9cb8af9`。验证：JVM **396 tests / 0 failures / 0 errors / 0 skipped**（较基线 364 新增 32）；`./gradlew :app:assembleDebug --offline` 通过；各批 Build CI success（A run [39218611718](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39218611718)、B run [39219935934](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39219935934)、D run [39222180985](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39222180985)、F run [39223625683](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39223625683)）。边界：**仅 JVM/fake 与编译验证，未做设备/真机/模拟器验证**；全程未运行 adb、`connectedAndroidTest`、安装或启动 App。问题 3 仍未关闭，代码完成不等于问题关闭。
+- **关联文档**：[H.264 实施计划](superpowers/plans/2026-10-18-h264-adapter.md)、[媒体路径接线实施计划](superpowers/plans/2026-10-19-media-path-wiring.md)、[编码框架设计](codec-framework.md)、[DB-CODEC-013](decision-board.md)、[DB-MULTI-005](decision-board.md)、[路线图阶段 2](optimization-roadmap.md)
+
+</details>
+
+<a id="tb-fw-006"></a>
+<details><summary>TB-FW-006 编码切换编排（⏳ 等待验证）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：⏳ 等待验证 / 🟠 P1 / 2026-10-17 / —
+- **任务**：编码切换编排：新编码器预热、客户端保持最后一帧、切换采集输出 Surface、发布新描述符/配置/可加入点、客户端重配或重建解码器、释放旧编码器；网络、认证与控制会话不重建。客户端会话与 `RenderTarget` 接线（批次 C/H）是切换与 Surface 恢复的运行前提。
+- **交付物 / 验证证据**：已完成（代码层面）：批次 F `a4d4bc8` 修订 `StreamRuntime.switchDescriptor` 支持 deferred 编码器：同步预热成功后才切换、失败保留旧编码器与 descriptor/epoch、新 descriptor/config/可加入点先于新 epoch 首个 AU、旧编码器在新 epoch 首个 join point 转发后释放；客户端重配与 Surface 恢复由批次 C `9bc7f1b`（`ClientMediaSession` + `SurfaceRenderTarget` + 单线程解码）与 H `37b2095`（Surface 失效进入 `RESYNCING`，恢复只经 `retryConfigure()`）落地。验证：JVM **396 tests / 0 failures / 0 errors / 0 skipped**；`./gradlew :app:assembleDebug --offline` 通过；Build CI success（F run [39223625683](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39223625683)、C run [39221385701](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39221385701)、H run [39224616320](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39224616320)）。边界：**仅 JVM/fake 与编译验证，未做设备/真机/模拟器验证**；切换黑帧时长、预热失败回退时延与 Surface 恢复时间均未实测；问题 3 仍未关闭。
+- **关联文档**：[编码框架设计](codec-framework.md)、[媒体路径接线实施计划](superpowers/plans/2026-10-19-media-path-wiring.md)、[DB-CODEC-014](decision-board.md)
+
+</details>
+
+<a id="tb-media-001"></a>
+<details><summary>TB-MEDIA-001 H.264 硬编硬解（⏳ 等待验证）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：⏳ 等待验证 / 🟠 P1 / 2026-10-17 / —
+- **任务**：H.264 硬编硬解（先 TCP）：`VirtualDisplay` 直接输出到 `MediaCodec` 输入 Surface；H.264 Baseline 为兼容基线与回退档；缓存 config 与 IDR；媒体走独立 TCP 帧协议；JPEG 仅保留快照与降级。
+- **交付物 / 验证证据**：已完成（代码层面）：批次 B `c027651`（`VirtualDisplay` 直通 `MediaCodec` 输入 Surface、StreamHub 每客户端会话）、C `9bc7f1b`（客户端 `ClientMediaSession` 解码与 Surface 渲染）、D `8a9c921`（码率/IDR 间隔参数贯通、JPEG 回退经框架、旧 JPEG RPC 移除）、G `101f685`（多客户端按共同兼容能力加入）。验证：JVM **396 tests / 0 failures / 0 errors / 0 skipped**；`./gradlew :app:assembleDebug --offline` 通过；Build CI success（B run [39219935934](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39219935934)、C run [39221385701](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39221385701)、D run [39222180985](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39222180985)、G run [39224142850](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39224142850)）。未执行：编码器/解码器设备矩阵、稳态无全尺寸 Bitmap/JPEG 的实测、新客户端从 config+IDR 加入与慢客户端隔离的真机验证。**仅 JVM/fake 与编译验证，未做设备/真机/模拟器验证。**
+- **关联文档**：[路线图阶段 2](optimization-roadmap.md)、[媒体架构](media-architecture.md)、[媒体路径接线实施计划](superpowers/plans/2026-10-19-media-path-wiring.md)
+
+</details>
+
+<a id="tb-media-003"></a>
+<details><summary>TB-MEDIA-003 运行时能力探测（⏳ 等待验证）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：⏳ 等待验证 / 🟠 P1 / 2026-10-17 / —
+- **任务**：运行时能力探测：服务端探测编码器 codec/profile/level/宽高/帧率/码率/硬件实例与热状态；客户端探测解码能力与 adaptive playback；经 HELLO/STREAM_INFO 交换，字段可缺省；旧客户端按 H.264 兼容档处理。
+- **交付物 / 验证证据**：已落地（代码层面，服务端编码器探测尚未接入选档）：批次 E `a7f93e8` 新增 `CodecCapability` 能力模型、`ClientCapabilities` 能力映射与 `support/CodecCapabilityProbe`（基于 `MediaCodecList`/`VideoCapabilities` 的运行时探测：客户端解码器宽高/帧率/码率/adaptive playback，服务端编码器可用性探测入口；探测失败按不可用处理，**不按 API 等级或设备形态推断**）；客户端已把探测结果写入 HELLO，服务端解析缺省字段并按 H.264 兼容档处理。批次 G `101f685` 在 `StreamHub.join` 按共同兼容能力选择候选 codec（profile/level 声明不一致即不兼容，宽高/帧率/码率取共同下界），无共同档返回 `REQUIRES_EXPLICIT_FALLBACK`。验证：JVM **396 tests / 0 failures / 0 errors / 0 skipped**；`./gradlew :app:assembleDebug --offline` 通过；Build CI success（E run [39222721914](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39222721914)、G run [39224142850](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39224142850)）。边界：JVM 不触 `android.media.*`，探测结果与实际设备能力的一致性未验证；热/功耗状态未覆盖；**未做设备/真机/模拟器验证**。
+- **关联文档**：[媒体架构能力探测](media-architecture.md)、[媒体路径接线实施计划](superpowers/plans/2026-10-19-media-path-wiring.md)、[决策 DB-CODEC-006](decision-board.md)、[路线图阶段 2](optimization-roadmap.md)
+
+</details>
 
 <a id="tb-codec-001"></a>
 <details><summary>TB-CODEC-001 HEVC 可选档位（⏳ 等待验证）</summary>
