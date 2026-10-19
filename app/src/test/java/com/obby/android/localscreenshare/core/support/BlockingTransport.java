@@ -9,6 +9,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Fake transport that can hold the next access-unit send until released.
+ *
+ * <p>Send-session and hub tests use it to observe the in-flight state. Blocking is armed
+ * explicitly and consumed by the next {@code sendAccessUnit}; that send reports its start to
+ * {@link #awaitSendStarted} and then waits at most five seconds for {@link #releaseSend} before
+ * failing with an {@link IOException}. The latches are created once, so only the first armed send
+ * blocks; later arms let the send complete immediately.</p>
  */
 public final class BlockingTransport extends FakeTransport {
 

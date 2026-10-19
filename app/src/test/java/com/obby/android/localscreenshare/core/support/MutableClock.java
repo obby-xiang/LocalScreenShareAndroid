@@ -4,6 +4,9 @@ import com.obby.android.localscreenshare.core.stream.TimeSource;
 
 /**
  * Deterministic JVM clock for queue, runtime, and session tests.
+ *
+ * <p>Time changes only through {@link #advance(long)} and {@link #set(long)}, so a test can freeze
+ * a deadline and move past it exactly. Not thread-safe.</p>
  */
 public final class MutableClock implements TimeSource {
 

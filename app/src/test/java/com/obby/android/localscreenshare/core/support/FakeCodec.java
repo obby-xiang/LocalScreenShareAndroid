@@ -29,9 +29,18 @@ import java.util.List;
 /**
  * JVM-only codec whose encoder and decoder never touch Android media APIs.
  *
- * <p>Encoders emit access units through the {@link EncoderOutput} supplied to the
- * factory, and decoders push {@link EncodedImageFrame}s into the {@link RenderTarget}
- * supplied to the factory.</p>
+ * <p>Encoders emit access units through the {@link EncoderOutput} supplied to the factory, and
+ * decoders push {@link EncodedImageFrame}s into the {@link RenderTarget} supplied to the
+ * factory. The registration uses {@link OverflowAction#DROP_UNTIL_JOIN_POINT} and accepts the
+ * access unit's join-point flag as its policy decision, so stream tests exercise the real drop
+ * and join paths. Emitted units take their config epoch and config parts from the stream
+ * descriptor the factory received, and their timestamps advance in synthetic one-millisecond
+ * steps that restart at zero when the config epoch changes.</p>
+ *
+ * <p>By default a sync-point request emits a join unit immediately; tests that assert the request
+ * count can disable that. The failure injections ({@code failNext*}) are one-shot. The factories
+ * keep only the most recently created encoder and decoder, and each creation replaces the stored
+ * instance.</p>
  */
 public final class FakeCodec {
 

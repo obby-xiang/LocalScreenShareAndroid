@@ -18,6 +18,14 @@ import java.util.concurrent.Executors;
 import lombok.AccessLevel;
 import lombok.NoArgsConstructor;
 
+/**
+ * NSD resolve helper that serializes requests and reports results on the main thread.
+ *
+ * <p>Resolve requests run on one shared single-thread executor at background priority, so only one
+ * resolve is in flight at a time. Each task submits the request and waits for the framework
+ * callback before the next task starts; that wait blocks the resolver thread, never the caller.
+ * Both outcomes are posted to the main thread, so listeners may touch UI state.</p>
+ */
 @NoArgsConstructor(access = AccessLevel.PRIVATE)
 public final class NsdUtils {
     private static final Supplier<Executor> RESOLVE_SERVICE_EXECUTOR_SUPPLIER =
@@ -32,6 +40,12 @@ public final class NsdUtils {
             })
             .build()));
 
+    /**
+     * Resolves {@code serviceInfo} in the background and reports the outcome to {@code listener}
+     * on the main thread. Returns immediately. A resolve that never completes keeps the resolver
+     * thread blocked, so later requests queue behind it; interrupting that thread ends the wait
+     * without cancelling the framework request.
+     */
     public static void resolveService(@NonNull final NsdManager nsdManager, @NonNull final NsdServiceInfo serviceInfo,
         @NonNull final NsdManager.ResolveListener listener) {
         RESOLVE_SERVICE_EXECUTOR_SUPPLIER.get().execute(() -> {

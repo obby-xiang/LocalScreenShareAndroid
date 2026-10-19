@@ -22,6 +22,10 @@ public final class H264BitWriter {
         return this;
     }
 
+    /**
+     * Writes the {@code bitCount} least significant bits of {@code value}, most significant bit
+     * first. Higher bits of {@code value} are ignored and no sign extension is performed.
+     */
     public H264BitWriter writeBits(int value, int bitCount) {
         if (bitCount < 0 || bitCount > 32) {
             throw new IllegalArgumentException("bitCount out of range: " + bitCount);
@@ -71,6 +75,10 @@ public final class H264BitWriter {
         return bitLength;
     }
 
+    /**
+     * Returns the written bits as bytes, with the final partial byte padded with zero bits. The
+     * returned array is a copy.
+     */
     public byte[] toByteArray() {
         int byteLength = (bitLength + 7) >>> 3;
         byte[] result = new byte[byteLength];

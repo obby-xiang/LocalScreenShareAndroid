@@ -34,6 +34,10 @@ import java.util.List;
  * {@link FakeEncoder#emitConfig(EncoderConfig)}. No Android media API is touched and
  * the input surface is always {@code null}, so the codec is usable on the JVM only
  * with {@code surfaceInputRequired=false}.</p>
+ *
+ * <p>Only encoders are usable: creating a decoder throws {@link UnsupportedOperationException},
+ * because the deferred-configuration tests only exercise the capture side. As with
+ * {@link FakeCodec}, failure injections are one-shot and only the last encoder is kept.</p>
  */
 public final class FakeDeferredCodec {
 

@@ -12,8 +12,17 @@ import androidx.annotation.NonNull;
 import lombok.AccessLevel;
 import lombok.NoArgsConstructor;
 
+/**
+ * Window and display metrics helpers.
+ */
 @NoArgsConstructor(access = AccessLevel.PRIVATE)
 public final class WindowUtils {
+    /**
+     * Returns the bounds of the largest window area on the default display. API 30+ uses the
+     * maximum window metrics; older releases use the real display size, which includes the system
+     * decor. Callers should derive the size from width and height rather than assuming a zero
+     * origin.
+     */
     @NonNull
     public static Rect getMaximumWindowBounds(@NonNull final Context context) {
         final WindowManager windowManager = context.getSystemService(WindowManager.class);

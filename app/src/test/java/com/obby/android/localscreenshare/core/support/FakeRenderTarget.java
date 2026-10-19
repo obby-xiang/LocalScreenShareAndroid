@@ -10,7 +10,12 @@ import java.util.Collections;
 import java.util.List;
 
 /**
- * JVM-only {@link RenderTarget} that records every rendered encoded image.
+ * JVM-only {@link RenderTarget} that records every rendered encoded image in order.
+ *
+ * <p>{@link #getSurface()} always returns {@code null}, so decoders must use the encoded-image
+ * path. {@link #renderEncodedImage} rejects null frames. {@code close()} only counts
+ * invocations, which lets tests assert that the runtime closed the target without any real
+ * resource being involved.</p>
  */
 public final class FakeRenderTarget implements RenderTarget {
 
