@@ -61,6 +61,30 @@ public final class CodecCapability {
         return new CodecCapability(codecId, null, null, null, 0, 0, 0, 0, false, false);
     }
 
+    /**
+     * Returns whether this capability and {@code other} can agree on a common configuration.
+     *
+     * <p>Size, frame-rate and bitrate bounds always admit a common point (their minimum), so only
+     * a profile or level that both capabilities declare differently makes them incompatible. A
+     * null or different-codec argument is treated as incompatible except for a null "no
+     * constraint" capability.</p>
+     */
+    public boolean isCompatibleWith(CodecCapability other) {
+        if (other == null) {
+            return false;
+        }
+        if (!codecId.equals(other.codecId)) {
+            return false;
+        }
+        if (profile != null && other.profile != null && !profile.equals(other.profile)) {
+            return false;
+        }
+        if (level != null && other.level != null && !level.equals(other.level)) {
+            return false;
+        }
+        return true;
+    }
+
     public String getCodecId() {
         return codecId;
     }

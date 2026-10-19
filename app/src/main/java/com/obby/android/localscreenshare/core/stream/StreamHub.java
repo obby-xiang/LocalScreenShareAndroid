@@ -430,17 +430,19 @@ public final class StreamHub implements StreamRuntimeListener {
         int bestPriority = Integer.MAX_VALUE;
         for (CodecRegistration registration : registry.getRegistrations()) {
             String codecId = registration.getDescriptor().getCodecId();
-            if (!candidateCaps.supports(codecId)) {
+            CodecCapability candidate = candidateCaps.getCapability(codecId);
+            if (candidate == null) {
                 continue;
             }
-            boolean allSupported = true;
+            boolean allCompatible = true;
             for (ClientCapabilities existing : capabilities.values()) {
-                if (!existing.supports(codecId)) {
-                    allSupported = false;
+                CodecCapability existingCap = existing.getCapability(codecId);
+                if (existingCap == null || !candidate.isCompatibleWith(existingCap)) {
+                    allCompatible = false;
                     break;
                 }
             }
-            if (!allSupported) {
+            if (!allCompatible) {
                 continue;
             }
             int priority = registration.getFallbackPriority();
