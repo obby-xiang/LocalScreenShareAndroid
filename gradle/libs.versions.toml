@@ -16,7 +16,7 @@ protobuf = "0.9.4"
 commons-lang3 = "3.17.0"
 guava = "33.4.0-android"
 camera = "1.4.1"
-splashscreen = "1.2.0-beta02"
+splashscreen = "1.2.0"
 
 [libraries]
 junit = { group = "junit", name = "junit", version.ref = "junit" }
