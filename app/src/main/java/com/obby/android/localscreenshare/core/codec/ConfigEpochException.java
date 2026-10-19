@@ -1,8 +1,12 @@
 package com.obby.android.localscreenshare.core.codec;
 
 /**
- * Raised when an access unit's configuration epoch does not match the decoder's
- * current configuration epoch.
+ * Raised when a configuration epoch does not match the epoch required by the current operation.
+ *
+ * <p>Unchecked and an {@link IllegalArgumentException} because a mismatched epoch is a caller
+ * error. It is used, for example, when a descriptor switch supplies a duplicate or skipped epoch
+ * instead of exactly the next one; both the expected and the actual value are retained for
+ * diagnostics.</p>
  */
 public final class ConfigEpochException extends IllegalArgumentException {
 

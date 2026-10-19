@@ -4,6 +4,12 @@ import java.util.Objects;
 
 /**
  * Immutable composite identity of a single media stream within a screen-share session.
+ *
+ * <p>{@code sessionInstanceId} distinguishes separate runs of the screen-share service, and
+ * {@code streamId} distinguishes streams inside one session, so multiple streams remain
+ * addressable. Both components must be non-blank. The string form is
+ * {@code sessionInstanceId/streamId}; equality and hashing use both components. Instances are map
+ * keys in the runtime and the hub and are safe to share between threads.</p>
  */
 public final class StreamKey {
 
@@ -29,6 +35,7 @@ public final class StreamKey {
         return streamId;
     }
 
+    /** Returns the canonical {@code sessionInstanceId/streamId} form. */
     public String getValue() {
         return sessionInstanceId + "/" + streamId;
     }

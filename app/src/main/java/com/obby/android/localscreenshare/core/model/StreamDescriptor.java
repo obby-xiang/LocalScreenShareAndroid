@@ -11,10 +11,24 @@ import java.util.List;
 /**
  * Immutable description of a stream's codec decode configuration.
  *
- * <p>The {@link #getConfigHash()} digest covers every field that affects how an
- * encoded access unit must be decoded, but deliberately excludes {@code configEpoch}
- * and the stream identity, so descriptors of the same codec configuration share one
- * hash across epoch bumps.</p>
+ * <p>A descriptor identifies the stream and config epoch, names the codec and bitstream framing,
+ * and carries the geometry, color and codec configuration a decoder needs. It is built through
+ * {@link #builder} and validated at construction; an instance never changes. A changed decode
+ * configuration is published as a new descriptor with the next config epoch.</p>
+ *
+ * <p><b>Coded versus visible size.</b> The coded size is the encoder's output raster, including
+ * alignment padding, and is what a decoder is configured with. The visible size is the region that
+ * should actually be displayed; it may be smaller than the coded size. Rotation is applied by the
+ * display side. Both visible size and rotation are part of the config hash, so changing either
+ * requires a new descriptor and a new epoch.</p>
+ *
+ * <p><b>Config hash.</b> {@link #getConfigHash()} is a SHA-256 digest rendered as 64 lowercase
+ * hexadecimal characters. It covers the codec id, MIME type, profile, level, coded size, visible
+ * size, rotation, bitstream format, the ordered configuration parts (id plus payload bytes) and
+ * the color description. It deliberately excludes {@code configEpoch} and the stream identity, so
+ * descriptors of the same decode configuration share one hash across epoch bumps and receivers are
+ * not forced to reconfigure for an epoch-only change. Null strings are encoded distinctly from
+ * empty strings.</p>
  */
 public final class StreamDescriptor {
 
@@ -93,51 +107,74 @@ public final class StreamDescriptor {
                 || rotationDegrees == 270;
     }
 
+    /**
+     * Starts building a descriptor.
+     *
+     * <p>The stream key, epoch, codec id, MIME type and bitstream format are required here; the
+     * coded size must still be supplied through {@link Builder#codedSize(int, int)} before
+     * {@link Builder#build()}.</p>
+     *
+     * @param configEpoch configuration epoch; must be at least one
+     */
     public static Builder builder(StreamKey streamKey, int configEpoch, String codecId,
                                   String mime, BitstreamFormat bitstreamFormat) {
         return new Builder(streamKey, configEpoch, codecId, mime, bitstreamFormat);
     }
 
+    /** Returns the stream identity. */
     public StreamKey getStreamKey() {
         return streamKey;
     }
 
+    /**
+     * Returns the configuration epoch. It is at least one and advances by exactly one for each
+     * published decode-configuration change.
+     */
     public int getConfigEpoch() {
         return configEpoch;
     }
 
+    /** Returns the codec id used as the registry key. */
     public String getCodecId() {
         return codecId;
     }
 
+    /** Returns the codec MIME type. */
     public String getMime() {
         return mime;
     }
 
+    /** Returns the optional codec profile name, or null when unspecified. */
     public String getProfile() {
         return profile;
     }
 
+    /** Returns the optional codec level name, or null when unspecified. */
     public String getLevel() {
         return level;
     }
 
+    /** Returns the encoder's coded width, including alignment padding. */
     public int getCodedWidth() {
         return codedWidth;
     }
 
+    /** Returns the encoder's coded height, including alignment padding. */
     public int getCodedHeight() {
         return codedHeight;
     }
 
+    /** Returns the width of the region that should be displayed. */
     public int getVisibleWidth() {
         return visibleWidth;
     }
 
+    /** Returns the height of the region that should be displayed. */
     public int getVisibleHeight() {
         return visibleHeight;
     }
 
+    /** Returns the display rotation in degrees: 0, 90, 180 or 270. */
     public int getRotationDegrees() {
         return rotationDegrees;
     }
@@ -146,18 +183,28 @@ public final class StreamDescriptor {
         return bitstreamFormat;
     }
 
+    /**
+     * Returns the ordered, unmodifiable codec configuration parts. The list may be empty for a
+     * codec that carries no out-of-band configuration.
+     */
     public List<CodecConfigPart> getConfigParts() {
         return configParts;
     }
 
+    /** Returns the color description; never null, but may be {@link ColorInfo#UNSPECIFIED}. */
     public ColorInfo getColorInfo() {
         return colorInfo;
     }
 
+    /** Returns the stable lowercase-hex SHA-256 digest of the decode configuration. */
     public String getConfigHash() {
         return configHash;
     }
 
+    /**
+     * Returns whether two descriptors describe the same decode configuration, by comparing config
+     * hashes. Epoch and stream identity are ignored. A null argument returns false.
+     */
     public boolean sameDecodeConfig(StreamDescriptor other) {
         if (other == null) {
             return false;
@@ -165,6 +212,12 @@ public final class StreamDescriptor {
         return configHash.equals(other.configHash);
     }
 
+    /**
+     * Returns a copy with a different config epoch. All other fields are shared and the config
+     * hash is unchanged, so this does not by itself require receivers to reconfigure.
+     *
+     * @throws IllegalArgumentException if the new epoch is below one
+     */
     public StreamDescriptor withConfigEpoch(int newConfigEpoch) {
         return new StreamDescriptor(streamKey, newConfigEpoch, codecId, mime, profile, level,
                 codedWidth, codedHeight, visibleWidth, visibleHeight, rotationDegrees,
@@ -233,6 +286,13 @@ public final class StreamDescriptor {
         return new String(chars);
     }
 
+    /**
+     * Mutable builder for {@link StreamDescriptor}.
+     *
+     * <p>Defaults: profile and level are null, visible size equals the coded size, rotation is
+     * zero, configuration parts are empty and color is {@link ColorInfo#UNSPECIFIED}. The coded
+     * size has no default and must be positive. Validation happens once in {@link #build()}.</p>
+     */
     public static final class Builder {
 
         private final StreamKey streamKey;
@@ -263,43 +323,66 @@ public final class StreamDescriptor {
             this.colorInfo = ColorInfo.UNSPECIFIED;
         }
 
+        /** Sets the optional codec profile name; null means unspecified. */
         public Builder profile(String profile) {
             this.profile = profile;
             return this;
         }
 
+        /** Sets the optional codec level name; null means unspecified. */
         public Builder level(String level) {
             this.level = level;
             return this;
         }
 
+        /**
+         * Sets the encoder's coded size. Required: the build fails unless both dimensions are
+         * positive.
+         */
         public Builder codedSize(int width, int height) {
             this.codedWidth = width;
             this.codedHeight = height;
             return this;
         }
 
+        /**
+         * Sets the displayed region. Optional: when not called, both dimensions default to the
+         * coded size.
+         */
         public Builder visibleSize(int width, int height) {
             this.visibleWidth = width;
             this.visibleHeight = height;
             return this;
         }
 
+        /** Sets the display rotation in degrees; must be 0, 90, 180 or 270. Defaults to zero. */
         public Builder rotationDegrees(int rotationDegrees) {
             this.rotationDegrees = rotationDegrees;
             return this;
         }
 
+        /**
+         * Sets the ordered codec configuration parts. Optional: null and an omitted call both
+         * default to an empty list.
+         */
         public Builder configParts(List<CodecConfigPart> configParts) {
             this.configParts = configParts;
             return this;
         }
 
+        /** Sets the color description; null defaults to {@link ColorInfo#UNSPECIFIED}. */
         public Builder colorInfo(ColorInfo colorInfo) {
             this.colorInfo = colorInfo;
             return this;
         }
 
+        /**
+         * Validates the accumulated values and creates the immutable descriptor.
+         *
+         * @throws IllegalArgumentException if a required value is missing, a size is
+         *                                  non-positive, the rotation is unsupported, or a
+         *                                  required reference is null
+         */
         public StreamDescriptor build() {
             int effectiveVisibleWidth = visibleWidth != null ? visibleWidth : codedWidth;
             int effectiveVisibleHeight = visibleHeight != null ? visibleHeight : codedHeight;

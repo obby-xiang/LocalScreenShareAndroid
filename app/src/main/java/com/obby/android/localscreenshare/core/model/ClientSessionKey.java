@@ -5,14 +5,22 @@ import java.util.Objects;
 /**
  * Immutable identity of a single client's view of a stream.
  *
- * <p>Carries both the stream identity and the client identity so that multiple
- * streams per client remain addressable in the future.</p>
+ * <p>Carries both the stream identity and the client identity so that multiple streams per client
+ * remain addressable. Two keys are equal only when both the stream key and the client id match;
+ * the string form is {@code sessionInstanceId/streamId/clientId}. The client id must not be blank.
+ * Instances are used as map keys by the stream hub, so they are immutable and have value-based
+ * equality.</p>
  */
 public final class ClientSessionKey {
 
     private final StreamKey streamKey;
     private final String clientId;
 
+    /**
+     * Creates a session key.
+     *
+     * @throws IllegalArgumentException if the stream key is null or the client id is null or blank
+     */
     public ClientSessionKey(StreamKey streamKey, String clientId) {
         if (streamKey == null) {
             throw new IllegalArgumentException("streamKey must not be null");
