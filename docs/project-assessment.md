@@ -250,7 +250,7 @@ flowchart LR
 | --- | --- | --- |
 | 采集输出 | ImageReader RGBA + Bitmap | VirtualDisplay 直接输出到 MediaCodec 输入 Surface |
 | 编码 | 软件 JPEG | 硬件 H.264 兼容基线；服务端/客户端能力探测后按档位选择 HEVC 等更高规格，H.264 可回退 |
-| 媒体承载 | 每帧 protobuf + gRPC stream | 独立 TCP 帧协议；按实测决定 RTP/UDP/WebRTC |
+| 媒体承载 | 每帧 protobuf + gRPC stream | 统一 gRPC 双向流承载完整访问单元（已实现接线）；独立 TCP 帧协议为备选；按实测决定 RTP/UDP/WebRTC |
 | 客户端渲染 | 全尺寸 JPEG 解码 + ImageView | MediaCodec 解码 + Surface/TextureView |
 | 会话所有权 | Service 同时管网络和悬浮窗 | ClientSession 与 RenderTarget 解耦 |
 | 多客户端 | 每客户端最新帧（JPEG 可丢） | 默认一次编码扇出；确认需求与能力后可用受限多档流；每客户端有界队列；GOP 感知 |

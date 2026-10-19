@@ -87,7 +87,7 @@
 
 | ID | 状态 | 优先级 | 标题 | 创建 | 完成 | 关联 |
 | --- | --- | --- | --- | --- | --- | --- |
-| TB-FW-003 | ⏳ 等待验证 | 🟠 P1 | H.264 单流 TCP | 2026-10-17 | — | [H.264 实施计划](superpowers/plans/2026-10-18-h264-adapter.md) |
+| TB-FW-003 | ⏳ 等待验证 | 🟠 P1 | H.264 单流接入 | 2026-10-17 | — | [H.264 实施计划](superpowers/plans/2026-10-18-h264-adapter.md) |
 | TB-FW-006 | ⏳ 等待验证 | 🟠 P1 | 编码切换编排 | 2026-10-17 | — | [编码框架设计](codec-framework.md) |
 | TB-MEDIA-001 | ⏳ 等待验证 | 🟠 P1 | H.264 硬编硬解 | 2026-10-17 | — | [媒体架构](media-architecture.md) |
 | TB-MEDIA-003 | ⏳ 等待验证 | 🟠 P1 | 运行时能力探测 | 2026-10-17 | — | [媒体架构](media-architecture.md) |
@@ -403,10 +403,10 @@
 ### ⏳ 等待验证条目
 
 <a id="tb-fw-003"></a>
-<details><summary>TB-FW-003 H.264 单流 TCP（⏳ 等待验证）</summary>
+<details><summary>TB-FW-003 H.264 单流接入（⏳ 等待验证）</summary>
 
 - **状态 / 优先级 / 创建 / 完成**：⏳ 等待验证 / 🟠 P1 / 2026-10-17 / —
-- **任务**：H.264 单流 TCP 与生产接线：`MediaCodec` 骨架、Surface 输入、明确 IDR 才可加入、`configEpoch`、配置缓存、有界队列与 `RESYNCING`；`StreamRuntime`/`StreamHub` 接入 `LssService`/`LssServer`，`VirtualDisplay` 直通编码器输入 Surface，移除旧 JPEG RPC。
+- **任务**：H.264 单流接入与生产接线：`MediaCodec` 骨架、Surface 输入、明确 IDR 才可加入、`configEpoch`、配置缓存、有界队列与 `RESYNCING`；`StreamRuntime`/`StreamHub` 接入 `LssService`/`LssServer`，`VirtualDisplay` 直通编码器输入 Surface，媒体经统一 gRPC 双向流承载完整访问单元，移除旧 JPEG RPC。
 - **交付物 / 验证证据**：已完成（代码层面）：计划 `4a3e3da`；批次 A `4ceab10`（双向流协议 + `GrpcMediaTransport`/`ScreenStreamProtoMapper`）、B `c027651`（服务端接入 StreamHub 与 H.264 采集直通）、D `8a9c921`（参数贯通、JPEG 回退经框架、移除旧 JPEG RPC）、F `a4d4bc8`（deferred 编码切换编排）；连同此前 H.264 适配器提交范围 `8161673..9cb8af9`。验证：JVM **396 tests / 0 failures / 0 errors / 0 skipped**（较基线 364 新增 32）；`./gradlew :app:assembleDebug --offline` 通过；各批 Build CI success（A run [39218611718](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39218611718)、B run [39219935934](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39219935934)、D run [39222180985](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39222180985)、F run [39223625683](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39223625683)）。边界：**仅 JVM/fake 与编译验证，未做设备/真机/模拟器验证**；全程未运行 adb、`connectedAndroidTest`、安装或启动 App。问题 3 仍未关闭，代码完成不等于问题关闭。
 - **关联文档**：[H.264 实施计划](superpowers/plans/2026-10-18-h264-adapter.md)、[媒体路径接线实施计划](superpowers/plans/2026-10-19-media-path-wiring.md)、[编码框架设计](codec-framework.md)、[DB-CODEC-013](decision-board.md)、[DB-MULTI-005](decision-board.md)、[路线图阶段 2](optimization-roadmap.md)
 
@@ -426,7 +426,7 @@
 <details><summary>TB-MEDIA-001 H.264 硬编硬解（⏳ 等待验证）</summary>
 
 - **状态 / 优先级 / 创建 / 完成**：⏳ 等待验证 / 🟠 P1 / 2026-10-17 / —
-- **任务**：H.264 硬编硬解（先 TCP）：`VirtualDisplay` 直接输出到 `MediaCodec` 输入 Surface；H.264 Baseline 为兼容基线与回退档；缓存 config 与 IDR；媒体走独立 TCP 帧协议；JPEG 仅保留快照与降级。
+- **任务**：H.264 硬编硬解（先 gRPC 双向流）：`VirtualDisplay` 直接输出到 `MediaCodec` 输入 Surface；H.264 Baseline 为兼容基线与回退档；缓存 config 与 IDR；媒体经统一 gRPC 双向流承载完整访问单元（已实现接线，批次 A `4ceab10`）；JPEG 仅保留快照与降级。
 - **交付物 / 验证证据**：已完成（代码层面）：批次 B `c027651`（`VirtualDisplay` 直通 `MediaCodec` 输入 Surface、StreamHub 每客户端会话）、C `9bc7f1b`（客户端 `ClientMediaSession` 解码与 Surface 渲染）、D `8a9c921`（码率/IDR 间隔参数贯通、JPEG 回退经框架、旧 JPEG RPC 移除）、G `101f685`（多客户端按共同兼容能力加入）。验证：JVM **396 tests / 0 failures / 0 errors / 0 skipped**；`./gradlew :app:assembleDebug --offline` 通过；Build CI success（B run [39219935934](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39219935934)、C run [39221385701](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39221385701)、D run [39222180985](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39222180985)、G run [39224142850](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39224142850)）。未执行：编码器/解码器设备矩阵、稳态无全尺寸 Bitmap/JPEG 的实测、新客户端从 config+IDR 加入与慢客户端隔离的真机验证。**仅 JVM/fake 与编译验证，未做设备/真机/模拟器验证。**
 - **关联文档**：[路线图阶段 2](optimization-roadmap.md)、[媒体架构](media-architecture.md)、[媒体路径接线实施计划](superpowers/plans/2026-10-19-media-path-wiring.md)
 

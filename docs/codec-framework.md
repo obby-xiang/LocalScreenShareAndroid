@@ -1,6 +1,6 @@
 # 可扩展编码框架设计
 
-> 状态：**隔离 H.264 适配器与两阶段配置发布已实现并仅经 JVM/fake 及编译验证；未接现有投屏、未做设备验证**。静态 Codec SPI、单活动流 Runtime、StreamHub、每客户端有界队列、客户端六状态机、JPEG 独立帧参考适配与隔离 H.264 适配器已在 `core` 落地；H.264 与 JPEG 均通过 JVM 单元测试，androidTest 仅编译未运行。HEVC/AV1、RTP/Packetizer、采集输出 Surface 切换、Service/UI 接线与真实设备验证均未实现。本文是设计契约，不能当作完整 spec 已实现或设备验证通过的证据。
+> 状态：**隔离核心、H.264 适配器与媒体路径生产接线（批次 A–H）已在代码层面落地，仅经 JVM/fake 及编译验证；未做设备/真机/模拟器验证**。静态 Codec SPI、单活动流 Runtime、StreamHub、每客户端有界队列、客户端六状态机、JPEG 独立帧参考适配与隔离 H.264 适配器已在 `core` 落地，并已接入 `LssService`/`LssServer`/`LssClient`；H.264、JPEG 与接线路径均通过 JVM 单元测试，androidTest 仅编译未运行。HEVC/AV1、RTP/Packetizer 与真实设备验证均未实现或未执行。本文是设计契约，不能当作设备验证通过的证据。
 > 适用范围：一个 `MediaProjection` 与一个 `VirtualDisplay` 的采集结果，第一版只跑一条活动流。多流、GPU 分发、RTP 与 WebRTC 只描述扩展位置与触发条件。
 > 相关文档：[媒体链路目标架构](media-architecture.md) · [渐进优化路线图](optimization-roadmap.md) · [窗口与会话设计](windowing-session-design.md) · [决策看板](decision-board.md) · [任务看板](task-board.md)
 
@@ -15,10 +15,10 @@
 | 解码配置 | `StreamDescriptor` 与 `StreamParameters` 分离，只有解码关键变化才推进 `configEpoch` | 已落地，JVM 验证 |
 | 新客户端加入 | 不假设所有关键帧/RAP 都可加入；按 codec 策略等待明确可加入点 | 已落地，JVM 验证 |
 | 编码切换 | 第一版单 VirtualDisplay、无 GPU Fanout，不能保证零间隙；只保证会话不重建、画面不花屏 | Runtime 预热/切换/旧 encoder 释放已落地并 JVM 验证；采集输出 Surface 切换未接线 |
-| 传输 | TCP/gRPC 传完整访问单元；RTP 由 `(codec, transport)` 封包器处理；WebRTC 作为独立媒体栈 | 传输接口已落地；TCP/gRPC 接线、RTP Packetizer 未实现 |
+| 传输 | 第一版媒体为统一 gRPC 双向流承载完整访问单元（已实现接线）；RTP 由 `(codec, transport)` 封包器处理；WebRTC 作为独立媒体栈 | 传输接口与 gRPC 双向流接线已落地；RTP Packetizer 未实现 |
 | 高级能力 | AV1、HDR、B 帧、时域层只预留契约，不在本阶段实现 | 未实现 |
 
-本文中的“已批准”只表示设计获得用户确认；当前只有隔离核心与隔离 H.264 适配器的 JVM/fake 及编译证据，未接现有投屏，未做 TCP/RTP 接线或设备/性能验证。
+本文中的“已批准”只表示设计获得用户确认；当前证据为隔离核心、隔离 H.264 适配器与 gRPC 双向流媒体接线（批次 A `4ceab10`）的 JVM/fake 及编译验证；未做 RTP 接线或设备/性能验证。
 
 ## 2. 设计目标与不变量
 
@@ -76,7 +76,7 @@ flowchart LR
 | `StreamRuntime` | 一条活动流的编码器实例、描述符与参数、`configEpoch`、访问单元生产、可加入点与关键帧请求、编码切换、配置缓存 | 客户端网络会话、慢客户端队列、渲染 | 一条活动流、一个编码器 |
 | `StreamHub` | 按 `streamKey` 注册与查找流，管理客户端订阅关系与流生命周期 | 编码、解码、封包 | 单活动流核心；接口按多流预留，但不实现多流调度 |
 | `ClientSendSession` | 每个客户端的发送路径：有界队列、序号、背压状态、重同步、绑定传输 | 解析码流、判断帧类型、重建解码器 | 每客户端一条，互相隔离 |
-| `MediaTransport` | 帧或字节的收发、长度前缀、协议版本、连接生命周期 | 解析负载、判断可加入点、选择 codec | 第一版媒体为 TCP；gRPC 在控制面承载控制消息，若用于媒体仍以完整访问单元为单位 |
+| `MediaTransport` | 帧或字节的收发、长度前缀、协议版本、连接生命周期 | 解析负载、判断可加入点、选择 codec | 第一版媒体为 gRPC 双向流承载完整访问单元（已实现接线）；独立 TCP 帧协议为备选方案 |
 | `ClientMediaSession` | 协商、应用描述符、管理解码器与状态机、把帧送到渲染目标、上报统计 | 采集、编码、队列扇出 | 每客户端一个 |
 | `RenderTarget` | 提供显示 Surface/View，处理 attach/detach 与尺寸变化 | 网络、解码器、状态机 | 只做显示，不拥有媒体生命周期 |
 
@@ -89,8 +89,8 @@ flowchart LR
     SURF --> ENC[单活动流编码器]
     ENC --> AU[访问单元与配置缓存]
     AU --> Q[每客户端有界队列]
-    Q --> TCP[TCP 媒体传输]
-    TCP --> DEC[客户端解码器]
+    Q --> GRPC[gRPC 双向流媒体传输]
+    GRPC --> DEC[客户端解码器]
     DEC --> RT[RenderTarget]
 ```
 
@@ -123,7 +123,7 @@ flowchart LR
 | `EncoderFactory` | 描述符、初始参数 | 创建并预热编码器，输出访问单元与配置部件；编码输入 Surface 由 `Encoder.getInputSurface()` 暴露（可为 null） | 由 `StreamRuntime` 调用并获取输入 Surface；公共层不接触 `MediaCodec` 细节 |
 | `DecoderFactory` | 描述符、`RenderTarget`、配置部件 | 创建或重建解码器，接收访问单元；MediaCodec 类解码器输出到 `RenderTarget` 的 Surface，JPEG 类通过 `RenderTarget.renderEncodedImage(EncodedImageFrame)` 输出压缩图像帧；解码/渲染错误统一为 `DecoderException` | 由 `ClientMediaSession` 调用；公共层不接触解码器细节，也不把访问单元当作解码帧；显示侧负责解码压缩帧 |
 | `CodecPolicy` | 描述符、访问单元元数据 | 判定可加入点、关键帧请求语义、队列溢出后的重同步方式、epoch 推进条件 | 发送会话与客户端状态机按策略执行，不硬编码 codec 规则 |
-| `PacketizerFactory(codec, transport)` | `codecId`、传输类型 | 为需要封包的传输生成封包器，例如 RTP 分片与时间戳 | 只有需要分片的传输才解析负载；TCP 完整访问单元路径不使用 |
+| `PacketizerFactory(codec, transport)` | `codecId`、传输类型 | 为需要封包的传输生成封包器，例如 RTP 分片与时间戳 | 只有需要分片的传输才解析负载；gRPC 双向流与 TCP 完整访问单元路径不使用 |
 
 ### 4.2 静态注册
 
@@ -418,12 +418,12 @@ sequenceDiagram
 
 | 传输 | 承载单位 | 是否需要封包器 | 公共层职责 |
 | --- | --- | --- | --- |
-| TCP（第一版媒体） | 完整访问单元 + 长度前缀 + 固定头 | 否 | 排队、发送、背压、重同步；不解析负载 |
-| gRPC 流（控制面；若用于媒体则按完整访问单元封装） | 控制消息；媒体变体为完整访问单元 | 否 | 认证、协商、描述符、参数、统计、关键帧请求；媒体变体只转发访问单元 |
+| 独立 TCP 帧协议（备选，未采用） | 完整访问单元 + 长度前缀 + 固定头 | 否 | 若启用：排队、发送、背压、重同步；不解析负载 |
+| gRPC 双向流（第一版媒体，已实现接线） | 完整访问单元；一个访问单元一条消息，不拆逐帧字段 | 否 | 排队、发送、背压、重同步；不解析负载；控制消息仍走控制面 |
 | RTP/UDP（按需） | RTP 包 | 是，`PacketizerFactory(codec, transport)` | 只传访问单元与元数据；分片、时间戳、负载类型由封包器处理 |
 | WebRTC（按需） | 独立媒体栈 | 不套用自定义访问单元管线 | 可共享控制面与能力协商；不强行把自定义 AU 管线塞进 WebRTC |
 
-- TCP 或 gRPC 媒体承载都以完整访问单元为最小媒体单位，天然保持解码顺序；第一版不实现应用层重排，也不把访问单元拆成逐帧 protobuf 字段。
+- gRPC 媒体承载与独立 TCP 备选方案都以完整访问单元为最小媒体单位，天然保持解码顺序；第一版不实现应用层重排，也不把访问单元拆成逐帧 protobuf 字段。
 - 媒体传输必须提供描述符下发能力。同一客户端、同一 `configEpoch` 内，描述符必须先于该 epoch 的首个访问单元；实现可以立即发送描述符，或在首个 AU 前缓冲。切换时必须先发布新描述符或缓冲新 AU，禁止首帧先于描述符。
 - RTP 封包器需要理解 codec 码流语法，因此必须位于 codec/transport 适配层，不能上移到公共层。
 - WebRTC 作为独立媒体栈评估：浏览器互操作、跨网与完整音视频栈由它自己解决；本框架不为它改造访问单元契约。
@@ -434,7 +434,7 @@ sequenceDiagram
 | 阶段 | 范围 | 交付物 | 退出条件 | 回退与协议兼容 |
 | --- | --- | --- | --- | --- |
 | 1. 契约 + JPEG 适配 | 定义 SPI、描述符、参数、访问单元、状态机与静态注册；把现有 JPEG 路径接入框架 | 契约代码、JPEG 编解码适配、单流发送、状态机 | JPEG 端到端可用；每帧可加入；描述符与参数分离生效；公共层无负载解析 | 保留旧 JPEG 路径开关；协议版本从第一版开始协商 |
-| 2. H.264 单流 TCP | `MediaCodec` 骨架、Surface 输入、明确 IDR 加入、`configEpoch`、有界队列与重同步 | H.264 编解码、TCP 访问单元传输、客户端解码状态机 | 单客户端稳定观看；分辨率/旋转切换可恢复；慢客户端不阻塞编码器 | 可回退到 JPEG 适配；旧客户端按协议版本降级 |
+| 2. H.264 单流接入（gRPC 双向流） | `MediaCodec` 骨架、Surface 输入、明确 IDR 加入、`configEpoch`、有界队列与重同步 | H.264 编解码、gRPC 双向流访问单元传输、客户端解码状态机 | 单客户端稳定观看；分辨率/旋转切换可恢复；慢客户端不阻塞编码器 | 可回退到 JPEG 适配；旧客户端按协议版本降级 |
 | 3. HEVC 扩展验证 | 复用 `MediaCodec` 骨架，只接受明确安全 IDR | HEVC 描述符、工厂与策略 | 新增 HEVC 不改公共层；CRA/RASL 不被当作可加入点 | 回退 H.264；HEVC 未验证时不默认启用 |
 | 4. 切换与多客户端 | 编码切换流程、多客户端扇出、异构客户端策略、慢客户端重同步 | 切换编排、客户端策略、队列与统计 | 切换不重建网络/认证；已有客户端不被静默降级；慢客户端隔离 | 保留单客户端单 codec 模式；切换失败保留旧编码器 |
 | 5. 按需扩展 | RTP、GPU 多流、AV1、HDR、时域层 | 各自独立的封包器、策略与验证 | 每项都有独立实测证据与明确回退 | 每项都必须可在不改公共契约的前提下关闭 |
@@ -455,7 +455,7 @@ sequenceDiagram
 | 多客户端 | 新客户端加入不影响已有客户端的描述符、epoch 与队列；关键帧请求合并；不兼容时按通用元数据显式降级或拒绝，不静默降级 |
 | 慢客户端 | 有界队列生效；参考帧溢出、单个 AU 超限或过期进入 `RESYNCING`；JPEG 只保留最新完整帧并继续；编码器不被阻塞 |
 | 编码切换 | 网络、认证、控制会话不重建；客户端保持最后一帧；新 epoch 描述符先于新 AU；可加入点到达前不显示新流；旧编码器在恢复后释放 |
-| 传输解耦 | TCP 传完整访问单元；媒体传输能下发描述符，且同 epoch 描述符先于首个 AU；RTP 封包器只在 `(codec, transport)` 适配层；WebRTC 不被强行套入自定义管线 |
+| 传输解耦 | 第一版 gRPC 双向流承载完整访问单元（独立 TCP 帧协议为备选）；媒体传输能下发描述符，且同 epoch 描述符先于首个 AU；RTP 封包器只在 `(codec, transport)` 适配层；WebRTC 不被强行套入自定义管线 |
 | 回退 | 每个阶段都有可用的上一阶段回退路径；协议版本不兼容时明确拒绝或降级，不静默失败 |
 | 证据边界 | 未执行的构建、设备、网络与性能验证不得写成已通过；不写没有实测支撑的延迟、功耗或画质数字 |
 
@@ -485,7 +485,7 @@ sequenceDiagram
 | 通用引擎化 | 不做滤镜图、通用管线、能力数据库或设备型号表 |
 | 动态发现 | 静态注册表固定，查不到就失败或降级 |
 | 复制队列逻辑 | 每客户端一个有界队列，策略通过 `CodecPolicy` 注入，不为 codec 复制队列实现 |
-| 过早优化传输 | 第一版 TCP 完整访问单元；RTP 只在实测触发后引入 |
+| 过早优化传输 | 第一版 gRPC 双向流完整访问单元；独立 TCP 帧协议与 RTP 只在实测触发后引入 |
 | 抽象无法验证 | 若新增一个 codec 必须修改公共层才能接入，停止扩展并先修订契约 |
 
 判断框架是否成立的标准：新增 HEVC 时，公共层代码不因 codec 名称或码流语法产生分支；新增 JPEG 时，公共层不因“每帧可加入”而修改状态机；新增 RTP 时，公共层不解析 NAL/OBU。
@@ -494,7 +494,7 @@ sequenceDiagram
 
 - 本文细化 [DB-SESSION-002](decision-board.md) 的 `WAIT_IDR`：拆为 `WAIT_CONFIG` 与 `WAIT_RANDOM_ACCESS`，以覆盖非 IDR 编码；旧术语只保留在历史记录中。
 - 本文为 [DB-CODEC-005](decision-board.md) 的关键帧请求合并、[DB-MULTI-003](decision-board.md) / [DB-MULTI-004](decision-board.md) 的兼容单流与多档策略提供实现契约，但不改变其裁决。
-- 本文为 [DB-NET-001](decision-board.md) 的 TCP/RTP/WebRTC 分工提供传输解耦方式：TCP 完整访问单元、RTP 按 `(codec, transport)` 封包、WebRTC 独立媒体栈。
+- 本文为 [DB-NET-001](decision-board.md) 的传输分工提供解耦方式：第一版媒体由 gRPC 双向流承载完整访问单元，独立 TCP 帧协议为备选，RTP 按 `(codec, transport)` 封包，WebRTC 独立媒体栈。
 - 本文不改变 H.264 兼容基线、HEVC 可选、AV1 后续选项的既有边界；也不把任何未实测能力写成已实现。
 
 ## 16. 开放问题
