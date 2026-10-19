@@ -37,6 +37,7 @@ import android.util.Size;
 import android.view.GestureDetector;
 import android.view.Gravity;
 import android.view.MotionEvent;
+import android.view.Surface;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
@@ -58,7 +59,6 @@ import androidx.core.content.ContextCompat;
 import com.google.android.material.chip.Chip;
 import com.google.android.material.color.MaterialColors;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
-import com.google.protobuf.ByteString;
 import com.obby.android.localscreenshare.MainActivity;
 import com.obby.android.localscreenshare.R;
 import com.obby.android.localscreenshare.core.codec.CodecIds;
@@ -70,7 +70,6 @@ import com.obby.android.localscreenshare.core.model.StreamKey;
 import com.obby.android.localscreenshare.core.model.StreamParameters;
 import com.obby.android.localscreenshare.core.stream.StreamHub;
 import com.obby.android.localscreenshare.core.stream.StreamRuntime;
-import com.obby.android.localscreenshare.grpc.screenstream.ScreenFrame;
 import com.obby.android.localscreenshare.server.LssServer;
 import com.obby.android.localscreenshare.server.LssServerInfo;
 import com.obby.android.localscreenshare.server.LssServerInfoListener;
@@ -219,6 +218,9 @@ public class LssService extends Service {
 
     private int mProjectionFrameRate;
 
+    // True for the H.264 surface path, false for the JPEG fallback path; read at start.
+    private boolean mIsH264;
+
     private final String mTag = "LssService@" + hashCode();
 
     // Serializes image acquisition with reader replacement and teardown. It also guards
@@ -324,8 +326,8 @@ public class LssService extends Service {
                         ImageProcessingUtil.copyByteBufferToBitmap(mScreenFrameBitmap, plane.getBuffer(),
                             plane.getRowStride());
 
-                        // The legacy protocol carries JPEG frames; the quality comes from the
-                        // current preference snapshot.
+                        // JPEG frames are submitted through the frame-input encoder; the quality
+                        // comes from the current preference snapshot.
                         final byte[] data;
                         try (final ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
                             mScreenFrameBitmap.compress(Bitmap.CompressFormat.JPEG, mProjectionQuality, outputStream);
@@ -335,12 +337,8 @@ public class LssService extends Service {
                         }
 
                         // Holding mImageReaderLock keeps this call ahead of teardown, which closes
-                        // the reader under the same lock. LssServer accepts calls from any thread.
-                        mServer.postScreenFrame(ScreenFrame.newBuilder()
-                            .setTimestamp(mFrameTimestamp)
-                            .setData(ByteString.copyFrom(data))
-                            .setSecure(mIsProjectionSecure)
-                            .build());
+                        // the reader under the same lock. The runtime accepts calls from any thread.
+                        mStreamRuntime.submitFrame(mFrameTimestamp / 1000L, data);
                     }
                 }
             }
@@ -404,6 +402,15 @@ public class LssService extends Service {
                 break;
             case Preferences.KEY_PROJECTION_FRAME_RATE:
                 mProjectionFrameRate = Preferences.get().getProjectionFrameRate();
+                break;
+            case Preferences.KEY_PROJECTION_BITRATE:
+                // Bitrate is hot-applied; frame rate and IDR interval only change on a rebuild.
+                if (mStreamRuntime != null) {
+                    mStreamRuntime.updateParameters(new StreamParameters(
+                        Preferences.get().getProjectionBitrate(),
+                        Preferences.get().getProjectionFrameRate(),
+                        Preferences.get().getProjectionIdrIntervalMs()));
+                }
                 break;
             default:
                 break;
@@ -536,11 +543,26 @@ public class LssService extends Service {
             return START_NOT_STICKY;
         }
 
-        // The virtual display renders the captured screen into the encoder's input surface.
+        // The virtual display renders the captured screen into the codec's input: the encoder
+        // surface for H.264, or an image reader feeding the frame-input JPEG path.
+        final Surface displaySurface;
+        if (mIsH264) {
+            displaySurface = mStreamRuntime.getInputSurface();
+        } else {
+            mImageReaderHandlerThread = new HandlerThread(IMAGE_READER_HANDLER_THREAD_NAME,
+                Process.THREAD_PRIORITY_BACKGROUND);
+            mImageReaderHandlerThread.start();
+            mImageReaderHandler = new Handler(mImageReaderHandlerThread.getLooper());
+            mImageReader = ImageReader.newInstance(mProjectionSize.getWidth(), mProjectionSize.getHeight(),
+                PixelFormat.RGBA_8888, IMAGE_READER_MAX_IMAGES);
+            mFrameTimestamp = -1L;
+            mImageReader.setOnImageAvailableListener(mOnImageAvailableListener, mImageReaderHandler);
+            displaySurface = mImageReader.getSurface();
+        }
         mVirtualDisplay = mMediaProjection.createVirtualDisplay(VIRTUAL_DISPLAY_NAME, mProjectionSize.getWidth(),
             mProjectionSize.getHeight(), getResources().getConfiguration().densityDpi,
             DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC | DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY,
-            mStreamRuntime.getInputSurface(), mVirtualDisplayCallback, new Handler(Looper.getMainLooper()));
+            displaySurface, mVirtualDisplayCallback, new Handler(Looper.getMainLooper()));
 
         // The chip is only shown once the pipeline is complete.
         mScreenShareChip = new ScreenShareChip(this);
@@ -783,18 +805,32 @@ public class LssService extends Service {
      * Parameters use {@link StreamParameters#DEFAULT} until the preference wiring lands.</p>
      */
     private void startStreamPipeline() {
+        mIsH264 = !"jpeg".equals(Preferences.get().getProjectionCodec());
+
         mCodecRegistry = CodecRegistry.withDefaults();
-        mCodecRegistry.register(H264Codec.androidRegistration());
+        if (mIsH264) {
+            mCodecRegistry.register(H264Codec.androidRegistration());
+        }
 
         mStreamKey = new StreamKey(Preferences.get().getServiceId(), "screen");
-        StreamDescriptor requested = StreamDescriptor.builder(mStreamKey, 1, CodecIds.H264,
-                        H264Codec.MIME, BitstreamFormat.ANNEX_B)
-                .codedSize(mProjectionSize.getWidth(), mProjectionSize.getHeight())
-                .visibleSize(mProjectionSize.getWidth(), mProjectionSize.getHeight())
-                .build();
+        final StreamDescriptor requested = mIsH264
+                ? StreamDescriptor.builder(mStreamKey, 1, CodecIds.H264, H264Codec.MIME,
+                                BitstreamFormat.ANNEX_B)
+                        .codedSize(mProjectionSize.getWidth(), mProjectionSize.getHeight())
+                        .visibleSize(mProjectionSize.getWidth(), mProjectionSize.getHeight())
+                        .build()
+                : StreamDescriptor.builder(mStreamKey, 1, CodecIds.JPEG, "image/jpeg",
+                                BitstreamFormat.JPEG_FRAME)
+                        .codedSize(mProjectionSize.getWidth(), mProjectionSize.getHeight())
+                        .visibleSize(mProjectionSize.getWidth(), mProjectionSize.getHeight())
+                        .build();
 
-        mStreamRuntime = new StreamRuntime(mCodecRegistry, mStreamKey, requested,
-                StreamParameters.DEFAULT);
+        final StreamParameters parameters = new StreamParameters(
+                Preferences.get().getProjectionBitrate(),
+                Preferences.get().getProjectionFrameRate(),
+                Preferences.get().getProjectionIdrIntervalMs());
+
+        mStreamRuntime = new StreamRuntime(mCodecRegistry, mStreamKey, requested, parameters);
         mStreamHub = new StreamHub(mCodecRegistry);
         mStreamHub.register(mStreamRuntime);
         mStreamHub.activate(mStreamKey);

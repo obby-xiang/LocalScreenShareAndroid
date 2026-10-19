@@ -53,6 +53,15 @@ public final class Preferences {
     /** JPEG quality for the legacy capture path; see {@link #getProjectionQuality()}. */
     public static final String KEY_PROJECTION_QUALITY = "projection_quality";
 
+    /** Capture codec mode; see {@link #getProjectionCodec()}. */
+    public static final String KEY_PROJECTION_CODEC = "projection_codec";
+
+    /** Capture bitrate in bits per second; see {@link #getProjectionBitrate()}. */
+    public static final String KEY_PROJECTION_BITRATE = "projection_bitrate";
+
+    /** Capture key-frame interval in milliseconds; see {@link #getProjectionIdrIntervalMs()}. */
+    public static final String KEY_PROJECTION_IDR_INTERVAL = "projection_idr_interval";
+
     /** Normalized chip position; see {@link #getServiceChipLocation()}. */
     public static final String KEY_SERVICE_CHIP_LOCATION = "service_chip_location";
 
@@ -87,6 +96,12 @@ public final class Preferences {
     private static final int DEFAULT_PROJECTION_QUALITY = 85;
 
     private static final int DEFAULT_PROJECTION_FRAME_RATE = 60;
+
+    private static final String DEFAULT_PROJECTION_CODEC = "h264";
+
+    private static final int DEFAULT_PROJECTION_BITRATE = 4_000_000;
+
+    private static final int DEFAULT_PROJECTION_IDR_INTERVAL_MS = 1000;
 
     private static final PointF DEFAULT_SERVICE_CHIP_LOCATION = new PointF(0f, 0f);
 
@@ -234,6 +249,40 @@ public final class Preferences {
     /** Persists the JPEG quality; the capture service applies it to later frames. */
     public void setProjectionQuality(final int quality) {
         mPreferences.edit().putInt(KEY_PROJECTION_QUALITY, quality).commit();
+    }
+
+    /**
+     * Capture codec mode, either {@code "h264"} or {@code "jpeg"}; defaults to H.264. JPEG is the
+     * fallback used when H.264 encoding is unavailable or disabled.
+     */
+    @NonNull
+    public String getProjectionCodec() {
+        return mPreferences.getString(KEY_PROJECTION_CODEC, DEFAULT_PROJECTION_CODEC);
+    }
+
+    /** Persists the codec mode; it takes effect when a capture session starts or is rebuilt. */
+    public void setProjectionCodec(@NonNull final String codec) {
+        mPreferences.edit().putString(KEY_PROJECTION_CODEC, codec).commit();
+    }
+
+    /** Capture bitrate in bits per second; defaults to 4 Mbps. */
+    public int getProjectionBitrate() {
+        return mPreferences.getInt(KEY_PROJECTION_BITRATE, DEFAULT_PROJECTION_BITRATE);
+    }
+
+    /** Persists the capture bitrate; the running encoder applies it live. */
+    public void setProjectionBitrate(final int bitrate) {
+        mPreferences.edit().putInt(KEY_PROJECTION_BITRATE, bitrate).commit();
+    }
+
+    /** Capture key-frame interval in milliseconds; defaults to 1000. */
+    public int getProjectionIdrIntervalMs() {
+        return mPreferences.getInt(KEY_PROJECTION_IDR_INTERVAL, DEFAULT_PROJECTION_IDR_INTERVAL_MS);
+    }
+
+    /** Persists the key-frame interval; it takes effect when the encoder is rebuilt. */
+    public void setProjectionIdrIntervalMs(final int intervalMs) {
+        mPreferences.edit().putInt(KEY_PROJECTION_IDR_INTERVAL, intervalMs).commit();
     }
 
     /**

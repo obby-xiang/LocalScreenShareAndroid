@@ -10,6 +10,7 @@ import com.obby.android.localscreenshare.core.codec.Encoder;
 import com.obby.android.localscreenshare.core.codec.EncoderConfig;
 import com.obby.android.localscreenshare.core.codec.EncoderException;
 import com.obby.android.localscreenshare.core.codec.EncoderOutput;
+import com.obby.android.localscreenshare.core.codec.FrameInputEncoder;
 import com.obby.android.localscreenshare.core.model.ColorInfo;
 import com.obby.android.localscreenshare.core.model.EncodedAccessUnit;
 import com.obby.android.localscreenshare.core.model.StreamDescriptor;
@@ -448,6 +449,38 @@ public final class StreamRuntime {
             throw e;
         }
         return true;
+    }
+
+    /**
+     * Submits one complete encoded frame to a frame-input encoder.
+     *
+     * <p>The frame is forwarded only while the runtime is {@code CONFIGURING} or {@code READY} and
+     * the active encoder implements {@link FrameInputEncoder}; other codecs ignore the call and
+     * return {@code false}. The encoder is invoked outside the runtime lock because it emits an
+     * access unit synchronously, which must not run while the lock is held.</p>
+     *
+     * @param ptsUs        presentation timestamp in microseconds
+     * @param encodedBytes complete encoded frame payload; must not be null or empty
+     * @return {@code true} when the active encoder accepted the frame
+     */
+    public boolean submitFrame(long ptsUs, byte[] encodedBytes) {
+        if (encodedBytes == null || encodedBytes.length == 0) {
+            return false;
+        }
+        final Encoder encoder;
+        synchronized (lock) {
+            if (closed) {
+                return false;
+            }
+            if (state != RuntimeState.CONFIGURING && state != RuntimeState.READY) {
+                return false;
+            }
+            if (!(activeEncoder instanceof FrameInputEncoder)) {
+                return false;
+            }
+            encoder = activeEncoder;
+        }
+        return ((FrameInputEncoder) encoder).submitFrame(ptsUs, encodedBytes);
     }
 
     /**

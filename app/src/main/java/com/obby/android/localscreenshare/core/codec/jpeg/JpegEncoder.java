@@ -4,6 +4,7 @@ import android.view.Surface;
 
 import com.obby.android.localscreenshare.core.codec.Encoder;
 import com.obby.android.localscreenshare.core.codec.EncoderOutput;
+import com.obby.android.localscreenshare.core.codec.FrameInputEncoder;
 import com.obby.android.localscreenshare.core.model.AccessUnitFlags;
 import com.obby.android.localscreenshare.core.model.EncodedAccessUnit;
 import com.obby.android.localscreenshare.core.model.JoinInfo;
@@ -17,7 +18,7 @@ import java.util.Collections;
  * Encoder for already-compressed JPEG frames. Each accepted frame becomes a
  * single join-point access unit; the per-instance sequence restarts at zero.
  */
-public final class JpegEncoder implements Encoder {
+public final class JpegEncoder implements Encoder, FrameInputEncoder {
 
     private final StreamKey streamKey;
     private final StreamDescriptor descriptor;
@@ -75,6 +76,16 @@ public final class JpegEncoder implements Encoder {
         closed = true;
     }
 
+    @Override
+    public boolean submitFrame(long ptsUs, byte[] encodedBytes) {
+        return offerJpegFrame(ptsUs, encodedBytes);
+    }
+
+    /**
+     * Accepts one complete JPEG frame; kept under its historical name for the existing tests.
+     *
+     * @return {@code true} when the frame was validated and emitted as an access unit
+     */
     public boolean offerJpegFrame(long ptsUs, byte[] jpegBytes) {
         if (!started || stopped || closed) {
             return false;

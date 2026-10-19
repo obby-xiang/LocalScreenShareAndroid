@@ -20,12 +20,10 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.core.content.ContextCompat;
 
-import com.google.protobuf.Empty;
 import com.obby.android.localscreenshare.core.codec.CodecRegistry;
 import com.obby.android.localscreenshare.core.stream.StreamHub;
 import com.obby.android.localscreenshare.core.stream.StreamRuntime;
 import com.obby.android.localscreenshare.grpc.screenstream.ClientMessage;
-import com.obby.android.localscreenshare.grpc.screenstream.ScreenFrame;
 import com.obby.android.localscreenshare.grpc.screenstream.ScreenStreamServiceGrpc;
 import com.obby.android.localscreenshare.grpc.screenstream.ServerMessage;
 import com.obby.android.localscreenshare.support.Constants;
@@ -170,9 +168,6 @@ public final class LssServer {
         .build(), new ThreadPoolExecutor.AbortPolicy());
 
     @NonNull
-    private final ScreenStreamService mScreenStreamService = new ScreenStreamService(mGrpcServerExecutor);
-
-    @NonNull
     private final StreamService mStreamService = new StreamService();
 
     // Records each open transport as a per-remote-address entry; called on gRPC transport threads.
@@ -249,7 +244,6 @@ public final class LssServer {
             .executor(mGrpcServerExecutor)
             .addTransportFilter(mServerTransportFilter)
             .addStreamTracerFactory(mServerStreamTracerFactory)
-            .addService(mScreenStreamService)
             .addService(mStreamService)
             .build();
 
@@ -491,21 +485,7 @@ public final class LssServer {
         }
 
         mGrpcServer.shutdownNow();
-        mScreenStreamService.stop();
         mGrpcServerExecutor.shutdownNow();
-    }
-
-    /**
-     * Publishes the latest captured frame to every connected client.
-     *
-     * <p>Typically called from the capture thread; safe to call from any thread. The frame replaces
-     * the previous one until a client is ready to receive it, so a slow client drops intermediate
-     * frames instead of queueing them.</p>
-     *
-     * @param frame newest frame; the server does not mutate it
-     */
-    public void postScreenFrame(@NonNull final ScreenFrame frame) {
-        mScreenStreamService.postScreenFrame(frame);
     }
 
     private void updateServerInfo(@NonNull final LssServerInfo serverInfo) {
@@ -536,96 +516,6 @@ public final class LssServer {
         nsdServiceInfo.setAttribute(Constants.NSD_SERVICE_ATTR_ID, serverInfo.getId());
         nsdServiceInfo.setAttribute(Constants.NSD_SERVICE_ATTR_NAME, serverInfo.getName());
         return nsdServiceInfo;
-    }
-
-    /**
-     * gRPC service implementation that fans the newest frame out to all connected clients.
-     *
-     * <p>Service calls run on the gRPC server executor. Registration and frame publication are
-     * serialized by {@code mLock}; {@link #stop()} marks the service stopped, releases every client
-     * observer and clears the frame while holding the same lock, so no frame is published after
-     * shutdown starts. Observers remove themselves through their release callback, which re-enters
-     * the same monitor from the releasing thread.</p>
-     */
-    private static class ScreenStreamService extends ScreenStreamServiceGrpc.ScreenStreamServiceImplBase {
-        private volatile boolean mIsStopped;
-
-        private volatile ScreenFrame mScreenFrame;
-
-        @NonNull
-        private final Executor mExecutor;
-
-        @NonNull
-        private final Object mLock = new Object();
-
-        // Copy-on-write so fan-out can iterate while an observer removes itself on release.
-        @NonNull
-        private final List<ScreenStreamResponseObserver> mScreenStreamResponseObservers = new CopyOnWriteArrayList<>();
-
-        private ScreenStreamService(@NonNull final Executor executor) {
-            mExecutor = executor;
-        }
-
-        /**
-         * Registers a client and immediately sends the latest frame, if one is already available.
-         * Runs on the gRPC server executor.
-         */
-        @Override
-        public void getScreenStream(Empty request, StreamObserver<ScreenFrame> responseObserver) {
-            if (mIsStopped) {
-                return;
-            }
-
-            synchronized (mLock) {
-                if (mIsStopped) {
-                    return;
-                }
-
-                final ScreenStreamResponseObserver observer = new ScreenStreamResponseObserver(
-                    (ServerCallStreamObserver<ScreenFrame>) responseObserver, mExecutor);
-                observer.setOnReleaseListener(() -> {
-                    synchronized (mLock) {
-                        mScreenStreamResponseObservers.remove(observer);
-                    }
-                });
-                mScreenStreamResponseObservers.add(observer);
-
-                if (mScreenFrame != null) {
-                    observer.postScreenFrame(mScreenFrame);
-                }
-            }
-        }
-
-        /**
-         * Stores the newest frame and offers it to every connected client; called from any thread.
-         */
-        public void postScreenFrame(@NonNull final ScreenFrame frame) {
-            if (mIsStopped) {
-                return;
-            }
-
-            synchronized (mLock) {
-                if (mIsStopped) {
-                    return;
-                }
-
-                mScreenFrame = frame;
-                mScreenStreamResponseObservers.forEach(observer -> observer.postScreenFrame(mScreenFrame));
-            }
-        }
-
-        /**
-         * Marks the service stopped, releases every client and drops the retained frame. Called by
-         * the server's stop() after the gRPC server has been shut down.
-         */
-        public void stop() {
-            synchronized (mLock) {
-                mIsStopped = true;
-                mScreenFrame = null;
-                mScreenStreamResponseObservers.forEach(ScreenStreamResponseObserver::release);
-                mScreenStreamResponseObservers.clear();
-            }
-        }
     }
 
     /**
@@ -714,110 +604,6 @@ public final class LssServer {
 
         @Override
         public void onCompleted() {
-        }
-    }
-
-    /**
-     * Per-client stream state. At most one frame is queued: a newer frame replaces the queued one,
-     * and the handler sends only when the gRPC call is ready. The timestamp check prevents sending
-     * the same frame again when readiness is signalled more than once.
-     *
-     * <p>The ready handler and {@link #postScreenFrame} are serialized by {@code mLock}; the gRPC
-     * close and cancel callbacks, as well as {@link #release()}, may arrive on gRPC threads.
-     * Release changes state only once and is also invoked when the enclosing service stops.</p>
-     */
-    @Accessors(prefix = "m")
-    private static class ScreenStreamResponseObserver {
-        private volatile boolean mIsReleased;
-
-        private volatile ScreenFrame mScreenFrame;
-
-        private volatile long mScreenFrameTimestamp = -1L;
-
-        @Setter
-        @Nullable
-        private OnReleaseListener mOnReleaseListener;
-
-        @NonNull
-        private final ServerCallStreamObserver<ScreenFrame> mObserver;
-
-        @NonNull
-        private final Executor mExecutor;
-
-        @NonNull
-        private final Object mLock = new Object();
-
-        // Sends the queued frame if it is newer than the last one sent; runs on mExecutor.
-        @NonNull
-        private final Runnable mOnReadyHandler = new Runnable() {
-            @Override
-            public void run() {
-                if (mIsReleased || mScreenFrame == null) {
-                    return;
-                }
-
-                synchronized (mLock) {
-                    if (mIsReleased || mScreenFrame == null) {
-                        return;
-                    }
-
-                    if (mScreenFrameTimestamp < mScreenFrame.getTimestamp()) {
-                        mScreenFrameTimestamp = mScreenFrame.getTimestamp();
-                        mObserver.onNext(mScreenFrame);
-                    }
-
-                    mScreenFrame = null;
-                }
-            }
-        };
-
-        private ScreenStreamResponseObserver(@NonNull final ServerCallStreamObserver<ScreenFrame> observer,
-            @NonNull final Executor executor) {
-            mObserver = observer;
-            mExecutor = executor;
-            mObserver.setOnReadyHandler(mOnReadyHandler);
-            mObserver.setOnCloseHandler(this::release);
-            mObserver.setOnCancelHandler(this::release);
-        }
-
-        /**
-         * Offers a frame to this client. Only the newest frame is kept; when the call is ready the
-         * send is scheduled on the executor, otherwise the frame waits for the ready callback.
-         */
-        public void postScreenFrame(@NonNull final ScreenFrame frame) {
-            if (mIsReleased) {
-                return;
-            }
-
-            synchronized (mLock) {
-                if (mIsReleased) {
-                    return;
-                }
-
-                mScreenFrame = frame;
-                if (mObserver.isReady()) {
-                    mExecutor.execute(mOnReadyHandler);
-                }
-            }
-        }
-
-        /**
-         * Marks this client released and notifies the enclosing service, which removes it from the
-         * fan-out list. State changes once; extra calls only repeat the notification.
-         */
-        public void release() {
-            synchronized (mLock) {
-                mIsReleased = true;
-                mScreenFrame = null;
-                if (mOnReleaseListener != null) {
-                    mOnReleaseListener.onRelease();
-                }
-            }
-        }
-
-        @FunctionalInterface
-        private interface OnReleaseListener {
-            void onRelease();
         }
     }
 
