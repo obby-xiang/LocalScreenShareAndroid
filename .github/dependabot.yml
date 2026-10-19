@@ -1,10 +1,14 @@
 version: 2
+# 仅保留安全更新：open-pull-requests-limit 为 0 时 Dependabot 不开版本升级 PR，
+# 有安全漏洞时仍会开安全更新 PR。版本升级由用户裁决后手动进行。
 updates:
   - package-ecosystem: "gradle"
     directory: "/"
     schedule:
       interval: "weekly"
+    open-pull-requests-limit: 0
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+    open-pull-requests-limit: 0
