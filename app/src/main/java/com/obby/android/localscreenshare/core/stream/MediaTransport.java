@@ -28,8 +28,10 @@ import java.io.IOException;
  * signals the failure to the peer, which {@link #close()} does not have to do. A session uses it
  * when it is revoked while the client may still be waiting for media - for example when a newer
  * connection takes over the same client id - so the client learns about the termination instead of
- * waiting for its own timeout. Both methods are idempotent, may be called from any thread, and only
- * the first one that runs releases the connection; a later call is a no-op.</p>
+ * waiting for its own timeout. Both methods are idempotent and may be called from any thread, and a
+ * repeated call is a no-op. An abort still reports the failure when {@link #close()} already ran,
+ * because a revoked session must not leave the peer waiting; aborting twice reports it only
+ * once.</p>
  */
 public interface MediaTransport {
 
@@ -59,8 +61,8 @@ public interface MediaTransport {
      *
      * <p>Called instead of {@link #close()} when the session is revoked while the peer may still
      * be waiting for media, so the peer does not have to wait for its own deadline. Like
-     * {@link #close()} this is idempotent and must not throw; when the connection was already
-     * released by either method, the call is a no-op.</p>
+     * {@link #close()} this is idempotent and must not throw; repeated aborts are no-ops, and an
+     * abort after {@link #close()} still reports the failure once.</p>
      *
      * @param reason short English description of the termination, safe to send to the peer
      */

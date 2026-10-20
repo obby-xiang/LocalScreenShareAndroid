@@ -24,8 +24,10 @@ import io.grpc.stub.StreamObserver;
  * <p><b>Termination.</b> {@link #close()} only releases the outbound side: the owner of the call
  * decides how the RPC ends. {@link #abort(String)} instead ends the RPC itself with
  * {@link Status#ABORTED} and the given description, so a peer whose session was taken over stops
- * waiting for media immediately. Both are serialized with sends behind the same lock, so an
- * {@code onError} never races an in-flight {@code onNext}.</p>
+ * waiting for media immediately. An abort still terminates the RPC when {@link #close()} already
+ * ran, because a revoked session must not leave the peer waiting; aborting twice does nothing the
+ * second time. Both are serialized with sends behind the same lock, so an {@code onError} never
+ * races an in-flight {@code onNext}.</p>
  */
 public final class GrpcMediaTransport implements MediaTransport {
 
@@ -36,6 +38,8 @@ public final class GrpcMediaTransport implements MediaTransport {
     private final Object sendLock = new Object();
 
     private boolean closed;
+
+    private boolean aborted;
 
     /**
      * Creates a transport over {@code observer}.
@@ -74,10 +78,11 @@ public final class GrpcMediaTransport implements MediaTransport {
     @Override
     public void abort(String reason) {
         synchronized (sendLock) {
-            if (closed) {
+            closed = true;
+            if (aborted) {
                 return;
             }
-            closed = true;
+            aborted = true;
             final String description = reason == null ? "transport aborted" : reason;
             try {
                 observer.onError(Status.ABORTED.withDescription(description).asRuntimeException());

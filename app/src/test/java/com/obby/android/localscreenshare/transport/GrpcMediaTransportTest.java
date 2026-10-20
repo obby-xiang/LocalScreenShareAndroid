@@ -113,14 +113,18 @@ public class GrpcMediaTransportTest {
     }
 
     @Test
-    public void abortAfterCloseIsIgnored() {
+    public void abortAfterCloseStillTerminatesTheRpc() {
         RecordingObserver observer = new RecordingObserver();
         GrpcMediaTransport transport = new GrpcMediaTransport(observer, false);
 
         transport.close();
         transport.abort("session taken over");
+        transport.abort("session taken over");
 
-        assertNull(observer.error);
+        // A revoked session must not leave the peer waiting, even if the plain release ran first.
+        assertNotNull(observer.error);
+        assertEquals(1, observer.errorCount);
+        assertEquals(Status.Code.ABORTED, Status.fromThrowable(observer.error).getCode());
         assertFalse(observer.completed);
     }
 
@@ -161,8 +165,8 @@ public class GrpcMediaTransportTest {
         }
         executor.shutdown();
 
-        // Whichever termination runs first wins; no call may fire a second callback.
-        assertTrue("abort must fire at most one onError", observer.errorCount <= 1);
+        // The first abort terminates the RPC; further aborts and plain closes add nothing.
+        assertEquals(1, observer.errorCount);
         assertFalse(observer.completed);
     }
 

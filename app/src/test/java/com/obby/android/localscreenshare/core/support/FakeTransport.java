@@ -16,9 +16,9 @@ import java.util.List;
  * {@link #getEvents()} returns a snapshot of the synchronized list. Each failure injection is
  * one-shot: the checked failure applies to the next send of either kind, and the unchecked
  * variants are separate for descriptors and access units. {@code close()} and {@code abort()}
- * count only the first termination call of either kind, whichever comes first, and are otherwise
- * idempotent. The fake does not enforce lifecycle, so a send after termination is still
- * recorded.</p>
+ * are idempotent; {@code abort()} is still recorded after {@code close()}, mirroring the
+ * production transport, while {@code close()} after an abort changes nothing. The fake does not
+ * enforce lifecycle, so a send after termination is still recorded.</p>
  */
 public class FakeTransport implements MediaTransport {
 
@@ -77,6 +77,7 @@ public class FakeTransport implements MediaTransport {
     private int abortCount;
     private String abortReason;
     private boolean closed;
+    private boolean aborted;
 
     public synchronized void failNextSend() {
         failNextSend = true;
@@ -114,8 +115,9 @@ public class FakeTransport implements MediaTransport {
 
     @Override
     public synchronized void abort(String reason) {
-        if (!closed) {
-            closed = true;
+        closed = true;
+        if (!aborted) {
+            aborted = true;
             abortCount++;
             abortReason = reason;
         }
