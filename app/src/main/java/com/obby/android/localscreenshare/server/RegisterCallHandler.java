@@ -7,12 +7,12 @@ import com.obby.android.localscreenshare.core.stream.TimeSource;
 import com.obby.android.localscreenshare.discovery.model.DeviceAddress;
 import com.obby.android.localscreenshare.discovery.model.DiscoveryChannel;
 import com.obby.android.localscreenshare.discovery.register.RegisterClient;
+import com.obby.android.localscreenshare.discovery.register.RegisterConstants;
 import com.obby.android.localscreenshare.discovery.register.RegisterProtoMapper;
 import com.obby.android.localscreenshare.discovery.store.DeviceStore;
 import com.obby.android.localscreenshare.grpc.screenstream.DeviceSummary;
 import com.obby.android.localscreenshare.grpc.screenstream.RegisterRequest;
 import com.obby.android.localscreenshare.grpc.screenstream.RegisterResponse;
-import com.obby.android.localscreenshare.support.Constants;
 import com.obby.android.localscreenshare.support.DelayedScheduler;
 import com.obby.android.localscreenshare.transport.ScreenStreamProtoMapper;
 
@@ -128,15 +128,15 @@ public final class RegisterCallHandler {
 
     @NonNull
     private final RateLimiter mGlobalLimiter =
-        new RateLimiter(Constants.REGISTER_REQUESTS_PER_MINUTE, RATE_WINDOW_MS);
+        new RateLimiter(RegisterConstants.REGISTER_REQUESTS_PER_MINUTE, RATE_WINDOW_MS);
 
     @NonNull
     private final RateLimiter mAddressLimiter =
-        new RateLimiter(Constants.REGISTER_REQUESTS_PER_ADDRESS_PER_MINUTE, RATE_WINDOW_MS);
+        new RateLimiter(RegisterConstants.REGISTER_REQUESTS_PER_ADDRESS_PER_MINUTE, RATE_WINDOW_MS);
 
     @NonNull
     private final RateLimiter mReverseLimiter =
-        new RateLimiter(Constants.REGISTER_REVERSE_PER_MINUTE, RATE_WINDOW_MS);
+        new RateLimiter(RegisterConstants.REGISTER_REVERSE_PER_MINUTE, RATE_WINDOW_MS);
 
     /**
      * Creates a handler without a reverse call; used by tests and by a server that does not
@@ -308,7 +308,7 @@ public final class RegisterCallHandler {
             return;
         }
         final DeviceAddress target = addresses.get(0);
-        final long delayMs = mRandom.nextInt((int) Constants.REGISTER_REVERSE_MAX_DELAY_MS + 1);
+        final long delayMs = mRandom.nextInt((int) RegisterConstants.REGISTER_REVERSE_MAX_DELAY_MS + 1);
         mScheduler.schedule(delayMs, () -> mReverseRegistrar.register(target, false, self,
             new RegisterClient.Callback() {
                 @Override

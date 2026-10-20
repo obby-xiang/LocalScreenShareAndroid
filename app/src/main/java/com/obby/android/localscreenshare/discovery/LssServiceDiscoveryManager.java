@@ -28,15 +28,18 @@ import com.obby.android.localscreenshare.discovery.provider.DeviceObservation;
 import com.obby.android.localscreenshare.discovery.provider.DiscoveryProviderListener;
 import com.obby.android.localscreenshare.discovery.register.GrpcRegisterStub;
 import com.obby.android.localscreenshare.discovery.register.RegisterClient;
+import com.obby.android.localscreenshare.discovery.register.RegisterConstants;
 import com.obby.android.localscreenshare.discovery.register.RegisterProtoMapper;
 import com.obby.android.localscreenshare.discovery.scan.AddressScanner;
 import com.obby.android.localscreenshare.discovery.scan.AndroidInterfaceEnumerator;
 import com.obby.android.localscreenshare.discovery.scan.RegisterAddressProbe;
+import com.obby.android.localscreenshare.discovery.scan.ScanConstants;
 import com.obby.android.localscreenshare.discovery.scan.ScanCoordinator;
 import com.obby.android.localscreenshare.discovery.store.DeviceStore;
 import com.obby.android.localscreenshare.discovery.store.DeviceStoreListener;
 import com.obby.android.localscreenshare.discovery.udp.AndroidMulticastSocketFactory;
 import com.obby.android.localscreenshare.discovery.udp.MulticastConfig;
+import com.obby.android.localscreenshare.discovery.udp.MulticastConstants;
 import com.obby.android.localscreenshare.discovery.udp.MulticastLockManager;
 import com.obby.android.localscreenshare.discovery.udp.SocketMulticastTransport;
 import com.obby.android.localscreenshare.discovery.udp.UdpMulticastDiscoveryProvider;
@@ -46,7 +49,6 @@ import com.obby.android.localscreenshare.identity.IdentityManager;
 import com.obby.android.localscreenshare.identity.IdentityUnavailableException;
 import com.obby.android.localscreenshare.settings.DiscoverySettings;
 import com.obby.android.localscreenshare.settings.Preferences;
-import com.obby.android.localscreenshare.support.Constants;
 import com.obby.android.localscreenshare.support.DelayedScheduler;
 import com.obby.android.localscreenshare.support.ThreadUtils;
 
@@ -139,7 +141,7 @@ public final class LssServiceDiscoveryManager {
         MulticastLockManager.get(), this::isSelfDeviceId, TimeSource.MONOTONIC,
         ThreadUtils.getMainThreadExecutor(), mRegisterClient, this::selfSummary,
         this::onConfirmed,
-        (host, port) -> mDeviceStore.isConfirmedWithin(host, port, Constants.REGISTER_RECONFIRM_INTERVAL_MS));
+        (host, port) -> mDeviceStore.isConfirmedWithin(host, port, RegisterConstants.REGISTER_RECONFIRM_INTERVAL_MS));
 
     // Recreated on every start because the discovered service types depend on the settings.
     @Nullable
@@ -153,7 +155,7 @@ public final class LssServiceDiscoveryManager {
     @NonNull
     private final AddressScanner mAddressScanner = new AddressScanner(
         new RegisterAddressProbe(new GrpcRegisterStub(), this::selfSummary, DiscoveryChannel.SCAN),
-        Constants.SCAN_MAX_CONCURRENCY, Constants.SCAN_BUDGET_MS, TimeSource.MONOTONIC);
+        ScanConstants.SCAN_MAX_CONCURRENCY, ScanConstants.SCAN_BUDGET_MS, TimeSource.MONOTONIC);
 
     @NonNull
     private final ScanCoordinator mScanCoordinator = new ScanCoordinator(
@@ -166,7 +168,7 @@ public final class LssServiceDiscoveryManager {
     private final ManualAddressProvider mManualAddressProvider = new ManualAddressProvider(
         new RegisterAddressProbe(new GrpcRegisterStub(), this::selfSummary, DiscoveryChannel.MANUAL),
         mFavoriteStore, ThreadUtils.getMainThreadExecutor(), this::onConfirmed,
-        Constants.MANUAL_PROBE_TIMEOUT_MS);
+        ScanConstants.MANUAL_PROBE_TIMEOUT_MS);
 
     @NonNull
     private final ScanCoordinator.Listener mScanListener = new ScanCoordinator.Listener() {
@@ -503,7 +505,7 @@ public final class LssServiceDiscoveryManager {
             mScanCoordinator.start(ScanCoordinator.Trigger.DISCOVERY_START);
         }
         mMainHandler.removeCallbacks(mEmptyListScanRunnable);
-        mMainHandler.postDelayed(mEmptyListScanRunnable, Constants.DISCOVERY_EMPTY_MANUAL_HINT_MS);
+        mMainHandler.postDelayed(mEmptyListScanRunnable, ScanConstants.DISCOVERY_EMPTY_MANUAL_HINT_MS);
         registerNetworkCallback();
         mMainHandler.removeCallbacks(mTickRunnable);
         mMainHandler.postDelayed(mTickRunnable, DeviceStore.TICK_INTERVAL_MS);
@@ -584,8 +586,8 @@ public final class LssServiceDiscoveryManager {
     @NonNull
     private static MulticastConfig multicastConfig() {
         return new MulticastConfig(Preferences.get().getMulticastGroup(),
-            Preferences.get().getMulticastPort(), Constants.MULTICAST_TTL,
-            Constants.MULTICAST_MAX_INTERFACES);
+            Preferences.get().getMulticastPort(), MulticastConstants.MULTICAST_TTL,
+            MulticastConstants.MULTICAST_MAX_INTERFACES);
     }
 
     /**

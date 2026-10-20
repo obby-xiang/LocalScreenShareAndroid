@@ -33,6 +33,7 @@ import com.obby.android.localscreenshare.discovery.model.DiscoveryChannel;
 import com.obby.android.localscreenshare.discovery.model.JoinPolicy;
 import com.obby.android.localscreenshare.discovery.model.LssDeviceInfo;
 import com.obby.android.localscreenshare.discovery.model.ShareState;
+import com.obby.android.localscreenshare.discovery.nsd.NsdConstants;
 import com.obby.android.localscreenshare.discovery.nsd.NsdResolver;
 import com.obby.android.localscreenshare.discovery.nsd.NsdTxtRecord;
 import com.obby.android.localscreenshare.discovery.register.GrpcRegisterStub;
@@ -55,7 +56,9 @@ import com.obby.android.localscreenshare.support.BackoffPolicy;
 import com.obby.android.localscreenshare.support.Constants;
 import com.obby.android.localscreenshare.support.DelayedScheduler;
 import com.obby.android.localscreenshare.support.NetUtils;
+import com.obby.android.localscreenshare.support.ServiceProtocol;
 import com.obby.android.localscreenshare.support.ThreadUtils;
+import com.obby.android.localscreenshare.transport.GrpcConstants;
 import com.obby.android.localscreenshare.transport.GrpcMediaTransport;
 import com.obby.android.localscreenshare.transport.ScreenStreamProtoMapper;
 
@@ -329,8 +332,8 @@ public final class LssServer {
     @NonNull
     private final Server mGrpcServer =
         OkHttpServerBuilder.forPort(Preferences.get().getServerPort(), InsecureServerCredentials.create())
-            .flowControlWindow(Constants.GRPC_FLOW_CONTROL_WINDOW)
-            .maxInboundMessageSize(Constants.GRPC_MAX_INBOUND_MESSAGE_SIZE)
+            .flowControlWindow(GrpcConstants.GRPC_FLOW_CONTROL_WINDOW)
+            .maxInboundMessageSize(GrpcConstants.GRPC_MAX_INBOUND_MESSAGE_SIZE)
             .executor(mGrpcServerExecutor)
             .addTransportFilter(mServerTransportFilter)
             .addStreamTracerFactory(mServerStreamTracerFactory)
@@ -546,7 +549,7 @@ public final class LssServer {
     private final BroadcastReceiver mBroadcastReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
-            if (Constants.ACTION_WIFI_AP_STATE_CHANGED.equals(intent.getAction())) {
+            if (ServiceProtocol.ACTION_WIFI_AP_STATE_CHANGED.equals(intent.getAction())) {
                 postResolveNsdServiceRunnable();
             }
         }
@@ -622,9 +625,9 @@ public final class LssServer {
         // and this device never advertises a record that requires the new TXT keys.
         final DiscoverySettings settings = Preferences.get().getDiscoverySettings();
         mPrimaryRegistration = settings.isCompatOnly() ? null
-            : new Registration(Constants.NSD_SERVICE_TYPE,
+            : new Registration(NsdConstants.NSD_SERVICE_TYPE,
                 buildNsdServiceInfo(advertisement, NsdTxtRecord.Namespace.CURRENT), true);
-        mLegacyRegistration = new Registration(Constants.NSD_SERVICE_TYPE_LEGACY,
+        mLegacyRegistration = new Registration(NsdConstants.NSD_SERVICE_TYPE_LEGACY,
             buildNsdServiceInfo(advertisement, NsdTxtRecord.Namespace.LEGACY),
             settings.isCompatOnly());
         mNsdServiceInfo = mPrimaryRegistration != null
@@ -637,7 +640,7 @@ public final class LssServer {
         mConnectivityManager.registerDefaultNetworkCallback(mNetworkCallback);
 
         final IntentFilter intentFilter = new IntentFilter();
-        intentFilter.addAction(Constants.ACTION_WIFI_AP_STATE_CHANGED);
+        intentFilter.addAction(ServiceProtocol.ACTION_WIFI_AP_STATE_CHANGED);
         ContextCompat.registerReceiver(mContext, mBroadcastReceiver, intentFilter, ContextCompat.RECEIVER_NOT_EXPORTED);
 
         if (mServerInfoListener != null) {
@@ -698,9 +701,9 @@ public final class LssServer {
         final LssDeviceInfo advertisement = buildAdvertisement(mServerInfo);
         final DiscoverySettings settings = Preferences.get().getDiscoverySettings();
         mPrimaryRegistration = settings.isCompatOnly() ? null
-            : new Registration(Constants.NSD_SERVICE_TYPE,
+            : new Registration(NsdConstants.NSD_SERVICE_TYPE,
                 buildNsdServiceInfo(advertisement, NsdTxtRecord.Namespace.CURRENT), true);
-        mLegacyRegistration = new Registration(Constants.NSD_SERVICE_TYPE_LEGACY,
+        mLegacyRegistration = new Registration(NsdConstants.NSD_SERVICE_TYPE_LEGACY,
             buildNsdServiceInfo(advertisement, NsdTxtRecord.Namespace.LEGACY),
             settings.isCompatOnly());
         mNsdServiceInfo = mPrimaryRegistration != null
@@ -828,7 +831,7 @@ public final class LssServer {
             .auth(AuthMode.NONE)
             .protocolVersion(String.valueOf(ScreenStreamProtoMapper.PROTOCOL_VERSION))
             .metadataVersion(NSD_METADATA_VERSION)
-            .capabilities(Constants.DEVICE_CAPABILITY_H264 | Constants.DEVICE_CAPABILITY_JPEG)
+            .capabilities(NsdConstants.DEVICE_CAPABILITY_H264 | NsdConstants.DEVICE_CAPABILITY_JPEG)
             .addresses(addresses)
             .build();
         return RegisterProtoMapper.toSummary(device);
@@ -878,7 +881,7 @@ public final class LssServer {
         final NsdServiceInfo nsdServiceInfo = new NsdServiceInfo();
         nsdServiceInfo.setServiceName(LssDeviceInfo.NAME_PREFIX + advertisement.shortId());
         nsdServiceInfo.setServiceType(namespace == NsdTxtRecord.Namespace.LEGACY
-            ? Constants.NSD_SERVICE_TYPE_LEGACY : Constants.NSD_SERVICE_TYPE);
+            ? NsdConstants.NSD_SERVICE_TYPE_LEGACY : NsdConstants.NSD_SERVICE_TYPE);
         nsdServiceInfo.setPort(mGrpcServer.getPort());
 
         final Map<String, byte[]> attributes =

@@ -74,6 +74,7 @@ import com.obby.android.localscreenshare.discovery.LssServiceDiscoveryManager;
 import com.obby.android.localscreenshare.discovery.model.AuthMode;
 import com.obby.android.localscreenshare.discovery.model.DeviceRole;
 import com.obby.android.localscreenshare.discovery.model.ShareState;
+import com.obby.android.localscreenshare.discovery.nsd.NsdConstants;
 import com.obby.android.localscreenshare.discovery.udp.AndroidMulticastSocketFactory;
 import com.obby.android.localscreenshare.discovery.udp.Announcement;
 import com.obby.android.localscreenshare.discovery.udp.MulticastAnnouncer;
@@ -92,8 +93,8 @@ import com.obby.android.localscreenshare.server.LssServerStatsListener;
 import com.obby.android.localscreenshare.settings.DiscoverySettings;
 import com.obby.android.localscreenshare.settings.Preferences;
 import com.obby.android.localscreenshare.settings.VisibilityPolicy;
-import com.obby.android.localscreenshare.support.Constants;
 import com.obby.android.localscreenshare.support.DelayedScheduler;
+import com.obby.android.localscreenshare.support.ServiceProtocol;
 import com.obby.android.localscreenshare.support.WindowUtils;
 import com.obby.android.localscreenshare.transport.ScreenStreamProtoMapper;
 
@@ -267,10 +268,10 @@ public class ScreenShareService extends Service {
     @NonNull
     private final Messenger mMessenger = new Messenger(new Handler(Looper.getMainLooper(), msg -> {
         switch (msg.what) {
-            case Constants.MSG_REGISTER_SERVICE_CLIENT:
+            case ServiceProtocol.MSG_REGISTER_SERVICE_CLIENT:
                 registerServiceClient(msg.replyTo);
                 return true;
-            case Constants.MSG_UNREGISTER_SERVICE_CLIENT:
+            case ServiceProtocol.MSG_UNREGISTER_SERVICE_CLIENT:
                 unregisterServiceClient(msg.replyTo);
                 return true;
             default:
@@ -399,9 +400,9 @@ public class ScreenShareService extends Service {
     private final BroadcastReceiver mBroadcastReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
-            if (Constants.ACTION_STOP_SERVICE.equals(intent.getAction())) {
+            if (ServiceProtocol.ACTION_STOP_SERVICE.equals(intent.getAction())) {
                 stopService();
-            } else if (Constants.ACTION_IDENTITY_RESET.equals(intent.getAction())) {
+            } else if (ServiceProtocol.ACTION_IDENTITY_RESET.equals(intent.getAction())) {
                 restartAnnouncements();
             }
         }
@@ -476,8 +477,8 @@ public class ScreenShareService extends Service {
         Log.i(mTag, "onCreate: service created");
 
         final IntentFilter intentFilter = new IntentFilter();
-        intentFilter.addAction(Constants.ACTION_STOP_SERVICE);
-        intentFilter.addAction(Constants.ACTION_IDENTITY_RESET);
+        intentFilter.addAction(ServiceProtocol.ACTION_STOP_SERVICE);
+        intentFilter.addAction(ServiceProtocol.ACTION_IDENTITY_RESET);
         ContextCompat.registerReceiver(this, mBroadcastReceiver, intentFilter, ContextCompat.RECEIVER_NOT_EXPORTED);
 
         mIsProjectionSecure = Preferences.get().isProjectionSecure();
@@ -851,7 +852,7 @@ public class ScreenShareService extends Service {
             .metadataVersion(1)
             .capabilities(settings.capabilities())
             .port(serverInfo.getPort())
-            .platform(Constants.DEVICE_PLATFORM_ANDROID)
+            .platform(NsdConstants.DEVICE_PLATFORM_ANDROID)
             .build();
     }
 
@@ -960,7 +961,7 @@ public class ScreenShareService extends Service {
     // failure is ignored.
     private void notifyServerStarted(@NonNull final Messenger messenger) {
         try {
-            messenger.send(Message.obtain(null, Constants.MSG_SERVER_STARTED));
+            messenger.send(Message.obtain(null, ServiceProtocol.MSG_SERVER_STARTED));
         } catch (RemoteException e) {
             // ignored
         }
@@ -968,7 +969,7 @@ public class ScreenShareService extends Service {
 
     private void notifyServerStopped(@NonNull final Messenger messenger) {
         try {
-            messenger.send(Message.obtain(null, Constants.MSG_SERVER_STOPPED));
+            messenger.send(Message.obtain(null, ServiceProtocol.MSG_SERVER_STOPPED));
         } catch (RemoteException e) {
             // ignored
         }
@@ -976,7 +977,7 @@ public class ScreenShareService extends Service {
 
     private void notifyServerInfoChanged(@NonNull final Messenger messenger) {
         try {
-            messenger.send(Message.obtain(null, Constants.MSG_SERVER_INFO_CHANGED, mServerInfo));
+            messenger.send(Message.obtain(null, ServiceProtocol.MSG_SERVER_INFO_CHANGED, mServerInfo));
         } catch (RemoteException e) {
             // ignored
         }
@@ -984,7 +985,7 @@ public class ScreenShareService extends Service {
 
     private void notifyServerStatsChanged(@NonNull final Messenger messenger) {
         try {
-            messenger.send(Message.obtain(null, Constants.MSG_SERVER_STATS_CHANGED, mServerStats));
+            messenger.send(Message.obtain(null, ServiceProtocol.MSG_SERVER_STATS_CHANGED, mServerStats));
         } catch (RemoteException e) {
             // ignored
         }
@@ -999,7 +1000,7 @@ public class ScreenShareService extends Service {
     @SuppressWarnings("DataFlowIssue")
     @NonNull
     private MediaProjection getMediaProjection(@NonNull final Intent intent) {
-        final ActivityResult mediaProjectionResult = intent.getParcelableExtra(Constants.EXTRA_MEDIA_PROJECTION_RESULT);
+        final ActivityResult mediaProjectionResult = intent.getParcelableExtra(ServiceProtocol.EXTRA_MEDIA_PROJECTION_RESULT);
         final MediaProjectionManager mediaProjectionManager = getSystemService(MediaProjectionManager.class);
         return mediaProjectionManager.getMediaProjection(mediaProjectionResult.getResultCode(),
             mediaProjectionResult.getData());
@@ -1080,7 +1081,7 @@ public class ScreenShareService extends Service {
             .setContentIntent(PendingIntent.getActivity(this, 0, new Intent(this, MainActivity.class),
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT))
             .addAction(0, getString(R.string.service_stop_notification_action), PendingIntent.getBroadcast(this, 0,
-                new Intent(Constants.ACTION_STOP_SERVICE).setPackage(getPackageName()),
+                new Intent(ServiceProtocol.ACTION_STOP_SERVICE).setPackage(getPackageName()),
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT))
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setOngoing(true)
@@ -1175,11 +1176,11 @@ public class ScreenShareService extends Service {
                         mDialog = new MaterialAlertDialogBuilder(mContext)
                             .setMessage(R.string.screen_share_stop_confirm)
                             .setPositiveButton(android.R.string.ok, (dialog, which) -> mContext.sendBroadcast(
-                                new Intent(Constants.ACTION_STOP_SERVICE).setPackage(mContext.getPackageName())))
+                                new Intent(ServiceProtocol.ACTION_STOP_SERVICE).setPackage(mContext.getPackageName())))
                             .setNegativeButton(android.R.string.cancel, null)
                             .setCancelable(false)
                             .create();
-                        mDialog.getWindow().setType(Constants.FLOATING_WINDOW_TYPE);
+                        mDialog.getWindow().setType(ServiceProtocol.FLOATING_WINDOW_TYPE);
                     }
                     mDialog.show();
                     return true;
@@ -1198,7 +1199,7 @@ public class ScreenShareService extends Service {
             mWindowManager = mContext.getSystemService(WindowManager.class);
             mChipView = createChipView();
             mLayoutParams = new WindowManager.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT, 0, 0, Constants.FLOATING_WINDOW_TYPE,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 0, 0, ServiceProtocol.FLOATING_WINDOW_TYPE,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
                 PixelFormat.TRANSLUCENT);
             mLayoutParams.gravity = Gravity.CENTER;

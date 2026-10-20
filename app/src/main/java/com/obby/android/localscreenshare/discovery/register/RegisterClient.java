@@ -7,7 +7,6 @@ import com.obby.android.localscreenshare.grpc.screenstream.DeviceSummary;
 import com.obby.android.localscreenshare.grpc.screenstream.RegisterRequest;
 import com.obby.android.localscreenshare.grpc.screenstream.RegisterResponse;
 import com.obby.android.localscreenshare.support.BackoffPolicy;
-import com.obby.android.localscreenshare.support.Constants;
 import com.obby.android.localscreenshare.support.DelayedScheduler;
 import com.obby.android.localscreenshare.transport.ScreenStreamProtoMapper;
 
@@ -64,7 +63,7 @@ public final class RegisterClient {
     private final Map<String, Pending> mPending = new HashMap<>();
 
     // Deadline of one call; the discovery refresh preset changes it between startups.
-    private volatile long mTimeoutMs = Constants.REGISTER_TIMEOUT_MS;
+    private volatile long mTimeoutMs = RegisterConstants.REGISTER_TIMEOUT_MS;
 
     /**
      * Creates a client with the default retry jitter.
@@ -125,7 +124,7 @@ public final class RegisterClient {
      * started with. A non-positive value restores the default.</p>
      */
     public void setTimeoutMs(final long timeoutMs) {
-        mTimeoutMs = timeoutMs > 0L ? timeoutMs : Constants.REGISTER_TIMEOUT_MS;
+        mTimeoutMs = timeoutMs > 0L ? timeoutMs : RegisterConstants.REGISTER_TIMEOUT_MS;
     }
 
     /** Cancels every in-flight call and suppresses their callbacks. */
@@ -204,9 +203,9 @@ public final class RegisterClient {
             }
             pending.active = false;
             cancelTimers(pending);
-            if (pending.retries < Constants.REGISTER_RETRY_DELAYS_MS.length) {
+            if (pending.retries < RegisterConstants.REGISTER_RETRY_DELAYS_MS.length) {
                 final long delayMs = mRetryJitter.apply(
-                    Constants.REGISTER_RETRY_DELAYS_MS[pending.retries]);
+                    RegisterConstants.REGISTER_RETRY_DELAYS_MS[pending.retries]);
                 pending.retries++;
                 pending.retry = mScheduler.schedule(delayMs, () -> attempt(pending));
                 return;

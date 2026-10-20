@@ -8,7 +8,6 @@ import com.obby.android.localscreenshare.discovery.model.JoinPolicy;
 import com.obby.android.localscreenshare.discovery.model.LssDeviceInfo;
 import com.obby.android.localscreenshare.discovery.model.ShareState;
 import com.obby.android.localscreenshare.discovery.provider.DeviceObservation;
-import com.obby.android.localscreenshare.support.Constants;
 
 import org.junit.Test;
 
@@ -35,18 +34,18 @@ public class NsdTxtRecordTest {
     public void currentRecordCarriesTheMinimalSetAndNoNameByDefault() {
         Map<String, byte[]> attributes = NsdTxtRecord.encode(device(true), NsdTxtRecord.Namespace.CURRENT, false);
 
-        assertEquals(NsdTxtRecord.SCHEMA_VERSION, value(attributes, Constants.NSD_SERVICE_ATTR_VERSION));
-        assertEquals(DEVICE_ID, value(attributes, Constants.NSD_SERVICE_ATTR_ID));
-        assertEquals("server", value(attributes, Constants.NSD_SERVICE_ATTR_ROLE));
-        assertEquals("live", value(attributes, Constants.NSD_SERVICE_ATTR_STATE));
-        assertEquals("approval", value(attributes, Constants.NSD_SERVICE_ATTR_JOIN));
-        assertEquals("1", value(attributes, Constants.NSD_SERVICE_ATTR_SECURE));
-        assertEquals("none", value(attributes, Constants.NSD_SERVICE_ATTR_AUTH));
-        assertEquals("1.0", value(attributes, Constants.NSD_SERVICE_ATTR_PROTOCOL_VERSION));
-        assertEquals("2", value(attributes, Constants.NSD_SERVICE_ATTR_METADATA_VERSION));
-        assertEquals("3", value(attributes, Constants.NSD_SERVICE_ATTR_CAPABILITIES));
-        assertFalse(attributes.containsKey(Constants.NSD_SERVICE_ATTR_DISPLAY_NAME));
-        assertFalse(attributes.containsKey(Constants.NSD_SERVICE_ATTR_NAME));
+        assertEquals(NsdTxtRecord.SCHEMA_VERSION, value(attributes, NsdConstants.NSD_SERVICE_ATTR_VERSION));
+        assertEquals(DEVICE_ID, value(attributes, NsdConstants.NSD_SERVICE_ATTR_ID));
+        assertEquals("server", value(attributes, NsdConstants.NSD_SERVICE_ATTR_ROLE));
+        assertEquals("live", value(attributes, NsdConstants.NSD_SERVICE_ATTR_STATE));
+        assertEquals("approval", value(attributes, NsdConstants.NSD_SERVICE_ATTR_JOIN));
+        assertEquals("1", value(attributes, NsdConstants.NSD_SERVICE_ATTR_SECURE));
+        assertEquals("none", value(attributes, NsdConstants.NSD_SERVICE_ATTR_AUTH));
+        assertEquals("1.0", value(attributes, NsdConstants.NSD_SERVICE_ATTR_PROTOCOL_VERSION));
+        assertEquals("2", value(attributes, NsdConstants.NSD_SERVICE_ATTR_METADATA_VERSION));
+        assertEquals("3", value(attributes, NsdConstants.NSD_SERVICE_ATTR_CAPABILITIES));
+        assertFalse(attributes.containsKey(NsdConstants.NSD_SERVICE_ATTR_DISPLAY_NAME));
+        assertFalse(attributes.containsKey(NsdConstants.NSD_SERVICE_ATTR_NAME));
     }
 
     @Test
@@ -76,7 +75,7 @@ public class NsdTxtRecordTest {
 
     @Test
     public void recordWithoutNameIsStillIngested() {
-        Map<String, byte[]> attributes = attributes(Constants.NSD_SERVICE_ATTR_ID, DEVICE_ID);
+        Map<String, byte[]> attributes = attributes(NsdConstants.NSD_SERVICE_ATTR_ID, DEVICE_ID);
 
         DeviceObservation observation = NsdTxtRecord.observe(attributes, HOST, PORT, 0L);
 
@@ -89,7 +88,7 @@ public class NsdTxtRecordTest {
     public void sharedNameIsWrittenOnlyWhenEnabled() {
         Map<String, byte[]> attributes = NsdTxtRecord.encode(device(false), NsdTxtRecord.Namespace.CURRENT, true);
 
-        assertEquals("Kitchen TV", value(attributes, Constants.NSD_SERVICE_ATTR_DISPLAY_NAME));
+        assertEquals("Kitchen TV", value(attributes, NsdConstants.NSD_SERVICE_ATTR_DISPLAY_NAME));
         assertEquals("Kitchen TV", NsdTxtRecord.observe(attributes, HOST, PORT, 0L).getName());
     }
 
@@ -97,26 +96,26 @@ public class NsdTxtRecordTest {
     public void legacyRecordKeepsTheOldShapeWithShortIdFallbackName() {
         Map<String, byte[]> attributes = NsdTxtRecord.encode(device(false), NsdTxtRecord.Namespace.LEGACY, false);
 
-        assertEquals(DEVICE_ID, value(attributes, Constants.NSD_SERVICE_ATTR_ID));
-        assertEquals("LSS-L7Q3K9M2", value(attributes, Constants.NSD_SERVICE_ATTR_NAME));
-        assertFalse(attributes.containsKey(Constants.NSD_SERVICE_ATTR_VERSION));
-        assertFalse(attributes.containsKey(Constants.NSD_SERVICE_ATTR_ROLE));
+        assertEquals(DEVICE_ID, value(attributes, NsdConstants.NSD_SERVICE_ATTR_ID));
+        assertEquals("LSS-L7Q3K9M2", value(attributes, NsdConstants.NSD_SERVICE_ATTR_NAME));
+        assertFalse(attributes.containsKey(NsdConstants.NSD_SERVICE_ATTR_VERSION));
+        assertFalse(attributes.containsKey(NsdConstants.NSD_SERVICE_ATTR_ROLE));
     }
 
     @Test
     public void legacyRecordWithSharingWritesTheAliasAndNeverTheSystemName() {
         Map<String, byte[]> attributes = NsdTxtRecord.encode(device(false), NsdTxtRecord.Namespace.LEGACY, true);
-        assertEquals("Kitchen TV", value(attributes, Constants.NSD_SERVICE_ATTR_NAME));
+        assertEquals("Kitchen TV", value(attributes, NsdConstants.NSD_SERVICE_ATTR_NAME));
 
         Map<String, byte[]> untitled = NsdTxtRecord.encode(
             LssDeviceInfo.builder().id(DEVICE_ID).build(), NsdTxtRecord.Namespace.LEGACY, true);
-        assertEquals("LSS-L7Q3K9M2", value(untitled, Constants.NSD_SERVICE_ATTR_NAME));
+        assertEquals("LSS-L7Q3K9M2", value(untitled, NsdConstants.NSD_SERVICE_ATTR_NAME));
     }
 
     @Test
     public void legacyNameKeyIsNormalizedOnDecode() {
         DeviceObservation observation = NsdTxtRecord.observe(
-            attributes(Constants.NSD_SERVICE_ATTR_ID, DEVICE_ID, Constants.NSD_SERVICE_ATTR_NAME, "Old server"),
+            attributes(NsdConstants.NSD_SERVICE_ATTR_ID, DEVICE_ID, NsdConstants.NSD_SERVICE_ATTR_NAME, "Old server"),
             HOST, PORT, 0L);
 
         assertNotNull(observation);
@@ -125,16 +124,16 @@ public class NsdTxtRecordTest {
 
     @Test
     public void unknownKeysAreIgnored() {
-        Map<String, byte[]> attributes = attributes(Constants.NSD_SERVICE_ATTR_ID, DEVICE_ID, "future", "value");
+        Map<String, byte[]> attributes = attributes(NsdConstants.NSD_SERVICE_ATTR_ID, DEVICE_ID, "future", "value");
 
-        assertEquals(DEVICE_ID, NsdTxtRecord.decode(attributes).get(Constants.NSD_SERVICE_ATTR_ID));
+        assertEquals(DEVICE_ID, NsdTxtRecord.decode(attributes).get(NsdConstants.NSD_SERVICE_ATTR_ID));
         assertEquals(1, NsdTxtRecord.decode(attributes).size());
     }
 
     @Test
     public void unsupportedSchemaVersionDropsTheRecord() {
         Map<String, byte[]> attributes = attributes(
-            Constants.NSD_SERVICE_ATTR_VERSION, "2", Constants.NSD_SERVICE_ATTR_ID, DEVICE_ID);
+            NsdConstants.NSD_SERVICE_ATTR_VERSION, "2", NsdConstants.NSD_SERVICE_ATTR_ID, DEVICE_ID);
 
         assertNull(NsdTxtRecord.observe(attributes, HOST, PORT, 0L));
     }
@@ -143,19 +142,19 @@ public class NsdTxtRecordTest {
     public void missingIdDropsTheRecord() {
         assertNull(NsdTxtRecord.observe(attributes(), HOST, PORT, 0L));
         assertNull(NsdTxtRecord.observe(
-            attributes(Constants.NSD_SERVICE_ATTR_ID, "   "), HOST, PORT, 0L));
+            attributes(NsdConstants.NSD_SERVICE_ATTR_ID, "   "), HOST, PORT, 0L));
     }
 
     @Test
     public void missingHostDropsTheRecord() {
-        assertNull(NsdTxtRecord.observe(attributes(Constants.NSD_SERVICE_ATTR_ID, DEVICE_ID), null, PORT, 0L));
-        assertNull(NsdTxtRecord.observe(attributes(Constants.NSD_SERVICE_ATTR_ID, DEVICE_ID), " ", PORT, 0L));
+        assertNull(NsdTxtRecord.observe(attributes(NsdConstants.NSD_SERVICE_ATTR_ID, DEVICE_ID), null, PORT, 0L));
+        assertNull(NsdTxtRecord.observe(attributes(NsdConstants.NSD_SERVICE_ATTR_ID, DEVICE_ID), " ", PORT, 0L));
     }
 
     @Test
     public void nonPrintableIdDropsTheRecord() {
         assertNull(NsdTxtRecord.observe(
-            attributes(Constants.NSD_SERVICE_ATTR_ID, "bad\u0000id"), HOST, PORT, 0L));
+            attributes(NsdConstants.NSD_SERVICE_ATTR_ID, "bad\u0000id"), HOST, PORT, 0L));
     }
 
     @Test
@@ -169,7 +168,7 @@ public class NsdTxtRecordTest {
         Map<String, byte[]> attributes = NsdTxtRecord.encode(device, NsdTxtRecord.Namespace.CURRENT, true);
 
         assertEquals(NsdTxtRecord.MAX_NAME_LENGTH,
-            value(attributes, Constants.NSD_SERVICE_ATTR_DISPLAY_NAME).length());
+            value(attributes, NsdConstants.NSD_SERVICE_ATTR_DISPLAY_NAME).length());
     }
 
     @Test
@@ -184,10 +183,10 @@ public class NsdTxtRecordTest {
     @Test
     public void invalidNumbersAndFlagsStayNull() {
         DeviceObservation observation = NsdTxtRecord.observe(attributes(
-            Constants.NSD_SERVICE_ATTR_ID, DEVICE_ID,
-            Constants.NSD_SERVICE_ATTR_CAPABILITIES, "many",
-            Constants.NSD_SERVICE_ATTR_METADATA_VERSION, "2.5",
-            Constants.NSD_SERVICE_ATTR_SECURE, "maybe"), HOST, PORT, 0L);
+            NsdConstants.NSD_SERVICE_ATTR_ID, DEVICE_ID,
+            NsdConstants.NSD_SERVICE_ATTR_CAPABILITIES, "many",
+            NsdConstants.NSD_SERVICE_ATTR_METADATA_VERSION, "2.5",
+            NsdConstants.NSD_SERVICE_ATTR_SECURE, "maybe"), HOST, PORT, 0L);
 
         assertNotNull(observation);
         assertNull(observation.getCapabilities());
@@ -198,10 +197,10 @@ public class NsdTxtRecordTest {
     @Test
     public void secureFlagAcceptsCommonSpellings() {
         assertEquals(Boolean.TRUE, NsdTxtRecord.observe(
-            attributes(Constants.NSD_SERVICE_ATTR_ID, DEVICE_ID, Constants.NSD_SERVICE_ATTR_SECURE, "true"),
+            attributes(NsdConstants.NSD_SERVICE_ATTR_ID, DEVICE_ID, NsdConstants.NSD_SERVICE_ATTR_SECURE, "true"),
             HOST, PORT, 0L).getSecure());
         assertEquals(Boolean.FALSE, NsdTxtRecord.observe(
-            attributes(Constants.NSD_SERVICE_ATTR_ID, DEVICE_ID, Constants.NSD_SERVICE_ATTR_SECURE, "0"),
+            attributes(NsdConstants.NSD_SERVICE_ATTR_ID, DEVICE_ID, NsdConstants.NSD_SERVICE_ATTR_SECURE, "0"),
             HOST, PORT, 0L).getSecure());
     }
 

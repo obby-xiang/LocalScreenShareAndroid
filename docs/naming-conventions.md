@@ -171,7 +171,7 @@ ui / service
 - 单个常量类只承载一个域，最多 20 个值；超过即按域拆分，拆分后类名体现域。
 - 跨域的进程内契约（Action、Extra、MessageId）归 `ServiceProtocol`，由服务端与客户端共同引用。
 - 协议参数归各 feature 的 `*Constants`：发现、扫描、注册、组播、传输各自成域，不集中到一个大类。
-- 现存 `Constants` 巨型类在 R3 批次拆分；拆分完成后不再新增跨域常量类。
+- 原 `Constants` 巨型类已在 R3 批次按域拆分；拆分完成后不再新增跨域常量类。
 - 常量使用 `UPPER_SNAKE`，并按域使用 `NSD_*`、`GRPC_*`、`MULTICAST_*` 等前缀。
 
 ## 6. 反例清单
@@ -184,7 +184,7 @@ ui / service
 | `LssService` / `LssClientService`（已于 R2 修复：改名为 `ScreenShareService` / `ScreenViewerService`） | 服务端与客户端语义无法从名字区分：前者是服务端（被看方），后者是客户端（看方），`Lss` 前缀不携带角色信息 | `app/src/main/java/.../service/ScreenShareService.java:152`、`app/src/main/java/.../service/ScreenViewerService.java:123` |
 | `DeviceListModel`（已于 R2 修复：改名为 `DiscoveryListModel`） | 是发现列表的行投影（分节、排序、空态），不是 MVVM 的 Model；放在 `discovery` 根包也看不出显示职责 | `app/src/main/java/.../discovery/ui/DiscoveryListModel.java:39` |
 | `discoverServices()` / `stopServiceDiscovery()`（已于 R2 修复：对称化为 `startDiscovery()` / `stopDiscovery()`） | 同一生命周期两端的动词不对称，调用方无法靠命名推断配对 | `app/src/main/java/.../discovery/LssServiceDiscoveryManager.java:295`、同文件 `:355` |
-| `Constants` | 56 个常量、6 个域（资源尺寸、NSD、Action/Extra、窗口类型、MessageId、gRPC 限额）、全仓库 236 处引用；任一处新增都扩大公共面 | `app/src/main/java/.../support/Constants.java:19` |
+| `Constants`（已于 R3 修复：拆为 `NsdConstants`、`MulticastConstants`、`RegisterConstants`、`ScanConstants`、`GrpcConstants` 与 `ServiceProtocol`；`support/Constants` 仅余 2 个运行时值） | 56 个常量、6 个域（资源尺寸、NSD、Action/Extra、窗口类型、MessageId、gRPC 限额）、全仓库 236 处引用；任一处新增都扩大公共面 | `app/src/main/java/.../support/Constants.java:19` |
 
 R2 批次同时处理了盘点中的其余命名问题：`KeystoreIdentityProvider` → `DefaultIdentityProvider`（真正的 `IdentityProvider` 实现）、`NsdUtils` → `NsdResolver`、`support/Reference` → `MutableReference`、`discovery/VisibilityPolicy` 迁入 `settings`、`deviceStore()` / `favoriteStore()` 改为 `getDeviceStore()` / `getFavoriteStore()`，以及资源键、布局 id 与主题名的领域前置统一。
 

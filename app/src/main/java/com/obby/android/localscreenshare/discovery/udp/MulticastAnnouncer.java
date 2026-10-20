@@ -3,7 +3,6 @@ package com.obby.android.localscreenshare.discovery.udp;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
-import com.obby.android.localscreenshare.support.Constants;
 import com.obby.android.localscreenshare.support.DelayedScheduler;
 
 import java.util.Locale;
@@ -101,8 +100,8 @@ public final class MulticastAnnouncer {
     /** Creates an announcer with an explicit random source, so tests get a fixed boot. */
     public MulticastAnnouncer(@NonNull final Sender sender, @NonNull final DelayedScheduler scheduler,
         @NonNull final Supplier<Announcement> templateSupplier, @NonNull final Random random) {
-        this(sender, scheduler, templateSupplier, random, Constants.MULTICAST_HEARTBEAT_ACTIVE_MS,
-            Constants.MULTICAST_HEARTBEAT_IDLE_MS);
+        this(sender, scheduler, templateSupplier, random, MulticastConstants.MULTICAST_HEARTBEAT_ACTIVE_MS,
+            MulticastConstants.MULTICAST_HEARTBEAT_IDLE_MS);
     }
 
     /**
@@ -123,9 +122,9 @@ public final class MulticastAnnouncer {
         mTemplateSupplier = Objects.requireNonNull(templateSupplier, "templateSupplier");
         mRandom = Objects.requireNonNull(random, "random");
         mHeartbeatActiveMs = heartbeatActiveMs > 0L
-            ? heartbeatActiveMs : Constants.MULTICAST_HEARTBEAT_ACTIVE_MS;
+            ? heartbeatActiveMs : MulticastConstants.MULTICAST_HEARTBEAT_ACTIVE_MS;
         mHeartbeatIdleMs = heartbeatIdleMs > 0L
-            ? heartbeatIdleMs : Constants.MULTICAST_HEARTBEAT_IDLE_MS;
+            ? heartbeatIdleMs : MulticastConstants.MULTICAST_HEARTBEAT_IDLE_MS;
     }
 
     /** Starts the startup burst; a second call while running is ignored. */
@@ -174,14 +173,14 @@ public final class MulticastAnnouncer {
         mPhase = Phase.GOODBYE;
         send(true);
 
-        mPending = mScheduler.schedule(Constants.MULTICAST_GOODBYE_DELAYS_MS[1], () -> {
+        mPending = mScheduler.schedule(MulticastConstants.MULTICAST_GOODBYE_DELAYS_MS[1], () -> {
             synchronized (MulticastAnnouncer.this) {
                 if (mClosed) {
                     return;
                 }
                 send(true);
                 mPending = mScheduler.schedule(
-                    Constants.MULTICAST_GOODBYE_DELAYS_MS[2] - Constants.MULTICAST_GOODBYE_DELAYS_MS[1],
+                    MulticastConstants.MULTICAST_GOODBYE_DELAYS_MS[2] - MulticastConstants.MULTICAST_GOODBYE_DELAYS_MS[1],
                     () -> {
                         synchronized (MulticastAnnouncer.this) {
                             if (mClosed) {
@@ -210,14 +209,14 @@ public final class MulticastAnnouncer {
         if (!mRunning) {
             return;
         }
-        if (mBurstIndex >= Constants.MULTICAST_BURST_DELAYS_MS.length) {
+        if (mBurstIndex >= MulticastConstants.MULTICAST_BURST_DELAYS_MS.length) {
             scheduleHeartbeat();
             return;
         }
         // The table holds absolute offsets from the start, so each delay is the gap to the
         // previous one: 100 ms, then 400 ms (t=500), then 1500 ms (t=2000).
-        final long offsetMs = Constants.MULTICAST_BURST_DELAYS_MS[mBurstIndex];
-        final long previousOffsetMs = mBurstIndex == 0 ? 0L : Constants.MULTICAST_BURST_DELAYS_MS[mBurstIndex - 1];
+        final long offsetMs = MulticastConstants.MULTICAST_BURST_DELAYS_MS[mBurstIndex];
+        final long previousOffsetMs = mBurstIndex == 0 ? 0L : MulticastConstants.MULTICAST_BURST_DELAYS_MS[mBurstIndex - 1];
         mBurstIndex++;
         mPhase = Phase.BURST;
         mPending = mScheduler.schedule(offsetMs - previousOffsetMs, this::onBurst);

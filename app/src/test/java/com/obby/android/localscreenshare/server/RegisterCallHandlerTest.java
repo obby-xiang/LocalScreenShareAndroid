@@ -5,12 +5,12 @@ import com.obby.android.localscreenshare.discovery.model.DevicePresence;
 import com.obby.android.localscreenshare.discovery.model.DiscoveryChannel;
 import com.obby.android.localscreenshare.discovery.model.LssDeviceInfo;
 import com.obby.android.localscreenshare.discovery.register.RegisterClient;
+import com.obby.android.localscreenshare.discovery.register.RegisterConstants;
 import com.obby.android.localscreenshare.discovery.store.DeviceStore;
 import com.obby.android.localscreenshare.discovery.support.FakeDelayedScheduler;
 import com.obby.android.localscreenshare.grpc.screenstream.DeviceSummary;
 import com.obby.android.localscreenshare.grpc.screenstream.RegisterRequest;
 import com.obby.android.localscreenshare.grpc.screenstream.RegisterResponse;
-import com.obby.android.localscreenshare.support.Constants;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -171,7 +171,7 @@ public class RegisterCallHandlerTest {
 
     @Test
     public void requestsPerAddressAreRateLimited() {
-        for (int i = 0; i < Constants.REGISTER_REQUESTS_PER_ADDRESS_PER_MINUTE; i++) {
+        for (int i = 0; i < RegisterConstants.REGISTER_REQUESTS_PER_ADDRESS_PER_MINUTE; i++) {
             RegisterResponse accepted = handle(request(true));
             assertTrue("request " + i + " should be accepted", accepted.getAccepted());
         }
@@ -196,12 +196,12 @@ public class RegisterCallHandlerTest {
 
     @Test
     public void reverseQuotaLimitsTheNumberOfUnsolicitedCalls() {
-        for (int i = 0; i < Constants.REGISTER_REVERSE_PER_MINUTE + 10; i++) {
+        for (int i = 0; i < RegisterConstants.REGISTER_REVERSE_PER_MINUTE + 10; i++) {
             mHandler.handle(request(true), "10.0.1." + i, response -> { });
         }
         mScheduler.advance(1_000L);
 
-        assertEquals(Constants.REGISTER_REVERSE_PER_MINUTE, mReverseCalls.size());
+        assertEquals(RegisterConstants.REGISTER_REVERSE_PER_MINUTE, mReverseCalls.size());
     }
 
     @Test

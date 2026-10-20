@@ -1,7 +1,9 @@
 package com.obby.android.localscreenshare.settings;
 
 import com.obby.android.localscreenshare.discovery.model.JoinPolicy;
-import com.obby.android.localscreenshare.support.Constants;
+import com.obby.android.localscreenshare.discovery.nsd.NsdConstants;
+import com.obby.android.localscreenshare.discovery.register.RegisterConstants;
+import com.obby.android.localscreenshare.discovery.udp.MulticastConstants;
 
 import org.junit.Test;
 
@@ -20,17 +22,17 @@ public class DiscoverySettingsTest {
         DiscoverySettings settings = DiscoverySettings.defaults();
 
         assertTrue(settings.isMulticastEnabled());
-        assertEquals(Constants.MULTICAST_GROUP, settings.getMulticastGroup());
-        assertEquals(Constants.MULTICAST_PORT, settings.getMulticastPort());
+        assertEquals(MulticastConstants.MULTICAST_GROUP, settings.getMulticastGroup());
+        assertEquals(MulticastConstants.MULTICAST_PORT, settings.getMulticastPort());
         assertEquals(DiscoverySettings.RefreshTier.BALANCED, settings.getRefreshTier());
         assertEquals(VisibilityPolicy.Visibility.VISIBLE, settings.getVisibility());
         assertFalse(settings.isCompatOnly());
         assertTrue(settings.isMulticastChannelEnabled());
         assertTrue(settings.isScanEnabled());
         assertEquals(
-            Arrays.asList(Constants.NSD_SERVICE_TYPE, Constants.NSD_SERVICE_TYPE_LEGACY),
+            Arrays.asList(NsdConstants.NSD_SERVICE_TYPE, NsdConstants.NSD_SERVICE_TYPE_LEGACY),
             settings.nsdServiceTypes());
-        assertEquals(Constants.DEVICE_CAPABILITY_H264 | Constants.DEVICE_CAPABILITY_JPEG,
+        assertEquals(NsdConstants.DEVICE_CAPABILITY_H264 | NsdConstants.DEVICE_CAPABILITY_JPEG,
             settings.capabilities());
     }
 
@@ -43,18 +45,18 @@ public class DiscoverySettingsTest {
 
     @Test
     public void groupOutsideTheMulticastRangeFallsBackToTheDefault() {
-        assertEquals(Constants.MULTICAST_GROUP, settings("223.255.255.255").getMulticastGroup());
-        assertEquals(Constants.MULTICAST_GROUP, settings("240.0.0.1").getMulticastGroup());
-        assertEquals(Constants.MULTICAST_GROUP, settings("192.168.1.1").getMulticastGroup());
+        assertEquals(MulticastConstants.MULTICAST_GROUP, settings("223.255.255.255").getMulticastGroup());
+        assertEquals(MulticastConstants.MULTICAST_GROUP, settings("240.0.0.1").getMulticastGroup());
+        assertEquals(MulticastConstants.MULTICAST_GROUP, settings("192.168.1.1").getMulticastGroup());
     }
 
     @Test
     public void malformedGroupLiteralFallsBackToTheDefault() {
-        assertEquals(Constants.MULTICAST_GROUP, settings("224.0.0").getMulticastGroup());
-        assertEquals(Constants.MULTICAST_GROUP, settings("224.0.0.256").getMulticastGroup());
-        assertEquals(Constants.MULTICAST_GROUP, settings("224.0.0.a").getMulticastGroup());
-        assertEquals(Constants.MULTICAST_GROUP, settings("  ").getMulticastGroup());
-        assertEquals(Constants.MULTICAST_GROUP, settings(null).getMulticastGroup());
+        assertEquals(MulticastConstants.MULTICAST_GROUP, settings("224.0.0").getMulticastGroup());
+        assertEquals(MulticastConstants.MULTICAST_GROUP, settings("224.0.0.256").getMulticastGroup());
+        assertEquals(MulticastConstants.MULTICAST_GROUP, settings("224.0.0.a").getMulticastGroup());
+        assertEquals(MulticastConstants.MULTICAST_GROUP, settings("  ").getMulticastGroup());
+        assertEquals(MulticastConstants.MULTICAST_GROUP, settings(null).getMulticastGroup());
     }
 
     @Test
@@ -76,7 +78,7 @@ public class DiscoverySettingsTest {
         assertFalse(DiscoverySettings.isValidPort(DiscoverySettings.MIN_MULTICAST_PORT - 1));
         assertFalse(DiscoverySettings.isValidPort(DiscoverySettings.MAX_MULTICAST_PORT + 1));
 
-        assertEquals(Constants.MULTICAST_PORT, port(80).getMulticastPort());
+        assertEquals(MulticastConstants.MULTICAST_PORT, port(80).getMulticastPort());
         assertEquals(1234, port(1234).getMulticastPort());
     }
 
@@ -90,9 +92,9 @@ public class DiscoverySettingsTest {
         assertEquals(3_000L, lowLatency.getHeartbeatActiveMs());
         assertEquals(10_000L, lowLatency.getHeartbeatIdleMs());
 
-        assertEquals(Constants.REGISTER_TIMEOUT_MS, balanced.getRegisterTimeoutMs());
-        assertEquals(Constants.MULTICAST_HEARTBEAT_ACTIVE_MS, balanced.getHeartbeatActiveMs());
-        assertEquals(Constants.MULTICAST_HEARTBEAT_IDLE_MS, balanced.getHeartbeatIdleMs());
+        assertEquals(RegisterConstants.REGISTER_TIMEOUT_MS, balanced.getRegisterTimeoutMs());
+        assertEquals(MulticastConstants.MULTICAST_HEARTBEAT_ACTIVE_MS, balanced.getHeartbeatActiveMs());
+        assertEquals(MulticastConstants.MULTICAST_HEARTBEAT_IDLE_MS, balanced.getHeartbeatIdleMs());
 
         assertEquals(1_000L, powerSaver.getRegisterTimeoutMs());
         assertEquals(10_000L, powerSaver.getHeartbeatActiveMs());
@@ -115,20 +117,20 @@ public class DiscoverySettingsTest {
 
     @Test
     public void compatOnlyDisablesMulticastAndScanAndKeepsOnlyTheLegacyType() {
-        DiscoverySettings settings = DiscoverySettings.of(true, Constants.MULTICAST_GROUP,
-            Constants.MULTICAST_PORT, "balanced", "visible", true);
+        DiscoverySettings settings = DiscoverySettings.of(true, MulticastConstants.MULTICAST_GROUP,
+            MulticastConstants.MULTICAST_PORT, "balanced", "visible", true);
 
         assertTrue(settings.isCompatOnly());
         assertFalse(settings.isMulticastChannelEnabled());
         assertFalse(settings.isScanEnabled());
-        assertEquals(List.of(Constants.NSD_SERVICE_TYPE_LEGACY), settings.nsdServiceTypes());
-        assertEquals(Constants.DEVICE_CAPABILITY_H264, settings.capabilities());
+        assertEquals(List.of(NsdConstants.NSD_SERVICE_TYPE_LEGACY), settings.nsdServiceTypes());
+        assertEquals(NsdConstants.DEVICE_CAPABILITY_H264, settings.capabilities());
     }
 
     @Test
     public void disabledMulticastDisablesTheChannelButKeepsDiscoveryAndScan() {
-        DiscoverySettings settings = DiscoverySettings.of(false, Constants.MULTICAST_GROUP,
-            Constants.MULTICAST_PORT, "balanced", "visible", false);
+        DiscoverySettings settings = DiscoverySettings.of(false, MulticastConstants.MULTICAST_GROUP,
+            MulticastConstants.MULTICAST_PORT, "balanced", "visible", false);
 
         assertFalse(settings.isMulticastChannelEnabled());
         assertTrue(settings.isScanEnabled());
@@ -145,8 +147,8 @@ public class DiscoverySettingsTest {
 
     @Test
     public void visibilityPolicyIsAnchoredAtTheEvaluationTime() {
-        DiscoverySettings settings = DiscoverySettings.of(true, Constants.MULTICAST_GROUP,
-            Constants.MULTICAST_PORT, "balanced", "visible_10_min", false);
+        DiscoverySettings settings = DiscoverySettings.of(true, MulticastConstants.MULTICAST_GROUP,
+            MulticastConstants.MULTICAST_PORT, "balanced", "visible_10_min", false);
 
         VisibilityPolicy policy = settings.visibilityPolicy(5_000L);
 
@@ -157,8 +159,8 @@ public class DiscoverySettingsTest {
 
     @Test
     public void persistedTemporaryWindowIsRestoredInsteadOfRestarted() {
-        DiscoverySettings settings = DiscoverySettings.of(true, Constants.MULTICAST_GROUP,
-            Constants.MULTICAST_PORT, "balanced", "visible_10_min", 1_000L, false);
+        DiscoverySettings settings = DiscoverySettings.of(true, MulticastConstants.MULTICAST_GROUP,
+            MulticastConstants.MULTICAST_PORT, "balanced", "visible_10_min", 1_000L, false);
 
         assertEquals(1_000L, settings.getVisibilityExpiresAtMs());
         assertTrue(settings.visibilityPolicy(999L).isAnnouncing(999L));
@@ -166,17 +168,17 @@ public class DiscoverySettingsTest {
     }
 
     private static DiscoverySettings settings(String group) {
-        return DiscoverySettings.of(true, group, Constants.MULTICAST_PORT, "balanced", "visible",
+        return DiscoverySettings.of(true, group, MulticastConstants.MULTICAST_PORT, "balanced", "visible",
             false);
     }
 
     private static DiscoverySettings port(int port) {
-        return DiscoverySettings.of(true, Constants.MULTICAST_GROUP, port, "balanced", "visible",
+        return DiscoverySettings.of(true, MulticastConstants.MULTICAST_GROUP, port, "balanced", "visible",
             false);
     }
 
     private static VisibilityPolicy.Visibility visibility(String wire) {
-        return DiscoverySettings.of(true, Constants.MULTICAST_GROUP, Constants.MULTICAST_PORT,
+        return DiscoverySettings.of(true, MulticastConstants.MULTICAST_GROUP, MulticastConstants.MULTICAST_PORT,
             "balanced", wire, false).getVisibility();
     }
 }

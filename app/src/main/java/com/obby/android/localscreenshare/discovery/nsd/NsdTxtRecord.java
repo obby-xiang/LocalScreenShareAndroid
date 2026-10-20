@@ -10,7 +10,6 @@ import com.obby.android.localscreenshare.discovery.model.JoinPolicy;
 import com.obby.android.localscreenshare.discovery.model.LssDeviceInfo;
 import com.obby.android.localscreenshare.discovery.model.ShareState;
 import com.obby.android.localscreenshare.discovery.provider.DeviceObservation;
-import com.obby.android.localscreenshare.support.Constants;
 
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
@@ -66,24 +65,24 @@ public final class NsdTxtRecord {
     @NonNull
     public static Map<String, String> decode(@NonNull final Map<String, byte[]> attributes) {
         final Map<String, String> values = new LinkedHashMap<>();
-        putDecoded(values, Constants.NSD_SERVICE_ATTR_VERSION, attributes);
-        putDecoded(values, Constants.NSD_SERVICE_ATTR_ID, attributes);
-        putDecoded(values, Constants.NSD_SERVICE_ATTR_ROLE, attributes);
-        putDecoded(values, Constants.NSD_SERVICE_ATTR_STATE, attributes);
-        putDecoded(values, Constants.NSD_SERVICE_ATTR_JOIN, attributes);
-        putDecoded(values, Constants.NSD_SERVICE_ATTR_SECURE, attributes);
-        putDecoded(values, Constants.NSD_SERVICE_ATTR_AUTH, attributes);
-        putDecoded(values, Constants.NSD_SERVICE_ATTR_PROTOCOL_VERSION, attributes);
-        putDecoded(values, Constants.NSD_SERVICE_ATTR_METADATA_VERSION, attributes);
-        putDecoded(values, Constants.NSD_SERVICE_ATTR_CAPABILITIES, attributes);
+        putDecoded(values, NsdConstants.NSD_SERVICE_ATTR_VERSION, attributes);
+        putDecoded(values, NsdConstants.NSD_SERVICE_ATTR_ID, attributes);
+        putDecoded(values, NsdConstants.NSD_SERVICE_ATTR_ROLE, attributes);
+        putDecoded(values, NsdConstants.NSD_SERVICE_ATTR_STATE, attributes);
+        putDecoded(values, NsdConstants.NSD_SERVICE_ATTR_JOIN, attributes);
+        putDecoded(values, NsdConstants.NSD_SERVICE_ATTR_SECURE, attributes);
+        putDecoded(values, NsdConstants.NSD_SERVICE_ATTR_AUTH, attributes);
+        putDecoded(values, NsdConstants.NSD_SERVICE_ATTR_PROTOCOL_VERSION, attributes);
+        putDecoded(values, NsdConstants.NSD_SERVICE_ATTR_METADATA_VERSION, attributes);
+        putDecoded(values, NsdConstants.NSD_SERVICE_ATTR_CAPABILITIES, attributes);
 
-        final String displayName = readValue(attributes, Constants.NSD_SERVICE_ATTR_DISPLAY_NAME);
+        final String displayName = readValue(attributes, NsdConstants.NSD_SERVICE_ATTR_DISPLAY_NAME);
         if (displayName != null) {
-            values.put(Constants.NSD_SERVICE_ATTR_DISPLAY_NAME, displayName);
+            values.put(NsdConstants.NSD_SERVICE_ATTR_DISPLAY_NAME, displayName);
         } else {
-            final String legacyName = readValue(attributes, Constants.NSD_SERVICE_ATTR_NAME);
+            final String legacyName = readValue(attributes, NsdConstants.NSD_SERVICE_ATTR_NAME);
             if (legacyName != null) {
-                values.put(Constants.NSD_SERVICE_ATTR_DISPLAY_NAME, legacyName);
+                values.put(NsdConstants.NSD_SERVICE_ATTR_DISPLAY_NAME, legacyName);
             }
         }
         return values;
@@ -100,27 +99,27 @@ public final class NsdTxtRecord {
     public static Map<String, byte[]> encode(@NonNull final LssDeviceInfo device,
         @NonNull final Namespace namespace, final boolean shareName) {
         final Map<String, byte[]> attributes = new LinkedHashMap<>();
-        putValue(attributes, Constants.NSD_SERVICE_ATTR_ID, device.getId());
+        putValue(attributes, NsdConstants.NSD_SERVICE_ATTR_ID, device.getId());
 
         if (namespace == Namespace.LEGACY) {
             final String legacyName = shareName && device.getName() != null
                 ? truncate(device.getName()) : LssDeviceInfo.NAME_PREFIX + device.shortId();
-            putValue(attributes, Constants.NSD_SERVICE_ATTR_NAME, legacyName);
+            putValue(attributes, NsdConstants.NSD_SERVICE_ATTR_NAME, legacyName);
             return attributes;
         }
 
-        putValue(attributes, Constants.NSD_SERVICE_ATTR_VERSION, SCHEMA_VERSION);
-        putValue(attributes, Constants.NSD_SERVICE_ATTR_ROLE, device.getRole().toWire());
-        putValue(attributes, Constants.NSD_SERVICE_ATTR_STATE, device.getState().toWire());
-        putValue(attributes, Constants.NSD_SERVICE_ATTR_JOIN, device.getJoin().toWire());
-        putValue(attributes, Constants.NSD_SERVICE_ATTR_SECURE, device.isSecure() ? "1" : "0");
-        putValue(attributes, Constants.NSD_SERVICE_ATTR_AUTH, device.getAuth().toWire());
-        putValue(attributes, Constants.NSD_SERVICE_ATTR_PROTOCOL_VERSION, device.getProtocolVersion());
-        putValue(attributes, Constants.NSD_SERVICE_ATTR_METADATA_VERSION,
+        putValue(attributes, NsdConstants.NSD_SERVICE_ATTR_VERSION, SCHEMA_VERSION);
+        putValue(attributes, NsdConstants.NSD_SERVICE_ATTR_ROLE, device.getRole().toWire());
+        putValue(attributes, NsdConstants.NSD_SERVICE_ATTR_STATE, device.getState().toWire());
+        putValue(attributes, NsdConstants.NSD_SERVICE_ATTR_JOIN, device.getJoin().toWire());
+        putValue(attributes, NsdConstants.NSD_SERVICE_ATTR_SECURE, device.isSecure() ? "1" : "0");
+        putValue(attributes, NsdConstants.NSD_SERVICE_ATTR_AUTH, device.getAuth().toWire());
+        putValue(attributes, NsdConstants.NSD_SERVICE_ATTR_PROTOCOL_VERSION, device.getProtocolVersion());
+        putValue(attributes, NsdConstants.NSD_SERVICE_ATTR_METADATA_VERSION,
             String.valueOf(device.getMetadataVersion()));
-        putValue(attributes, Constants.NSD_SERVICE_ATTR_CAPABILITIES, String.valueOf(device.getCapabilities()));
+        putValue(attributes, NsdConstants.NSD_SERVICE_ATTR_CAPABILITIES, String.valueOf(device.getCapabilities()));
         if (shareName && device.getName() != null) {
-            putValue(attributes, Constants.NSD_SERVICE_ATTR_DISPLAY_NAME, truncate(device.getName()));
+            putValue(attributes, NsdConstants.NSD_SERVICE_ATTR_DISPLAY_NAME, truncate(device.getName()));
         }
         return attributes;
     }
@@ -137,12 +136,12 @@ public final class NsdTxtRecord {
         @Nullable final String host, final int port, final long nowMs) {
         final Map<String, String> values = decode(attributes);
 
-        final String version = values.get(Constants.NSD_SERVICE_ATTR_VERSION);
+        final String version = values.get(NsdConstants.NSD_SERVICE_ATTR_VERSION);
         if (version != null && !SCHEMA_VERSION.equals(version)) {
             return null;
         }
 
-        final String id = values.get(Constants.NSD_SERVICE_ATTR_ID);
+        final String id = values.get(NsdConstants.NSD_SERVICE_ATTR_ID);
         if (id == null || id.length() > MAX_ID_LENGTH || !isPrintable(id)) {
             return null;
         }
@@ -153,19 +152,19 @@ public final class NsdTxtRecord {
         return DeviceObservation.builder()
             .source(DiscoveryChannel.NSD)
             .id(id)
-            .name(values.get(Constants.NSD_SERVICE_ATTR_DISPLAY_NAME))
-            .role(values.containsKey(Constants.NSD_SERVICE_ATTR_ROLE)
-                ? DeviceRole.fromWire(values.get(Constants.NSD_SERVICE_ATTR_ROLE)) : null)
-            .state(values.containsKey(Constants.NSD_SERVICE_ATTR_STATE)
-                ? ShareState.fromWire(values.get(Constants.NSD_SERVICE_ATTR_STATE)) : null)
-            .join(values.containsKey(Constants.NSD_SERVICE_ATTR_JOIN)
-                ? JoinPolicy.fromWire(values.get(Constants.NSD_SERVICE_ATTR_JOIN)) : null)
-            .secure(parseBoolean(values.get(Constants.NSD_SERVICE_ATTR_SECURE)))
-            .auth(values.containsKey(Constants.NSD_SERVICE_ATTR_AUTH)
-                ? AuthMode.fromWire(values.get(Constants.NSD_SERVICE_ATTR_AUTH)) : null)
-            .protocolVersion(values.get(Constants.NSD_SERVICE_ATTR_PROTOCOL_VERSION))
-            .metadataVersion(parseInt(values.get(Constants.NSD_SERVICE_ATTR_METADATA_VERSION)))
-            .capabilities(parseInt(values.get(Constants.NSD_SERVICE_ATTR_CAPABILITIES)))
+            .name(values.get(NsdConstants.NSD_SERVICE_ATTR_DISPLAY_NAME))
+            .role(values.containsKey(NsdConstants.NSD_SERVICE_ATTR_ROLE)
+                ? DeviceRole.fromWire(values.get(NsdConstants.NSD_SERVICE_ATTR_ROLE)) : null)
+            .state(values.containsKey(NsdConstants.NSD_SERVICE_ATTR_STATE)
+                ? ShareState.fromWire(values.get(NsdConstants.NSD_SERVICE_ATTR_STATE)) : null)
+            .join(values.containsKey(NsdConstants.NSD_SERVICE_ATTR_JOIN)
+                ? JoinPolicy.fromWire(values.get(NsdConstants.NSD_SERVICE_ATTR_JOIN)) : null)
+            .secure(parseBoolean(values.get(NsdConstants.NSD_SERVICE_ATTR_SECURE)))
+            .auth(values.containsKey(NsdConstants.NSD_SERVICE_ATTR_AUTH)
+                ? AuthMode.fromWire(values.get(NsdConstants.NSD_SERVICE_ATTR_AUTH)) : null)
+            .protocolVersion(values.get(NsdConstants.NSD_SERVICE_ATTR_PROTOCOL_VERSION))
+            .metadataVersion(parseInt(values.get(NsdConstants.NSD_SERVICE_ATTR_METADATA_VERSION)))
+            .capabilities(parseInt(values.get(NsdConstants.NSD_SERVICE_ATTR_CAPABILITIES)))
             .host(host)
             .port(port)
             .lastSeenMs(nowMs)

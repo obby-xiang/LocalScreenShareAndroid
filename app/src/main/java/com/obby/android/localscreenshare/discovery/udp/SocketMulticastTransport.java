@@ -4,7 +4,6 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import com.obby.android.localscreenshare.support.BackoffPolicy;
-import com.obby.android.localscreenshare.support.Constants;
 import com.obby.android.localscreenshare.support.DelayedScheduler;
 
 import java.io.IOException;
@@ -143,7 +142,7 @@ public final class SocketMulticastTransport implements MulticastTransport {
     }
 
     private void receiveLoop(@NonNull final MulticastEndpoint endpoint, final int generation) {
-        final byte[] buffer = new byte[Constants.MULTICAST_RECEIVE_BUFFER];
+        final byte[] buffer = new byte[MulticastConstants.MULTICAST_RECEIVE_BUFFER];
         int consecutiveErrors = 0;
         while (mRunning) {
             try {
@@ -159,7 +158,7 @@ public final class SocketMulticastTransport implements MulticastTransport {
                     return;
                 }
                 consecutiveErrors++;
-                if (consecutiveErrors >= Constants.MULTICAST_MAX_RECEIVE_ERRORS) {
+                if (consecutiveErrors >= MulticastConstants.MULTICAST_MAX_RECEIVE_ERRORS) {
                     onEndpointFailed(endpoint, generation, e);
                     return;
                 }

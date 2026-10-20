@@ -7,7 +7,6 @@ import com.obby.android.localscreenshare.discovery.support.FakeRegisterStub;
 import com.obby.android.localscreenshare.grpc.screenstream.DeviceSummary;
 import com.obby.android.localscreenshare.grpc.screenstream.RegisterResponse;
 import com.obby.android.localscreenshare.support.BackoffPolicy;
-import com.obby.android.localscreenshare.support.Constants;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -54,7 +53,7 @@ public class RegisterClientTest {
         assertTrue(mClient.register(mAddress, true, mSelf, mCallback));
 
         assertEquals(1, mStub.callCount());
-        assertEquals(Constants.REGISTER_TIMEOUT_MS, mStub.last().timeoutMs);
+        assertEquals(RegisterConstants.REGISTER_TIMEOUT_MS, mStub.last().timeoutMs);
         assertEquals(1, mStub.last().request.getProtocolVersion());
         assertTrue(mStub.last().request.getAnnounces());
 
@@ -69,14 +68,14 @@ public class RegisterClientTest {
     public void timeoutRetriesTwiceThenFails() {
         mClient.register(mAddress, true, mSelf, mCallback);
 
-        mScheduler.advance(Constants.REGISTER_TIMEOUT_MS);
+        mScheduler.advance(RegisterConstants.REGISTER_TIMEOUT_MS);
         assertEquals(1, mStub.callCount());
-        mScheduler.advance(Constants.REGISTER_RETRY_DELAYS_MS[0]);
+        mScheduler.advance(RegisterConstants.REGISTER_RETRY_DELAYS_MS[0]);
         assertEquals(2, mStub.callCount());
-        mScheduler.advance(Constants.REGISTER_TIMEOUT_MS);
-        mScheduler.advance(Constants.REGISTER_RETRY_DELAYS_MS[1]);
+        mScheduler.advance(RegisterConstants.REGISTER_TIMEOUT_MS);
+        mScheduler.advance(RegisterConstants.REGISTER_RETRY_DELAYS_MS[1]);
         assertEquals(3, mStub.callCount());
-        mScheduler.advance(Constants.REGISTER_TIMEOUT_MS);
+        mScheduler.advance(RegisterConstants.REGISTER_TIMEOUT_MS);
 
         assertEquals(0, mCallback.successes.size());
         assertEquals(1, mCallback.failures.size());
@@ -91,7 +90,7 @@ public class RegisterClientTest {
         mStub.failLast("UNAVAILABLE");
         assertEquals(1, mStub.callCount());
 
-        mScheduler.advance(Constants.REGISTER_RETRY_DELAYS_MS[0]);
+        mScheduler.advance(RegisterConstants.REGISTER_RETRY_DELAYS_MS[0]);
 
         assertEquals(2, mStub.callCount());
         assertEquals(0, mCallback.failures.size());

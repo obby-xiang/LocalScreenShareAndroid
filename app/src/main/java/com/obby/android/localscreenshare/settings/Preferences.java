@@ -11,7 +11,7 @@ import androidx.annotation.Nullable;
 
 import com.google.gson.Gson;
 import com.obby.android.localscreenshare.App;
-import com.obby.android.localscreenshare.support.Constants;
+import com.obby.android.localscreenshare.discovery.udp.MulticastConstants;
 
 import java.util.List;
 import java.util.Optional;
@@ -520,8 +520,8 @@ public final class Preferences {
      */
     @NonNull
     public String getMulticastGroup() {
-        final String group = mPreferences.getString(KEY_MULTICAST_GROUP, Constants.MULTICAST_GROUP);
-        return group == null || group.trim().isEmpty() ? Constants.MULTICAST_GROUP : group.trim();
+        final String group = mPreferences.getString(KEY_MULTICAST_GROUP, MulticastConstants.MULTICAST_GROUP);
+        return group == null || group.trim().isEmpty() ? MulticastConstants.MULTICAST_GROUP : group.trim();
     }
 
     /** Persists the multicast group; the next channel start uses it. */
@@ -535,7 +535,7 @@ public final class Preferences {
 
     /** Multicast port used by the announcement channel; defaults to {@link Constants#MULTICAST_PORT}. */
     public int getMulticastPort() {
-        return mPreferences.getInt(KEY_MULTICAST_PORT, Constants.MULTICAST_PORT);
+        return mPreferences.getInt(KEY_MULTICAST_PORT, MulticastConstants.MULTICAST_PORT);
     }
 
     /** Persists the multicast port; the next channel start uses it. */

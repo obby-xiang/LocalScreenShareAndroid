@@ -2,7 +2,6 @@ package com.obby.android.localscreenshare.discovery.udp;
 
 import androidx.annotation.NonNull;
 
-import com.obby.android.localscreenshare.support.Constants;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
@@ -33,7 +32,7 @@ public final class MulticastConfig {
      * @throws IllegalArgumentException if the group is not multicast IPv4 or the port is invalid
      */
     public MulticastConfig(@NonNull final String group, final int port) {
-        this(group, port, Constants.MULTICAST_TTL, Constants.MULTICAST_MAX_INTERFACES);
+        this(group, port, MulticastConstants.MULTICAST_TTL, MulticastConstants.MULTICAST_MAX_INTERFACES);
     }
 
     /**

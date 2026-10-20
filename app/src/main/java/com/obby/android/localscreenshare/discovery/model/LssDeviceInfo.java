@@ -22,7 +22,7 @@ import lombok.ToString;
  * <p>This is the discovery model: identity ({@code id}, {@code fingerprint}), advertised
  * capabilities, every address the device was seen at, and the store-derived presence. It is
  * {@link Parcelable} so the viewer service can receive the complete description through
- * {@code Constants.EXTRA_SERVICE_INFO}, while
+ * {@code ServiceProtocol.EXTRA_SERVICE_INFO}, while
  * {@link com.obby.android.localscreenshare.discovery.legacy.LssServiceInfo}
  * stays only as the legacy NSD adapter contract.</p>
  *

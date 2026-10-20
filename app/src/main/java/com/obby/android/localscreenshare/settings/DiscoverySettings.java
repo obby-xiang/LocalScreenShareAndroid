@@ -2,12 +2,14 @@ package com.obby.android.localscreenshare.settings;
 
 import androidx.annotation.NonNull;
 
-import com.obby.android.localscreenshare.support.Constants;
 
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
+import com.obby.android.localscreenshare.discovery.nsd.NsdConstants;
+import com.obby.android.localscreenshare.discovery.register.RegisterConstants;
+import com.obby.android.localscreenshare.discovery.udp.MulticastConstants;
 
 /**
  * Immutable snapshot of the user's discovery settings.
@@ -57,8 +59,8 @@ public final class DiscoverySettings {
      */
     public enum RefreshTier {
         LOW_LATENCY("low_latency", 250L, 3_000L, 10_000L),
-        BALANCED("balanced", Constants.REGISTER_TIMEOUT_MS,
-            Constants.MULTICAST_HEARTBEAT_ACTIVE_MS, Constants.MULTICAST_HEARTBEAT_IDLE_MS),
+        BALANCED("balanced", RegisterConstants.REGISTER_TIMEOUT_MS,
+            MulticastConstants.MULTICAST_HEARTBEAT_ACTIVE_MS, MulticastConstants.MULTICAST_HEARTBEAT_IDLE_MS),
         POWER_SAVER("power_saver", 1_000L, 10_000L, 30_000L);
 
         @NonNull
@@ -150,7 +152,7 @@ public final class DiscoverySettings {
     /** Returns the default settings: multicast on, visible, balanced refresh, mDNS and multicast. */
     @NonNull
     public static DiscoverySettings defaults() {
-        return new DiscoverySettings(true, Constants.MULTICAST_GROUP, Constants.MULTICAST_PORT,
+        return new DiscoverySettings(true, MulticastConstants.MULTICAST_GROUP, MulticastConstants.MULTICAST_PORT,
             RefreshTier.BALANCED, VisibilityPolicy.Visibility.VISIBLE, 0L, false);
     }
 
@@ -279,17 +281,17 @@ public final class DiscoverySettings {
     @NonNull
     public List<String> nsdServiceTypes() {
         if (mCompatOnly) {
-            return Collections.singletonList(Constants.NSD_SERVICE_TYPE_LEGACY);
+            return Collections.singletonList(NsdConstants.NSD_SERVICE_TYPE_LEGACY);
         }
         return Collections.unmodifiableList(
-            Arrays.asList(Constants.NSD_SERVICE_TYPE, Constants.NSD_SERVICE_TYPE_LEGACY));
+            Arrays.asList(NsdConstants.NSD_SERVICE_TYPE, NsdConstants.NSD_SERVICE_TYPE_LEGACY));
     }
 
     /** Returns the capability bitmap to advertise for this mode. */
     public int capabilities() {
         return mCompatOnly
-            ? Constants.DEVICE_CAPABILITY_H264
-            : Constants.DEVICE_CAPABILITY_H264 | Constants.DEVICE_CAPABILITY_JPEG;
+            ? NsdConstants.DEVICE_CAPABILITY_H264
+            : NsdConstants.DEVICE_CAPABILITY_H264 | NsdConstants.DEVICE_CAPABILITY_JPEG;
     }
 
     /** Returns the visibility policy of this snapshot, anchored at the persisted window. */
@@ -303,11 +305,11 @@ public final class DiscoverySettings {
 
     @NonNull
     private static String normalizeGroup(final String group) {
-        return isValidGroupAddress(group) ? group.trim() : Constants.MULTICAST_GROUP;
+        return isValidGroupAddress(group) ? group.trim() : MulticastConstants.MULTICAST_GROUP;
     }
 
     private static int normalizePort(final int port) {
-        return isValidPort(port) ? port : Constants.MULTICAST_PORT;
+        return isValidPort(port) ? port : MulticastConstants.MULTICAST_PORT;
     }
 
     @Override

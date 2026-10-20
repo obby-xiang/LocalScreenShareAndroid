@@ -81,9 +81,9 @@ import com.obby.android.localscreenshare.discovery.model.DeviceAddress;
 import com.obby.android.localscreenshare.discovery.model.LssDeviceInfo;
 import com.obby.android.localscreenshare.render.SurfaceRenderTarget;
 import com.obby.android.localscreenshare.settings.Preferences;
-import com.obby.android.localscreenshare.support.Constants;
 import com.obby.android.localscreenshare.support.MutableReference;
 import com.obby.android.localscreenshare.support.ResourceUtils;
+import com.obby.android.localscreenshare.support.ServiceProtocol;
 
 import org.apache.commons.lang3.math.NumberUtils;
 import org.apache.commons.lang3.mutable.MutableBoolean;
@@ -245,10 +245,10 @@ public class ScreenViewerService extends Service {
                     mClient.start(mClientObserver, receiver);
                 })
                 .setNegativeButton(android.R.string.cancel, (dialog, which) -> sendBroadcast(
-                    new Intent(Constants.ACTION_STOP_CLIENT_SERVICE).setPackage(getPackageName())))
+                    new Intent(ServiceProtocol.ACTION_STOP_CLIENT_SERVICE).setPackage(getPackageName())))
                 .setCancelable(false)
                 .create();
-            mDialog.getWindow().setType(Constants.FLOATING_WINDOW_TYPE);
+            mDialog.getWindow().setType(ServiceProtocol.FLOATING_WINDOW_TYPE);
             mDialog.show();
         }
     };
@@ -290,7 +290,7 @@ public class ScreenViewerService extends Service {
     private final BroadcastReceiver mBroadcastReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
-            if (Constants.ACTION_STOP_CLIENT_SERVICE.equals(intent.getAction())) {
+            if (ServiceProtocol.ACTION_STOP_CLIENT_SERVICE.equals(intent.getAction())) {
                 stopService();
             }
         }
@@ -306,7 +306,7 @@ public class ScreenViewerService extends Service {
         Log.i(mTag, "onCreate: service created");
 
         final IntentFilter intentFilter = new IntentFilter();
-        intentFilter.addAction(Constants.ACTION_STOP_CLIENT_SERVICE);
+        intentFilter.addAction(ServiceProtocol.ACTION_STOP_CLIENT_SERVICE);
         ContextCompat.registerReceiver(this, mBroadcastReceiver, intentFilter, ContextCompat.RECEIVER_NOT_EXPORTED);
     }
 
@@ -349,7 +349,7 @@ public class ScreenViewerService extends Service {
             return START_NOT_STICKY;
         }
 
-        final LssDeviceInfo serviceInfo = intent.getParcelableExtra(Constants.EXTRA_SERVICE_INFO);
+        final LssDeviceInfo serviceInfo = intent.getParcelableExtra(ServiceProtocol.EXTRA_SERVICE_INFO);
         if (serviceInfo == null || serviceInfo.primaryAddress() == null) {
             Log.w(mTag, "onStartCommand: no usable device in the intent");
             stopService();
@@ -573,7 +573,7 @@ public class ScreenViewerService extends Service {
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT))
             .addAction(0, getString(R.string.client_service_stop_notification_action),
                 PendingIntent.getBroadcast(this, 0,
-                    new Intent(Constants.ACTION_STOP_CLIENT_SERVICE).setPackage(getPackageName()),
+                    new Intent(ServiceProtocol.ACTION_STOP_CLIENT_SERVICE).setPackage(getPackageName()),
                     PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT))
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setOngoing(true)
@@ -608,7 +608,7 @@ public class ScreenViewerService extends Service {
             mWindowManager = themedContext.getSystemService(WindowManager.class);
             mLoadingView = LayoutInflater.from(themedContext).inflate(R.layout.widget_screen_share_loading, null);
             mLayoutParams = new WindowManager.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT, 0, 0, Constants.FLOATING_WINDOW_TYPE,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 0, 0, ServiceProtocol.FLOATING_WINDOW_TYPE,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
                     | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON, PixelFormat.TRANSLUCENT);
             mLayoutParams.gravity = Gravity.CENTER;
@@ -620,12 +620,12 @@ public class ScreenViewerService extends Service {
                                 R.string.screen_share_disconnect_confirm, serviceInfo.getName()),
                             HtmlCompat.FROM_HTML_MODE_LEGACY))
                         .setPositiveButton(android.R.string.ok, (dialog, which) -> themedContext.sendBroadcast(
-                            new Intent(Constants.ACTION_STOP_CLIENT_SERVICE)
+                            new Intent(ServiceProtocol.ACTION_STOP_CLIENT_SERVICE)
                                 .setPackage(themedContext.getPackageName())))
                         .setNegativeButton(android.R.string.cancel, null)
                         .setCancelable(false)
                         .create();
-                    mDialog.getWindow().setType(Constants.FLOATING_WINDOW_TYPE);
+                    mDialog.getWindow().setType(ServiceProtocol.FLOATING_WINDOW_TYPE);
                 }
                 mDialog.show();
             });
@@ -711,7 +711,7 @@ public class ScreenViewerService extends Service {
             mWindowManager = mContext.getSystemService(WindowManager.class);
             mTextureView = new TextureView(mContext);
             mTextureView.setOpaque(false);
-            mLayoutParams = new WindowManager.LayoutParams(0, 0, 0, 0, Constants.FLOATING_WINDOW_TYPE,
+            mLayoutParams = new WindowManager.LayoutParams(0, 0, 0, 0, ServiceProtocol.FLOATING_WINDOW_TYPE,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
                 PixelFormat.TRANSLUCENT);
             mLayoutParams.gravity = Gravity.CENTER;
@@ -805,11 +805,11 @@ public class ScreenViewerService extends Service {
                             R.string.screen_share_disconnect_confirm, nameOf(mServiceInfo)),
                         HtmlCompat.FROM_HTML_MODE_LEGACY))
                     .setPositiveButton(android.R.string.ok, (dialog, which) -> mContext.sendBroadcast(
-                        new Intent(Constants.ACTION_STOP_CLIENT_SERVICE).setPackage(mContext.getPackageName())))
+                        new Intent(ServiceProtocol.ACTION_STOP_CLIENT_SERVICE).setPackage(mContext.getPackageName())))
                     .setNegativeButton(android.R.string.cancel, null)
                     .setCancelable(false)
                     .create();
-                mDialog.getWindow().setType(Constants.FLOATING_WINDOW_TYPE);
+                mDialog.getWindow().setType(ServiceProtocol.FLOATING_WINDOW_TYPE);
             }
             mDialog.show();
         }
@@ -960,11 +960,11 @@ public class ScreenViewerService extends Service {
                             .setMessage(HtmlCompat.fromHtml(mContext.getString(R.string.screen_share_disconnect_confirm,
                                 nameOf(mServiceInfo)), HtmlCompat.FROM_HTML_MODE_LEGACY))
                             .setPositiveButton(android.R.string.ok, (dialog, which) -> mContext.sendBroadcast(
-                                new Intent(Constants.ACTION_STOP_CLIENT_SERVICE).setPackage(mContext.getPackageName())))
+                                new Intent(ServiceProtocol.ACTION_STOP_CLIENT_SERVICE).setPackage(mContext.getPackageName())))
                             .setNegativeButton(android.R.string.cancel, null)
                             .setCancelable(false)
                             .create();
-                        mDialog.getWindow().setType(Constants.FLOATING_WINDOW_TYPE);
+                        mDialog.getWindow().setType(ServiceProtocol.FLOATING_WINDOW_TYPE);
                     }
                     mDialog.show();
                     return true;
@@ -992,7 +992,7 @@ public class ScreenViewerService extends Service {
             mServiceInfo = serviceInfo;
             mWindowManager = mContext.getSystemService(WindowManager.class);
             mFrameView = createFrameView();
-            mLayoutParams = new WindowManager.LayoutParams(0, 0, 0, 0, Constants.FLOATING_WINDOW_TYPE,
+            mLayoutParams = new WindowManager.LayoutParams(0, 0, 0, 0, ServiceProtocol.FLOATING_WINDOW_TYPE,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
                 PixelFormat.TRANSLUCENT);
             mLayoutParams.gravity = Gravity.CENTER;
@@ -1209,7 +1209,7 @@ public class ScreenViewerService extends Service {
             final BottomSheetDialog settingsDialog = new BottomSheetDialog(mContext);
             settingsDialog.setContentView(R.layout.widget_screen_share_viewer_settings);
             settingsDialog.setDismissWithAnimation(true);
-            settingsDialog.getWindow().setType(Constants.FLOATING_WINDOW_TYPE);
+            settingsDialog.getWindow().setType(ServiceProtocol.FLOATING_WINDOW_TYPE);
             settingsDialog.getBehavior().setSkipCollapsed(true);
 
             final Slider opacitySettingView = settingsDialog.findViewById(R.id.opacity_setting);

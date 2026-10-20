@@ -18,6 +18,7 @@ import com.obby.android.localscreenshare.identity.DeviceIdentity;
 import com.obby.android.localscreenshare.identity.IdentityManager;
 import com.obby.android.localscreenshare.identity.IdentityUnavailableException;
 import com.obby.android.localscreenshare.support.Constants;
+import com.obby.android.localscreenshare.transport.GrpcConstants;
 import com.obby.android.localscreenshare.transport.ScreenStreamProtoMapper;
 
 import org.apache.commons.lang3.concurrent.BasicThreadFactory;
@@ -191,8 +192,8 @@ public final class LssClient {
      */
     public LssClient(@NonNull final String host, final int port) {
         mGrpcChannel = OkHttpChannelBuilder.forAddress(host, port, InsecureChannelCredentials.create())
-            .flowControlWindow(Constants.GRPC_FLOW_CONTROL_WINDOW)
-            .maxInboundMessageSize(Constants.GRPC_MAX_INBOUND_MESSAGE_SIZE)
+            .flowControlWindow(GrpcConstants.GRPC_FLOW_CONTROL_WINDOW)
+            .maxInboundMessageSize(GrpcConstants.GRPC_MAX_INBOUND_MESSAGE_SIZE)
             .executor(mGrpcClientExecutor)
             .intercept(mClientInterceptor)
             .build();

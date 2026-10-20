@@ -20,7 +20,6 @@ import com.obby.android.localscreenshare.discovery.provider.DeviceObservation;
 import com.obby.android.localscreenshare.discovery.provider.DiscoveryProvider;
 import com.obby.android.localscreenshare.discovery.provider.DiscoveryProviderListener;
 import com.obby.android.localscreenshare.support.BackoffPolicy;
-import com.obby.android.localscreenshare.support.Constants;
 import com.obby.android.localscreenshare.support.NetUtils;
 import com.obby.android.localscreenshare.support.ThreadUtils;
 
@@ -105,7 +104,7 @@ public final class NsdDiscoveryProvider implements DiscoveryProvider {
     public NsdDiscoveryProvider(@NonNull final Context context, @NonNull final TimeSource timeSource,
         @NonNull final Predicate<String> selfIdFilter) {
         this(context, timeSource, selfIdFilter,
-            Arrays.asList(Constants.NSD_SERVICE_TYPE, Constants.NSD_SERVICE_TYPE_LEGACY));
+            Arrays.asList(NsdConstants.NSD_SERVICE_TYPE, NsdConstants.NSD_SERVICE_TYPE_LEGACY));
     }
 
     /**

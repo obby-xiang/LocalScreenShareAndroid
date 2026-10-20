@@ -69,6 +69,7 @@ import com.obby.android.localscreenshare.discovery.favorite.FavoriteStore;
 import com.obby.android.localscreenshare.discovery.manual.ManualAddressProvider;
 import com.obby.android.localscreenshare.discovery.model.DeviceAddress;
 import com.obby.android.localscreenshare.discovery.model.LssDeviceInfo;
+import com.obby.android.localscreenshare.discovery.scan.ScanConstants;
 import com.obby.android.localscreenshare.discovery.store.DeviceStoreListener;
 import com.obby.android.localscreenshare.discovery.ui.DiscoveryListModel;
 import com.obby.android.localscreenshare.grpc.screenstream.DeviceSummary;
@@ -83,6 +84,7 @@ import com.obby.android.localscreenshare.settings.Preferences;
 import com.obby.android.localscreenshare.settings.VisibilityPolicy;
 import com.obby.android.localscreenshare.support.Constants;
 import com.obby.android.localscreenshare.support.IntentUtils;
+import com.obby.android.localscreenshare.support.ServiceProtocol;
 
 import java.text.NumberFormat;
 import java.util.Arrays;
@@ -266,16 +268,16 @@ public class MainActivity extends AppCompatActivity {
     @NonNull
     private final Messenger mMessenger = new Messenger(new Handler(Looper.getMainLooper(), msg -> {
         switch (msg.what) {
-            case Constants.MSG_SERVER_STARTED:
+            case ServiceProtocol.MSG_SERVER_STARTED:
                 onServerStarted();
                 return true;
-            case Constants.MSG_SERVER_STOPPED:
+            case ServiceProtocol.MSG_SERVER_STOPPED:
                 onServerStopped();
                 return true;
-            case Constants.MSG_SERVER_INFO_CHANGED:
+            case ServiceProtocol.MSG_SERVER_INFO_CHANGED:
                 onServerInfoChanged((LssServerInfo) msg.obj);
                 return true;
-            case Constants.MSG_SERVER_STATS_CHANGED:
+            case ServiceProtocol.MSG_SERVER_STATS_CHANGED:
                 onServerStatsChanged((LssServerStats) msg.obj);
                 return true;
             default:
@@ -341,7 +343,7 @@ public class MainActivity extends AppCompatActivity {
         result -> {
             if (result.getResultCode() == Activity.RESULT_OK) {
                 ContextCompat.startForegroundService(this, new Intent(this, ScreenShareService.class)
-                    .putExtra(Constants.EXTRA_MEDIA_PROJECTION_RESULT, result));
+                    .putExtra(ServiceProtocol.EXTRA_MEDIA_PROJECTION_RESULT, result));
             }
         }
     );
@@ -422,7 +424,7 @@ public class MainActivity extends AppCompatActivity {
                 LssServiceDiscoveryManager.get().addDeviceListener(mDeviceListener);
                 mMainHandler.removeCallbacks(mDiscoveryHintRunnable);
                 mMainHandler.postDelayed(mDiscoveryHintRunnable,
-                    Constants.DISCOVERY_EMPTY_MANUAL_HINT_MS);
+                    ScanConstants.DISCOVERY_EMPTY_MANUAL_HINT_MS);
             } else {
                 LssServiceDiscoveryManager.get().removeDeviceListener(mDeviceListener);
                 mMainHandler.removeCallbacks(mDiscoveryHintRunnable);
@@ -461,7 +463,7 @@ public class MainActivity extends AppCompatActivity {
             LssServiceDiscoveryManager.get().addDeviceListener(mDeviceListener);
             mMainHandler.removeCallbacks(mDiscoveryHintRunnable);
             mMainHandler.postDelayed(mDiscoveryHintRunnable,
-                Constants.DISCOVERY_EMPTY_MANUAL_HINT_MS);
+                ScanConstants.DISCOVERY_EMPTY_MANUAL_HINT_MS);
         }
     }
 
@@ -764,7 +766,7 @@ public class MainActivity extends AppCompatActivity {
                 }
 
                 LssServiceDiscoveryManager.get().onIdentityReset();
-                sendBroadcast(new Intent(Constants.ACTION_IDENTITY_RESET).setPackage(getPackageName()));
+                sendBroadcast(new Intent(ServiceProtocol.ACTION_IDENTITY_RESET).setPackage(getPackageName()));
                 updateDeviceIdentityView();
                 Toast.makeText(this, R.string.identity_reset_done, Toast.LENGTH_LONG).show();
             })
@@ -808,7 +810,7 @@ public class MainActivity extends AppCompatActivity {
         mDialog = new MaterialAlertDialogBuilder(this)
             .setMessage(R.string.screen_share_stop_confirm)
             .setPositiveButton(android.R.string.ok, (dialog, which) -> sendBroadcast(
-                new Intent(Constants.ACTION_STOP_SERVICE).setPackage(getPackageName())))
+                new Intent(ServiceProtocol.ACTION_STOP_SERVICE).setPackage(getPackageName())))
             .setNegativeButton(android.R.string.cancel, null)
             .setCancelable(false)
             .create();
@@ -845,7 +847,7 @@ public class MainActivity extends AppCompatActivity {
     private void startScreenShareViewerConfirmed(@NonNull final LssDeviceInfo serviceInfo) {
         if (requestScreenShare()) {
             ContextCompat.startForegroundService(this, new Intent(this, ScreenViewerService.class)
-                .putExtra(Constants.EXTRA_SERVICE_INFO, serviceInfo));
+                .putExtra(ServiceProtocol.EXTRA_SERVICE_INFO, serviceInfo));
         }
     }
 
@@ -906,7 +908,7 @@ public class MainActivity extends AppCompatActivity {
         }
 
         try {
-            final Message message = Message.obtain(null, Constants.MSG_REGISTER_SERVICE_CLIENT);
+            final Message message = Message.obtain(null, ServiceProtocol.MSG_REGISTER_SERVICE_CLIENT);
             message.replyTo = mMessenger;
             mServiceMessenger.send(message);
         } catch (RemoteException e) {
@@ -920,7 +922,7 @@ public class MainActivity extends AppCompatActivity {
         }
 
         try {
-            final Message message = Message.obtain(null, Constants.MSG_UNREGISTER_SERVICE_CLIENT);
+            final Message message = Message.obtain(null, ServiceProtocol.MSG_UNREGISTER_SERVICE_CLIENT);
             message.replyTo = mMessenger;
             mServiceMessenger.send(message);
         } catch (RemoteException e) {

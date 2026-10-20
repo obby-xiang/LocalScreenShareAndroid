@@ -3,7 +3,7 @@ package com.obby.android.localscreenshare.discovery.udp;
 import androidx.annotation.NonNull;
 
 import com.obby.android.localscreenshare.core.stream.TimeSource;
-import com.obby.android.localscreenshare.support.Constants;
+import com.obby.android.localscreenshare.discovery.register.RegisterConstants;
 
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -93,7 +93,7 @@ public final class MulticastAnnouncementFilter {
         final String key = host + "|" + port;
         final long nowMs = mTimeSource.nowMs();
         final Long lastMs = mLastRegisterMs.get(key);
-        if (lastMs != null && nowMs - lastMs < Constants.REGISTER_MERGE_WINDOW_MS) {
+        if (lastMs != null && nowMs - lastMs < RegisterConstants.REGISTER_MERGE_WINDOW_MS) {
             return false;
         }
         mLastRegisterMs.put(key, nowMs);
