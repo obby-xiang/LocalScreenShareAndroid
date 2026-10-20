@@ -4,7 +4,7 @@ import android.util.Log;
 
 import androidx.annotation.NonNull;
 
-import com.obby.android.localscreenshare.support.Preferences;
+import com.obby.android.localscreenshare.settings.Preferences;
 
 /**
  * Process-wide holder of this installation's {@link DeviceIdentity}.

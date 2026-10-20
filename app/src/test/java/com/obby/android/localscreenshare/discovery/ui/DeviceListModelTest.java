@@ -1,4 +1,4 @@
-package com.obby.android.localscreenshare.discovery;
+package com.obby.android.localscreenshare.discovery.ui;
 
 import com.obby.android.localscreenshare.discovery.model.DeviceAddress;
 import com.obby.android.localscreenshare.discovery.model.DevicePresence;

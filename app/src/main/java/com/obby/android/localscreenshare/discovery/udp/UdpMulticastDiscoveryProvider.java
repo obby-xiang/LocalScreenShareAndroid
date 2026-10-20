@@ -12,7 +12,7 @@ import com.obby.android.localscreenshare.discovery.provider.DiscoveryProviderLis
 import com.obby.android.localscreenshare.discovery.register.RegisterClient;
 import com.obby.android.localscreenshare.grpc.screenstream.DeviceSummary;
 import com.obby.android.localscreenshare.grpc.screenstream.RegisterResponse;
-import com.obby.android.localscreenshare.utils.NetUtils;
+import com.obby.android.localscreenshare.support.NetUtils;
 
 import java.net.InetAddress;
 import java.util.Objects;

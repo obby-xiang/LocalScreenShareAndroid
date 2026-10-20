@@ -1,4 +1,4 @@
-package com.obby.android.localscreenshare.utils;
+package com.obby.android.localscreenshare.discovery.nsd;
 
 import android.net.nsd.NsdManager;
 import android.net.nsd.NsdServiceInfo;
@@ -8,6 +8,7 @@ import androidx.annotation.NonNull;
 
 import com.google.common.base.Supplier;
 import com.google.common.base.Suppliers;
+import com.obby.android.localscreenshare.support.ThreadUtils;
 
 import org.apache.commons.lang3.concurrent.BasicThreadFactory;
 

@@ -17,7 +17,6 @@ import com.obby.android.localscreenshare.grpc.screenstream.ServerMessage;
 import com.obby.android.localscreenshare.identity.DeviceIdentity;
 import com.obby.android.localscreenshare.identity.IdentityManager;
 import com.obby.android.localscreenshare.identity.IdentityUnavailableException;
-import com.obby.android.localscreenshare.support.CodecCapabilityProbe;
 import com.obby.android.localscreenshare.support.Constants;
 import com.obby.android.localscreenshare.transport.ScreenStreamProtoMapper;
 

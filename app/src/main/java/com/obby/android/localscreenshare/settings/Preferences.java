@@ -1,4 +1,4 @@
-package com.obby.android.localscreenshare.support;
+package com.obby.android.localscreenshare.settings;
 
 import android.annotation.SuppressLint;
 import android.content.Context;
@@ -11,7 +11,7 @@ import androidx.annotation.Nullable;
 
 import com.google.gson.Gson;
 import com.obby.android.localscreenshare.App;
-import com.obby.android.localscreenshare.discovery.DiscoverySettings;
+import com.obby.android.localscreenshare.support.Constants;
 
 import java.util.List;
 import java.util.Optional;
@@ -562,7 +562,7 @@ public final class Preferences {
     /**
      * Discovery refresh preset wire value; empty means the default preset.
      *
-     * <p>The value is validated by {@link com.obby.android.localscreenshare.discovery.DiscoverySettings},
+     * <p>The value is validated by {@link DiscoverySettings},
      * which turns an unknown or empty value into the balanced preset.</p>
      */
     @NonNull

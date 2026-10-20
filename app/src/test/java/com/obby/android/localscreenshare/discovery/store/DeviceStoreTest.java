@@ -1,7 +1,7 @@
 package com.obby.android.localscreenshare.discovery.store;
 
 import com.obby.android.localscreenshare.core.support.MutableClock;
-import com.obby.android.localscreenshare.discovery.LssServiceInfo;
+import com.obby.android.localscreenshare.discovery.legacy.LssServiceInfo;
 import com.obby.android.localscreenshare.discovery.model.DevicePresence;
 import com.obby.android.localscreenshare.discovery.model.DiscoveryChannel;
 import com.obby.android.localscreenshare.discovery.model.LssDeviceInfo;

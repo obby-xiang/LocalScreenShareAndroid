@@ -8,7 +8,7 @@ import android.util.Log;
  *
  * <p>The instance is assigned in {@link #onCreate()}, which runs before the first activity or
  * service callback of this process, so component code can rely on {@link #get()} from any
- * lifecycle callback. {@link com.obby.android.localscreenshare.support.Preferences} and the
+ * lifecycle callback. {@link com.obby.android.localscreenshare.settings.Preferences} and the
  * discovery manager use it to reach application resources. {@link #getLabel()} resolves the
  * user-visible application label for text that explains a permission request.</p>
  */

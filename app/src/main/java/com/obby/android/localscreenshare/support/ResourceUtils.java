@@ -1,4 +1,4 @@
-package com.obby.android.localscreenshare.utils;
+package com.obby.android.localscreenshare.support;
 
 import android.content.Context;
 import android.util.TypedValue;

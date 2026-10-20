@@ -88,7 +88,8 @@ public final class Constants {
     /**
      * Default multicast group used by the discovery channel. It is administratively scoped
      * (224.0.0.0/8) and never routed, so announcements stay on the local link; the group and the
-     * port are user-configurable through {@link Preferences}.
+     * port are user-configurable through
+     * {@link com.obby.android.localscreenshare.settings.Preferences}.
      */
     public static final String MULTICAST_GROUP = "224.0.0.167";
 

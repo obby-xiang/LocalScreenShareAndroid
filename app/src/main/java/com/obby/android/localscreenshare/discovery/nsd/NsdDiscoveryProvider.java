@@ -21,9 +21,8 @@ import com.obby.android.localscreenshare.discovery.provider.DiscoveryProvider;
 import com.obby.android.localscreenshare.discovery.provider.DiscoveryProviderListener;
 import com.obby.android.localscreenshare.support.BackoffPolicy;
 import com.obby.android.localscreenshare.support.Constants;
-import com.obby.android.localscreenshare.utils.NetUtils;
-import com.obby.android.localscreenshare.utils.NsdUtils;
-import com.obby.android.localscreenshare.utils.ThreadUtils;
+import com.obby.android.localscreenshare.support.NetUtils;
+import com.obby.android.localscreenshare.support.ThreadUtils;
 
 import java.util.Arrays;
 import java.util.LinkedHashMap;

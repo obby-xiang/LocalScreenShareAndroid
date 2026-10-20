@@ -1,4 +1,4 @@
-package com.obby.android.localscreenshare.support;
+package com.obby.android.localscreenshare.client;
 
 import android.media.MediaCodecInfo;
 import android.media.MediaCodecList;

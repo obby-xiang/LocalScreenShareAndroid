@@ -70,7 +70,6 @@ import com.obby.android.localscreenshare.core.model.StreamKey;
 import com.obby.android.localscreenshare.core.model.StreamParameters;
 import com.obby.android.localscreenshare.core.stream.StreamHub;
 import com.obby.android.localscreenshare.core.stream.StreamRuntime;
-import com.obby.android.localscreenshare.discovery.DiscoverySettings;
 import com.obby.android.localscreenshare.discovery.LssServiceDiscoveryManager;
 import com.obby.android.localscreenshare.discovery.VisibilityPolicy;
 import com.obby.android.localscreenshare.discovery.model.AuthMode;
@@ -91,11 +90,12 @@ import com.obby.android.localscreenshare.server.LssServerInfo;
 import com.obby.android.localscreenshare.server.LssServerInfoListener;
 import com.obby.android.localscreenshare.server.LssServerStats;
 import com.obby.android.localscreenshare.server.LssServerStatsListener;
+import com.obby.android.localscreenshare.settings.DiscoverySettings;
+import com.obby.android.localscreenshare.settings.Preferences;
 import com.obby.android.localscreenshare.support.Constants;
 import com.obby.android.localscreenshare.support.DelayedScheduler;
-import com.obby.android.localscreenshare.support.Preferences;
+import com.obby.android.localscreenshare.support.WindowUtils;
 import com.obby.android.localscreenshare.transport.ScreenStreamProtoMapper;
-import com.obby.android.localscreenshare.utils.WindowUtils;
 
 import org.apache.commons.lang3.time.DurationFormatUtils;
 

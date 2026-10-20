@@ -80,10 +80,10 @@ import com.obby.android.localscreenshare.discovery.favorite.FavoriteStore;
 import com.obby.android.localscreenshare.discovery.model.DeviceAddress;
 import com.obby.android.localscreenshare.discovery.model.LssDeviceInfo;
 import com.obby.android.localscreenshare.render.SurfaceRenderTarget;
+import com.obby.android.localscreenshare.settings.Preferences;
 import com.obby.android.localscreenshare.support.Constants;
-import com.obby.android.localscreenshare.support.Preferences;
 import com.obby.android.localscreenshare.support.Reference;
-import com.obby.android.localscreenshare.utils.ResourceUtils;
+import com.obby.android.localscreenshare.support.ResourceUtils;
 
 import org.apache.commons.lang3.math.NumberUtils;
 import org.apache.commons.lang3.mutable.MutableBoolean;
