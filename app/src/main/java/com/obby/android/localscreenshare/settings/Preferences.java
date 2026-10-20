@@ -515,7 +515,7 @@ public final class Preferences {
 
     /**
      * Multicast group used by the announcement channel; defaults to
-     * {@link Constants#MULTICAST_GROUP}. It is read when the channel starts, so a change applies
+     * {@link MulticastConstants#MULTICAST_GROUP}. It is read when the channel starts, so a change applies
      * to the next start.
      */
     @NonNull
@@ -533,7 +533,7 @@ public final class Preferences {
         }
     }
 
-    /** Multicast port used by the announcement channel; defaults to {@link Constants#MULTICAST_PORT}. */
+    /** Multicast port used by the announcement channel; defaults to {@link MulticastConstants#MULTICAST_PORT}. */
     public int getMulticastPort() {
         return mPreferences.getInt(KEY_MULTICAST_PORT, MulticastConstants.MULTICAST_PORT);
     }

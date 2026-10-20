@@ -78,7 +78,7 @@ import lombok.NoArgsConstructor;
  * <p>The multicast provider also confirms peers through Register: only an accepted handshake
  * promotes a device to confirmed, so a received announcement alone never makes a device look
  * reachable. An address confirmed within
- * {@link Constants#REGISTER_RECONFIRM_INTERVAL_MS} is not confirmed again, which keeps heartbeat
+ * {@link RegisterConstants#REGISTER_RECONFIRM_INTERVAL_MS} is not confirmed again, which keeps heartbeat
  * traffic below the server's per-address quota. The store is exposed through
  * {@link #getDeviceStore()} so the capture server can write the peers it learns through its own
  * Register handler into the same table.</p>

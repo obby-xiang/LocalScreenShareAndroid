@@ -97,7 +97,7 @@ import java.util.Objects;
  * floating viewer.
  *
  * <p><b>Lifecycle.</b> Started by {@link MainActivity} with
- * {@link Constants#EXTRA_SERVICE_INFO} after the notification and overlay permissions have been
+ * {@link ServiceProtocol#EXTRA_SERVICE_INFO} after the notification and overlay permissions have been
  * granted. {@link #onStartCommand(Intent, int, int)} creates the notification channel, promotes
  * the service to the foreground with the remote-messaging type, resets any previous session,
  * creates an {@link ScreenShareClient} and shows the loading overlay before the client connects. A
@@ -111,7 +111,7 @@ import java.util.Objects;
  * a later disconnect, or a failed first connection, closes the client, shows a floating
  * confirmation and offers a retry. The retry creates a new client because an {@link ScreenShareClient} is
  * single-use. Cancelling the confirmation broadcasts
- * {@link Constants#ACTION_STOP_CLIENT_SERVICE}.</p>
+ * {@link ServiceProtocol#ACTION_STOP_CLIENT_SERVICE}.</p>
  *
  * <p><b>Threading and ownership.</b> All service callbacks and {@link ClientObserver}
  * callbacks run on the main thread; {@link ScreenShareClient} decodes frames on its own executor and

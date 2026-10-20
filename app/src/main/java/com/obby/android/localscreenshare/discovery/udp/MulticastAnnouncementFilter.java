@@ -25,7 +25,7 @@ import java.util.function.Predicate;
  *       than the newest one from the same boot. A different boot means the peer restarted, so its
  *       sequence baseline restarts too.</li>
  *   <li><b>Registration merging</b> lets one address trigger at most one Register call per
- *       {@link Constants#REGISTER_MERGE_WINDOW_MS} window, which collapses the three startup
+ *       {@link RegisterConstants#REGISTER_MERGE_WINDOW_MS} window, which collapses the three startup
  *       announcements and the interfaces that heard them into one handshake.</li>
  * </ul>
  *

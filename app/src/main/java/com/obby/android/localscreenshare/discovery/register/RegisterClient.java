@@ -21,7 +21,7 @@ import java.util.concurrent.Executor;
 /**
  * Client side of the Register handshake: deadline, retries and per-address deduplication.
  *
- * <p>One call has a {@link Constants#REGISTER_TIMEOUT_MS 500 ms} deadline and at most two retries,
+ * <p>One call has a {@link RegisterConstants#REGISTER_TIMEOUT_MS 500 ms} deadline and at most two retries,
  * delayed by 200 ms and 500 ms respectively with jitter so many devices that heard the same
  * announcement do not retry in lockstep. A rejection is terminal: retrying an answer that already
  * said no only adds load. Only timeouts and transport failures are retried.</p>

@@ -114,7 +114,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
  *
  * <p><b>Lifecycle.</b> The service is started, not bound, by {@link MainActivity} right after the
  * user grants screen capture; the consent result travels in
- * {@link Constants#EXTRA_MEDIA_PROJECTION_RESULT}. {@link #onCreate()} registers the stop-command
+ * {@link ServiceProtocol#EXTRA_MEDIA_PROJECTION_RESULT}. {@link #onCreate()} registers the stop-command
  * receiver, snapshots the projection preferences and subscribes the preference observer.
  * {@link #onStartCommand(Intent, int, int)} then, in this order, promotes the service to the
  * foreground with the media-projection type, creates and starts the server, obtains the
@@ -525,7 +525,7 @@ public class ScreenShareService extends Service {
     /**
      * Starts the server and the capture pipeline, then shows the floating chip.
      *
-     * <p>Requires the consent result in {@link Constants#EXTRA_MEDIA_PROJECTION_RESULT}; a null
+     * <p>Requires the consent result in {@link ServiceProtocol#EXTRA_MEDIA_PROJECTION_RESULT}; a null
      * intent cannot carry it, so a system restart is rejected with {@code START_NOT_STICKY}. A
      * second start while the server is running is ignored for the same reason. The foreground
      * notification is posted before the projection is used, and a failure while promoting the

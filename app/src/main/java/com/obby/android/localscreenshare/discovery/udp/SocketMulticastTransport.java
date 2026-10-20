@@ -17,7 +17,7 @@ import java.util.Objects;
  * {@link MulticastTransport} over interface sockets, with receive-loop recovery.
  *
  * <p>Each endpoint gets its own daemon receiver thread. A receiver resets its error counter on
- * every successful datagram; after {@link Constants#MULTICAST_MAX_RECEIVE_ERRORS} consecutive
+ * every successful datagram; after {@link MulticastConstants#MULTICAST_MAX_RECEIVE_ERRORS} consecutive
  * failures it closes its endpoint and asks for a rebuild. Rebuilding closes and reopens every
  * endpoint after a {@link BackoffPolicy} delay, which is what recovers the channel after Wi-Fi is
  * replaced or a socket is torn down underneath it. The receiver thread of a closed endpoint simply
