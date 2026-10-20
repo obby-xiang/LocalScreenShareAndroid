@@ -1,5 +1,6 @@
 package com.obby.android.localscreenshare.client;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
@@ -26,6 +27,7 @@ import org.junit.Test;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Unit tests for {@link ClientMediaReceiver}.
@@ -104,10 +106,90 @@ public class ClientMediaReceiverTest {
         assertEquals(ClientState.CLOSED, session.getState());
     }
 
+    @Test
+    public void descriptorReportsStreamGeometryBeforeApplyingIt() {
+        List<int[]> geometries = new ArrayList<>();
+        AtomicReference<ClientState> stateAtCallback = new AtomicReference<>();
+        ClientMediaReceiver receiver = new ClientMediaReceiver(STREAM_KEY, session, null,
+                (width, height, rotation) -> {
+                    geometries.add(new int[]{width, height, rotation});
+                    stateAtCallback.set(session.getState());
+                });
+
+        receiver.onServerMessage(descriptorMessage(1, false, 1080, 2340, 0));
+
+        assertEquals(1, geometries.size());
+        assertArrayEquals(new int[]{1080, 2340, 0}, geometries.get(0));
+        assertEquals(ClientState.NEGOTIATING, stateAtCallback.get());
+    }
+
+    @Test
+    public void descriptorReportsRotation() {
+        List<int[]> geometries = new ArrayList<>();
+        ClientMediaReceiver receiver = new ClientMediaReceiver(STREAM_KEY, session, null,
+                (width, height, rotation) -> geometries.add(new int[]{width, height, rotation}));
+
+        receiver.onServerMessage(descriptorMessage(1, false, 2340, 1080, 90));
+
+        assertEquals(1, geometries.size());
+        assertArrayEquals(new int[]{2340, 1080, 90}, geometries.get(0));
+    }
+
+    @Test
+    public void newerEpochReportsGeometryAgain() {
+        List<int[]> geometries = new ArrayList<>();
+        ClientMediaReceiver receiver = new ClientMediaReceiver(STREAM_KEY, session, null,
+                (width, height, rotation) -> geometries.add(new int[]{width, height, rotation}));
+
+        receiver.onServerMessage(descriptorMessage(1, false, 1080, 2340, 0));
+        receiver.onServerMessage(descriptorMessage(2, false, 1080, 2340, 0));
+
+        assertEquals(2, geometries.size());
+        assertArrayEquals(new int[]{1080, 2340, 0}, geometries.get(1));
+        assertEquals(ClientState.WAIT_RANDOM_ACCESS, session.getState());
+    }
+
+    @Test
+    public void accessUnitDoesNotReportGeometry() {
+        List<int[]> geometries = new ArrayList<>();
+        ClientMediaReceiver receiver = new ClientMediaReceiver(STREAM_KEY, session, null,
+                (width, height, rotation) -> geometries.add(new int[]{width, height, rotation}));
+
+        receiver.onServerMessage(descriptorMessage(1, false, 1080, 2340, 0));
+        receiver.onServerMessage(accessUnitMessage(1, 0L, true));
+
+        assertEquals(1, geometries.size());
+    }
+
+    @Test
+    public void closedSessionDoesNotReportGeometry() {
+        List<int[]> geometries = new ArrayList<>();
+        ClientMediaReceiver receiver = new ClientMediaReceiver(STREAM_KEY, session, null,
+                (width, height, rotation) -> geometries.add(new int[]{width, height, rotation}));
+        receiver.close();
+
+        receiver.onServerMessage(descriptorMessage(1, false, 1080, 2340, 0));
+
+        assertTrue(geometries.isEmpty());
+    }
+
     private ServerMessage descriptorMessage(int epoch, boolean secure) {
         StreamDescriptor descriptor = StreamDescriptor.builder(STREAM_KEY, epoch,
                         FakeCodec.DEFAULT_CODEC_ID, FakeCodec.DEFAULT_MIME, BitstreamFormat.ANNEX_B)
                 .codedSize(64, 48)
+                .build();
+        return ServerMessage.newBuilder()
+                .setDescriptor(ScreenStreamProtoMapper.toProtoDescriptor(descriptor, secure))
+                .build();
+    }
+
+    private ServerMessage descriptorMessage(int epoch, boolean secure, int visibleWidth,
+                                            int visibleHeight, int rotationDegrees) {
+        StreamDescriptor descriptor = StreamDescriptor.builder(STREAM_KEY, epoch,
+                        FakeCodec.DEFAULT_CODEC_ID, FakeCodec.DEFAULT_MIME, BitstreamFormat.ANNEX_B)
+                .codedSize(visibleWidth, visibleHeight)
+                .visibleSize(visibleWidth, visibleHeight)
+                .rotationDegrees(rotationDegrees)
                 .build();
         return ServerMessage.newBuilder()
                 .setDescriptor(ScreenStreamProtoMapper.toProtoDescriptor(descriptor, secure))

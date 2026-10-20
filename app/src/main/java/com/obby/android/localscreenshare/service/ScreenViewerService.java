@@ -69,6 +69,7 @@ import com.obby.android.localscreenshare.client.ScreenShareClient;
 import com.obby.android.localscreenshare.client.ClientObserver;
 import com.obby.android.localscreenshare.client.ClientStats;
 import com.obby.android.localscreenshare.client.ClientStatsListener;
+import com.obby.android.localscreenshare.client.StreamGeometryListener;
 import com.obby.android.localscreenshare.core.client.ClientMediaSession;
 import com.obby.android.localscreenshare.core.client.ClientStateListener;
 import com.obby.android.localscreenshare.core.codec.CodecIds;
@@ -83,6 +84,8 @@ import com.obby.android.localscreenshare.discovery.favorite.FavoriteStore;
 import com.obby.android.localscreenshare.discovery.model.DeviceAddress;
 import com.obby.android.localscreenshare.discovery.model.DeviceInfo;
 import com.obby.android.localscreenshare.render.SurfaceRenderTarget;
+import com.obby.android.localscreenshare.render.ViewerFitPolicy;
+import com.obby.android.localscreenshare.render.ZoomMode;
 import com.obby.android.localscreenshare.settings.Preferences;
 import com.obby.android.localscreenshare.support.MutableReference;
 import com.obby.android.localscreenshare.support.ResourceUtils;
@@ -554,7 +557,14 @@ public class ScreenViewerService extends Service {
                 new ClientCapabilities(Collections.singleton(CodecIds.H264)),
                 mSurfaceRenderTarget, mClientStateListener);
         mClientMediaSession = session;
-        mClientMediaReceiver = new ClientMediaReceiver(mStreamKey, session, mClientSecureListener);
+        mClientMediaReceiver = new ClientMediaReceiver(mStreamKey, session, mClientSecureListener,
+            (visibleWidth, visibleHeight, rotationDegrees) -> mMainHandler.post(() -> {
+                // The descriptor arrives on the decode thread; the window is only touched here.
+                if (mSurfaceShareViewer != null) {
+                    mSurfaceShareViewer.setContentGeometry(visibleWidth, visibleHeight,
+                        rotationDegrees);
+                }
+            }));
 
         // Mount the surface viewer now so its texture view acquires a surface; the H.264 decoder
         // cannot be created until a surface exists, and STREAMING (which used to trigger the mount)
@@ -683,8 +693,14 @@ public class ScreenViewerService extends Service {
      * single tap opens the disconnect confirmation. Opacity, scale, corner rounding and the
      * normalized location come from the persisted viewer settings; the secure flag maps to
      * {@code FLAG_SECURE}. The round-rect outline mirrors the shape of the bitmap viewer this
-     * window replaced. Stream-aspect sizing and the settings sheet are refined with the
-     * window-surface work.</p>
+     * window replaced.</p>
+     *
+     * <p><b>Geometry.</b> The window size comes from {@link ViewerFitPolicy}: the visible size and
+     * rotation reported by the stream descriptor, the usable display bounds and the viewing
+     * percentage. Until the first descriptor arrives the window keeps the legacy "bounds times
+     * percentage" size, so the texture view can acquire a surface before any frame exists. A
+     * rotated stream is fitted to the swapped content size and the texture is transformed to match,
+     * which keeps the pixels upright without stretching them.</p>
      */
     private static class SurfaceShareViewer {
         // Corner radius as a fraction of the shorter window side, matching the bitmap viewer.
@@ -724,6 +740,14 @@ public class ScreenViewerService extends Service {
 
         private int mScale;
 
+        // Visible stream size and display rotation; zero rotation and zero size until the first
+        // descriptor arrives, which makes the fit policy fall back to the legacy window size.
+        private int mContentWidth;
+
+        private int mContentHeight;
+
+        private int mRotationDegrees;
+
         // Corner radius of the round-rect outline; 0 disables outline clipping.
         private float mCornerSize;
 
@@ -732,7 +756,19 @@ public class ScreenViewerService extends Service {
             mContext = new ContextThemeWrapper(context, R.style.Theme_ScreenShare);
             mServiceInfo = serviceInfo;
             mWindowManager = mContext.getSystemService(WindowManager.class);
-            mTextureView = new TextureView(mContext);
+            mTextureView = new TextureView(mContext) {
+                @Override
+                protected void onConfigurationChanged(@NonNull final Configuration newConfig) {
+                    super.onConfigurationChanged(newConfig);
+                    // The usable bounds change with rotation and multi-window; re-fit after the new
+                    // configuration has been applied, as the bitmap viewer did.
+                    post(() -> {
+                        if (getParent() != null) {
+                            updateView();
+                        }
+                    });
+                }
+            };
             mTextureView.setOpaque(false);
             // The outline is evaluated against the current view bounds, so the clipped corners
             // follow the window size while the radius keeps the bitmap viewer's ratio.
@@ -799,8 +835,71 @@ public class ScreenViewerService extends Service {
                 mLocation.set(Preferences.get().getViewerLocation());
                 updateLayoutParams();
                 updateShape();
+                updateContentTransform();
                 mWindowManager.addView(mTextureView, mLayoutParams);
             }
+        }
+
+        /**
+         * Stores the visible stream geometry reported by a descriptor and resizes the window.
+         *
+         * <p>Called on the main thread. The geometry is retained even while the window is not
+         * mounted, so a later {@link #show()} sizes the window before the first frame. An unchanged
+         * geometry is ignored: a descriptor that only advances the configuration epoch must not
+         * touch the window.</p>
+         */
+        void setContentGeometry(final int visibleWidth, final int visibleHeight,
+                                final int rotationDegrees) {
+            if (mContentWidth == visibleWidth && mContentHeight == visibleHeight
+                && mRotationDegrees == rotationDegrees) {
+                return;
+            }
+
+            mContentWidth = visibleWidth;
+            mContentHeight = visibleHeight;
+            mRotationDegrees = rotationDegrees;
+
+            if (mTextureView.getParent() != null) {
+                updateView();
+            }
+        }
+
+        /**
+         * Re-applies the window size, shape and content rotation and pushes them to the window.
+         */
+        private void updateView() {
+            updateLayoutParams();
+            updateShape();
+            updateContentTransform();
+            mWindowManager.updateViewLayout(mTextureView, mLayoutParams);
+        }
+
+        /**
+         * Rotates the decoded content inside the window.
+         *
+         * <p>The decoder writes an unrotated frame and the texture stretches it to the window, so a
+         * quarter-turn stream must be rotated here or it is displayed sideways. The rotated frame
+         * has the swapped aspect ratio, which the window already has, so the content is scaled by
+         * the same swapped factor before the rotation: after rotating, it fills the window exactly.
+         * A half-turn needs no scaling. An identity matrix is applied for the common unrotated
+         * case, so the default behaviour is unchanged.</p>
+         */
+        private void updateContentTransform() {
+            final int width = mLayoutParams.width;
+            final int height = mLayoutParams.height;
+            final Matrix transform = new Matrix();
+            if (width > 0 && height > 0) {
+                final float centerX = width / 2f;
+                final float centerY = height / 2f;
+                if (mRotationDegrees == 90 || mRotationDegrees == 270) {
+                    transform.setScale((float) height / width, (float) width / height, centerX,
+                        centerY);
+                    transform.postRotate(mRotationDegrees, centerX, centerY);
+                } else if (mRotationDegrees == 180) {
+                    transform.setRotate(180f, centerX, centerY);
+                }
+            }
+            mTextureView.setTransform(transform);
         }
 
         /**
@@ -870,6 +969,15 @@ public class ScreenViewerService extends Service {
             mDialog.show();
         }
 
+        /**
+         * Computes the window size from the stream geometry and maps the normalized location onto
+         * the allowed center range.
+         *
+         * <p>Before the first descriptor the fit policy reports {@code fallback}, which is the
+         * legacy "bounds times percentage" size; afterwards the window keeps the content aspect
+         * ratio and is rotated with it. The position is recomputed because the allowed center range
+         * depends on the window size.</p>
+         */
         private void updateLayoutParams() {
             mLayoutParams.alpha = mOpacity / 100f;
 
@@ -882,8 +990,11 @@ public class ScreenViewerService extends Service {
             getMaxLayoutBounds(mBounds);
             final int minSize = mContext.getResources()
                 .getDimensionPixelSize(R.dimen.screen_share_viewer_min_size);
-            mLayoutParams.width = Math.max(minSize, (int) (mBounds.width() * mScale / 100f));
-            mLayoutParams.height = Math.max(minSize, (int) (mBounds.height() * mScale / 100f));
+            final ViewerFitPolicy.Fit fit = ViewerFitPolicy.fit(mContentWidth, mContentHeight,
+                mRotationDegrees, mBounds.width(), mBounds.height(), mScale, minSize,
+                ZoomMode.FIT);
+            mLayoutParams.width = fit.getWidth();
+            mLayoutParams.height = fit.getHeight();
 
             getLocationBounds(mBounds);
             mLayoutParams.x = (int) (mBounds.left + mBounds.width() * mLocation.x);

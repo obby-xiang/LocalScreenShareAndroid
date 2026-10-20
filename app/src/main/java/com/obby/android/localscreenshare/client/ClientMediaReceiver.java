@@ -1,6 +1,7 @@
 package com.obby.android.localscreenshare.client;
 
 import com.obby.android.localscreenshare.core.client.ClientMediaSession;
+import com.obby.android.localscreenshare.core.model.StreamDescriptor;
 import com.obby.android.localscreenshare.core.model.StreamKey;
 import com.obby.android.localscreenshare.grpc.screenstream.ServerMessage;
 import com.obby.android.localscreenshare.transport.ScreenStreamProtoMapper;
@@ -9,10 +10,11 @@ import com.obby.android.localscreenshare.transport.ScreenStreamProtoMapper;
  * Drives a {@link ClientMediaSession} from wire messages on the client's decode thread.
  *
  * <p>The receiver owns the deserialization of server messages and the stream identity, and reports
- * the session-level secure flag to a {@link ClientSecureListener}. It is deliberately not
- * thread-safe: the owning client must call {@link #onServerMessage} from a single decode thread so
- * decoding never runs on the gRPC shared executor. The session itself serializes its own state, so
- * the receiver only has to serialize the deserialization plus the secure-flag edge tracking.</p>
+ * the session-level secure flag to a {@link ClientSecureListener} and the display geometry of the
+ * incoming stream to a {@link StreamGeometryListener}. It is deliberately not thread-safe: the
+ * owning client must call {@link #onServerMessage} from a single decode thread so decoding never
+ * runs on the gRPC shared executor. The session itself serializes its own state, so the receiver
+ * only has to serialize the deserialization plus the secure-flag edge tracking.</p>
  */
 public final class ClientMediaReceiver {
 
@@ -22,10 +24,12 @@ public final class ClientMediaReceiver {
 
     private final ClientSecureListener secureListener;
 
+    private final StreamGeometryListener geometryListener;
+
     private Boolean lastSecure;
 
     /**
-     * Creates a receiver for one session.
+     * Creates a receiver that reports only the secure flag.
      *
      * @param streamKey      stream identity used to rebuild descriptors and access units
      * @param session        the session driven by this receiver
@@ -34,6 +38,21 @@ public final class ClientMediaReceiver {
      */
     public ClientMediaReceiver(StreamKey streamKey, ClientMediaSession session,
                                ClientSecureListener secureListener) {
+        this(streamKey, session, secureListener, null);
+    }
+
+    /**
+     * Creates a receiver for one session.
+     *
+     * @param streamKey        stream identity used to rebuild descriptors and access units
+     * @param session          the session driven by this receiver
+     * @param secureListener   optional listener for secure-flag changes; may be null
+     * @param geometryListener optional listener for stream geometry changes; may be null
+     * @throws IllegalArgumentException if {@code streamKey} or {@code session} is null
+     */
+    public ClientMediaReceiver(StreamKey streamKey, ClientMediaSession session,
+                               ClientSecureListener secureListener,
+                               StreamGeometryListener geometryListener) {
         if (streamKey == null) {
             throw new IllegalArgumentException("streamKey must not be null");
         }
@@ -43,15 +62,20 @@ public final class ClientMediaReceiver {
         this.streamKey = streamKey;
         this.session = session;
         this.secureListener = secureListener;
+        this.geometryListener = geometryListener;
     }
 
     /**
      * Applies one server message to the session.
      *
      * <p>A descriptor is deserialized and applied before its access units; the secure flag is
-     * reported on every change from the previous value, including the first descriptor. A unit
-     * from a stale or unknown epoch is handled by the session without changing its state
-     * incorrectly.</p>
+     * reported on every change from the previous value, including the first descriptor. The stream
+     * geometry is reported for every descriptor, before the session applies it, so the viewer can
+     * resize its window before the new decoder produces frames; an epoch-only change repeats the
+     * report, which the display side ignores when nothing moved. A descriptor cannot carry a
+     * non-positive visible size (the model rejects it), so the geometry report is guarded purely
+     * defensively. A unit from a stale or unknown epoch is handled by the session without changing
+     * its state incorrectly.</p>
      */
     public void onServerMessage(ServerMessage message) {
         if (message == null || session.isClosed()) {
@@ -68,8 +92,15 @@ public final class ClientMediaReceiver {
                         secureListener.onSecureChanged(secure);
                     }
                 }
-                session.onDescriptor(
-                        ScreenStreamProtoMapper.toStreamDescriptor(streamKey, descriptor));
+                final StreamDescriptor streamDescriptor =
+                        ScreenStreamProtoMapper.toStreamDescriptor(streamKey, descriptor);
+                if (geometryListener != null && streamDescriptor.getVisibleWidth() > 0
+                        && streamDescriptor.getVisibleHeight() > 0) {
+                    geometryListener.onStreamGeometry(streamDescriptor.getVisibleWidth(),
+                            streamDescriptor.getVisibleHeight(),
+                            streamDescriptor.getRotationDegrees());
+                }
+                session.onDescriptor(streamDescriptor);
                 break;
             }
             case ACCESS_UNIT:
