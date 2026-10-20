@@ -143,7 +143,8 @@ public class NsdDiscoveryCoordinatorTest {
         mScheduler.runAll();
 
         assertEquals(0, mCoordinator.pendingRetryCount());
-        assertEquals(Arrays.asList("start:" + CURRENT, "stop:" + LEGACY, "start:" + LEGACY), mDiscovery.events);
+        assertEquals(Arrays.asList("stop:" + CURRENT, "start:" + CURRENT, "stop:" + LEGACY, "start:" + LEGACY),
+            mDiscovery.events);
     }
 
     @Test
@@ -179,12 +180,37 @@ public class NsdDiscoveryCoordinatorTest {
 
         mCoordinator.stopAll();
 
-        assertEquals(Collections.singletonList("stop:" + LEGACY), mDiscovery.events);
+        assertEquals(Arrays.asList("stop:" + CURRENT, "stop:" + LEGACY), mDiscovery.events);
         assertEquals(0, mCoordinator.pendingRetryCount());
         assertFalse(mCoordinator.isActive());
 
         mScheduler.runAll();
-        assertEquals(1, mDiscovery.events.size());
+        assertEquals(2, mDiscovery.events.size());
+    }
+
+    @Test
+    public void stopAllStopsTypesWhoseRunningFlagLaggedBehindTheFramework() {
+        mCoordinator.startAll();
+        // A late stop callback clears the flag while the framework may still be discovering.
+        mCoordinator.onDiscoveryStopped(CURRENT);
+        mDiscovery.events.clear();
+
+        mCoordinator.stopAll();
+
+        assertEquals(Arrays.asList("stop:" + CURRENT, "stop:" + LEGACY), mDiscovery.events);
+    }
+
+    @Test
+    public void networkChangeStopsTypesWhoseRunningFlagLaggedBehindTheFramework() {
+        mCoordinator.startAll();
+        mCoordinator.onDiscoveryStopped(CURRENT);
+        mDiscovery.events.clear();
+
+        mCoordinator.onNetworkChanged();
+        mScheduler.runAll();
+
+        assertEquals(Arrays.asList("stop:" + CURRENT, "start:" + CURRENT, "stop:" + LEGACY, "start:" + LEGACY),
+            mDiscovery.events);
     }
 
     @Test

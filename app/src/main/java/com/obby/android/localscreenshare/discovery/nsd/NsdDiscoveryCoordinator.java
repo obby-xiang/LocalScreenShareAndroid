@@ -97,16 +97,20 @@ public final class NsdDiscoveryCoordinator {
         }
     }
 
-    /** Stops every type, cancels retries and the pending network restart. */
+    /**
+     * Stops every type, cancels retries and the pending network restart.
+     *
+     * <p>Every type is stopped even when it is not believed to be running: framework stop
+     * callbacks are asynchronous, so the local flag can lag behind the real state, and a stop for
+     * a type that is already idle is harmless.</p>
+     */
     public void stopAll() {
         mActive = false;
         cancelNetworkChangeTask();
         for (final Session session : mSessions.values()) {
             cancelRetry(session);
-            if (session.running) {
-                session.running = false;
-                mDiscovery.stopDiscovery(session.serviceType);
-            }
+            session.running = false;
+            mDiscovery.stopDiscovery(session.serviceType);
         }
     }
 
@@ -203,6 +207,9 @@ public final class NsdDiscoveryCoordinator {
         return new ArrayList<>(mSessions.keySet());
     }
 
+    // Restarts every type. The stop is issued unconditionally for the same reason as in stopAll:
+    // the framework may still be discovering a type whose local running flag was cleared by a
+    // late stop callback, and starting such a type without stopping it first is rejected.
     private void restartAll() {
         mNetworkChangeTask = null;
         if (!mActive) {
@@ -211,10 +218,8 @@ public final class NsdDiscoveryCoordinator {
         for (final Session session : mSessions.values()) {
             cancelRetry(session);
             session.backoff.reset();
-            if (session.running) {
-                session.running = false;
-                mDiscovery.stopDiscovery(session.serviceType);
-            }
+            session.running = false;
+            mDiscovery.stopDiscovery(session.serviceType);
             start(session);
         }
     }

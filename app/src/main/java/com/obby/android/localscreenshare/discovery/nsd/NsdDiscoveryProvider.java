@@ -342,6 +342,13 @@ public final class NsdDiscoveryProvider implements DiscoveryProvider {
                 mNsdManager.discoverServices(serviceType, NsdManager.PROTOCOL_DNS_SD, listener);
             } catch (RuntimeException e) {
                 Log.e(TAG, String.format("startDiscovery: start failed, serviceType = %s", serviceType), e);
+                // The framework may still consider this type active, for example when a late stop
+                // callback cleared the local flag; stop it so the retry can start cleanly.
+                try {
+                    mNsdManager.stopServiceDiscovery(listener);
+                } catch (RuntimeException ignored) {
+                    // Nothing was running, so there is nothing to stop.
+                }
                 if (mCoordinator != null) {
                     mCoordinator.onStartFailed(serviceType);
                 }
