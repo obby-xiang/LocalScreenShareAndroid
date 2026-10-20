@@ -1,7 +1,7 @@
 # 局域网设备发现调研
 
-> 状态：调研结论，未实施；日期 2026-10-20
-> 证据边界：本文综合三轮调研（业界机制、LocalSend 源码、身份与字段）。源码与协议文档结论标记为"已验证证据"；未落地的设计标记为"建议"；对产品意图的判断标记为"推测"。未做设备/网络实测。
+> 状态：已实施（TB-DISC-001..009 已完成代码实现，待设备验证）；调研日期 2026-10-20
+> 证据边界：本文综合三轮调研（业界机制、LocalSend 源码、身份与字段）。源码与协议文档结论标记为"已验证证据"；文中"建议"指调研时的设计或参数建议，落地状态以任务看板为准；对产品意图的判断标记为"推测"。未做设备/网络实测。
 > 相关文档：[项目现状与技术审查](project-assessment.md) · [媒体链路目标架构](media-architecture.md) · [决策看板](decision-board.md) · [任务看板](task-board.md)
 
 ## 0. 阅读约定
@@ -10,30 +10,31 @@
 | --- | --- |
 | 当前实现 | 可在当前仓库代码中直接核对 |
 | 已验证证据 | 来自源码、协议文档或可复核的上游实现 |
-| 建议 | 目标设计，尚未实现/实测 |
+| 建议 | 调研时给出的设计或参数建议；是否落地与实测见任务看板 |
 | 推测 | 对产品意图或外部行为的判断 |
 
 ## 1. 背景与问题
 
 ### 1.1 当前实现
 
+> 本节原记录调研启动时的单通道基线；TB-DISC-001..009 已按本文方案改造，下表按落地后的代码更新。原单通道基线对应的痛点保留在 §1.2，作为方案来源。
+
 | 事实 | 证据 |
 | --- | --- |
-| 发现只有 Android NSD（mDNS/DNS-SD）单通道 | `LssServiceDiscoveryManager` 只调用 `NsdManager.discoverServices` |
-| 服务类型是 `_localscreenshare._udp`，实际承载是 TCP gRPC | `Constants.NSD_SERVICE_TYPE`；`LssServer` 用同一端口启动 gRPC |
-| 服务名 `localscreenshare` 为 16 字符，超过 RFC 6763 的 15 字符上限 | `Constants.NSD_SERVICE_TYPE`；RFC 6763 §7.2 [S19] |
-| NSD 实例名是随机 `serviceId`，不是设备名 | `LssServer.buildNsdServiceInfo` 调用 `setServiceName(serverInfo.getId())` |
-| TXT `name` 默认取系统设备名 | `Preferences.getServiceName()` 读取 `Settings.Global.DEVICE_NAME` |
-| `LssServerInfo` 只有 `id/name/hostAddress/port` | `LssServerInfo.java` |
-| resolve 没有超时，单线程串行 | `NsdUtils.resolveService` 用无超时 `CountDownLatch.await()` |
-| resolve 失败只记日志，不重试/退避 | `LssServiceDiscoveryManager.onResolveFailed` |
-| 发现启动失败只记日志 | `onStartDiscoveryFailed` |
-| 没有应用层 TTL、心跳、离开通知 | 依赖 NSD `onServiceLost` |
-| gRPC 明文、无认证 | `InsecureServerCredentials` / `InsecureChannelCredentials` |
+| 发现由 NSD、UDP 组播与手动地址/收藏三条通道并行汇入同一 `DeviceStore` | `DiscoveryManager` 组装 `NsdDiscoveryProvider`、`UdpMulticastDiscoveryProvider` 与 `ManualAddressProvider` |
+| 主服务类型为 `_lss._tcp`，过渡期并行注册与发现 legacy `_localscreenshare._udp` | `NsdConstants.NSD_SERVICE_TYPE`、`NsdConstants.NSD_SERVICE_TYPE_LEGACY`；`ScreenShareServer` 同时注册两种类型 |
+| 组播公告 TTL=1，每个可用接口一个 socket，启动 3 连发并以默认 5/15 s 心跳维持（随刷新档位调整），停止时发送告别 | `MulticastConstants`、`MulticastAnnouncer` |
+| 只有 Register 确认成功才把设备提升为 `CONFIRMED`，仅收到公告只算 `HEARD` | `DeviceStore.confirm`、`RegisterClient` |
+| NSD 实例名是 `LSS-<短 ID 前 8 位>`，不使用设备名 | `ScreenShareServer.buildNsdServiceInfo` 调用 `setServiceName(DeviceInfo.NAME_PREFIX + advertisement.shortId())` |
+| 当前命名空间的 TXT 只广播最小字段，设备名默认不广播（legacy 类型使用 `LSS-<短 ID>`） | `NsdTxtRecord`、`DiscoverySettings` 的可见性策略 |
+| resolve 有 2 s 超时，不会因单个服务卡住 resolver | `NsdResolver.DEFAULT_RESOLVE_TIMEOUT_MS`、`NsdDiscoveryProvider.RESOLVE_TIMEOUT_MS` |
+| 发现启动失败按退避重试，网络变化后自动重启 | `NsdDiscoveryProvider` 使用 `BackoffPolicy` |
+| 应用层 TTL：`HEARD` 15 s、`CONFIRMED` 45 s 过期；收藏降级为 `UNREACHABLE`，告别立即移除 | `DeviceStore.HEARD_TTL_MS`、`DeviceStore.CONFIRMED_TTL_MS` |
+| gRPC 仍为明文、无认证（TLS 与身份 pinning 见 TB-DISC-010） | `InsecureServerCredentials` / `InsecureChannelCredentials` |
 
-> 校正：任务背景里"实例名=设备名"与当前代码不符；实例名是随机 ID，泄露点是 TXT `name`。本文按代码事实记录。
+### 1.2 调研时识别的痛点
 
-### 1.2 痛点
+> 以下为单通道基线下的问题清单，用于说明方案来源。多通道、Register 确认、TTL/心跳/告别与分级扫描已由 TB-DISC-001..009 落地；认证与 TLS pinning 仍待 TB-DISC-010。
 
 1. **单通道脆弱**：mDNS 在 Android 厂商实现、Windows 防火墙、AP 隔离、跨 VLAN 下表现不一致；浏览器完全不能做 mDNS。
 2. **服务类型错误且超长**：`_udp` 与 TCP gRPC 不符；`localscreenshare` 16 字符超过 15 字符上限。
@@ -303,7 +304,7 @@ mv=12
 caps=3
 ```
 
-- 服务类型建议 `_lss._tcp`；实例名 `LSS-<id 前 8 位>`，不要用设备名。
+- 服务类型定为 `_lss._tcp`（已落地，legacy `_localscreenshare._udp` 并行保留）；实例名 `LSS-<id 前 8 位>`，不要用设备名。
 - `port` 由 SRV 提供；`name` 默认不进 TXT，用户显式开启才加 `n=<name>`。
 - 完整 `fp` 不进广播；Register/HELLO 再带。
 
@@ -327,10 +328,10 @@ caps=3
 | key 建议长度 | ≤9 字符 | [S19] |
 | 实例名 | ≤63 bytes | [S19] |
 
-### 5.6 `LssDeviceInfo` 建议模型
+### 5.6 `DeviceInfo` 建议模型
 
 ```kotlin
-data class LssDeviceInfo(
+data class DeviceInfo(
     val id: String,
     val fp: String,
     val name: String?,
@@ -354,6 +355,8 @@ data class LssDeviceInfo(
 
 ### 6.1 参数建议
 
+> 下表是调研参数建议；多数已落地到 `MulticastConstants`、`RegisterConstants`、`ScanConstants` 与 `DeviceStore`，具体取值以代码为准。
+
 | 参数 | 建议 | 依据/说明 |
 | --- | --- | --- |
 | 启动公告 | 3 连发，100/500/2000 ms | LocalSend 已验证做法 [S2] |
@@ -369,7 +372,7 @@ data class LssDeviceInfo(
 | 缓存上限 | 256 台 | 建议；防 DoS |
 | 过期 | 3×TTL 未确认则 stale/lost | 建议 |
 | 启动失败退避 | 1/2/4/8/16/30 s | 建议；重置于网络变化 |
-| resolve 超时 | 2 s | 当前无超时 [S23] |
+| resolve 超时 | 2 s | 已实现 2 s（`NsdResolver.DEFAULT_RESOLVE_TIMEOUT_MS`）[S23] |
 
 ### 6.2 设备状态机
 
@@ -414,7 +417,7 @@ stateDiagram-v2
 flowchart LR
     subgraph App[应用层]
         UI[设备列表/收藏]
-        REG[DeviceRegistry]
+        REG[DeviceStore]
     end
     subgraph Discovery[发现层]
         DP[DiscoveryProvider]
@@ -435,8 +438,8 @@ flowchart LR
     DP --> GRPC
 ```
 
-- `DiscoveryProvider` 只产出 `LssDeviceInfo`，不持有 socket/传输细节。
-- `DeviceRegistry` 负责去重、TTL、收藏、排序；所有通道写同一 store。
+- `DiscoveryProvider` 只产出 `DeviceInfo`，不持有 socket/传输细节。
+- `DeviceStore` 负责去重、TTL、收藏、排序；所有通道写同一 store。
 - `Transport` 负责 TLS、Register/HELLO、pin 校验；发现层不信任公告。
 
 ### 7.3 分阶段落地
@@ -448,6 +451,8 @@ flowchart LR
 | P2 | 收藏 + 分级扫描 + 手动/扫码 | AP 隔离下收藏/手动可连 |
 | P3 | 身份 pinning + 多地址 + Windows | 身份变更提示；Windows 可发现 |
 | P4 | Web 会合/WebRTC | 浏览器可看；不参与 LAN 发现 |
+
+> 落地状态：P0–P2 已由 TB-DISC-001..009 完成代码实现，待设备验证；P3 的身份派生已由 TB-DISC-004 落地，TLS pinning 与 Windows 端未实现；P4 未实现。
 
 ### 7.4 验收标准
 
