@@ -267,6 +267,13 @@ public final class RegisterCallHandler {
             return;
         }
 
+        if (caller.getDeviceId().equals(self.getDeviceId())) {
+            // A self Register (for example a loopback probe) must not write this device into its
+            // own list; answer it without learning.
+            reply(replier, true, null, self);
+            return;
+        }
+
         learn(caller, remoteHost);
         reply(replier, true, null, self);
         maybeReverseRegister(request, caller, self, remoteHost, nowMs);
@@ -315,13 +322,16 @@ public final class RegisterCallHandler {
             return;
         }
         final List<DeviceAddress> addresses = RegisterProtoMapper.toAddresses(caller, mChannel);
-        final String host = addresses.isEmpty() ? remoteHost : addresses.get(0).getHost();
-        final int port = addresses.isEmpty() ? 0 : addresses.get(0).getPort();
+        if (addresses.isEmpty()) {
+            // A caller without an address (a viewer that is not also sharing) has nothing to
+            // connect to; writing it would only create an unreachable ghost entry in the list.
+            return;
+        }
+        final String host = addresses.get(0).getHost();
+        final int port = addresses.get(0).getPort();
         mMainExecutor.execute(() -> {
             mDeviceStore.onObserved(RegisterProtoMapper.toObservation(caller, mChannel, host, port, null));
-            if (port > 0) {
-                mDeviceStore.confirm(caller.getDeviceId(), mChannel, host, port);
-            }
+            mDeviceStore.confirm(caller.getDeviceId(), mChannel, host, port);
         });
     }
 

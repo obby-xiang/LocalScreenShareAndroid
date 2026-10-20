@@ -240,6 +240,44 @@ public class RegisterCallHandlerTest {
         assertNotNull(mStore.device(PEER_ID));
     }
 
+    @Test
+    public void selfRegisterIsAnsweredButNotLearned() {
+        AtomicReference<RegisterResponse> response = new AtomicReference<>();
+        mHandler.handle(RegisterRequest.newBuilder()
+            .setProtocolVersion(1)
+            .setAnnounces(true)
+            .setSelf(DeviceSummary.newBuilder()
+                .setDeviceId(SELF_ID)
+                .setFingerprint("self-fingerprint")
+                .setName("me")
+                .setRole("server")
+                .build())
+            .build(), REMOTE_HOST, response::set);
+
+        assertNotNull(response.get());
+        assertTrue(response.get().getAccepted());
+        assertEquals(0, mStore.size());
+    }
+
+    @Test
+    public void callerWithoutAddressIsNotLearned() {
+        AtomicReference<RegisterResponse> response = new AtomicReference<>();
+        mHandler.handle(RegisterRequest.newBuilder()
+            .setProtocolVersion(1)
+            .setAnnounces(true)
+            .setSelf(DeviceSummary.newBuilder()
+                .setDeviceId(PEER_ID)
+                .setFingerprint(FINGERPRINT)
+                .setName("viewer")
+                .setRole("client")
+                .build())
+            .build(), REMOTE_HOST, response::set);
+
+        assertNotNull(response.get());
+        assertTrue(response.get().getAccepted());
+        assertEquals(0, mStore.size());
+    }
+
     private RegisterCallHandler filteredHandler(java.util.function.Predicate<String> filter) {
         return new RegisterCallHandler(() -> mSelf, mStore, Runnable::run, mClock,
             (address, announces, self, callback) -> mReverseCalls.add(
