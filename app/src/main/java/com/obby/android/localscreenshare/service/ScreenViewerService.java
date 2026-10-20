@@ -164,7 +164,8 @@ public class ScreenViewerService extends Service {
     @Nullable
     private ClientMediaReceiver mClientMediaReceiver;
 
-    // Surface viewer shown once the session streams; created on the first STREAMING transition.
+    // Surface viewer mounted as soon as the session starts so its texture view exposes a surface;
+    // created on the first media-session start and reused across retries.
     @Nullable
     private SurfaceShareViewer mSurfaceShareViewer;
 
@@ -217,15 +218,17 @@ public class ScreenViewerService extends Service {
                 mDialog.dismiss();
             }
 
-            if (mSurfaceShareViewer != null) {
-                mSurfaceShareViewer.dismiss();
-            }
-
             if (mScreenShareLoading != null) {
                 mScreenShareLoading.dismiss();
             }
 
+            // Close the decoder before releasing the surface, so a streaming decoder does not
+            // cancel buffers on a texture that is already being abandoned.
             teardownMediaSession();
+
+            if (mSurfaceShareViewer != null) {
+                mSurfaceShareViewer.dismiss();
+            }
 
             if (mClient != null) {
                 mClient.stop();
@@ -347,7 +350,10 @@ public class ScreenViewerService extends Service {
         Log.i(mTag, String.format("onStartCommand: startId = %d", startId));
 
         if (intent == null) {
+            // A system restart after a crash delivers a null intent; stop the zombie foreground
+            // service and clear its notification instead of leaving it running without a target.
             Log.w(mTag, "onStartCommand: intent is null");
+            stopService();
             return START_NOT_STICKY;
         }
 
@@ -388,11 +394,6 @@ public class ScreenViewerService extends Service {
             mDialog = null;
         }
 
-        if (mSurfaceShareViewer != null) {
-            mSurfaceShareViewer.dismiss();
-            mSurfaceShareViewer = null;
-        }
-
         if (mScreenShareLoading != null) {
             mScreenShareLoading.dismiss();
         }
@@ -402,6 +403,11 @@ public class ScreenViewerService extends Service {
         }
 
         teardownMediaSession();
+
+        if (mSurfaceShareViewer != null) {
+            mSurfaceShareViewer.dismiss();
+            mSurfaceShareViewer = null;
+        }
 
         final ClientMediaReceiver receiver = startMediaSession();
         mClient = new ScreenShareClient(hostOf(mServiceInfo), portOf(mServiceInfo));
@@ -473,17 +479,17 @@ public class ScreenViewerService extends Service {
             mDialog = null;
         }
 
-        if (mSurfaceShareViewer != null) {
-            mSurfaceShareViewer.dismiss();
-            mSurfaceShareViewer = null;
-        }
-
         if (mScreenShareLoading != null) {
             mScreenShareLoading.dismiss();
             mScreenShareLoading = null;
         }
 
         teardownMediaSession();
+
+        if (mSurfaceShareViewer != null) {
+            mSurfaceShareViewer.dismiss();
+            mSurfaceShareViewer = null;
+        }
 
         if (mClient != null) {
             mClient.stop();
