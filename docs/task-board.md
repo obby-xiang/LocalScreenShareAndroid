@@ -29,8 +29,9 @@
 - 编码框架隔离核心（契约、StreamHub、有界队列、六状态机、JPEG 参考适配）已完成并通过 JVM 验证，见 [TB-FW-001](#tb-fw-001)、[TB-FW-004](#tb-fw-004)、[TB-FW-005](#tb-fw-005)、[TB-FW-002](#tb-fw-002)。
 - 问题 3 尚未由用户明确关闭，不能标记完成；代码完成 ≠ 问题关闭，API 25 只是兼容下限，能力按运行时探测分档。
 - 编码框架待收尾：TB-FW-003、TB-FW-006、TB-MEDIA-001、TB-MEDIA-003 等待设备验证；TB-FW-002 仍部分完成；TB-FW-007、TB-FW-008 未完成。
-- 设备发现功能已立项（[TB-DISC-001](#tb-disc-001)..[TB-DISC-010](#tb-disc-010)）：B1（[TB-DISC-002](#tb-disc-002)、[TB-DISC-003](#tb-disc-003)）、B2（[TB-DISC-004](#tb-disc-004)）与 B3（[TB-DISC-005](#tb-disc-005)、[TB-DISC-006](#tb-disc-006)）代码层面已完成并通过 JVM 与 CI 验证，TB-DISC-007 至 TB-DISC-010 待办；设备验证仍未解禁。
+- 设备发现功能已立项（[TB-DISC-001](#tb-disc-001)..[TB-DISC-010](#tb-disc-010)）：B1（[TB-DISC-002](#tb-disc-002)、[TB-DISC-003](#tb-disc-003)）、B2（[TB-DISC-004](#tb-disc-004)）、B3（[TB-DISC-005](#tb-disc-005)、[TB-DISC-006](#tb-disc-006)）与 B4（[TB-DISC-007](#tb-disc-007)、[TB-DISC-008](#tb-disc-008)）代码层面已完成并通过 JVM 与 CI 验证，TB-DISC-009 至 TB-DISC-010 待办；设备验证仍未解禁。
 - B3 已落地 UDP 组播公告（启动 3 连发、5/15 s 心跳、停服告别、`MulticastLock` 引用计数）与 Register 双向握手（成功才确认、`announces` 单跳防回环、限速与限包长）；仅经 JVM/fake 与编译验证，同网段互见、真实组播与 Reverse Register 未做设备实测。
+- B4 已落地分级扫描（按接口前缀生成候选、1 s grace 零确认才升级、50 并发/500 ms 探测/8 s 预算、可取消）、收藏持久化与上次成功地址优先探测、手动 IP 常驻入口与 8 s 空列表提示、连接前指纹校验；仅经 JVM/fake 与编译验证，真实网段扫描、组播被过滤场景与手动探测未做设备实测。
 - 阶段 0/1 的代码优化尚未开始，当前没有进行中的代码任务。
 - 下一步：按 [渐进优化路线图](optimization-roadmap.md) 的阶段 0 启动可观测性与基线，落地顺序以 [编码框架](codec-framework.md) 为准。
 - 前置约束：拿到基线前，不预设任何性能、发热或延迟收益。
@@ -48,8 +49,6 @@
 
 | ID | 状态 | 优先级 | 标题 | 创建 | 完成 | 关联 |
 | --- | --- | --- | --- | --- | --- | --- |
-| TB-DISC-007 | 📋 待办 | 🟡 P2 | 分级扫描 | 2026-10-20 | — | [发现调研](discovery-research.md) |
-| TB-DISC-008 | 📋 待办 | 🟡 P2 | 手动 IP 与收藏 | 2026-10-20 | — | [发现调研](discovery-research.md) |
 | TB-DISC-009 | 📋 待办 | 🟡 P2 | 发现设置与 UI 集成 | 2026-10-20 | — | [发现调研](discovery-research.md) |
 | TB-DISC-010 | 📋 待办 | 🟡 P2 | 传输加密与身份 pinning | 2026-10-20 | — | [发现调研](discovery-research.md) |
 | TB-ENG-005 | 📋 待办 | 🟡 P2 | 新偏好设置界面控件 | 2026-10-19 | — | [问题3接线计划](superpowers/plans/2026-10-19-media-path-wiring.md) |
@@ -82,6 +81,8 @@
 | TB-DISC-004 | ✅ 已完成 | 🟠 P1 | 设备身份（密钥派生 ID） | 2026-10-20 | 2026-10-20 | [实施计划](superpowers/plans/2026-10-20-device-discovery.md) |
 | TB-DISC-005 | ✅ 已完成 | 🟠 P1 | UDP 组播发现通道 | 2026-10-20 | 2026-10-20 | [实施计划](superpowers/plans/2026-10-20-device-discovery.md) |
 | TB-DISC-006 | ✅ 已完成 | 🟠 P1 | Register 双向发现 RPC | 2026-10-20 | 2026-10-20 | [实施计划](superpowers/plans/2026-10-20-device-discovery.md) |
+| TB-DISC-007 | ✅ 已完成 | 🟡 P2 | 分级扫描 | 2026-10-20 | 2026-10-20 | [实施计划](superpowers/plans/2026-10-20-device-discovery.md) |
+| TB-DISC-008 | ✅ 已完成 | 🟡 P2 | 手动 IP 与收藏 | 2026-10-20 | 2026-10-20 | [实施计划](superpowers/plans/2026-10-20-device-discovery.md) |
 | TB-ENG-003 | ✅ 已完成 | 🟡 P2 | 代码文档与英文注释 | 2026-10-18 | 2026-10-19 | [实施计划](superpowers/plans/2026-10-19-code-docs-i18n.md) |
 | TB-ENG-004 | ✅ 已完成 | 🟡 P2 | 中英双语资源 | 2026-10-18 | 2026-10-19 | [决策看板](decision-board.md) |
 | TB-DOC-008 | ✅ 已完成 | 🔴 P0 | 框架实施计划 | 2026-10-17 | 2026-10-18 | [实施计划](superpowers/plans/2026-10-17-codec-framework.md) |
@@ -133,26 +134,6 @@
 当前无进行中任务。
 
 ### 📋 待办条目
-
-<a id="tb-disc-007"></a>
-<details><summary>TB-DISC-007 分级扫描（📋 待办）</summary>
-
-- **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟡 P2 / 2026-10-20 / —
-- **任务**：分级扫描：公告与收藏并行，经 1 s grace 仍零确认再扫描；按接口 prefix 扫描（不写死 `/24`，并发 ≤50，单请求 500 ms）；不扫 VPN/蜂窝接口。
-- **交付物 / 验证证据**：交付：候选生成、并发控制与超时、接口过滤与单测。验证：非 `/24` 网段也能发现、扫描不阻塞主流程、VPN/蜂窝接口被跳过；当前未实施，设备验证未解禁。
-- **关联文档**：[发现调研](discovery-research.md)
-
-</details>
-
-<a id="tb-disc-008"></a>
-<details><summary>TB-DISC-008 手动 IP 与收藏（📋 待办）</summary>
-
-- **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟡 P2 / 2026-10-20 / —
-- **任务**：手动 IP 常驻入口（自动发现 8–12 s 无结果时亮出）；收藏持久化 `{id, fp, ip, port, alias, customAlias}`；上次成功地址优先探测。
-- **交付物 / 验证证据**：交付：手动添加与编辑、收藏存储、优先探测与单测。验证：自动发现失败时仍可手动连接、重启后收藏保留、地址变更后回退可用；当前未实施，设备验证未解禁。
-- **关联文档**：[发现调研](discovery-research.md)
-
-</details>
 
 <a id="tb-disc-009"></a>
 <details><summary>TB-DISC-009 发现设置与 UI 集成（📋 待办）</summary>
@@ -346,6 +327,26 @@
 </details>
 
 ### ✅ 已完成条目
+
+<a id="tb-disc-008"></a>
+<details><summary>TB-DISC-008 手动 IP 与收藏（✅ 2026-10-20）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：✅ 已完成 / 🟡 P2 / 2026-10-20 / 2026-10-20
+- **任务**：手动 IP 常驻入口（自动发现 8–12 s 无结果时亮出）；收藏持久化 `{id, fp, ip, port, alias, customAlias}`；上次成功地址优先探测。
+- **交付物 / 验证证据**：交付（提交 `0bb9a14`）：`discovery/favorite` 的 `FavoriteDevice`（`id`/`fp`/`ip`/`port`/`alias`/`customAlias`，另记 `identityChanged` 与 `lastSuccessMs`）、`FavoriteStorage`/`SharedPreferencesFavoriteStorage`（独立 `lss-favorites` 文件，与设置文件分离）、`FavoriteStore`（增删改查与持久化、`customAlias=false` 时远端改名自动更新、指纹不一致置 `identityChanged` 且不覆盖、`confirmIdentity` 在用户确认后重绑、`probeTargets` 按上次成功地址排序、旧格式收藏一次性迁移并清除源键）；`discovery/manual` 的 `ManualAddress`（IPv4、带/不带端口、方括号或裸 IPv6，拒绝域名）与 `ManualAddressProvider`（发现启动时并行探测收藏与上次地址，2 s 超时；手动入口探测走同一 Register 判据）；`LssServiceDiscoveryManager` 增加收藏播种（不可达收藏仍以别名与收藏标记留在列表）、`setFavorite`/`confirmFavoriteIdentity`/`probeManualAddress`/`refreshDiscovery`；`MainActivity` 增加“手动添加”常驻按钮与 8 s 空列表提示、长按收藏/取消收藏、收藏与“身份已变更”标识、连接前指纹校验并要求确认；`LssClientService` 在 `onConnected` 回写上次成功地址；中英文文案同步（`check_strings.py` 55 个键一致）。验证：`FavoriteStoreTest`（19）、`ManualAddressTest`（9）、`ManualAddressProviderTest`（7）与 `DeviceStoreTest` 新增 3 覆盖收藏往返与损坏 JSON 回退、改名联动、身份变更标记与确认重绑、上次成功地址优先、旧收藏迁移、IPv4/IPv6 端口解析、收藏探测与手动探测的成功/失败/停止路径、身份变更标记与确认重绑；全量 **634 tests / 0 failures / 0 errors / 0 skipped**（55 个测试类）；两条构建命令与 `:app:lintDebug` 成功；CI 同上。边界：未执行 adb、模拟器、实机或 `connectedAndroidTest`；真实 gRPC 手动探测、收藏跨重启与身份变更提示未在设备上实测，设备验证未解禁。
+- **关联文档**：[发现调研](discovery-research.md)、[实施计划](superpowers/plans/2026-10-20-device-discovery.md)
+
+</details>
+
+<a id="tb-disc-007"></a>
+<details><summary>TB-DISC-007 分级扫描（✅ 2026-10-20）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：✅ 已完成 / 🟡 P2 / 2026-10-20 / 2026-10-20
+- **任务**：分级扫描：公告与收藏并行，经 1 s grace 仍零确认再扫描；按接口 prefix 扫描（不写死 `/24`，并发 ≤50，单请求 500 ms）；不扫 VPN/蜂窝接口。
+- **交付物 / 验证证据**：交付（提交 `0bb9a14`）：`discovery/scan` 的 `NetworkPrefix`（由本机地址与前缀计算网络/广播地址，跳过自身、网络与广播地址；每接口上限 1024，超出退到本机 `/24` 并标 `partial`）、`LocalInterface`/`InterfaceEnumerator`/`InterfaceFilter`/`AndroidInterfaceEnumerator`（只接受 Wi-Fi/以太网，排除 VPN/蜂窝/回环/点对点以及 `tun*`/`ppp*`/`rmnet*`/`dummy*`/`p2p*`，只枚举 IPv4）、`AddressProbe`/`ProbeResult`/`RegisterAddressProbe`（单次 Register、`announces=false`、无重试）、`AddressScanner`（50 线程 + 有界队列 128、500 ms/请求、8 s/接口预算、`cancel()` 幂等、结果带 `scanned`/`confirmed`/`cancelled`/`partial`、接口之间串行）、`ScanCoordinator`（`IDLE → GRACE(1 s) → SCANNING → DONE`，grace 内确认数大于 0 不扫描，重复触发合并、网络变化重启、取消丢弃在途结果）；`LssServiceDiscoveryManager` 把扫描命中走既有 observe+confirm 路径（通道 `SCAN`），并在发现启动、手动刷新、列表为空（8 s）与网络变化时触发。验证：`NetworkPrefixTest`（8）、`InterfaceFilterTest`（7）、`AddressScannerTest`（8）、`ScanCoordinatorTest`（10）覆盖 `/24`/`/22`/`/16` 候选数、非标准掩码、上限截断与 `partial`、VPN/蜂窝/回环/点对点及接口名过滤、并发不超过 50、预算耗尽终止、取消后不再发新探测、grace 零确认才升级、网络变化重启与重复触发合并；全量 **634 tests / 0 failures / 0 errors / 0 skipped**（55 个测试类，较 563 基线增加 71）；`:app:assembleDebug`、`:app:assembleDebugAndroidTest` 与 `:app:lintDebug` 成功；Build CI run [39372297965](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39372297965)、Checks run [39372297959](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39372297959) success。边界：未执行 adb、模拟器、实机或 `connectedAndroidTest`；`/22`、`/16`、热点与双栈网络下的扫描时延和准确率未实测，扫描端口固定取本机配置端口（默认 8080），设备验证未解禁。
+- **关联文档**：[发现调研](discovery-research.md)、[实施计划](superpowers/plans/2026-10-20-device-discovery.md)
+
+</details>
 
 <a id="tb-disc-006"></a>
 <details><summary>TB-DISC-006 Register 双向发现 RPC（✅ 2026-10-20）</summary>
