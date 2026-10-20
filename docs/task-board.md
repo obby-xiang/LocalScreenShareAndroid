@@ -52,6 +52,8 @@
 | ID | 状态 | 优先级 | 标题 | 创建 | 完成 | 关联 |
 | --- | --- | --- | --- | --- | --- | --- |
 | TB-DISC-010 | 📋 待办 | 🟡 P2 | 传输加密与身份 pinning | 2026-10-20 | — | [发现调研](discovery-research.md) |
+| TB-DISC-011 | 📋 待办 | 🟡 P3 | 手动添加条目跨重启持久化 | 2026-10-20 | — | [发现调研](discovery-research.md) |
+| TB-MEDIA-004 | 📋 待办 | 🟡 P3 | 首帧绿色花屏自愈 | 2026-10-20 | — | [媒体架构](media-architecture.md) |
 | TB-ENG-005 | 📋 待办 | 🟡 P2 | 新偏好设置界面控件 | 2026-10-19 | — | [问题3接线计划](superpowers/plans/2026-10-19-media-path-wiring.md) |
 | TB-ENG-006 | 📋 待办 | 🟡 P2 | JPEG 降级客户端查看器接回 | 2026-10-19 | — | [问题3接线计划](superpowers/plans/2026-10-19-media-path-wiring.md) |
 | TB-ENG-007 | 📋 待办 | 🟡 P2 | 客户端发送统计并入服务端统计 | 2026-10-19 | — | [问题3接线计划](superpowers/plans/2026-10-19-media-path-wiring.md) |
@@ -145,6 +147,26 @@
 - **任务**：自签 TLS + TOFU 指纹确认；Register 与媒体流加密；与 [TB-SEC-001](#tb-sec-001) 协同；本项可后置。
 - **交付物 / 验证证据**：交付：TLS 配置、指纹确认流程、pinning 校验与测试。验证：首次连接需确认指纹、指纹变化被拒绝、Register 与媒体流均加密；当前未实施，设备验证未解禁。
 - **关联文档**：[发现调研](discovery-research.md)、[TB-SEC-001](#tb-sec-001)
+
+</details>
+
+<a id="tb-disc-011"></a>
+<details><summary>TB-DISC-011 手动添加条目跨重启持久化（📋 待办）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟡 P3 / 2026-10-20 / —
+- **任务**：手动添加（pinned）条目目前只存于内存 `DeviceStore`，进程重启后清空，需重新手动添加。若产品期望跨进程保留，需把 pinned 条目持久化（类似 `FavoriteStore` 的路径）；否则保持现状并记录该限制。
+- **交付物 / 验证证据**：交付：手动条目持久化与恢复、相关单测。验证：重启后手动条目仍在列表；当前未实施，仅登记设计观察。
+- **关联文档**：[发现调研](discovery-research.md)、[TB-DISC-008](#tb-disc-008)
+
+</details>
+
+<a id="tb-media-004"></a>
+<details><summary>TB-MEDIA-004 首帧绿色花屏自愈（📋 待办）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟡 P3 / 2026-10-20 / —
+- **任务**：首次连接约 3 s 时首帧为绿色花屏（首个 GOP 未就绪的典型形态），约 10 s 内自行恢复；重连未复现。若双机验收要求首帧即正确，需检查 join point/首个关键帧与 SPS/PPS 的应用时机（`ClientMediaSession` 侧）。
+- **交付物 / 验证证据**：交付：首帧正确性排查与修复、相关单测。验证：首帧即正确、无花屏；当前未实施，仅登记观察。
+- **关联文档**：[媒体架构](media-architecture.md)
 
 </details>
 
