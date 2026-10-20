@@ -29,9 +29,10 @@
 - 编码框架隔离核心（契约、StreamHub、有界队列、六状态机、JPEG 参考适配）已完成并通过 JVM 验证，见 [TB-FW-001](#tb-fw-001)、[TB-FW-004](#tb-fw-004)、[TB-FW-005](#tb-fw-005)、[TB-FW-002](#tb-fw-002)。
 - 问题 3 尚未由用户明确关闭，不能标记完成；代码完成 ≠ 问题关闭，API 25 只是兼容下限，能力按运行时探测分档。
 - 编码框架待收尾：TB-FW-003、TB-FW-006、TB-MEDIA-001、TB-MEDIA-003 等待设备验证；TB-FW-002 仍部分完成；TB-FW-007、TB-FW-008 未完成。
-- 设备发现功能已立项（[TB-DISC-001](#tb-disc-001)..[TB-DISC-010](#tb-disc-010)）：B1（[TB-DISC-002](#tb-disc-002)、[TB-DISC-003](#tb-disc-003)）、B2（[TB-DISC-004](#tb-disc-004)）、B3（[TB-DISC-005](#tb-disc-005)、[TB-DISC-006](#tb-disc-006)）与 B4（[TB-DISC-007](#tb-disc-007)、[TB-DISC-008](#tb-disc-008)）代码层面已完成并通过 JVM 与 CI 验证，TB-DISC-009 至 TB-DISC-010 待办；设备验证仍未解禁。
+- 设备发现功能（[TB-DISC-001](#tb-disc-001)..[TB-DISC-010](#tb-disc-010)）B1–B5 代码层面已全部完成并通过 JVM 与 CI 验证：B1（[TB-DISC-002](#tb-disc-002)、[TB-DISC-003](#tb-disc-003)）、B2（[TB-DISC-004](#tb-disc-004)）、B3（[TB-DISC-005](#tb-disc-005)、[TB-DISC-006](#tb-disc-006)）、B4（[TB-DISC-007](#tb-disc-007)、[TB-DISC-008](#tb-disc-008)）与 B5（[TB-DISC-009](#tb-disc-009)）；[TB-DISC-010](#tb-disc-010)（自签 TLS + TOFU pinning）后置；设备验证仍未解禁。
 - B3 已落地 UDP 组播公告（启动 3 连发、5/15 s 心跳、停服告别、`MulticastLock` 引用计数）与 Register 双向握手（成功才确认、`announces` 单跳防回环、限速与限包长）；仅经 JVM/fake 与编译验证，同网段互见、真实组播与 Reverse Register 未做设备实测。
 - B4 已落地分级扫描（按接口前缀生成候选、1 s grace 零确认才升级、50 并发/500 ms 探测/8 s 预算、可取消）、收藏持久化与上次成功地址优先探测、手动 IP 常驻入口与 8 s 空列表提示、连接前指纹校验；仅经 JVM/fake 与编译验证，真实网段扫描、组播被过滤场景与手动探测未做设备实测。
+- B5 已落地发现设置（组播开关/组地址/端口、三档刷新、四档可见性、仅 mDNS 兼容模式、广播设备名）、`DeviceStore` 统一列表与共享屏/观看者分区、状态徽标与 STALE/UNREACHABLE 灰显、`LssDeviceInfo` 的 `Intent` 契约迁移；仅经 JVM/fake、编译与 lint 验证，真实设置生效、可见性对公告/Register 的影响与列表状态未做设备实测。
 - 阶段 0/1 的代码优化尚未开始，当前没有进行中的代码任务。
 - 下一步：按 [渐进优化路线图](optimization-roadmap.md) 的阶段 0 启动可观测性与基线，落地顺序以 [编码框架](codec-framework.md) 为准。
 - 前置约束：拿到基线前，不预设任何性能、发热或延迟收益。
@@ -49,7 +50,6 @@
 
 | ID | 状态 | 优先级 | 标题 | 创建 | 完成 | 关联 |
 | --- | --- | --- | --- | --- | --- | --- |
-| TB-DISC-009 | 📋 待办 | 🟡 P2 | 发现设置与 UI 集成 | 2026-10-20 | — | [发现调研](discovery-research.md) |
 | TB-DISC-010 | 📋 待办 | 🟡 P2 | 传输加密与身份 pinning | 2026-10-20 | — | [发现调研](discovery-research.md) |
 | TB-ENG-005 | 📋 待办 | 🟡 P2 | 新偏好设置界面控件 | 2026-10-19 | — | [问题3接线计划](superpowers/plans/2026-10-19-media-path-wiring.md) |
 | TB-ENG-006 | 📋 待办 | 🟡 P2 | JPEG 降级客户端查看器接回 | 2026-10-19 | — | [问题3接线计划](superpowers/plans/2026-10-19-media-path-wiring.md) |
@@ -82,6 +82,7 @@
 | TB-DISC-005 | ✅ 已完成 | 🟠 P1 | UDP 组播发现通道 | 2026-10-20 | 2026-10-20 | [实施计划](superpowers/plans/2026-10-20-device-discovery.md) |
 | TB-DISC-006 | ✅ 已完成 | 🟠 P1 | Register 双向发现 RPC | 2026-10-20 | 2026-10-20 | [实施计划](superpowers/plans/2026-10-20-device-discovery.md) |
 | TB-DISC-007 | ✅ 已完成 | 🟡 P2 | 分级扫描 | 2026-10-20 | 2026-10-20 | [实施计划](superpowers/plans/2026-10-20-device-discovery.md) |
+| TB-DISC-009 | ✅ 已完成 | 🟡 P2 | 发现设置与 UI 集成 | 2026-10-20 | 2026-10-20 | [实施计划](superpowers/plans/2026-10-20-device-discovery.md) |
 | TB-DISC-008 | ✅ 已完成 | 🟡 P2 | 手动 IP 与收藏 | 2026-10-20 | 2026-10-20 | [实施计划](superpowers/plans/2026-10-20-device-discovery.md) |
 | TB-ENG-003 | ✅ 已完成 | 🟡 P2 | 代码文档与英文注释 | 2026-10-18 | 2026-10-19 | [实施计划](superpowers/plans/2026-10-19-code-docs-i18n.md) |
 | TB-ENG-004 | ✅ 已完成 | 🟡 P2 | 中英双语资源 | 2026-10-18 | 2026-10-19 | [决策看板](decision-board.md) |
@@ -134,16 +135,6 @@
 当前无进行中任务。
 
 ### 📋 待办条目
-
-<a id="tb-disc-009"></a>
-<details><summary>TB-DISC-009 发现设置与 UI 集成（📋 待办）</summary>
-
-- **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟡 P2 / 2026-10-20 / —
-- **任务**：发现设置（组播组/端口/超时、可见性、仅用兼容模式开关）；设备列表统一从 `DeviceStore` 渲染；服务端/客户端分区与状态展示。
-- **交付物 / 验证证据**：交付：设置项与偏好、列表渲染、状态展示与单测。验证：设置项生效、列表状态与 `DeviceStore` 一致、可见性开关按预期隐藏设备；当前未实施，设备验证未解禁。
-- **关联文档**：[发现调研](discovery-research.md)
-
-</details>
 
 <a id="tb-disc-010"></a>
 <details><summary>TB-DISC-010 传输加密与身份 pinning（📋 待办）</summary>
@@ -327,6 +318,16 @@
 </details>
 
 ### ✅ 已完成条目
+
+<a id="tb-disc-009"></a>
+<details><summary>TB-DISC-009 发现设置与 UI 集成（✅ 2026-10-20）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：✅ 已完成 / 🟡 P2 / 2026-10-20 / 2026-10-20
+- **任务**：发现设置（组播开关/组地址/端口、发现超时与心跳档位、可见性、仅用兼容模式）；设备列表统一从 `DeviceStore` 渲染；服务端/客户端分区与状态展示；`LssServiceInfo` 契约迁移到 `LssDeviceInfo`。
+- **交付物 / 验证证据**：交付（提交 `10b835e`）：`discovery/DiscoverySettings` 不可变快照（组播开关、224.0.0.0/4 字面量校验的组地址、1024–65535 端口、`RefreshTier` 三档把 Register 超时 500 ms 映射为 250/500/1000 ms、心跳 5/15 s 映射为 3/10、5/15、10/30 s，可见性、`compatOnly`；兼容模式只保留 legacy NSD 类型、能力位去掉 JPEG、停用组播与扫描；非法值逐项回退默认，不开放任意数值）；`discovery/VisibilityPolicy`（`HIDDEN`/`FAVORITES`/`VISIBLE`/`VISIBLE_10_MIN` 的公告、`join` 与 Register 接受规则，10 分钟窗口按持久化的绝对到期时间回退为隐藏）；`discovery/DeviceListModel`（共享屏/观看者分区、`CONFIRMED`→收藏→IPv4→最近确认排序、`LIVE`/`IDLE`/需确认/不可加入/不可达状态、STALE/UNREACHABLE 灰显、三种空状态）；`MainActivity` 改为 `ListAdapter<DeviceListModel.Row>`（`DiffUtil` 以 id 判定）并新增分区标题、状态徽标、灰显与设置面板的组播开关/组地址/端口/刷新档位/可见性/兼容模式/广播设备名控件，组地址在失焦或关闭面板时校验提交；`LssDeviceInfo`/`DeviceAddress` 改为 `Parcelable`，`Constants.EXTRA_SERVICE_INFO` 承载 `LssDeviceInfo`，`LssClientService` 改用 `primaryAddress()`，`LssServiceInfo` 标注 `@Deprecated` 仅服务 legacy 投影；`LssServiceDiscoveryManager` 新增 `addDeviceListener`/`removeDeviceListener`，设置变化 200 ms 去抖后重启 provider；`LssService` 在公告设置变化与可见性到期时重启/停止公告；`LssServer` 在兼容模式下只注册 legacy 类型并按可见性拒绝 Register（`not_visible`）。B3 遗留同批处理：30 s 内已确认地址不再重复 Register（`Constants.REGISTER_RECONFIRM_INTERVAL_MS` + `DeviceStore.isConfirmedWithin`），避免心跳耗尽每地址配额；`StreamCallHandler` 记录并暴露 HELLO 的 `device_id`/`fingerprint`。中英文文案 79 键一致。验证：`DiscoverySettingsTest`（13）、`VisibilityPolicyTest`（7）、`DeviceListModelTest`（11）与 `DeviceStoreMergeTest`（+1）、`RegisterCallHandlerTest`（+2）、`StreamCallHandlerTest`（+2）覆盖档位映射与非法值回退、四档可见性与窗口到期、兼容模式 provider/类型/能力映射、分区与排序、状态投影与灰显、可见性对 Register 白名单的影响、已确认地址的去重窗口、HELLO 身份捕获；全量 **670 tests / 0 failures / 0 errors / 0 skipped**（58 个测试类，较 634 基线增加 36）；`./gradlew :app:testDebugUnitTest --offline`、`./gradlew :app:assembleDebug --offline`、`./gradlew :app:assembleDebugAndroidTest --offline`、`:app:lintDebug --offline` 与 `python scripts/checks/check_strings.py` 全部通过；Build CI run [39373857133](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39373857133)、Checks run [39373857069](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39373857069) success。偏差与边界：`HIDDEN` 只停止公告与 Register，仍保留 NSD 注册（全停会让设备无法被发现）；HELLO 的设备身份目前只捕获并暴露，尚未写入 store 做会话与发现条目的绑定。未执行 adb、模拟器、实机或 `connectedAndroidTest`；真实设置生效、组播/NSD 可见性、Register 白名单与列表状态未实测，设备验证未解禁。
+- **关联文档**：[发现调研](discovery-research.md)、[实施计划](superpowers/plans/2026-10-20-device-discovery.md)
+
+</details>
 
 <a id="tb-disc-008"></a>
 <details><summary>TB-DISC-008 手动 IP 与收藏（✅ 2026-10-20）</summary>
