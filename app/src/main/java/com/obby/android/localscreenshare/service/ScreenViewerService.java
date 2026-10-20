@@ -14,6 +14,7 @@ import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.DrawFilter;
 import android.graphics.Matrix;
+import android.graphics.Outline;
 import android.graphics.Paint;
 import android.graphics.PaintFlagsDrawFilter;
 import android.graphics.PixelFormat;
@@ -34,6 +35,7 @@ import android.view.MotionEvent;
 import android.view.TextureView;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewOutlineProvider;
 import android.view.WindowManager;
 import android.widget.ImageView;
 
@@ -674,26 +676,20 @@ public class ScreenViewerService extends Service {
     }
 
     /**
-     * Floating, draggable viewer for received frames.
-     *
-     * <p>Created and used on the main thread. The first {@link #show()} applies the stored
-     * opacity, scale and normalized location; later frames only replace the bitmap and, when the
-     * frame size or the secure flag changes, the window layout. A long press starts dragging, a
-     * single tap opens the disconnect confirmation and a double tap opens the settings sheet.
-     * Settings are applied live and persisted when a slider is released. The frame reference
-     * passed to {@link #setFrame} is owned by the viewer until the next frame or
-     * {@link #dismiss()} clears it.</p>
-     */
-    /**
      * Floating, draggable surface viewer for H.264 frames.
      *
      * <p>Hosts a {@link TextureView} that the decoder renders into directly, so no per-frame
      * callback is needed. Created and used on the main thread. A long press starts dragging and a
-     * single tap opens the disconnect confirmation. Opacity, scale and the normalized location come
-     * from the persisted viewer settings; the secure flag maps to {@code FLAG_SECURE}. Stream-aspect
-     * sizing and the settings sheet are refined with the window-surface work.</p>
+     * single tap opens the disconnect confirmation. Opacity, scale, corner rounding and the
+     * normalized location come from the persisted viewer settings; the secure flag maps to
+     * {@code FLAG_SECURE}. The round-rect outline mirrors the shape of the bitmap viewer this
+     * window replaced. Stream-aspect sizing and the settings sheet are refined with the
+     * window-surface work.</p>
      */
     private static class SurfaceShareViewer {
+        // Corner radius as a fraction of the shorter window side, matching the bitmap viewer.
+        private static final float CORNER_SIZE_RATIO = 1 / 16f;
+
         @NonNull
         private final Context mContext;
 
@@ -728,6 +724,9 @@ public class ScreenViewerService extends Service {
 
         private int mScale;
 
+        // Corner radius of the round-rect outline; 0 disables outline clipping.
+        private float mCornerSize;
+
         private SurfaceShareViewer(@NonNull final Context context,
                                    @NonNull final DeviceInfo serviceInfo) {
             mContext = new ContextThemeWrapper(context, R.style.Theme_ScreenShare);
@@ -735,6 +734,14 @@ public class ScreenViewerService extends Service {
             mWindowManager = mContext.getSystemService(WindowManager.class);
             mTextureView = new TextureView(mContext);
             mTextureView.setOpaque(false);
+            // The outline is evaluated against the current view bounds, so the clipped corners
+            // follow the window size while the radius keeps the bitmap viewer's ratio.
+            mTextureView.setOutlineProvider(new ViewOutlineProvider() {
+                @Override
+                public void getOutline(@NonNull final View view, @NonNull final Outline outline) {
+                    outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), mCornerSize);
+                }
+            });
             mLayoutParams = new WindowManager.LayoutParams(0, 0, 0, 0, ServiceProtocol.FLOATING_WINDOW_TYPE,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
                 PixelFormat.TRANSLUCENT);
@@ -791,8 +798,33 @@ public class ScreenViewerService extends Service {
                 mScale = Preferences.get().getViewerScale();
                 mLocation.set(Preferences.get().getViewerLocation());
                 updateLayoutParams();
+                updateShape();
                 mWindowManager.addView(mTextureView, mLayoutParams);
             }
+        }
+
+        /**
+         * Applies the rounded-corner setting to the window outline.
+         *
+         * <p>The radius is a fixed fraction of the shorter window side, capped by the theme's
+         * large corner size, as the bitmap viewer did. Outline clipping is disabled when rounding
+         * is turned off or the window has no measurable size yet.</p>
+         */
+        private void updateShape() {
+            if (!Preferences.get().isViewerRounded()) {
+                mCornerSize = 0f;
+                mTextureView.setClipToOutline(false);
+                mTextureView.invalidateOutline();
+                return;
+            }
+
+            final float maxCornerSize = mContext.getResources().getDimension(
+                ResourceUtils.resolveAttribute(mContext, com.google.android.material.R.attr.shapeCornerSizeLarge));
+            mCornerSize = Math.min(
+                Math.min(mLayoutParams.width, mLayoutParams.height) * CORNER_SIZE_RATIO, maxCornerSize);
+
+            mTextureView.setClipToOutline(mCornerSize > 0f);
+            mTextureView.invalidateOutline();
         }
 
         void dismiss() {
@@ -895,6 +927,17 @@ public class ScreenViewerService extends Service {
         }
     }
 
+    /**
+     * Floating, draggable viewer for received frames.
+     *
+     * <p>Created and used on the main thread. The first {@link #show()} applies the stored
+     * opacity, scale and normalized location; later frames only replace the bitmap and, when the
+     * frame size or the secure flag changes, the window layout. A long press starts dragging, a
+     * single tap opens the disconnect confirmation and a double tap opens the settings sheet.
+     * Settings are applied live and persisted when a slider is released. The frame reference
+     * passed to {@link #setFrame} is owned by the viewer until the next frame or
+     * {@link #dismiss()} clears it.</p>
+     */
     private static class ScreenShareViewer {
         private static final float CORNER_SIZE_RATIO = 1 / 16f;
 
