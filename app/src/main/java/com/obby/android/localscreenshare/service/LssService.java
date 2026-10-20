@@ -453,8 +453,13 @@ public class LssService extends Service {
             case Preferences.KEY_DISCOVERY_COMPAT_ONLY:
             case Preferences.KEY_SHARE_NAME_ENABLED:
                 // Announcement settings reach the transport directly, so the announcer is
-                // restarted; the running capture and the media stream are untouched.
+                // restarted; the running capture and the media stream are untouched. The mDNS
+                // record is re-published because its TXT carries the join policy and the optional
+                // display name.
                 restartAnnouncements();
+                if (mServer != null) {
+                    mServer.onDiscoverySettingsChanged();
+                }
                 break;
             default:
                 break;

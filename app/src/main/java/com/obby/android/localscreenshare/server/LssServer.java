@@ -672,6 +672,47 @@ public final class LssServer {
     }
 
     /**
+     * Re-publishes the mDNS record after a discovery setting changed.
+     *
+     * <p>Called on the main thread from the capture service's preference observer. The gRPC server
+     * and the running stream are untouched: only the two NSD registrations are replaced, because
+     * compatibility mode drops the current service type and the TXT record carries the join policy
+     * and the optional display name. The old registrations are released before the new ones are
+     * created, so a listener is never registered twice.</p>
+     */
+    public void onDiscoverySettingsChanged() {
+        if (mServerInfo == null) {
+            return;
+        }
+        Log.i(mTag, "onDiscoverySettingsChanged: re-publish the mDNS record");
+
+        if (mPrimaryRegistration != null) {
+            mPrimaryRegistration.unregister();
+            mPrimaryRegistration = null;
+        }
+        if (mLegacyRegistration != null) {
+            mLegacyRegistration.unregister();
+            mLegacyRegistration = null;
+        }
+
+        final LssDeviceInfo advertisement = buildAdvertisement(mServerInfo);
+        final DiscoverySettings settings = Preferences.get().getDiscoverySettings();
+        mPrimaryRegistration = settings.isCompatOnly() ? null
+            : new Registration(Constants.NSD_SERVICE_TYPE,
+                buildNsdServiceInfo(advertisement, NsdTxtRecord.Namespace.CURRENT), true);
+        mLegacyRegistration = new Registration(Constants.NSD_SERVICE_TYPE_LEGACY,
+            buildNsdServiceInfo(advertisement, NsdTxtRecord.Namespace.LEGACY),
+            settings.isCompatOnly());
+        mNsdServiceInfo = mPrimaryRegistration != null
+            ? mPrimaryRegistration.mServiceInfo : mLegacyRegistration.mServiceInfo;
+
+        if (mPrimaryRegistration != null) {
+            mPrimaryRegistration.register();
+        }
+        mLegacyRegistration.register();
+    }
+
+    /**
      * Stops advertising, stops the gRPC server and releases the executor.
      *
      * <p>Must be called on the main thread. State is nulled first, so pending callbacks turn into
