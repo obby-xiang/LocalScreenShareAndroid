@@ -13,11 +13,15 @@ import androidx.annotation.Nullable;
  */
 public interface FavoriteStorage {
 
-    /** Returns the serialized favorite list, or null when nothing was stored yet. */
+    /**
+     * Returns the serialized favorite list, or null when nothing was stored yet.
+     */
     @Nullable
     String read();
 
-    /** Replaces the serialized favorite list. */
+    /**
+     * Replaces the serialized favorite list.
+     */
     void write(@NonNull String value);
 
     /**
@@ -27,6 +31,8 @@ public interface FavoriteStorage {
     @Nullable
     String readLegacy();
 
-    /** Removes the legacy document after a migration attempt. */
+    /**
+     * Removes the legacy document after a migration attempt.
+     */
     void clearLegacy();
 }

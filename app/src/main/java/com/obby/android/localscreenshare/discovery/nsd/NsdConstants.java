@@ -12,7 +12,9 @@ import lombok.NoArgsConstructor;
  */
 @NoArgsConstructor(access = AccessLevel.PRIVATE)
 public final class NsdConstants {
-    /** DNS-SD service type used for registration and discovery; fits the 15-character RFC 6763 label limit. */
+    /**
+     * DNS-SD service type used for registration and discovery; fits the 15-character RFC 6763 label limit.
+     */
     @SuppressWarnings("SpellCheckingInspection")
     public static final String NSD_SERVICE_TYPE = "_lss._tcp";
 
@@ -23,37 +25,59 @@ public final class NsdConstants {
     @SuppressWarnings("SpellCheckingInspection")
     public static final String NSD_SERVICE_TYPE_LEGACY = "_localscreenshare._udp";
 
-    /** TXT attribute key holding the server id as UTF-8; discovery drops services without it. */
+    /**
+     * TXT attribute key holding the server id as UTF-8; discovery drops services without it.
+     */
     public static final String NSD_SERVICE_ATTR_ID = "id";
 
-    /** TXT attribute key holding the user-visible server name as UTF-8 (legacy namespace). */
+    /**
+     * TXT attribute key holding the user-visible server name as UTF-8 (legacy namespace).
+     */
     public static final String NSD_SERVICE_ATTR_NAME = "name";
 
-    /** TXT attribute key holding the minimal-record schema version. */
+    /**
+     * TXT attribute key holding the minimal-record schema version.
+     */
     public static final String NSD_SERVICE_ATTR_VERSION = "v";
 
-    /** TXT attribute key holding the device role wire value. */
+    /**
+     * TXT attribute key holding the device role wire value.
+     */
     public static final String NSD_SERVICE_ATTR_ROLE = "r";
 
-    /** TXT attribute key holding the share-state wire value. */
+    /**
+     * TXT attribute key holding the share-state wire value.
+     */
     public static final String NSD_SERVICE_ATTR_STATE = "s";
 
-    /** TXT attribute key holding the join-policy wire value. */
+    /**
+     * TXT attribute key holding the join-policy wire value.
+     */
     public static final String NSD_SERVICE_ATTR_JOIN = "j";
 
-    /** TXT attribute key holding the secure-transport flag ({@code 0}/{@code 1}). */
+    /**
+     * TXT attribute key holding the secure-transport flag ({@code 0}/{@code 1}).
+     */
     public static final String NSD_SERVICE_ATTR_SECURE = "sec";
 
-    /** TXT attribute key holding the auth-mode wire value. */
+    /**
+     * TXT attribute key holding the auth-mode wire value.
+     */
     public static final String NSD_SERVICE_ATTR_AUTH = "auth";
 
-    /** TXT attribute key holding the protocol version. */
+    /**
+     * TXT attribute key holding the protocol version.
+     */
     public static final String NSD_SERVICE_ATTR_PROTOCOL_VERSION = "pv";
 
-    /** TXT attribute key holding the metadata version. */
+    /**
+     * TXT attribute key holding the metadata version.
+     */
     public static final String NSD_SERVICE_ATTR_METADATA_VERSION = "mv";
 
-    /** TXT attribute key holding the capability bitmap. */
+    /**
+     * TXT attribute key holding the capability bitmap.
+     */
     public static final String NSD_SERVICE_ATTR_CAPABILITIES = "caps";
 
     /**
@@ -62,12 +86,18 @@ public final class NsdConstants {
      */
     public static final String NSD_SERVICE_ATTR_DISPLAY_NAME = "n";
 
-    /** Capability bit: the device can encode H.264. */
+    /**
+     * Capability bit: the device can encode H.264.
+     */
     public static final int DEVICE_CAPABILITY_H264 = 1;
 
-    /** Capability bit: the device can encode JPEG. */
+    /**
+     * Capability bit: the device can encode JPEG.
+     */
     public static final int DEVICE_CAPABILITY_JPEG = 1 << 1;
 
-    /** Platform value advertised in multicast announcements. */
+    /**
+     * Platform value advertised in multicast announcements.
+     */
     public static final String DEVICE_PLATFORM_ANDROID = "android";
 }

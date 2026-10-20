@@ -428,20 +428,26 @@ public class ScreenViewerService extends Service {
             && Objects.equals(previous, next);
     }
 
-    /** Returns the host of the device to dial, or an empty string when it has no address. */
+    /**
+     * Returns the host of the device to dial, or an empty string when it has no address.
+     */
     @NonNull
     private static String hostOf(@Nullable final DeviceInfo device) {
         final DeviceAddress address = device == null ? null : device.primaryAddress();
         return address == null ? "" : address.getHost();
     }
 
-    /** Returns the port of the device to dial, or {@code 0} when it has no address. */
+    /**
+     * Returns the port of the device to dial, or {@code 0} when it has no address.
+     */
     private static int portOf(@Nullable final DeviceInfo device) {
         final DeviceAddress address = device == null ? null : device.primaryAddress();
         return address == null ? 0 : address.getPort();
     }
 
-    /** Returns the display name of the device, never null. */
+    /**
+     * Returns the display name of the device, never null.
+     */
     @NonNull
     private static String nameOf(@Nullable final DeviceInfo device) {
         return device == null ? "" : device.displayName();
@@ -540,7 +546,9 @@ public class ScreenViewerService extends Service {
         return mClientMediaReceiver;
     }
 
-    /** Closes the media session and releases the surface target; idempotent. */
+    /**
+     * Closes the media session and releases the surface target; idempotent.
+     */
     private void teardownMediaSession() {
         if (mClientMediaReceiver != null) {
             mClientMediaReceiver.close();

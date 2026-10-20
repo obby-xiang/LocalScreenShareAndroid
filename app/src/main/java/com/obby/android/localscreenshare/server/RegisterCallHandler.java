@@ -49,52 +49,82 @@ import java.util.function.Supplier;
  */
 public final class RegisterCallHandler {
 
-    /** The caller did not send a device id or a fingerprint. */
+    /**
+     * The caller did not send a device id or a fingerprint.
+     */
     public static final String REASON_MISSING_IDENTITY = "missing_identity";
 
-    /** The caller's identity fields are malformed. */
+    /**
+     * The caller's identity fields are malformed.
+     */
     public static final String REASON_INVALID_IDENTITY = "invalid_identity";
 
-    /** The request is structurally invalid. */
+    /**
+     * The request is structurally invalid.
+     */
     public static final String REASON_INVALID_REQUEST = "invalid_request";
 
-    /** The caller speaks a newer protocol version than this server. */
+    /**
+     * The caller speaks a newer protocol version than this server.
+     */
     public static final String REASON_UNSUPPORTED_VERSION = "unsupported_version";
 
-    /** The caller exceeded its request quota. */
+    /**
+     * The caller exceeded its request quota.
+     */
     public static final String REASON_RATE_LIMITED = "rate_limited";
 
-    /** This server is stopping and cannot answer discovery requests. */
+    /**
+     * This server is stopping and cannot answer discovery requests.
+     */
     public static final String REASON_UNAVAILABLE = "unavailable";
 
-    /** The caller is not allowed to see or reach this device under its visibility preset. */
+    /**
+     * The caller is not allowed to see or reach this device under its visibility preset.
+     */
     public static final String REASON_NOT_VISIBLE = "not_visible";
 
-    /** Length of the device id derived from the identity key. */
+    /**
+     * Length of the device id derived from the identity key.
+     */
     public static final int DEVICE_ID_LENGTH = 26;
 
-    /** Maximum length of a fingerprint field. */
+    /**
+     * Maximum length of a fingerprint field.
+     */
     public static final int MAX_FINGERPRINT_LENGTH = 64;
 
-    /** Maximum length of a name field. */
+    /**
+     * Maximum length of a name field.
+     */
     public static final int MAX_NAME_LENGTH = 64;
 
-    /** Maximum number of addresses accepted in one summary. */
+    /**
+     * Maximum number of addresses accepted in one summary.
+     */
     public static final int MAX_ADDRESSES = 4;
 
     private static final long RATE_WINDOW_MS = 60_000L;
 
-    /** Receives the response of one request. */
+    /**
+     * Receives the response of one request.
+     */
     @FunctionalInterface
     public interface Replier {
-        /** Sends the response; called on the thread that handled the request. */
+        /**
+         * Sends the response; called on the thread that handled the request.
+         */
         void respond(@NonNull RegisterResponse response);
     }
 
-    /** Issues one reverse Register; implemented by {@link RegisterClient}. */
+    /**
+     * Issues one reverse Register; implemented by {@link RegisterClient}.
+     */
     @FunctionalInterface
     public interface ReverseRegistrar {
-        /** Starts one call that must not trigger another reverse call. */
+        /**
+         * Starts one call that must not trigger another reverse call.
+         */
         void register(@NonNull DeviceAddress address, boolean announces, @NonNull DeviceSummary self,
             @NonNull RegisterClient.Callback callback);
     }

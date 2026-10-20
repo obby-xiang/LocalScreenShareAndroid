@@ -69,7 +69,9 @@ public final class StreamCallHandler {
         this.transport = transport;
     }
 
-    /** Handles one client control message; a second HELLO after joining is ignored. */
+    /**
+     * Handles one client control message; a second HELLO after joining is ignored.
+     */
     public void onClientMessage(ClientMessage message) {
         if (closed || message == null) {
             return;
@@ -110,7 +112,9 @@ public final class StreamCallHandler {
         return hub.drainOne(key);
     }
 
-    /** Returns whether the handler has been closed and its session detached. */
+    /**
+     * Returns whether the handler has been closed and its session detached.
+     */
     public boolean isClosed() {
         return closed;
     }
@@ -127,12 +131,16 @@ public final class StreamCallHandler {
         return deviceId;
     }
 
-    /** Returns the fingerprint the client declared in its HELLO, or null when it declared none. */
+    /**
+     * Returns the fingerprint the client declared in its HELLO, or null when it declared none.
+     */
     public String getFingerprint() {
         return fingerprint;
     }
 
-    /** Detaches the client's session and closes its transport; idempotent. */
+    /**
+     * Detaches the client's session and closes its transport; idempotent.
+     */
     public void close() {
         if (closed) {
             return;
@@ -191,7 +199,9 @@ public final class StreamCallHandler {
         }
     }
 
-    /** Returns the trimmed value, or null when it is absent or blank. */
+    /**
+     * Returns the trimmed value, or null when it is absent or blank.
+     */
     private static String emptyToNull(String value) {
         return value == null || value.trim().isEmpty() ? null : value.trim();
     }

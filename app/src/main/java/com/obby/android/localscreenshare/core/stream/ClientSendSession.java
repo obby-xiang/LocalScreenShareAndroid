@@ -97,31 +97,41 @@ public final class ClientSendSession {
         this.timeSource = timeSource;
     }
 
-    /** Returns the client and stream identity of this session. */
+    /**
+     * Returns the client and stream identity of this session.
+     */
     public ClientSessionKey getKey() {
         return key;
     }
 
-    /** Returns the client id part of the session key. */
+    /**
+     * Returns the client id part of the session key.
+     */
     public String getClientId() {
         return key.getClientId();
     }
 
-    /** Returns the current session state, read atomically. */
+    /**
+     * Returns the current session state, read atomically.
+     */
     public ClientState getState() {
         synchronized (stateLock) {
             return state;
         }
     }
 
-    /** Returns the descriptor of the current epoch, or {@code null} before the first one. */
+    /**
+     * Returns the descriptor of the current epoch, or {@code null} before the first one.
+     */
     public StreamDescriptor getCurrentDescriptor() {
         synchronized (stateLock) {
             return currentDescriptor;
         }
     }
 
-    /** Returns whether the session was detached; a detached session never becomes active again. */
+    /**
+     * Returns whether the session was detached; a detached session never becomes active again.
+     */
     public boolean isDetached() {
         synchronized (stateLock) {
             return detached;

@@ -87,17 +87,23 @@ public final class ClientMediaSession {
         this.listener = listener;
     }
 
-    /** Returns the current state, read atomically. */
+    /**
+     * Returns the current state, read atomically.
+     */
     public synchronized ClientState getState() {
         return state;
     }
 
-    /** Returns the descriptor of the current epoch, or {@code null} before the first one. */
+    /**
+     * Returns the descriptor of the current epoch, or {@code null} before the first one.
+     */
     public synchronized StreamDescriptor getCurrentDescriptor() {
         return currentDescriptor;
     }
 
-    /** Returns whether the session is closed; a closed session never reopens. */
+    /**
+     * Returns whether the session is closed; a closed session never reopens.
+     */
     public synchronized boolean isClosed() {
         return closed;
     }

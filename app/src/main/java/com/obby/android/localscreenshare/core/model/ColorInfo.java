@@ -10,7 +10,9 @@ package com.obby.android.localscreenshare.core.model;
  */
 public final class ColorInfo {
 
-    /** Placeholder for an unknown or unreported color description. */
+    /**
+     * Placeholder for an unknown or unreported color description.
+     */
     public static final ColorInfo UNSPECIFIED = new ColorInfo(null, null, false);
 
     private final String colorSpace;

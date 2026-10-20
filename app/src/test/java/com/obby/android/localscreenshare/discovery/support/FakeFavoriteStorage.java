@@ -44,23 +44,31 @@ public final class FakeFavoriteStorage implements FavoriteStorage {
         mLegacyDocument = null;
     }
 
-    /** Seeds the current document directly. */
+    /**
+     * Seeds the current document directly.
+     */
     public void setDocument(@Nullable final String document) {
         mDocument = document;
     }
 
-    /** Seeds the legacy document directly. */
+    /**
+     * Seeds the legacy document directly.
+     */
     public void setLegacyDocument(@Nullable final String document) {
         mLegacyDocument = document;
     }
 
-    /** Returns the current serialized document, or null. */
+    /**
+     * Returns the current serialized document, or null.
+     */
     @Nullable
     public String document() {
         return mDocument;
     }
 
-    /** Returns how many times {@link #write(String)} was called. */
+    /**
+     * Returns how many times {@link #write(String)} was called.
+     */
     public int writes() {
         return mWrites;
     }

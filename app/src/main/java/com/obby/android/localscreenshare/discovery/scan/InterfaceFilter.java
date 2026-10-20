@@ -23,7 +23,9 @@ import java.util.Set;
  */
 public final class InterfaceFilter {
 
-    /** Interface-name prefixes that never carry a LAN peer worth scanning. */
+    /**
+     * Interface-name prefixes that never carry a LAN peer worth scanning.
+     */
     private static final Set<String> EXCLUDED_NAME_PREFIXES = new HashSet<>();
 
     static {
@@ -33,7 +35,9 @@ public final class InterfaceFilter {
     private InterfaceFilter() {
     }
 
-    /** Returns whether one interface may be scanned. */
+    /**
+     * Returns whether one interface may be scanned.
+     */
     public static boolean isEligible(@NonNull final LocalInterface candidate) {
         if (candidate.isLoopback() || candidate.isPointToPoint()) {
             return false;
@@ -45,7 +49,9 @@ public final class InterfaceFilter {
         return !hasExcludedName(candidate.getName());
     }
 
-    /** Returns the eligible interfaces, preserving the input order. */
+    /**
+     * Returns the eligible interfaces, preserving the input order.
+     */
     @NonNull
     public static List<LocalInterface> eligible(@NonNull final List<LocalInterface> candidates) {
         final List<LocalInterface> eligible = new ArrayList<>(candidates.size());

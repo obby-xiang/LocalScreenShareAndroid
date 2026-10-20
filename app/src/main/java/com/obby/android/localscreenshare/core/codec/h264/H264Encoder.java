@@ -332,7 +332,9 @@ public final class H264Encoder implements Encoder {
         releaseOnce();
     }
 
-    /** Waits, bounded, for the start transition to settle; never blocks while holding the lock. */
+    /**
+     * Waits, bounded, for the start transition to settle; never blocks while holding the lock.
+     */
     private boolean awaitStartComplete() {
         try {
             return startComplete.await(DRAIN_JOIN_TIMEOUT_MS, TimeUnit.MILLISECONDS);
@@ -342,21 +344,27 @@ public final class H264Encoder implements Encoder {
         }
     }
 
-    /** True after the bridge has been released at least once; exposed for tests and diagnostics. */
+    /**
+     * True after the bridge has been released at least once; exposed for tests and diagnostics.
+     */
     public boolean isBridgeReleased() {
         synchronized (lock) {
             return bridgeReleased;
         }
     }
 
-    /** True when a close detected that the drain thread did not terminate; tests/diagnostics only. */
+    /**
+     * True when a close detected that the drain thread did not terminate; tests/diagnostics only.
+     */
     public boolean isLeakDetected() {
         synchronized (lock) {
             return leakDetected;
         }
     }
 
-    /** Drains encoded output on the daemon thread; on exit it best-effort stops the bridge. */
+    /**
+     * Drains encoded output on the daemon thread; on exit it best-effort stops the bridge.
+     */
     private void drain() {
         try {
             while (!shouldStop()) {
@@ -645,7 +653,9 @@ public final class H264Encoder implements Encoder {
         output.onAccessUnit(accessUnit);
     }
 
-    /** Reports a terminal failure exactly once; subsequent failures are suppressed. */
+    /**
+     * Reports a terminal failure exactly once; subsequent failures are suppressed.
+     */
     private void fail(String message) {
         notifyFailure(new EncoderException(message));
     }
@@ -695,7 +705,9 @@ public final class H264Encoder implements Encoder {
         return H264ConfigExtractor.toAnnexB(csd);
     }
 
-    /** Compares the resolved coded size, color and config parts against the published config. */
+    /**
+     * Compares the resolved coded size, color and config parts against the published config.
+     */
     private boolean configsEqual(List<CodecConfigPart> parts, int width, int height,
                                  ColorInfo color) {
         // Called with the lock held; reads the published config snapshot.
@@ -726,7 +738,9 @@ public final class H264Encoder implements Encoder {
         return true;
     }
 
-    /** {@link ColorInfo} has no {@code equals}; compare the three fields that describe a color. */
+    /**
+     * {@link ColorInfo} has no {@code equals}; compare the three fields that describe a color.
+     */
     private static boolean colorsEqual(ColorInfo a, ColorInfo b) {
         if (a == null || b == null) {
             return a == b;
@@ -745,7 +759,9 @@ public final class H264Encoder implements Encoder {
         return a.equals(b);
     }
 
-    /** True when no usable color was observed, so the requested color must be used instead. */
+    /**
+     * True when no usable color was observed, so the requested color must be used instead.
+     */
     private static boolean isUnspecifiedColor(ColorInfo color) {
         return color == null
                 || (color.getColorSpace() == null

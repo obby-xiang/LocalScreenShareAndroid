@@ -17,7 +17,9 @@ import org.junit.Test;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/** Unit tests for capability-aware fallback selection in {@link StreamHub}. */
+/**
+ * Unit tests for capability-aware fallback selection in {@link StreamHub}.
+ */
 public class StreamHubCapabilityJoinTest {
 
     private static final String ACTIVE_CODEC = "fake";

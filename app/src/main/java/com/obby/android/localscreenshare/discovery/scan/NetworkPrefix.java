@@ -25,10 +25,14 @@ import java.util.Objects;
  */
 public final class NetworkPrefix {
 
-    /** Upper bound of candidates one interface contributes. */
+    /**
+     * Upper bound of candidates one interface contributes.
+     */
     public static final int MAX_HOSTS = 1024;
 
-    /** Prefix length whose network holds more than {@link #MAX_HOSTS} usable hosts. */
+    /**
+     * Prefix length whose network holds more than {@link #MAX_HOSTS} usable hosts.
+     */
     public static final int MAX_FULL_PREFIX_LENGTH = 22;
 
     private static final int LOCAL_NETWORK_MASK = 0xFFFFFF00;
@@ -99,19 +103,25 @@ public final class NetworkPrefix {
         return new Result(addresses, partial);
     }
 
-    /** Builds the network mask of a prefix length. */
+    /**
+     * Builds the network mask of a prefix length.
+     */
     private static int mask(final int prefixLength) {
         return prefixLength == 0 ? 0 : 0xFFFFFFFF << (32 - prefixLength);
     }
 
-    /** Reads the four address bytes as an unsigned-looking int. */
+    /**
+     * Reads the four address bytes as an unsigned-looking int.
+     */
     private static int toInt(@NonNull final Inet4Address address) {
         final byte[] bytes = address.getAddress();
         return ((bytes[0] & 0xFF) << 24) | ((bytes[1] & 0xFF) << 16)
             | ((bytes[2] & 0xFF) << 8) | (bytes[3] & 0xFF);
     }
 
-    /** Creates a literal address from four bytes; never resolves a name. */
+    /**
+     * Creates a literal address from four bytes; never resolves a name.
+     */
     @NonNull
     private static Inet4Address toAddress(final int value) {
         final byte[] bytes = {
@@ -125,7 +135,9 @@ public final class NetworkPrefix {
         }
     }
 
-    /** Candidates of one interface plus whether the enumeration had to be truncated. */
+    /**
+     * Candidates of one interface plus whether the enumeration had to be truncated.
+     */
     public static final class Result {
 
         @NonNull
@@ -138,18 +150,24 @@ public final class NetworkPrefix {
             mPartial = partial;
         }
 
-        /** Returns the candidates in ascending host order, never including the local address. */
+        /**
+         * Returns the candidates in ascending host order, never including the local address.
+         */
         @NonNull
         public List<Inet4Address> getAddresses() {
             return mAddresses;
         }
 
-        /** True when the network was larger than the bound and only the local {@code /24} was used. */
+        /**
+         * True when the network was larger than the bound and only the local {@code /24} was used.
+         */
         public boolean isPartial() {
             return mPartial;
         }
 
-        /** Returns the number of candidates. */
+        /**
+         * Returns the number of candidates.
+         */
         public int size() {
             return mAddresses.size();
         }

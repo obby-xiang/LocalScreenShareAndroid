@@ -25,21 +25,33 @@ package com.obby.android.localscreenshare.core.model;
  * state is set to its current value.</p>
  */
 public enum ClientState {
-    /** No usable descriptor yet; no codec has been selected. */
+    /**
+     * No usable descriptor yet; no codec has been selected.
+     */
     NEGOTIATING,
 
-    /** A descriptor was accepted and the decoder is being created and configured. */
+    /**
+     * A descriptor was accepted and the decoder is being created and configured.
+     */
     WAIT_CONFIG,
 
-    /** The decoder is configured and waiting for a random-access point. */
+    /**
+     * The decoder is configured and waiting for a random-access point.
+     */
     WAIT_RANDOM_ACCESS,
 
-    /** Decoding same-epoch access units continuously. */
+    /**
+     * Decoding same-epoch access units continuously.
+     */
     STREAMING,
 
-    /** The decode pipeline was lost; units are dropped until a join point restores it. */
+    /**
+     * The decode pipeline was lost; units are dropped until a join point restores it.
+     */
     RESYNCING,
 
-    /** Terminal state; no further transitions and no further output. */
+    /**
+     * Terminal state; no further transitions and no further output.
+     */
     CLOSED
 }

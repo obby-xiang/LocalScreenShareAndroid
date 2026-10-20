@@ -40,7 +40,9 @@ public final class CodecRegistry {
         }
     }
 
-    /** Returns true when the id is registered; a null id returns false. */
+    /**
+     * Returns true when the id is registered; a null id returns false.
+     */
     public boolean contains(String codecId) {
         return codecId != null && registrations.containsKey(codecId);
     }
@@ -69,7 +71,9 @@ public final class CodecRegistry {
         return Collections.unmodifiableList(new ArrayList<>(registrations.values()));
     }
 
-    /** Returns an unmodifiable snapshot of the registered codec ids. */
+    /**
+     * Returns an unmodifiable snapshot of the registered codec ids.
+     */
     public Set<String> getCodecIds() {
         return Collections.unmodifiableSet(new HashSet<>(registrations.keySet()));
     }

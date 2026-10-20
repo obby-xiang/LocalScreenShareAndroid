@@ -75,7 +75,9 @@ public final class DefaultIdentityProvider implements IdentityProvider {
         return identity;
     }
 
-    /** Key source; the checked exceptions are converted once by {@link #derive}. */
+    /**
+     * Key source; the checked exceptions are converted once by {@link #derive}.
+     */
     @FunctionalInterface
     private interface KeyStoreOperation {
         KeyPair run() throws GeneralSecurityException, IOException;

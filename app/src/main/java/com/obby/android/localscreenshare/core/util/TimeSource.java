@@ -10,9 +10,13 @@ package com.obby.android.localscreenshare.core.util;
  */
 public interface TimeSource {
 
-    /** Production clock: monotonic milliseconds derived from {@code System.nanoTime()}. */
+    /**
+     * Production clock: monotonic milliseconds derived from {@code System.nanoTime()}.
+     */
     TimeSource MONOTONIC = () -> System.nanoTime() / 1_000_000L;
 
-    /** Returns the current time in milliseconds; non-decreasing between calls. */
+    /**
+     * Returns the current time in milliseconds; non-decreasing between calls.
+     */
     long nowMs();
 }

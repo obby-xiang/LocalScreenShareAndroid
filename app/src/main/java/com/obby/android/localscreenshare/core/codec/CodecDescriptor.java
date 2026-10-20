@@ -64,17 +64,23 @@ public final class CodecDescriptor {
         return bitstreamFormat;
     }
 
-    /** True when the encoder consumes input through a surface. */
+    /**
+     * True when the encoder consumes input through a surface.
+     */
     public boolean isSurfaceInputRequired() {
         return surfaceInputRequired;
     }
 
-    /** True when the decoder renders into a surface and needs a non-null render-target surface. */
+    /**
+     * True when the decoder renders into a surface and needs a non-null render-target surface.
+     */
     public boolean isSurfaceOutputRequired() {
         return surfaceOutputRequired;
     }
 
-    /** True when the decode configuration is produced by the encoder after start. */
+    /**
+     * True when the decode configuration is produced by the encoder after start.
+     */
     public boolean hasConfigParts() {
         return carriesConfigParts;
     }

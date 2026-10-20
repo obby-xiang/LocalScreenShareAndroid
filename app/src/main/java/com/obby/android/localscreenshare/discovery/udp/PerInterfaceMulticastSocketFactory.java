@@ -115,7 +115,9 @@ public final class PerInterfaceMulticastSocketFactory implements MulticastSocket
         return false;
     }
 
-    /** {@link MulticastEndpoint} over one bound and joined socket. */
+    /**
+     * {@link MulticastEndpoint} over one bound and joined socket.
+     */
     private static final class SocketEndpoint implements MulticastEndpoint {
         @NonNull
         private final String mInterfaceName;

@@ -33,17 +33,23 @@ public final class H264SliceHeader {
         this.picParameterSetId = picParameterSetId;
     }
 
-    /** Zero-based index of the first macroblock covered by this slice; 0 starts the picture. */
+    /**
+     * Zero-based index of the first macroblock covered by this slice; 0 starts the picture.
+     */
     public int getFirstMbInSlice() {
         return firstMbInSlice;
     }
 
-    /** Raw {@code slice_type} code (0..9); use {@code % 5} to get P/B/I/SP/SI. */
+    /**
+     * Raw {@code slice_type} code (0..9); use {@code % 5} to get P/B/I/SP/SI.
+     */
     public int getSliceType() {
         return sliceType;
     }
 
-    /** Id of the picture parameter set this slice refers to, as written in the bitstream. */
+    /**
+     * Id of the picture parameter set this slice refers to, as written in the bitstream.
+     */
     public int getPicParameterSetId() {
         return picParameterSetId;
     }

@@ -33,12 +33,16 @@ public final class MulticastLockManager {
 
     private int mRefCount;
 
-    /** Creates a manager over an explicit lock; used by tests and by {@link #get()}. */
+    /**
+     * Creates a manager over an explicit lock; used by tests and by {@link #get()}.
+     */
     public MulticastLockManager(@NonNull final Lock lock) {
         mLock = Objects.requireNonNull(lock, "lock");
     }
 
-    /** Returns the process-wide manager, creating the Wi-Fi lock on first use. */
+    /**
+     * Returns the process-wide manager, creating the Wi-Fi lock on first use.
+     */
     @NonNull
     public static MulticastLockManager get() {
         MulticastLockManager instance = sInstance;
@@ -82,7 +86,9 @@ public final class MulticastLockManager {
         return mRefCount;
     }
 
-    /** Returns the current number of users. */
+    /**
+     * Returns the current number of users.
+     */
     public synchronized int refCount() {
         return mRefCount;
     }
@@ -114,16 +120,24 @@ public final class MulticastLockManager {
         }
     };
 
-    /** The lock operation the manager counts. */
+    /**
+     * The lock operation the manager counts.
+     */
     public interface Lock {
-        /** Acquires the underlying resource. */
+        /**
+         * Acquires the underlying resource.
+         */
         void acquire();
 
-        /** Releases the underlying resource. */
+        /**
+         * Releases the underlying resource.
+         */
         void release();
     }
 
-    /** {@link Lock} over the framework multicast lock. */
+    /**
+     * {@link Lock} over the framework multicast lock.
+     */
     private static final class WifiLock implements Lock {
         @NonNull
         private final WifiManager.MulticastLock mMulticastLock;

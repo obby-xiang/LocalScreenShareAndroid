@@ -90,33 +90,43 @@ public final class FavoriteDevice {
         return new FavoriteDevice(id, fingerprint, host, port, alias, customAlias, false, 0L);
     }
 
-    /** True when this favorite has an address that can be probed. */
+    /**
+     * True when this favorite has an address that can be probed.
+     */
     public boolean hasAddress() {
         return mPort > 0;
     }
 
-    /** Returns a copy with a new last known address. */
+    /**
+     * Returns a copy with a new last known address.
+     */
     @NonNull
     public FavoriteDevice withAddress(@NonNull final String host, final int port) {
         return new FavoriteDevice(mId, mFingerprint, host, port, mAlias, mCustomAlias,
             mIdentityChanged, mLastSuccessMs);
     }
 
-    /** Returns a copy with a new label and its custom flag. */
+    /**
+     * Returns a copy with a new label and its custom flag.
+     */
     @NonNull
     public FavoriteDevice withAlias(@Nullable final String alias, final boolean customAlias) {
         return new FavoriteDevice(mId, mFingerprint, mHost, mPort, alias, customAlias,
             mIdentityChanged, mLastSuccessMs);
     }
 
-    /** Returns a copy with the identity-changed flag set or cleared. */
+    /**
+     * Returns a copy with the identity-changed flag set or cleared.
+     */
     @NonNull
     public FavoriteDevice withIdentityChanged(final boolean identityChanged) {
         return new FavoriteDevice(mId, mFingerprint, mHost, mPort, mAlias, mCustomAlias,
             identityChanged, mLastSuccessMs);
     }
 
-    /** Returns a copy that records a successful connection at {@code nowMs}. */
+    /**
+     * Returns a copy that records a successful connection at {@code nowMs}.
+     */
     @NonNull
     public FavoriteDevice withSuccess(@NonNull final String host, final int port,
         final long nowMs) {
@@ -124,20 +134,26 @@ public final class FavoriteDevice {
             mIdentityChanged, nowMs);
     }
 
-    /** Returns a copy bound to a new fingerprint; used when the user confirms a change. */
+    /**
+     * Returns a copy bound to a new fingerprint; used when the user confirms a change.
+     */
     @NonNull
     public FavoriteDevice withFingerprint(@Nullable final String fingerprint) {
         return new FavoriteDevice(mId, fingerprint, mHost, mPort, mAlias, mCustomAlias,
             false, mLastSuccessMs);
     }
 
-    /** Returns the display label, or the id when the favorite has no alias. */
+    /**
+     * Returns the display label, or the id when the favorite has no alias.
+     */
     @NonNull
     public String displayName() {
         return mAlias != null ? mAlias : mId;
     }
 
-    /** Returns whether two favorites describe the same device identity. */
+    /**
+     * Returns whether two favorites describe the same device identity.
+     */
     public boolean sameIdentity(@NonNull final FavoriteDevice other) {
         return Objects.equals(mId, other.mId) && Objects.equals(mFingerprint, other.mFingerprint);
     }

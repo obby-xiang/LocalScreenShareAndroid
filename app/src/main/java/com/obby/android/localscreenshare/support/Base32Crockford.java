@@ -18,10 +18,14 @@ import java.util.Locale;
  */
 public final class Base32Crockford {
 
-    /** Encoding alphabet; the index of a character is its five-bit value. */
+    /**
+     * Encoding alphabet; the index of a character is its five-bit value.
+     */
     public static final String ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
-    /** Radix of the encoding. */
+    /**
+     * Radix of the encoding.
+     */
     public static final int RADIX = 32;
 
     private static final int BITS_PER_SYMBOL = 5;

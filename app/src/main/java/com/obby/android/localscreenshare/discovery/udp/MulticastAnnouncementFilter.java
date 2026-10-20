@@ -34,7 +34,9 @@ import java.util.function.Predicate;
  */
 public final class MulticastAnnouncementFilter {
 
-    /** Upper bound of tracked devices and addresses. */
+    /**
+     * Upper bound of tracked devices and addresses.
+     */
     public static final int MAX_TRACKED = 256;
 
     @NonNull
@@ -107,7 +109,9 @@ public final class MulticastAnnouncementFilter {
         return true;
     }
 
-    /** Drops the ordering and merge state; called when discovery stops. */
+    /**
+     * Drops the ordering and merge state; called when discovery stops.
+     */
     public void reset() {
         mSequences.clear();
         mLastRegisterMs.clear();
@@ -124,7 +128,9 @@ public final class MulticastAnnouncementFilter {
         }
     }
 
-    /** Last accepted sequence of one device boot. */
+    /**
+     * Last accepted sequence of one device boot.
+     */
     private static final class Sequence {
         @NonNull
         final String boot;

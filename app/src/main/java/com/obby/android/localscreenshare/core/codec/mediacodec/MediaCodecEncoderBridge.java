@@ -39,13 +39,19 @@ public interface MediaCodecEncoderBridge {
      */
     Surface createInputSurface();
 
-    /** Starts the codec. Encoded output becomes available only after this call. */
+    /**
+     * Starts the codec. Encoded output becomes available only after this call.
+     */
     void start();
 
-    /** Stops the codec after the drain loop exits. Idempotent. */
+    /**
+     * Stops the codec after the drain loop exits. Idempotent.
+     */
     void stop();
 
-    /** Releases the codec and the input surface. Idempotent; never called while a call is in flight. */
+    /**
+     * Releases the codec and the input surface. Idempotent; never called while a call is in flight.
+     */
     void release();
 
     /**
@@ -54,7 +60,9 @@ public interface MediaCodecEncoderBridge {
      */
     void requestSyncFrame();
 
-    /** Applies a new target bitrate without reconfiguring or restarting the codec. */
+    /**
+     * Applies a new target bitrate without reconfiguring or restarting the codec.
+     */
     void updateBitrate(int bitrateBps);
 
     /**
@@ -64,6 +72,8 @@ public interface MediaCodecEncoderBridge {
      */
     EncodedSample dequeueOutput(long timeoutUs);
 
-    /** Returns the latest output format snapshot, non-null only after a format change. */
+    /**
+     * Returns the latest output format snapshot, non-null only after a format change.
+     */
     EncoderStreamFormat getOutputFormat();
 }

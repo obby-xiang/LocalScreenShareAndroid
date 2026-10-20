@@ -19,10 +19,14 @@ public interface DiscoveryProvider {
      */
     void start(@NonNull DiscoveryProviderListener listener);
 
-    /** Stops the source; pending callbacks become no-ops and no observation is delivered afterwards. */
+    /**
+     * Stops the source; pending callbacks become no-ops and no observation is delivered afterwards.
+     */
     void stop();
 
-    /** Returns the stable provider id used in logs and diagnostics. */
+    /**
+     * Returns the stable provider id used in logs and diagnostics.
+     */
     @NonNull
     String id();
 }

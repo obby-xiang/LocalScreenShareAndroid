@@ -57,7 +57,9 @@ public final class StreamHub implements StreamRuntimeListener {
             new ConcurrentHashMap<>();
     private StreamRuntime activeRuntime;
 
-    /** Creates a hub with default queue limits and the production monotonic clock. */
+    /**
+     * Creates a hub with default queue limits and the production monotonic clock.
+     */
     public StreamHub(CodecRegistry registry) {
         this(registry, StreamQueueLimits.defaults(), TimeSource.MONOTONIC);
     }
@@ -161,7 +163,9 @@ public final class StreamHub implements StreamRuntimeListener {
         }
     }
 
-    /** Returns the active runtime, or {@code null} when no stream is active. */
+    /**
+     * Returns the active runtime, or {@code null} when no stream is active.
+     */
     public StreamRuntime getActiveStream() {
         synchronized (lock) {
             return activeRuntime;
@@ -306,12 +310,16 @@ public final class StreamHub implements StreamRuntimeListener {
         }
     }
 
-    /** Returns the session bound to a key, or null; intended for inspection and tests. */
+    /**
+     * Returns the session bound to a key, or null; intended for inspection and tests.
+     */
     public ClientSendSession getSession(ClientSessionKey key) {
         return key == null ? null : sessions.get(key);
     }
 
-    /** Returns the number of attached sessions. */
+    /**
+     * Returns the number of attached sessions.
+     */
     public int getSessionCount() {
         return sessions.size();
     }

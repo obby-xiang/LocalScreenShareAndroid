@@ -29,17 +29,23 @@ public final class FakeIdentityKeyStore implements IdentityKeyStore {
 
     private int mResetCount;
 
-    /** Drops the key while keeping nothing else, which is what a backup restore looks like. */
+    /**
+     * Drops the key while keeping nothing else, which is what a backup restore looks like.
+     */
     public void forgetKey() {
         mKeyPair = null;
     }
 
-    /** Makes every call fail the way an unavailable keystore provider would. */
+    /**
+     * Makes every call fail the way an unavailable keystore provider would.
+     */
     public void failOnAccess() {
         mFails = true;
     }
 
-    /** Returns the stored key pair, or null when no key was generated yet. */
+    /**
+     * Returns the stored key pair, or null when no key was generated yet.
+     */
     @Nullable
     public KeyPair keyPair() {
         return mKeyPair;

@@ -21,15 +21,21 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public final class FakeProbe implements AddressProbe {
 
-    /** Decides the answer of one probe. */
+    /**
+     * Decides the answer of one probe.
+     */
     @FunctionalInterface
     public interface Responder {
-        /** Returns the result for one address. */
+        /**
+         * Returns the result for one address.
+         */
         @NonNull
         ProbeResult respond(@NonNull String host, int port);
     }
 
-    /** One recorded probe. */
+    /**
+     * One recorded probe.
+     */
     public static final class Call {
         @NonNull
         public final String host;
@@ -60,18 +66,24 @@ public final class FakeProbe implements AddressProbe {
     @Nullable
     private volatile Runnable mOnProbe;
 
-    /** Creates a probe that answers with {@code responder}. */
+    /**
+     * Creates a probe that answers with {@code responder}.
+     */
     public FakeProbe(@NonNull final Responder responder) {
         mResponder = responder;
     }
 
-    /** Creates a probe whose every attempt fails. */
+    /**
+     * Creates a probe whose every attempt fails.
+     */
     @NonNull
     public static FakeProbe alwaysFailing() {
         return new FakeProbe((host, port) -> ProbeResult.failed(host, port, "unreachable"));
     }
 
-    /** Creates a probe that confirms every address with the given identity. */
+    /**
+     * Creates a probe that confirms every address with the given identity.
+     */
     @NonNull
     public static FakeProbe confirmingAll(@NonNull final String deviceId) {
         return new FakeProbe((host, port) -> ProbeResult.confirmed(DeviceSummary.newBuilder()
@@ -80,12 +92,16 @@ public final class FakeProbe implements AddressProbe {
             .build(), host, port));
     }
 
-    /** Sets a sleep applied to every probe, used to observe concurrency. */
+    /**
+     * Sets a sleep applied to every probe, used to observe concurrency.
+     */
     public void setDelayMs(final long delayMs) {
         mDelayMs = delayMs;
     }
 
-    /** Sets a hook that runs at the start of every probe. */
+    /**
+     * Sets a hook that runs at the start of every probe.
+     */
     public void setOnProbe(@Nullable final Runnable onProbe) {
         mOnProbe = onProbe;
     }
@@ -115,7 +131,9 @@ public final class FakeProbe implements AddressProbe {
         }
     }
 
-    /** Returns the recorded calls in completion order. */
+    /**
+     * Returns the recorded calls in completion order.
+     */
     @NonNull
     public List<Call> calls() {
         synchronized (mCalls) {
@@ -123,17 +141,23 @@ public final class FakeProbe implements AddressProbe {
         }
     }
 
-    /** Returns the number of probes issued. */
+    /**
+     * Returns the number of probes issued.
+     */
     public int callCount() {
         return mCalls.size();
     }
 
-    /** Returns the highest number of probes that overlapped. */
+    /**
+     * Returns the highest number of probes that overlapped.
+     */
     public int maxConcurrent() {
         return mMaxActive.get();
     }
 
-    /** Returns the probed hosts in call order. */
+    /**
+     * Returns the probed hosts in call order.
+     */
     @NonNull
     public List<String> hosts() {
         final List<String> hosts = new ArrayList<>();

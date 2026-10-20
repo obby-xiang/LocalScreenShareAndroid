@@ -14,7 +14,9 @@ import java.io.IOException;
  */
 public final class AndroidMediaCodecBridgeFactory implements MediaCodecBridgeFactory {
 
-    /** Creates the factory. */
+    /**
+     * Creates the factory.
+     */
     public AndroidMediaCodecBridgeFactory() {
     }
 

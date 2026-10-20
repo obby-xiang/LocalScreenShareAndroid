@@ -21,7 +21,9 @@ package com.obby.android.localscreenshare.core.model;
  */
 public final class EncodedAccessUnit {
 
-    /** Sentinel for a stream with no decode timestamps (no frame reordering). */
+    /**
+     * Sentinel for a stream with no decode timestamps (no frame reordering).
+     */
     public static final long DTS_UNSET = Long.MIN_VALUE;
 
     private final StreamKey streamKey;
@@ -93,17 +95,23 @@ public final class EncodedAccessUnit {
         this.payload = payload.clone();
     }
 
-    /** Returns the stream this unit belongs to. */
+    /**
+     * Returns the stream this unit belongs to.
+     */
     public StreamKey getStreamKey() {
         return streamKey;
     }
 
-    /** Returns the config epoch that identifies the descriptor used to encode this unit. */
+    /**
+     * Returns the config epoch that identifies the descriptor used to encode this unit.
+     */
     public int getConfigEpoch() {
         return configEpoch;
     }
 
-    /** Returns the unit's index within its {@code (streamKey, configEpoch)} sequence. */
+    /**
+     * Returns the unit's index within its {@code (streamKey, configEpoch)} sequence.
+     */
     public long getSequence() {
         return sequence;
     }
@@ -116,7 +124,9 @@ public final class EncodedAccessUnit {
         return dtsUs;
     }
 
-    /** Returns the signaling flags; codec policies may re-validate the payload. */
+    /**
+     * Returns the signaling flags; codec policies may re-validate the payload.
+     */
     public AccessUnitFlags getFlags() {
         return flags;
     }
@@ -130,22 +140,30 @@ public final class EncodedAccessUnit {
         return joinInfo;
     }
 
-    /** Returns optional temporal layer metadata, or {@code null} when the codec does not use it. */
+    /**
+     * Returns optional temporal layer metadata, or {@code null} when the codec does not use it.
+     */
     public Integer getTemporalLayerId() {
         return temporalLayerId;
     }
 
-    /** Returns a copy of the encoded payload. */
+    /**
+     * Returns a copy of the encoded payload.
+     */
     public byte[] getPayload() {
         return payload.clone();
     }
 
-    /** Returns the payload length without copying the payload. */
+    /**
+     * Returns the payload length without copying the payload.
+     */
     public int getPayloadLength() {
         return payload.length;
     }
 
-    /** True when a decode timestamp is present rather than {@link #DTS_UNSET}. */
+    /**
+     * True when a decode timestamp is present rather than {@link #DTS_UNSET}.
+     */
     public boolean hasDtsUs() {
         return dtsUs != DTS_UNSET;
     }

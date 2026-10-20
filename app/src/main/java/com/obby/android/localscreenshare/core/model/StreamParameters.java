@@ -10,7 +10,9 @@ package com.obby.android.localscreenshare.core.model;
  */
 public final class StreamParameters {
 
-    /** Default hints: 4 Mbps, 30 frames per second and a 1 second key-frame interval. */
+    /**
+     * Default hints: 4 Mbps, 30 frames per second and a 1 second key-frame interval.
+     */
     public static final StreamParameters DEFAULT =
             new StreamParameters(4_000_000, 30, 1000);
 
@@ -50,17 +52,23 @@ public final class StreamParameters {
         return keyFrameIntervalMs;
     }
 
-    /** Returns a copy with another target bitrate; this instance is unchanged. */
+    /**
+     * Returns a copy with another target bitrate; this instance is unchanged.
+     */
     public StreamParameters withTargetBitrate(int newTargetBitrateBps) {
         return new StreamParameters(newTargetBitrateBps, frameRateHint, keyFrameIntervalMs);
     }
 
-    /** Returns a copy with another frame-rate hint; this instance is unchanged. */
+    /**
+     * Returns a copy with another frame-rate hint; this instance is unchanged.
+     */
     public StreamParameters withFrameRateHint(int newFrameRateHint) {
         return new StreamParameters(targetBitrateBps, newFrameRateHint, keyFrameIntervalMs);
     }
 
-    /** Returns a copy with another key-frame interval; this instance is unchanged. */
+    /**
+     * Returns a copy with another key-frame interval; this instance is unchanged.
+     */
     public StreamParameters withKeyFrameInterval(int newKeyFrameIntervalMs) {
         return new StreamParameters(targetBitrateBps, frameRateHint, newKeyFrameIntervalMs);
     }

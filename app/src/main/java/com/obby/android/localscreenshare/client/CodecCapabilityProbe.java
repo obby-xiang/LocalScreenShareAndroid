@@ -40,7 +40,9 @@ public final class CodecCapabilityProbe {
         return new ClientCapabilities(capabilities);
     }
 
-    /** Returns true when the device advertises at least one encoder for {@code mime}. */
+    /**
+     * Returns true when the device advertises at least one encoder for {@code mime}.
+     */
     public static boolean hasEncoder(String mime) {
         try {
             MediaCodecList list = new MediaCodecList(MediaCodecList.ALL_CODECS);

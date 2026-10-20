@@ -794,7 +794,9 @@ public class ScreenShareService extends Service {
         mMainHandler.postDelayed(mVisibilityExpiryRunnable, policy.getExpiresAtMs() - nowMs + 100L);
     }
 
-    /** Stops the announcer; it sends its goodbye burst and releases the sockets and the lock. */
+    /**
+     * Stops the announcer; it sends its goodbye burst and releases the sockets and the lock.
+     */
     private void stopAnnouncements() {
         mMainHandler.removeCallbacks(mVisibilityExpiryRunnable);
         if (mAnnouncer == null) {
@@ -1036,7 +1038,9 @@ public class ScreenShareService extends Service {
         mStreamRuntime.start();
     }
 
-    /** Builds the requested descriptor for the current codec mode and capture size. */
+    /**
+     * Builds the requested descriptor for the current codec mode and capture size.
+     */
     @NonNull
     private StreamDescriptor buildRequestedDescriptor(final int configEpoch) {
         final int width = mProjectionSize.getWidth();

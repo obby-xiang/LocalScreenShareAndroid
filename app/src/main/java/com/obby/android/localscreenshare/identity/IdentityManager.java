@@ -37,7 +37,9 @@ public final class IdentityManager {
             () -> Preferences.get().getIdentityFingerprint(), this::recordIdentity);
     }
 
-    /** Returns the process-wide instance. */
+    /**
+     * Returns the process-wide instance.
+     */
     @NonNull
     public static IdentityManager get() {
         return InstanceHolder.INSTANCE;

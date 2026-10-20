@@ -32,7 +32,9 @@ import java.util.Map;
  */
 public final class ScreenStreamProtoMapper {
 
-    /** Version of the wire protocol implemented by this mapper. */
+    /**
+     * Version of the wire protocol implemented by this mapper.
+     */
     public static final int PROTOCOL_VERSION = 1;
 
     private ScreenStreamProtoMapper() {

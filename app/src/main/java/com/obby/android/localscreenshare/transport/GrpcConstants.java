@@ -11,9 +11,13 @@ import lombok.NoArgsConstructor;
  */
 @NoArgsConstructor(access = AccessLevel.PRIVATE)
 public final class GrpcConstants {
-    /** HTTP/2 flow-control window used by both the gRPC client and server (1 MiB). */
+    /**
+     * HTTP/2 flow-control window used by both the gRPC client and server (1 MiB).
+     */
     public static final int GRPC_FLOW_CONTROL_WINDOW = 1024 * 1024;
 
-    /** Maximum inbound message size accepted by both the gRPC client and server (8 MiB). */
+    /**
+     * Maximum inbound message size accepted by both the gRPC client and server (8 MiB).
+     */
     public static final int GRPC_MAX_INBOUND_MESSAGE_SIZE = 8 * 1024 * 1024;
 }

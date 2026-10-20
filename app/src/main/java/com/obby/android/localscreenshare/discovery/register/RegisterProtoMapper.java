@@ -31,7 +31,9 @@ public final class RegisterProtoMapper {
     private RegisterProtoMapper() {
     }
 
-    /** Builds the discovery summary of a device, including every address the store knows. */
+    /**
+     * Builds the discovery summary of a device, including every address the store knows.
+     */
     @NonNull
     public static DeviceSummary toSummary(@NonNull final DeviceInfo device) {
         final DeviceSummary.Builder builder = DeviceSummary.newBuilder()
@@ -90,7 +92,9 @@ public final class RegisterProtoMapper {
             .build();
     }
 
-    /** Returns the addresses of a summary as discovery addresses, in wire order. */
+    /**
+     * Returns the addresses of a summary as discovery addresses, in wire order.
+     */
     @NonNull
     public static List<DeviceAddress> toAddresses(@NonNull final DeviceSummary summary,
         @NonNull final DiscoveryChannel channel) {
@@ -128,12 +132,16 @@ public final class RegisterProtoMapper {
         return null;
     }
 
-    /** Normalizes a wire protocol version: {@code 0} means the first version. */
+    /**
+     * Normalizes a wire protocol version: {@code 0} means the first version.
+     */
     public static int normalizeVersion(final int version) {
         return version <= 0 ? ScreenStreamProtoMapper.PROTOCOL_VERSION : version;
     }
 
-    /** True when a wire protocol version can be served by this implementation. */
+    /**
+     * True when a wire protocol version can be served by this implementation.
+     */
     public static boolean isVersionCompatible(final int version) {
         final int normalized = normalizeVersion(version);
         return normalized > 0 && normalized <= ScreenStreamProtoMapper.PROTOCOL_VERSION;

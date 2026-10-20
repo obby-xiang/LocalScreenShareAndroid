@@ -39,7 +39,9 @@ public final class FakeDelayedScheduler implements DelayedScheduler {
         mTasks.clear();
     }
 
-    /** Advances virtual time and runs every task that becomes due, in chronological order. */
+    /**
+     * Advances virtual time and runs every task that becomes due, in chronological order.
+     */
     public synchronized void advance(final long deltaMs) {
         final long targetMs = mNowMs + deltaMs;
         while (true) {
@@ -63,22 +65,30 @@ public final class FakeDelayedScheduler implements DelayedScheduler {
         mNowMs = targetMs;
     }
 
-    /** Returns the current virtual time. */
+    /**
+     * Returns the current virtual time.
+     */
     public synchronized long nowMs() {
         return mNowMs;
     }
 
-    /** Returns the number of scheduled and not yet run tasks. */
+    /**
+     * Returns the number of scheduled and not yet run tasks.
+     */
     public synchronized int pendingCount() {
         return mTasks.size();
     }
 
-    /** Returns whether {@link #shutdown()} was called. */
+    /**
+     * Returns whether {@link #shutdown()} was called.
+     */
     public synchronized boolean isShutdown() {
         return mShutdown;
     }
 
-    /** One scheduled callback. */
+    /**
+     * One scheduled callback.
+     */
     private static final class Task {
         final long atMs;
 

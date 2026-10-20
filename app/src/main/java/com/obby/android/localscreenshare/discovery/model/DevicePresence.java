@@ -10,15 +10,23 @@ package com.obby.android.localscreenshare.discovery.model;
  * {@link #UNREACHABLE} is the terminal state of a favorite that has expired.</p>
  */
 public enum DevicePresence {
-    /** Observed by at least one discovery source within the heard window, never confirmed. */
+    /**
+     * Observed by at least one discovery source within the heard window, never confirmed.
+     */
     HEARD,
 
-    /** Application-level confirmation received within the confirmed window. */
+    /**
+     * Application-level confirmation received within the confirmed window.
+     */
     CONFIRMED,
 
-    /** Last observation is older than the heard window; entry retained until the remove window. */
+    /**
+     * Last observation is older than the heard window; entry retained until the remove window.
+     */
     STALE,
 
-    /** Favorite whose last observation is older than the remove window; kept for retry. */
+    /**
+     * Favorite whose last observation is older than the remove window; kept for retry.
+     */
     UNREACHABLE
 }

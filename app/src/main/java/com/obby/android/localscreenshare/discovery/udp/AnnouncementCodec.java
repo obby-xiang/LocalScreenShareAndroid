@@ -32,10 +32,14 @@ import java.nio.charset.StandardCharsets;
  */
 public final class AnnouncementCodec {
 
-    /** Maximum wire size of one announcement. */
+    /**
+     * Maximum wire size of one announcement.
+     */
     public static final int MAX_BYTES = 512;
 
-    /** Maximum number of JSON members accepted in one announcement. */
+    /**
+     * Maximum number of JSON members accepted in one announcement.
+     */
     public static final int MAX_FIELDS = 24;
 
     private static final String KEY_VERSION = "v";

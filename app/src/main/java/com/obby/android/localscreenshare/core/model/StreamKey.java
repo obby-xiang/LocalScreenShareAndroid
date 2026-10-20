@@ -35,7 +35,9 @@ public final class StreamKey {
         return streamId;
     }
 
-    /** Returns the canonical {@code sessionInstanceId/streamId} form. */
+    /**
+     * Returns the canonical {@code sessionInstanceId/streamId} form.
+     */
     public String getValue() {
         return sessionInstanceId + "/" + streamId;
     }

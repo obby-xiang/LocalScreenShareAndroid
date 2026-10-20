@@ -275,7 +275,9 @@ public class RegisterCallHandlerTest {
                 .build());
     }
 
-    /** One reverse call recorded by the fake registrar. */
+    /**
+     * One reverse call recorded by the fake registrar.
+     */
     private static final class ReverseCall {
         final String host;
 

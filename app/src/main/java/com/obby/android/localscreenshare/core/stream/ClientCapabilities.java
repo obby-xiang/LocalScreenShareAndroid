@@ -58,22 +58,30 @@ public final class ClientCapabilities {
         this.capabilities = Collections.unmodifiableMap(copy);
     }
 
-    /** Returns whether a codec is supported; {@code null} is never supported. */
+    /**
+     * Returns whether a codec is supported; {@code null} is never supported.
+     */
     public boolean supports(String codecId) {
         return codecId != null && capabilities.containsKey(codecId);
     }
 
-    /** Returns the capability for a codec, or {@code null} when unsupported. */
+    /**
+     * Returns the capability for a codec, or {@code null} when unsupported.
+     */
     public CodecCapability getCapability(String codecId) {
         return codecId == null ? null : capabilities.get(codecId);
     }
 
-    /** Returns the unmodifiable set of supported codec ids. */
+    /**
+     * Returns the unmodifiable set of supported codec ids.
+     */
     public Set<String> getCodecIds() {
         return Collections.unmodifiableSet(new LinkedHashSet<>(capabilities.keySet()));
     }
 
-    /** Returns an unmodifiable snapshot of the codec-id-to-capability map. */
+    /**
+     * Returns an unmodifiable snapshot of the codec-id-to-capability map.
+     */
     public Map<String, CodecCapability> getCapabilities() {
         return capabilities;
     }

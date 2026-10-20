@@ -34,13 +34,19 @@ import lombok.NoArgsConstructor;
  */
 @NoArgsConstructor(access = AccessLevel.PRIVATE)
 public final class NsdResolver {
-    /** Default resolve timeout; matches the discovery research budget. */
+    /**
+     * Default resolve timeout; matches the discovery research budget.
+     */
     public static final long DEFAULT_RESOLVE_TIMEOUT_MS = 2_000L;
 
-    /** Error code reported through {@link NsdManager.ResolveListener#onResolveFailed} on timeout. */
+    /**
+     * Error code reported through {@link NsdManager.ResolveListener#onResolveFailed} on timeout.
+     */
     public static final int ERROR_CODE_TIMEOUT = -1;
 
-    /** Error code reported when the framework rejected the resolve request synchronously. */
+    /**
+     * Error code reported when the framework rejected the resolve request synchronously.
+     */
     public static final int ERROR_CODE_REQUEST_REJECTED = -2;
 
     private static final Supplier<Executor> RESOLVE_SERVICE_EXECUTOR_SUPPLIER =

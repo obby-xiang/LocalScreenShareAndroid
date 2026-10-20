@@ -60,7 +60,9 @@ public final class CodecRegistration {
         return decoderFactory;
     }
 
-    /** Returns the policy shared by all sessions that use this codec. */
+    /**
+     * Returns the policy shared by all sessions that use this codec.
+     */
     public CodecPolicy getPolicy() {
         return policy;
     }

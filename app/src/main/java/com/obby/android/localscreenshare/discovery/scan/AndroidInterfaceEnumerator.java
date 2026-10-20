@@ -36,7 +36,9 @@ public final class AndroidInterfaceEnumerator implements InterfaceEnumerator {
     @NonNull
     private final ConnectivityManager mConnectivityManager;
 
-    /** Creates the enumerator from an application context. */
+    /**
+     * Creates the enumerator from an application context.
+     */
     public AndroidInterfaceEnumerator(@NonNull final Context context) {
         mConnectivityManager = context.getSystemService(ConnectivityManager.class);
     }
@@ -78,7 +80,9 @@ public final class AndroidInterfaceEnumerator implements InterfaceEnumerator {
         return InterfaceFilter.eligible(candidates);
     }
 
-    /** Maps the transports of one network, preferring the transport that disqualifies a scan. */
+    /**
+     * Maps the transports of one network, preferring the transport that disqualifies a scan.
+     */
     @NonNull
     private static LocalInterface.Transport transportOf(@NonNull final NetworkCapabilities capabilities) {
         if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
@@ -96,7 +100,9 @@ public final class AndroidInterfaceEnumerator implements InterfaceEnumerator {
         return LocalInterface.Transport.OTHER;
     }
 
-    /** Reads the point-to-point flag of the named OS interface; unknown names are not exclusive. */
+    /**
+     * Reads the point-to-point flag of the named OS interface; unknown names are not exclusive.
+     */
     private static boolean isPointToPoint(@NonNull final String name) {
         if (name.isEmpty()) {
             return false;

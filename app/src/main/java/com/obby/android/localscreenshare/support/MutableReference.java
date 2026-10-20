@@ -21,7 +21,9 @@ public class MutableReference<T> {
     @Nullable
     private T mValue;
 
-    /** Creates a holder around {@code value}; the argument is not null-checked. */
+    /**
+     * Creates a holder around {@code value}; the argument is not null-checked.
+     */
     public MutableReference(@NonNull final T value) {
         mValue = value;
     }

@@ -92,7 +92,9 @@ final class DeviceEntry {
         lastSeenMs = nowMs;
     }
 
-    /** Applies one non-goodbye observation; returns false when it is an out-of-order duplicate. */
+    /**
+     * Applies one non-goodbye observation; returns false when it is an out-of-order duplicate.
+     */
     boolean merge(@NonNull final DeviceObservation observation, final long observedAtMs) {
         if (isOutOfOrder(observation)) {
             return false;
@@ -148,7 +150,9 @@ final class DeviceEntry {
         return true;
     }
 
-    /** Marks the matching address as confirmed, inserting it when the channel never reported it. */
+    /**
+     * Marks the matching address as confirmed, inserting it when the channel never reported it.
+     */
     void confirm(@NonNull final DiscoveryChannel channel, @NonNull final String host, final int port,
         final long confirmedAtMs) {
         final DeviceAddress address = new DeviceAddress(host, port, channel, true, confirmedAtMs);
@@ -159,12 +163,16 @@ final class DeviceEntry {
         leaving = false;
     }
 
-    /** Drops the address observed by {@code channel} at {@code host:port}, if it is known. */
+    /**
+     * Drops the address observed by {@code channel} at {@code host:port}, if it is known.
+     */
     boolean removeAddress(@NonNull final DiscoveryChannel channel, @NonNull final String host, final int port) {
         return addresses.remove(new DeviceAddress(host, port, channel).getKey()) != null;
     }
 
-    /** Returns the addresses as an immutable snapshot, ordered by usefulness. */
+    /**
+     * Returns the addresses as an immutable snapshot, ordered by usefulness.
+     */
     @NonNull
     List<DeviceAddress> addresses() {
         final List<DeviceAddress> snapshot = new ArrayList<>(addresses.values());
@@ -172,7 +180,9 @@ final class DeviceEntry {
         return Collections.unmodifiableList(snapshot);
     }
 
-    /** True when the entry has no address and no channel reported it recently enough to keep. */
+    /**
+     * True when the entry has no address and no channel reported it recently enough to keep.
+     */
     boolean isExpired(final long nowMs, final long heardTtlMs, final long confirmedTtlMs,
         final long removeAfterMs) {
         if (favorite) {
@@ -184,7 +194,9 @@ final class DeviceEntry {
         return nowMs - lastSeenMs > removeAfterMs;
     }
 
-    /** Derives the presence of this entry at {@code nowMs}; never returns null. */
+    /**
+     * Derives the presence of this entry at {@code nowMs}; never returns null.
+     */
     @NonNull
     DevicePresence presence(final long nowMs, final long confirmedTtlMs, final long heardTtlMs,
         final long removeAfterMs) {

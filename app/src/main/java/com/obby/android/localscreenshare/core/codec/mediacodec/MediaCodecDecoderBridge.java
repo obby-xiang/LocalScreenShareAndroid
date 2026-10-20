@@ -21,16 +21,24 @@ package com.obby.android.localscreenshare.core.codec.mediacodec;
  */
 public interface MediaCodecDecoderBridge {
 
-    /** Configures the codec with the Annex B parameter sets and render surface in {@code format}. */
+    /**
+     * Configures the codec with the Annex B parameter sets and render surface in {@code format}.
+     */
     void configure(DecoderFormat format);
 
-    /** Starts the codec so queued input can be decoded. */
+    /**
+     * Starts the codec so queued input can be decoded.
+     */
     void start();
 
-    /** Stops the codec. Idempotent; safe on a codec that was never started. */
+    /**
+     * Stops the codec. Idempotent; safe on a codec that was never started.
+     */
     void stop();
 
-    /** Releases the codec. Idempotent; the render surface is not released. */
+    /**
+     * Releases the codec. Idempotent; the render surface is not released.
+     */
     void release();
 
     /**
@@ -39,7 +47,9 @@ public interface MediaCodecDecoderBridge {
      */
     int dequeueInputBuffer(long timeoutUs);
 
-    /** Copies {@code data} into input buffer {@code index} and queues it as one complete access unit. */
+    /**
+     * Copies {@code data} into input buffer {@code index} and queues it as one complete access unit.
+     */
     void queueInputBuffer(int index, byte[] data, long ptsUs);
 
     /**

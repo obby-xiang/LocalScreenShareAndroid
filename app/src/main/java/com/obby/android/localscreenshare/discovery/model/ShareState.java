@@ -13,16 +13,24 @@ import java.util.Locale;
  * {@link DevicePresence}.</p>
  */
 public enum ShareState {
-    /** A capture session is running. */
+    /**
+     * A capture session is running.
+     */
     LIVE,
 
-    /** Device is reachable but not streaming. */
+    /**
+     * Device is reachable but not streaming.
+     */
     IDLE,
 
-    /** State not advertised or not understood. */
+    /**
+     * State not advertised or not understood.
+     */
     UNKNOWN;
 
-    /** Maps a wire value to a state; null, blank and unknown values return {@link #UNKNOWN}. */
+    /**
+     * Maps a wire value to a state; null, blank and unknown values return {@link #UNKNOWN}.
+     */
     @NonNull
     public static ShareState fromWire(@Nullable final String value) {
         if (value == null) {
@@ -38,7 +46,9 @@ public enum ShareState {
         }
     }
 
-    /** Returns the lowercase wire value of this state. */
+    /**
+     * Returns the lowercase wire value of this state.
+     */
     @NonNull
     public String toWire() {
         return name().toLowerCase(Locale.ROOT);

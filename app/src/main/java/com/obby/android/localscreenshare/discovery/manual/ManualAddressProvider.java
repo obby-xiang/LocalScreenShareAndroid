@@ -34,10 +34,14 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public final class ManualAddressProvider implements DiscoveryProvider {
 
-    /** Stable provider id. */
+    /**
+     * Stable provider id.
+     */
     public static final String PROVIDER_ID = "manual";
 
-    /** Receives a peer whose probe succeeded. */
+    /**
+     * Receives a peer whose probe succeeded.
+     */
     @FunctionalInterface
     public interface ConfirmationSink {
         /**
@@ -52,12 +56,18 @@ public final class ManualAddressProvider implements DiscoveryProvider {
             @NonNull String host, int port);
     }
 
-    /** Outcome of one manual probe, delivered on the main-thread executor. */
+    /**
+     * Outcome of one manual probe, delivered on the main-thread executor.
+     */
     public interface ProbeCallback {
-        /** The address answered and was handed to the confirmation sink. */
+        /**
+         * The address answered and was handed to the confirmation sink.
+         */
         void onConfirmed(@NonNull String host, int port, @NonNull DeviceSummary peer);
 
-        /** The address did not answer, or the input was invalid; {@code reason} is a short code. */
+        /**
+         * The address did not answer, or the input was invalid; {@code reason} is a short code.
+         */
         void onFailed(@NonNull String reason);
     }
 
@@ -169,7 +179,9 @@ public final class ManualAddressProvider implements DiscoveryProvider {
         return true;
     }
 
-    /** Stops the probe executor; only the owner calls this when the provider is discarded. */
+    /**
+     * Stops the probe executor; only the owner calls this when the provider is discarded.
+     */
     public void shutdown() {
         mProbeExecutor.shutdownNow();
     }

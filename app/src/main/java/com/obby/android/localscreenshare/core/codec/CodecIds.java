@@ -9,16 +9,24 @@ package com.obby.android.localscreenshare.core.codec;
  */
 public final class CodecIds {
 
-    /** Reference intra-frame codec; every complete frame is independently decodable. */
+    /**
+     * Reference intra-frame codec; every complete frame is independently decodable.
+     */
     public static final String JPEG = "jpeg";
 
-    /** H.264/AVC, a reference-dependent codec that publishes configuration parts. */
+    /**
+     * H.264/AVC, a reference-dependent codec that publishes configuration parts.
+     */
     public static final String H264 = "h264";
 
-    /** Reserved identifier; no adapter registers it in this batch. */
+    /**
+     * Reserved identifier; no adapter registers it in this batch.
+     */
     public static final String HEVC = "hevc";
 
-    /** Reserved identifier; no adapter registers it in this batch. */
+    /**
+     * Reserved identifier; no adapter registers it in this batch.
+     */
     public static final String AV1 = "av1";
 
     private CodecIds() {

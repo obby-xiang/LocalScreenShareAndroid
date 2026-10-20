@@ -434,7 +434,9 @@ public final class DiscoveryManager {
         return true;
     }
 
-    /** Returns whether {@code id} is a favorite. */
+    /**
+     * Returns whether {@code id} is a favorite.
+     */
     public boolean isFavorite(@NonNull final String id) {
         return mFavoriteStore.isFavorite(id);
     }
@@ -582,7 +584,9 @@ public final class DiscoveryManager {
         updateServiceInfoList();
     }
 
-    /** Reads the multicast configuration for one provider start. */
+    /**
+     * Reads the multicast configuration for one provider start.
+     */
     @NonNull
     private static MulticastConfig multicastConfig() {
         return new MulticastConfig(Preferences.get().getMulticastGroup(),
@@ -707,7 +711,9 @@ public final class DiscoveryManager {
         }
     }
 
-    /** Imports the pre-identity favorite document once; a no-op when there is none. */
+    /**
+     * Imports the pre-identity favorite document once; a no-op when there is none.
+     */
     private void migrateFavorites() {
         final int imported = mFavoriteStore.migrateLegacy();
         if (imported > 0) {
@@ -738,7 +744,9 @@ public final class DiscoveryManager {
         }
     }
 
-    /** Counts the devices with an application-level confirmation, used by the scan grace. */
+    /**
+     * Counts the devices with an application-level confirmation, used by the scan grace.
+     */
     private int confirmedDeviceCount() {
         int confirmed = 0;
         for (final DeviceInfo device : mDeviceStore.snapshot()) {

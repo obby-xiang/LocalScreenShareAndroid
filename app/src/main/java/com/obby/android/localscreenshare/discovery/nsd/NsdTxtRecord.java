@@ -32,24 +32,38 @@ import java.util.Map;
  */
 public final class NsdTxtRecord {
 
-    /** TXT schema version written for the current namespace. */
+    /**
+     * TXT schema version written for the current namespace.
+     */
     public static final String SCHEMA_VERSION = "1";
 
-    /** Maximum accepted or written length of the device name, in characters. */
+    /**
+     * Maximum accepted or written length of the device name, in characters.
+     */
     public static final int MAX_NAME_LENGTH = 64;
 
-    /** Maximum accepted length of a device id, in characters. */
+    /**
+     * Maximum accepted length of a device id, in characters.
+     */
     public static final int MAX_ID_LENGTH = 64;
 
-    /** TXT value limit from RFC 6763; larger values are ignored while decoding. */
+    /**
+     * TXT value limit from RFC 6763; larger values are ignored while decoding.
+     */
     private static final int MAX_VALUE_BYTES = 255;
 
-    /** TXT namespace written by {@link #encode(DeviceInfo, Namespace, boolean)}. */
+    /**
+     * TXT namespace written by {@link #encode(DeviceInfo, Namespace, boolean)}.
+     */
     public enum Namespace {
-        /** Current {@code _lss._tcp} record: the full minimal set. */
+        /**
+         * Current {@code _lss._tcp} record: the full minimal set.
+         */
         CURRENT,
 
-        /** Legacy {@code _localscreenshare._udp} record understood by pre-_lss clients. */
+        /**
+         * Legacy {@code _localscreenshare._udp} record understood by pre-_lss clients.
+         */
         LEGACY
     }
 

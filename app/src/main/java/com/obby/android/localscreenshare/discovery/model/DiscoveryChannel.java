@@ -8,18 +8,28 @@ package com.obby.android.localscreenshare.discovery.model;
  * key rather than of the device identity.</p>
  */
 public enum DiscoveryChannel {
-    /** Android NSD (mDNS/DNS-SD), either the current or the legacy service type. */
+    /**
+     * Android NSD (mDNS/DNS-SD), either the current or the legacy service type.
+     */
     NSD,
 
-    /** UDP multicast announcement. */
+    /**
+     * UDP multicast announcement.
+     */
     MULTICAST,
 
-    /** Direct address scan. */
+    /**
+     * Direct address scan.
+     */
     SCAN,
 
-    /** Address entered by the user. */
+    /**
+     * Address entered by the user.
+     */
     MANUAL,
 
-    /** Persisted favorite probe. */
+    /**
+     * Persisted favorite probe.
+     */
     FAVORITE
 }

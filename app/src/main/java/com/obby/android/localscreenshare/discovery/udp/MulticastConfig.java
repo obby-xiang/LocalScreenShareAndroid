@@ -72,23 +72,31 @@ public final class MulticastConfig {
         mMaxInterfaces = maxInterfaces;
     }
 
-    /** Returns the configured group literal. */
+    /**
+     * Returns the configured group literal.
+     */
     @NonNull
     public String getGroup() {
         return mGroup;
     }
 
-    /** Returns the multicast port. */
+    /**
+     * Returns the multicast port.
+     */
     public int getPort() {
         return mPort;
     }
 
-    /** Returns the multicast hop limit. */
+    /**
+     * Returns the multicast hop limit.
+     */
     public int getTtl() {
         return mTtl;
     }
 
-    /** Returns the maximum number of interface sockets. */
+    /**
+     * Returns the maximum number of interface sockets.
+     */
     public int getMaxInterfaces() {
         return mMaxInterfaces;
     }

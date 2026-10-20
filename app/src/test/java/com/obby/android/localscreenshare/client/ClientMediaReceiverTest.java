@@ -27,7 +27,9 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
-/** Unit tests for {@link ClientMediaReceiver}. */
+/**
+ * Unit tests for {@link ClientMediaReceiver}.
+ */
 public class ClientMediaReceiverTest {
 
     private static final StreamKey STREAM_KEY = new StreamKey("session-1", "stream-1");

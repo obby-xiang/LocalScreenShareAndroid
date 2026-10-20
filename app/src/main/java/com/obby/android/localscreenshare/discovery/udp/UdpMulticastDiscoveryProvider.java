@@ -38,18 +38,26 @@ import java.util.function.Supplier;
  */
 public final class UdpMulticastDiscoveryProvider implements DiscoveryProvider {
 
-    /** Stable provider id. */
+    /**
+     * Stable provider id.
+     */
     public static final String PROVIDER_ID = "multicast";
 
-    /** Creates the transport used by one provider start. */
+    /**
+     * Creates the transport used by one provider start.
+     */
     @FunctionalInterface
     public interface TransportFactory {
-        /** Returns a not yet started transport. */
+        /**
+         * Returns a not yet started transport.
+         */
         @NonNull
         MulticastTransport create();
     }
 
-    /** Receives a peer whose Register call succeeded. */
+    /**
+     * Receives a peer whose Register call succeeded.
+     */
     @FunctionalInterface
     public interface ConfirmationSink {
         /**
@@ -200,7 +208,9 @@ public final class UdpMulticastDiscoveryProvider implements DiscoveryProvider {
         return PROVIDER_ID;
     }
 
-    /** Decodes one datagram on the receiver thread and hands it to the main thread. */
+    /**
+     * Decodes one datagram on the receiver thread and hands it to the main thread.
+     */
     private void handlePacket(@NonNull final byte[] payload, @NonNull final InetAddress sender) {
         final Announcement announcement = AnnouncementCodec.decode(payload);
         if (announcement == null) {
@@ -210,7 +220,9 @@ public final class UdpMulticastDiscoveryProvider implements DiscoveryProvider {
         mMainExecutor.execute(() -> handleAnnouncement(announcement, host));
     }
 
-    /** Applies the admission rules and Register trigger; runs on the main thread. */
+    /**
+     * Applies the admission rules and Register trigger; runs on the main thread.
+     */
     private void handleAnnouncement(@NonNull final Announcement announcement, @NonNull final String host) {
         if (!mStarted || !mFilter.accept(announcement)) {
             return;

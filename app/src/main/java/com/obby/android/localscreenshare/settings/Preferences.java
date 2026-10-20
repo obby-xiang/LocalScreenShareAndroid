@@ -36,73 +36,119 @@ import java.util.concurrent.CopyOnWriteArrayList;
  */
 @SuppressLint("ApplySharedPref")
 public final class Preferences {
-    /** Server bind port; see {@link #getServerPort()}. */
+    /**
+     * Server bind port; see {@link #getServerPort()}.
+     */
     public static final String KEY_SERVER_PORT = "server_port";
 
-    /** Secure-frame flag; see {@link #isProjectionSecure()}. */
+    /**
+     * Secure-frame flag; see {@link #isProjectionSecure()}.
+     */
     public static final String KEY_PROJECTION_SECURE = "projection_secure";
 
-    /** Capture scale percentage; see {@link #getProjectionScale()}. */
+    /**
+     * Capture scale percentage; see {@link #getProjectionScale()}.
+     */
     public static final String KEY_PROJECTION_SCALE = "projection_scale";
 
-    /** Keep-screen-on flag for capture; see {@link #isProjectionKeepScreenOn()}. */
+    /**
+     * Keep-screen-on flag for capture; see {@link #isProjectionKeepScreenOn()}.
+     */
     public static final String KEY_PROJECTION_KEEP_SCREEN_ON = "projection_keep_screen_on";
 
-    /** Capture frame rate cap; see {@link #getProjectionFrameRate()}. */
+    /**
+     * Capture frame rate cap; see {@link #getProjectionFrameRate()}.
+     */
     public static final String KEY_PROJECTION_FRAME_RATE = "projection_frame_rate";
 
-    /** JPEG quality for the legacy capture path; see {@link #getProjectionQuality()}. */
+    /**
+     * JPEG quality for the legacy capture path; see {@link #getProjectionQuality()}.
+     */
     public static final String KEY_PROJECTION_QUALITY = "projection_quality";
 
-    /** Capture codec mode; see {@link #getProjectionCodec()}. */
+    /**
+     * Capture codec mode; see {@link #getProjectionCodec()}.
+     */
     public static final String KEY_PROJECTION_CODEC = "projection_codec";
 
-    /** Capture bitrate in bits per second; see {@link #getProjectionBitrate()}. */
+    /**
+     * Capture bitrate in bits per second; see {@link #getProjectionBitrate()}.
+     */
     public static final String KEY_PROJECTION_BITRATE = "projection_bitrate";
 
-    /** Capture key-frame interval in milliseconds; see {@link #getProjectionIdrIntervalMs()}. */
+    /**
+     * Capture key-frame interval in milliseconds; see {@link #getProjectionIdrIntervalMs()}.
+     */
     public static final String KEY_PROJECTION_IDR_INTERVAL = "projection_idr_interval";
 
-    /** Normalized chip position; see {@link #getServiceChipLocation()}. */
+    /**
+     * Normalized chip position; see {@link #getServiceChipLocation()}.
+     */
     public static final String KEY_SERVICE_CHIP_LOCATION = "service_chip_location";
 
-    /** Keep-screen-on flag for the viewer overlay; see {@link #isViewerKeepScreenOn()}. */
+    /**
+     * Keep-screen-on flag for the viewer overlay; see {@link #isViewerKeepScreenOn()}.
+     */
     public static final String KEY_VIEWER_KEEP_SCREEN_ON = "viewer_keep_screen_on";
 
-    /** Overlay opacity percentage; see {@link #getViewerOpacity()}. */
+    /**
+     * Overlay opacity percentage; see {@link #getViewerOpacity()}.
+     */
     public static final String KEY_VIEWER_OPACITY = "viewer_opacity";
 
-    /** Overlay scale percentage; see {@link #getViewerScale()}. */
+    /**
+     * Overlay scale percentage; see {@link #getViewerScale()}.
+     */
     public static final String KEY_VIEWER_SCALE = "viewer_scale";
 
-    /** Normalized overlay position; see {@link #getViewerLocation()}. */
+    /**
+     * Normalized overlay position; see {@link #getViewerLocation()}.
+     */
     public static final String KEY_VIEWER_LOCATION = "viewer_location";
 
-    /** Rounded-corner flag for the overlay; see {@link #isViewerRounded()}. */
+    /**
+     * Rounded-corner flag for the overlay; see {@link #isViewerRounded()}.
+     */
     public static final String KEY_VIEWER_ROUNDED = "viewer_rounded";
 
-    /** Discovery toggle; see {@link #isDiscoveryEnabled()}. */
+    /**
+     * Discovery toggle; see {@link #isDiscoveryEnabled()}.
+     */
     public static final String KEY_DISCOVERY_ENABLED = "discovery_enabled";
 
-    /** Multicast announcement group; see {@link #getMulticastGroup()}. */
+    /**
+     * Multicast announcement group; see {@link #getMulticastGroup()}.
+     */
     public static final String KEY_MULTICAST_GROUP = "multicast_group";
 
-    /** Multicast announcement port; see {@link #getMulticastPort()}. */
+    /**
+     * Multicast announcement port; see {@link #getMulticastPort()}.
+     */
     public static final String KEY_MULTICAST_PORT = "multicast_port";
 
-    /** Multicast announcement toggle; see {@link #isMulticastAnnounceEnabled()}. */
+    /**
+     * Multicast announcement toggle; see {@link #isMulticastAnnounceEnabled()}.
+     */
     public static final String KEY_MULTICAST_ANNOUNCE_ENABLED = "multicast_announce_enabled";
 
-    /** Discovery refresh preset; see {@link #getDiscoveryRefreshTier()}. */
+    /**
+     * Discovery refresh preset; see {@link #getDiscoveryRefreshTier()}.
+     */
     public static final String KEY_DISCOVERY_REFRESH_TIER = "discovery_refresh_tier";
 
-    /** Visibility preset; see {@link #getDiscoveryVisibility()}. */
+    /**
+     * Visibility preset; see {@link #getDiscoveryVisibility()}.
+     */
     public static final String KEY_DISCOVERY_VISIBILITY = "discovery_visibility";
 
-    /** Absolute expiry of the temporary visibility preset; see {@link #getDiscoveryVisibilityUntil()}. */
+    /**
+     * Absolute expiry of the temporary visibility preset; see {@link #getDiscoveryVisibilityUntil()}.
+     */
     public static final String KEY_DISCOVERY_VISIBILITY_UNTIL = "discovery_visibility_until";
 
-    /** mDNS-only compatibility mode; see {@link #isDiscoveryCompatOnly()}. */
+    /**
+     * mDNS-only compatibility mode; see {@link #isDiscoveryCompatOnly()}.
+     */
     public static final String KEY_DISCOVERY_COMPAT_ONLY = "discovery_compat_only";
 
     private static final String PREF_FILE_NAME = "lss-preferences";
@@ -113,7 +159,9 @@ public final class Preferences {
 
     private static final String KEY_DEVICE_ALIAS = "device_alias";
 
-    /** Name-sharing flag; see {@link #isShareNameEnabled()}. */
+    /**
+     * Name-sharing flag; see {@link #isShareNameEnabled()}.
+     */
     public static final String KEY_SHARE_NAME_ENABLED = "share_name_enabled";
 
     private static final String KEY_IDENTITY_ID = "identity_id";
@@ -188,7 +236,9 @@ public final class Preferences {
         mObservers.add(observer);
     }
 
-    /** Removes an observer; the last removal detaches the SharedPreferences listener. */
+    /**
+     * Removes an observer; the last removal detaches the SharedPreferences listener.
+     */
     public void removeObserver(@NonNull final Observer observer) {
         mObservers.remove(observer);
 
@@ -248,7 +298,9 @@ public final class Preferences {
         return alias == null || alias.trim().isEmpty() ? null : alias;
     }
 
-    /** Persists the device alias; a null or blank value removes it. */
+    /**
+     * Persists the device alias; a null or blank value removes it.
+     */
     public void setDeviceAlias(@Nullable final String alias) {
         if (alias == null || alias.trim().isEmpty()) {
             mPreferences.edit().remove(KEY_DEVICE_ALIAS).commit();
@@ -268,7 +320,9 @@ public final class Preferences {
         return mPreferences.getBoolean(KEY_SHARE_NAME_ENABLED, false);
     }
 
-    /** Persists the name-sharing flag; the next advertisement picks it up. */
+    /**
+     * Persists the name-sharing flag; the next advertisement picks it up.
+     */
     public void setShareNameEnabled(final boolean isEnabled) {
         mPreferences.edit().putBoolean(KEY_SHARE_NAME_ENABLED, isEnabled).commit();
     }
@@ -285,7 +339,9 @@ public final class Preferences {
         return mPreferences.getString(KEY_IDENTITY_FINGERPRINT, null);
     }
 
-    /** Returns the device id recorded by the last identity load, or null before the first one. */
+    /**
+     * Returns the device id recorded by the last identity load, or null before the first one.
+     */
     @Nullable
     public String getIdentityId() {
         return mPreferences.getString(KEY_IDENTITY_ID, null);
@@ -318,7 +374,9 @@ public final class Preferences {
         return mPreferences.getString(KEY_LEGACY_SERVICE_ID, null);
     }
 
-    /** Captures the pre-identity server id once; later calls are ignored by the caller. */
+    /**
+     * Captures the pre-identity server id once; later calls are ignored by the caller.
+     */
     public void setLegacyIdentityServiceId(@Nullable final String serviceId) {
         if (serviceId == null || serviceId.trim().isEmpty()) {
             mPreferences.edit().remove(KEY_LEGACY_SERVICE_ID).commit();
@@ -327,7 +385,9 @@ public final class Preferences {
         }
     }
 
-    /** Server bind port; defaults to 8080. Read when the server is constructed. */
+    /**
+     * Server bind port; defaults to 8080. Read when the server is constructed.
+     */
     public int getServerPort() {
         return mPreferences.getInt(KEY_SERVER_PORT, DEFAULT_SERVER_PORT);
     }
@@ -349,37 +409,51 @@ public final class Preferences {
         return mPreferences.getBoolean(KEY_PROJECTION_SECURE, false);
     }
 
-    /** Persists the secure-frame flag; the capture service applies it to later frames. */
+    /**
+     * Persists the secure-frame flag; the capture service applies it to later frames.
+     */
     public void setProjectionSecure(final boolean isSecure) {
         mPreferences.edit().putBoolean(KEY_PROJECTION_SECURE, isSecure).commit();
     }
 
-    /** Whether capture keeps the screen on while sharing; defaults to true. */
+    /**
+     * Whether capture keeps the screen on while sharing; defaults to true.
+     */
     public boolean isProjectionKeepScreenOn() {
         return mPreferences.getBoolean(KEY_PROJECTION_KEEP_SCREEN_ON, true);
     }
 
-    /** Persists the keep-screen-on flag; it takes effect when a capture session starts. */
+    /**
+     * Persists the keep-screen-on flag; it takes effect when a capture session starts.
+     */
     public void setProjectionKeepScreenOn(final boolean isKeepScreenOn) {
         mPreferences.edit().putBoolean(KEY_PROJECTION_KEEP_SCREEN_ON, isKeepScreenOn).commit();
     }
 
-    /** Maximum capture frame rate in frames per second; defaults to 60. */
+    /**
+     * Maximum capture frame rate in frames per second; defaults to 60.
+     */
     public int getProjectionFrameRate() {
         return mPreferences.getInt(KEY_PROJECTION_FRAME_RATE, DEFAULT_PROJECTION_FRAME_RATE);
     }
 
-    /** Persists the frame rate cap; the capture service applies it to later frames. */
+    /**
+     * Persists the frame rate cap; the capture service applies it to later frames.
+     */
     public void setProjectionFrameRate(final int frameRate) {
         mPreferences.edit().putInt(KEY_PROJECTION_FRAME_RATE, frameRate).commit();
     }
 
-    /** JPEG quality used by the legacy capture path; defaults to 85. */
+    /**
+     * JPEG quality used by the legacy capture path; defaults to 85.
+     */
     public int getProjectionQuality() {
         return mPreferences.getInt(KEY_PROJECTION_QUALITY, DEFAULT_PROJECTION_QUALITY);
     }
 
-    /** Persists the JPEG quality; the capture service applies it to later frames. */
+    /**
+     * Persists the JPEG quality; the capture service applies it to later frames.
+     */
     public void setProjectionQuality(final int quality) {
         mPreferences.edit().putInt(KEY_PROJECTION_QUALITY, quality).commit();
     }
@@ -393,27 +467,37 @@ public final class Preferences {
         return mPreferences.getString(KEY_PROJECTION_CODEC, DEFAULT_PROJECTION_CODEC);
     }
 
-    /** Persists the codec mode; it takes effect when a capture session starts or is rebuilt. */
+    /**
+     * Persists the codec mode; it takes effect when a capture session starts or is rebuilt.
+     */
     public void setProjectionCodec(@NonNull final String codec) {
         mPreferences.edit().putString(KEY_PROJECTION_CODEC, codec).commit();
     }
 
-    /** Capture bitrate in bits per second; defaults to 4 Mbps. */
+    /**
+     * Capture bitrate in bits per second; defaults to 4 Mbps.
+     */
     public int getProjectionBitrate() {
         return mPreferences.getInt(KEY_PROJECTION_BITRATE, DEFAULT_PROJECTION_BITRATE);
     }
 
-    /** Persists the capture bitrate; the running encoder applies it live. */
+    /**
+     * Persists the capture bitrate; the running encoder applies it live.
+     */
     public void setProjectionBitrate(final int bitrate) {
         mPreferences.edit().putInt(KEY_PROJECTION_BITRATE, bitrate).commit();
     }
 
-    /** Capture key-frame interval in milliseconds; defaults to 1000. */
+    /**
+     * Capture key-frame interval in milliseconds; defaults to 1000.
+     */
     public int getProjectionIdrIntervalMs() {
         return mPreferences.getInt(KEY_PROJECTION_IDR_INTERVAL, DEFAULT_PROJECTION_IDR_INTERVAL_MS);
     }
 
-    /** Persists the key-frame interval; it takes effect when the encoder is rebuilt. */
+    /**
+     * Persists the key-frame interval; it takes effect when the encoder is rebuilt.
+     */
     public void setProjectionIdrIntervalMs(final int intervalMs) {
         mPreferences.edit().putInt(KEY_PROJECTION_IDR_INTERVAL, intervalMs).commit();
     }
@@ -426,7 +510,9 @@ public final class Preferences {
         return mPreferences.getInt(KEY_PROJECTION_SCALE, DEFAULT_PROJECTION_SCALE);
     }
 
-    /** Persists the capture scale; the capture service resizes an active capture. */
+    /**
+     * Persists the capture scale; the capture service resizes an active capture.
+     */
     public void setProjectionScale(final int scale) {
         mPreferences.edit().putInt(KEY_PROJECTION_SCALE, scale).commit();
     }
@@ -442,37 +528,51 @@ public final class Preferences {
             .orElseGet(() -> new PointF(DEFAULT_SERVICE_CHIP_LOCATION.x, DEFAULT_SERVICE_CHIP_LOCATION.y));
     }
 
-    /** Persists the chip position; the coordinates are fractions of the bounds, not pixels. */
+    /**
+     * Persists the chip position; the coordinates are fractions of the bounds, not pixels.
+     */
     public void setServiceChipLocation(@NonNull final PointF location) {
         mPreferences.edit().putString(KEY_SERVICE_CHIP_LOCATION, mGson.toJson(location)).commit();
     }
 
-    /** Whether the viewer overlay keeps the screen on while showing a stream; defaults to true. */
+    /**
+     * Whether the viewer overlay keeps the screen on while showing a stream; defaults to true.
+     */
     public boolean isViewerKeepScreenOn() {
         return mPreferences.getBoolean(KEY_VIEWER_KEEP_SCREEN_ON, true);
     }
 
-    /** Persists the viewer keep-screen-on flag; applied the next time the overlay is shown. */
+    /**
+     * Persists the viewer keep-screen-on flag; applied the next time the overlay is shown.
+     */
     public void setViewerKeepScreenOn(final boolean isKeepScreenOn) {
         mPreferences.edit().putBoolean(KEY_VIEWER_KEEP_SCREEN_ON, isKeepScreenOn).commit();
     }
 
-    /** Viewer overlay opacity in percent; defaults to 100. */
+    /**
+     * Viewer overlay opacity in percent; defaults to 100.
+     */
     public int getViewerOpacity() {
         return mPreferences.getInt(KEY_VIEWER_OPACITY, DEFAULT_VIEWER_OPACITY);
     }
 
-    /** Persists the overlay opacity; applied when the overlay is shown or the user gestures. */
+    /**
+     * Persists the overlay opacity; applied when the overlay is shown or the user gestures.
+     */
     public void setViewerOpacity(final int opacity) {
         mPreferences.edit().putInt(KEY_VIEWER_OPACITY, opacity).commit();
     }
 
-    /** Viewer overlay size in percent; defaults to 80. */
+    /**
+     * Viewer overlay size in percent; defaults to 80.
+     */
     public int getViewerScale() {
         return mPreferences.getInt(KEY_VIEWER_SCALE, DEFAULT_VIEWER_SCALE);
     }
 
-    /** Persists the overlay size; applied when the overlay is shown or the user gestures. */
+    /**
+     * Persists the overlay size; applied when the overlay is shown or the user gestures.
+     */
     public void setViewerScale(final int scale) {
         mPreferences.edit().putInt(KEY_VIEWER_SCALE, scale).commit();
     }
@@ -488,27 +588,37 @@ public final class Preferences {
             .orElseGet(() -> new PointF(DEFAULT_VIEWER_LOCATION.x, DEFAULT_VIEWER_LOCATION.y));
     }
 
-    /** Persists the overlay position as fractions of the bounds, not pixels. */
+    /**
+     * Persists the overlay position as fractions of the bounds, not pixels.
+     */
     public void setViewerLocation(@NonNull final PointF location) {
         mPreferences.edit().putString(KEY_VIEWER_LOCATION, mGson.toJson(location)).commit();
     }
 
-    /** Whether the viewer overlay uses rounded corners; defaults to true. */
+    /**
+     * Whether the viewer overlay uses rounded corners; defaults to true.
+     */
     public boolean isViewerRounded() {
         return mPreferences.getBoolean(KEY_VIEWER_ROUNDED, true);
     }
 
-    /** Persists the rounded-corner flag; applied the next time the overlay shape is updated. */
+    /**
+     * Persists the rounded-corner flag; applied the next time the overlay shape is updated.
+     */
     public void setViewerRounded(final boolean isRounded) {
         mPreferences.edit().putBoolean(KEY_VIEWER_ROUNDED, isRounded).commit();
     }
 
-    /** Whether the app discovers and lists services; defaults to true. */
+    /**
+     * Whether the app discovers and lists services; defaults to true.
+     */
     public boolean isDiscoveryEnabled() {
         return mPreferences.getBoolean(KEY_DISCOVERY_ENABLED, true);
     }
 
-    /** Persists the discovery toggle; the activity and discovery manager read it on next use. */
+    /**
+     * Persists the discovery toggle; the activity and discovery manager read it on next use.
+     */
     public void setDiscoveryEnabled(final boolean isEnabled) {
         mPreferences.edit().putBoolean(KEY_DISCOVERY_ENABLED, isEnabled).commit();
     }
@@ -524,7 +634,9 @@ public final class Preferences {
         return group == null || group.trim().isEmpty() ? MulticastConstants.MULTICAST_GROUP : group.trim();
     }
 
-    /** Persists the multicast group; the next channel start uses it. */
+    /**
+     * Persists the multicast group; the next channel start uses it.
+     */
     public void setMulticastGroup(@Nullable final String group) {
         if (group == null || group.trim().isEmpty()) {
             mPreferences.edit().remove(KEY_MULTICAST_GROUP).commit();
@@ -533,12 +645,16 @@ public final class Preferences {
         }
     }
 
-    /** Multicast port used by the announcement channel; defaults to {@link MulticastConstants#MULTICAST_PORT}. */
+    /**
+     * Multicast port used by the announcement channel; defaults to {@link MulticastConstants#MULTICAST_PORT}.
+     */
     public int getMulticastPort() {
         return mPreferences.getInt(KEY_MULTICAST_PORT, MulticastConstants.MULTICAST_PORT);
     }
 
-    /** Persists the multicast port; the next channel start uses it. */
+    /**
+     * Persists the multicast port; the next channel start uses it.
+     */
     public void setMulticastPort(final int port) {
         mPreferences.edit().putInt(KEY_MULTICAST_PORT, port).commit();
     }
@@ -554,7 +670,9 @@ public final class Preferences {
         return mPreferences.getBoolean(KEY_MULTICAST_ANNOUNCE_ENABLED, true);
     }
 
-    /** Persists the multicast channel toggle; discovery and announcements apply it immediately. */
+    /**
+     * Persists the multicast channel toggle; discovery and announcements apply it immediately.
+     */
     public void setMulticastAnnounceEnabled(final boolean isEnabled) {
         mPreferences.edit().putBoolean(KEY_MULTICAST_ANNOUNCE_ENABLED, isEnabled).commit();
     }
@@ -570,7 +688,9 @@ public final class Preferences {
         return Optional.ofNullable(mPreferences.getString(KEY_DISCOVERY_REFRESH_TIER, null)).orElse("");
     }
 
-    /** Persists the refresh preset; a discovery restart applies it. */
+    /**
+     * Persists the refresh preset; a discovery restart applies it.
+     */
     public void setDiscoveryRefreshTier(@NonNull final String tier) {
         mPreferences.edit().putString(KEY_DISCOVERY_REFRESH_TIER, tier).commit();
     }
@@ -586,7 +706,9 @@ public final class Preferences {
         return Optional.ofNullable(mPreferences.getString(KEY_DISCOVERY_VISIBILITY, null)).orElse("");
     }
 
-    /** Absolute expiry of the temporary visibility preset; {@code 0} when it never expires. */
+    /**
+     * Absolute expiry of the temporary visibility preset; {@code 0} when it never expires.
+     */
     public long getDiscoveryVisibilityUntil() {
         return mPreferences.getLong(KEY_DISCOVERY_VISIBILITY_UNTIL, 0L);
     }
@@ -604,12 +726,16 @@ public final class Preferences {
             .commit();
     }
 
-    /** Whether discovery is restricted to mDNS and the legacy service type; defaults to false. */
+    /**
+     * Whether discovery is restricted to mDNS and the legacy service type; defaults to false.
+     */
     public boolean isDiscoveryCompatOnly() {
         return mPreferences.getBoolean(KEY_DISCOVERY_COMPAT_ONLY, false);
     }
 
-    /** Persists the compatibility-mode flag; discovery and announcements apply it immediately. */
+    /**
+     * Persists the compatibility-mode flag; discovery and announcements apply it immediately.
+     */
     public void setDiscoveryCompatOnly(final boolean compatOnly) {
         mPreferences.edit().putBoolean(KEY_DISCOVERY_COMPAT_ONLY, compatOnly).commit();
     }
@@ -636,7 +762,9 @@ public final class Preferences {
         void onChanged(@Nullable String key);
     }
 
-    /** Initializes the singleton on first access; class initialization publishes it safely. */
+    /**
+     * Initializes the singleton on first access; class initialization publishes it safely.
+     */
     private static class InstanceHolder {
         private static final Preferences INSTANCE = new Preferences();
     }

@@ -97,7 +97,9 @@ public class H264StreamEndToEndTest {
 
     private static final long JOIN_INTERVAL_MS = 100L;
 
-    /** Upper bound for an expected callback; generous because it only guards against hangs. */
+    /**
+     * Upper bound for an expected callback; generous because it only guards against hangs.
+     */
     private static final long AWAIT_TIMEOUT_MS = 5_000L;
 
     private static final byte[] IDR = H264Fixtures.annexB(H264Fixtures.idrSlice());
@@ -668,7 +670,9 @@ public class H264StreamEndToEndTest {
         return drained;
     }
 
-    /** Feeds events to a client media session strictly in their transport order. */
+    /**
+     * Feeds events to a client media session strictly in their transport order.
+     */
     private static void feed(ClientMediaSession client, List<FakeTransport.Event> events) {
         for (FakeTransport.Event event : events) {
             if (event.isDescriptor()) {
@@ -734,7 +738,9 @@ public class H264StreamEndToEndTest {
 
         final Probe probe;
 
-        /** Null when the fixture is built around a custom bridge factory. */
+        /**
+         * Null when the fixture is built around a custom bridge factory.
+         */
         final FakeMediaCodecBridgeFactory bridges;
 
         FakeFixture(MutableClock clock, CodecRegistry registry, StreamRuntime runtime,

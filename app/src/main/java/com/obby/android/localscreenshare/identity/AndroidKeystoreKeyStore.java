@@ -33,13 +33,19 @@ import java.security.spec.ECGenParameterSpec;
  */
 public final class AndroidKeystoreKeyStore implements IdentityKeyStore {
 
-    /** Keystore alias of the device identity key. */
+    /**
+     * Keystore alias of the device identity key.
+     */
     public static final String KEY_ALIAS = "lss-device-identity";
 
-    /** AndroidKeyStore provider name. */
+    /**
+     * AndroidKeyStore provider name.
+     */
     public static final String KEYSTORE_PROVIDER = "AndroidKeyStore";
 
-    /** NIST P-256 curve name understood by {@link ECGenParameterSpec}. */
+    /**
+     * NIST P-256 curve name understood by {@link ECGenParameterSpec}.
+     */
     public static final String EC_CURVE = "secp256r1";
 
     @NonNull
@@ -76,7 +82,9 @@ public final class AndroidKeystoreKeyStore implements IdentityKeyStore {
         return keyStore;
     }
 
-    /** Returns the stored key pair, or null when the entry is missing or cannot be read. */
+    /**
+     * Returns the stored key pair, or null when the entry is missing or cannot be read.
+     */
     @Nullable
     private static KeyPair readKeyPair(@NonNull final KeyStore keyStore) throws GeneralSecurityException {
         if (!keyStore.containsAlias(KEY_ALIAS)) {

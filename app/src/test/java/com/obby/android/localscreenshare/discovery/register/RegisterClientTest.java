@@ -177,7 +177,9 @@ public class RegisterClientTest {
             .build();
     }
 
-    /** Records callbacks; both lists stay empty until one arrives. */
+    /**
+     * Records callbacks; both lists stay empty until one arrives.
+     */
     private static final class RecordingCallback implements RegisterClient.Callback {
         private final List<RegisterResponse> successes = new ArrayList<>();
         private final List<String> failures = new ArrayList<>();

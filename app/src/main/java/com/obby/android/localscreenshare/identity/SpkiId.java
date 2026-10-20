@@ -27,19 +27,29 @@ import java.security.NoSuchAlgorithmException;
  */
 public final class SpkiId {
 
-    /** Hash algorithm used to derive the identifiers. */
+    /**
+     * Hash algorithm used to derive the identifiers.
+     */
     public static final String HASH_ALGORITHM = "SHA-256";
 
-    /** Length of the fingerprint text in characters: 32 bytes as unpadded base64url. */
+    /**
+     * Length of the fingerprint text in characters: 32 bytes as unpadded base64url.
+     */
     public static final int FINGERPRINT_LENGTH = 43;
 
-    /** Number of digest bytes encoded into the short id. */
+    /**
+     * Number of digest bytes encoded into the short id.
+     */
     public static final int ID_HASH_BYTES = 16;
 
-    /** Length of the short id in characters: 16 bytes as Crockford base32. */
+    /**
+     * Length of the short id in characters: 16 bytes as Crockford base32.
+     */
     public static final int ID_LENGTH = Base32Crockford.encodedLength(ID_HASH_BYTES);
 
-    /** base64url alphabet without padding; the fingerprint never needs {@code =}. */
+    /**
+     * base64url alphabet without padding; the fingerprint never needs {@code =}.
+     */
     private static final String BASE64_URL_ALPHABET =
         "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
@@ -88,7 +98,9 @@ public final class SpkiId {
         return Base32Crockford.encode(idBytes);
     }
 
-    /** Encodes bytes as unpadded base64url, the fingerprint textual form. */
+    /**
+     * Encodes bytes as unpadded base64url, the fingerprint textual form.
+     */
     @NonNull
     static String encodeBase64Url(@NonNull final byte[] data) {
         // Hand-rolled because java.util.Base64 is only available from API 26 and the project

@@ -31,7 +31,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** Unit tests for {@link ScreenStreamProtoMapper}. */
+/**
+ * Unit tests for {@link ScreenStreamProtoMapper}.
+ */
 public class ScreenStreamProtoMapperTest {
 
     private static final StreamKey KEY = new StreamKey("session", "stream");

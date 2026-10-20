@@ -573,7 +573,9 @@ public final class ScreenShareServer {
         mStreamRuntime = runtime;
     }
 
-    /** Sets the session-level secure flag applied to every descriptor. */
+    /**
+     * Sets the session-level secure flag applied to every descriptor.
+     */
     public void setSecure(final boolean secure) {
         mSecure = secure;
     }
@@ -975,7 +977,9 @@ public final class ScreenShareServer {
         }
     }
 
-    /** Forwards client control messages to a handler and closes it when the call ends. */
+    /**
+     * Forwards client control messages to a handler and closes it when the call ends.
+     */
     private static final class ClientObserver implements StreamObserver<ClientMessage> {
         private final StreamCallHandler handler;
 
@@ -1003,7 +1007,9 @@ public final class ScreenShareServer {
         }
     }
 
-    /** Discards every client message; used once the server has stopped. */
+    /**
+     * Discards every client message; used once the server has stopped.
+     */
     private static final class NoopClientObserver implements StreamObserver<ClientMessage> {
         @Override
         public void onNext(ClientMessage value) {

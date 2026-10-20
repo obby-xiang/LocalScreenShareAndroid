@@ -35,26 +35,34 @@ public final class ProbeResult {
         mReason = reason;
     }
 
-    /** Creates a successful result carrying the peer summary. */
+    /**
+     * Creates a successful result carrying the peer summary.
+     */
     @NonNull
     public static ProbeResult confirmed(@NonNull final DeviceSummary summary,
         @NonNull final String host, final int port) {
         return new ProbeResult(true, summary, host, port, "");
     }
 
-    /** Creates a failed result; {@code reason} is a short diagnostic code. */
+    /**
+     * Creates a failed result; {@code reason} is a short diagnostic code.
+     */
     @NonNull
     public static ProbeResult failed(@NonNull final String host, final int port,
         @NonNull final String reason) {
         return new ProbeResult(false, null, host, port, reason);
     }
 
-    /** True when the remote accepted the Register and returned its identity. */
+    /**
+     * True when the remote accepted the Register and returned its identity.
+     */
     public boolean isConfirmed() {
         return mConfirmed;
     }
 
-    /** Returns the peer summary, or null when the probe failed. */
+    /**
+     * Returns the peer summary, or null when the probe failed.
+     */
     @Nullable
     public DeviceSummary getSummary() {
         return mSummary;
@@ -69,7 +77,9 @@ public final class ProbeResult {
         return mPort;
     }
 
-    /** Returns the failure reason, or an empty string on success. */
+    /**
+     * Returns the failure reason, or an empty string on success.
+     */
     @NonNull
     public String getReason() {
         return mReason;

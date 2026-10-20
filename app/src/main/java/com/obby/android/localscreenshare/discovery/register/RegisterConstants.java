@@ -13,7 +13,9 @@ import lombok.NoArgsConstructor;
  */
 @NoArgsConstructor(access = AccessLevel.PRIVATE)
 public final class RegisterConstants {
-    /** Windows in which one address triggers at most one Register call. */
+    /**
+     * Windows in which one address triggers at most one Register call.
+     */
     public static final long REGISTER_MERGE_WINDOW_MS = 300L;
 
     /**
@@ -26,21 +28,33 @@ public final class RegisterConstants {
      */
     public static final long REGISTER_RECONFIRM_INTERVAL_MS = 30_000L;
 
-    /** Deadline of one Register call, in milliseconds. */
+    /**
+     * Deadline of one Register call, in milliseconds.
+     */
     public static final long REGISTER_TIMEOUT_MS = 500L;
 
-    /** Retry delays of a Register call whose attempt failed or timed out. */
+    /**
+     * Retry delays of a Register call whose attempt failed or timed out.
+     */
     public static final long[] REGISTER_RETRY_DELAYS_MS = {200L, 500L};
 
-    /** Register calls accepted per remote address within one minute. */
+    /**
+     * Register calls accepted per remote address within one minute.
+     */
     public static final int REGISTER_REQUESTS_PER_ADDRESS_PER_MINUTE = 10;
 
-    /** Register calls accepted globally within one minute. */
+    /**
+     * Register calls accepted globally within one minute.
+     */
     public static final int REGISTER_REQUESTS_PER_MINUTE = 100;
 
-    /** Unsolicited reverse Register calls sent within one minute. */
+    /**
+     * Unsolicited reverse Register calls sent within one minute.
+     */
     public static final int REGISTER_REVERSE_PER_MINUTE = 30;
 
-    /** Upper bound of a reverse Register delay, in milliseconds; the delay is random. */
+    /**
+     * Upper bound of a reverse Register delay, in milliseconds; the delay is random.
+     */
     public static final long REGISTER_REVERSE_MAX_DELAY_MS = 200L;
 }

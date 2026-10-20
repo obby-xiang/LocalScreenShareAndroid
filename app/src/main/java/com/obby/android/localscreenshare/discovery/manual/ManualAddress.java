@@ -105,12 +105,16 @@ public final class ManualAddress {
         return mPort;
     }
 
-    /** True when the host is an IPv6 literal. */
+    /**
+     * True when the host is an IPv6 literal.
+     */
     public boolean isIpv6() {
         return mIpv6;
     }
 
-    /** Returns the host in the form used in {@code host:port} text. */
+    /**
+     * Returns the host in the form used in {@code host:port} text.
+     */
     @NonNull
     public String displayHost() {
         return mIpv6 ? "[" + mHost + "]" : mHost;

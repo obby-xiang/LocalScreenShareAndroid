@@ -24,7 +24,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import io.grpc.stub.StreamObserver;
 
-/** Unit tests for {@link GrpcMediaTransport}. */
+/**
+ * Unit tests for {@link GrpcMediaTransport}.
+ */
 public class GrpcMediaTransportTest {
 
     private static final StreamKey KEY = new StreamKey("session", "stream");
@@ -120,7 +122,9 @@ public class GrpcMediaTransportTest {
         assertEquals(1, observer.maxConcurrency.get());
     }
 
-    /** Records every message, tolerating only sequential {@code onNext} calls. */
+    /**
+     * Records every message, tolerating only sequential {@code onNext} calls.
+     */
     private static final class RecordingObserver implements StreamObserver<ServerMessage> {
         final List<ServerMessage> messages = new ArrayList<>();
 
@@ -138,7 +142,9 @@ public class GrpcMediaTransportTest {
         }
     }
 
-    /** Records the maximum number of overlapping {@code onNext} invocations. */
+    /**
+     * Records the maximum number of overlapping {@code onNext} invocations.
+     */
     private static final class TrackingConcurrencyObserver implements StreamObserver<ServerMessage> {
         final AtomicInteger count = new AtomicInteger();
         final AtomicInteger current = new AtomicInteger();

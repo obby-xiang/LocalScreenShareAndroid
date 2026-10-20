@@ -14,7 +14,9 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
-/** Unit tests for {@link DiscoverySettings}. */
+/**
+ * Unit tests for {@link DiscoverySettings}.
+ */
 public class DiscoverySettingsTest {
 
     @Test

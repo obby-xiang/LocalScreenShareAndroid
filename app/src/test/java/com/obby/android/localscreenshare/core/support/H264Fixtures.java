@@ -13,7 +13,9 @@ import java.io.ByteArrayOutputStream;
  */
 public final class H264Fixtures {
 
-    /** PPS id chosen so its Exp-Golomb code forces {@code 00 00 03} into the slice header. */
+    /**
+     * PPS id chosen so its Exp-Golomb code forces {@code 00 00 03} into the slice header.
+     */
     public static final int IDR_PPS_ID_WITH_EMULATION_PREVENTION = 0x7FFFFF;
 
     private static final int NAL_HEADER_SPS = 0x67;
@@ -31,7 +33,9 @@ public final class H264Fixtures {
     private static final byte[] START_CODE = {0, 0, 0, 1};
     private static final byte[] SHORT_START_CODE = {0, 0, 1};
 
-    /** Baseline-profile SPS (profile 66, level 3.0) describing a 320x240 frame. */
+    /**
+     * Baseline-profile SPS (profile 66, level 3.0) describing a 320x240 frame.
+     */
     public static byte[] sps() {
         return new H264BitWriter()
                 .writeBytes(new byte[]{(byte) NAL_HEADER_SPS})
@@ -53,7 +57,9 @@ public final class H264Fixtures {
                 .toByteArray();
     }
 
-    /** PPS 0 with CAVLC entropy coding, referencing SPS 0. */
+    /**
+     * PPS 0 with CAVLC entropy coding, referencing SPS 0.
+     */
     public static byte[] pps() {
         return new H264BitWriter()
                 .writeBytes(new byte[]{(byte) NAL_HEADER_PPS})

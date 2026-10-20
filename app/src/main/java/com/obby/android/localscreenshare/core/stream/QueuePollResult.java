@@ -19,12 +19,16 @@ public final class QueuePollResult {
         this.resyncRequired = resyncRequired;
     }
 
-    /** Returns the unit to send, or {@code null} for an empty or resync result. */
+    /**
+     * Returns the unit to send, or {@code null} for an empty or resync result.
+     */
     public EncodedAccessUnit getAccessUnit() {
         return accessUnit;
     }
 
-    /** Returns whether the queue discarded its contents and now needs a join point. */
+    /**
+     * Returns whether the queue discarded its contents and now needs a join point.
+     */
     public boolean isResyncRequired() {
         return resyncRequired;
     }
@@ -41,12 +45,16 @@ public final class QueuePollResult {
         return new QueuePollResult(accessUnit, false);
     }
 
-    /** Creates the signal that the queue dropped its contents and needs a join point. */
+    /**
+     * Creates the signal that the queue dropped its contents and needs a join point.
+     */
     public static QueuePollResult resync() {
         return new QueuePollResult(null, true);
     }
 
-    /** Creates the result for a queue with nothing to send. */
+    /**
+     * Creates the result for a queue with nothing to send.
+     */
     public static QueuePollResult empty() {
         return new QueuePollResult(null, false);
     }

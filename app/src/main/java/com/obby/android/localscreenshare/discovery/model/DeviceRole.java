@@ -13,19 +13,29 @@ import java.util.Locale;
  * legacy advertisement carries no role field at all.</p>
  */
 public enum DeviceRole {
-    /** Device only sends screen captures. */
+    /**
+     * Device only sends screen captures.
+     */
     SERVER,
 
-    /** Device only views screen captures. */
+    /**
+     * Device only views screen captures.
+     */
     CLIENT,
 
-    /** Device can both send and view. */
+    /**
+     * Device can both send and view.
+     */
     BOTH,
 
-    /** Role not advertised or not understood. */
+    /**
+     * Role not advertised or not understood.
+     */
     UNKNOWN;
 
-    /** Maps a wire value to a role; null, blank and unknown values return {@link #UNKNOWN}. */
+    /**
+     * Maps a wire value to a role; null, blank and unknown values return {@link #UNKNOWN}.
+     */
     @NonNull
     public static DeviceRole fromWire(@Nullable final String value) {
         if (value == null) {
@@ -43,7 +53,9 @@ public enum DeviceRole {
         }
     }
 
-    /** Returns the lowercase wire value of this role. */
+    /**
+     * Returns the lowercase wire value of this role.
+     */
     @NonNull
     public String toWire() {
         return name().toLowerCase(Locale.ROOT);

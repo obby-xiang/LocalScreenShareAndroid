@@ -230,7 +230,9 @@ public final class H264AnnexBParser {
         return out.toByteArray();
     }
 
-    /** Returns 4 for a four-byte start code at {@code scStart}, 3 for a three-byte one. */
+    /**
+     * Returns 4 for a four-byte start code at {@code scStart}, 3 for a three-byte one.
+     */
     private static int startCodeLength(byte[] data, int scStart) {
         if (scStart + 4 <= data.length
                 && data[scStart] == 0 && data[scStart + 1] == 0

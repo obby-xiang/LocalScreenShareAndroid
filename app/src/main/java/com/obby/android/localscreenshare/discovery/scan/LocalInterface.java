@@ -18,17 +18,29 @@ import java.util.Objects;
  */
 public final class LocalInterface {
 
-    /** Transport reported by the platform for the network that owns the interface. */
+    /**
+     * Transport reported by the platform for the network that owns the interface.
+     */
     public enum Transport {
-        /** Wi-Fi. */
+        /**
+         * Wi-Fi.
+         */
         WIFI,
-        /** Ethernet, including USB tethering adapters. */
+        /**
+         * Ethernet, including USB tethering adapters.
+         */
         ETHERNET,
-        /** Cellular data. */
+        /**
+         * Cellular data.
+         */
         CELLULAR,
-        /** Any VPN, including always-on and per-app tunnels. */
+        /**
+         * Any VPN, including always-on and per-app tunnels.
+         */
         VPN,
-        /** Anything else, including Bluetooth and unknown transports. */
+        /**
+         * Anything else, including Bluetooth and unknown transports.
+         */
         OTHER
     }
 
@@ -84,7 +96,9 @@ public final class LocalInterface {
         return new LocalInterface(name, parse(address), prefixLength, transport, false, false);
     }
 
-    /** Parses a numeric IPv4 literal without ever resolving a name. */
+    /**
+     * Parses a numeric IPv4 literal without ever resolving a name.
+     */
     @NonNull
     private static Inet4Address parse(@NonNull final String address) {
         final String[] parts = address.split("\\.", -1);

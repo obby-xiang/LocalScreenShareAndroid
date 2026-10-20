@@ -64,10 +64,14 @@ public class H264EncoderTest {
     private static final StreamParameters PARAMETERS =
             new StreamParameters(2_500_000, 60, 1000);
 
-    /** Upper bound for an expected callback; generous because it only guards against hangs. */
+    /**
+     * Upper bound for an expected callback; generous because it only guards against hangs.
+     */
     private static final long AWAIT_TIMEOUT_MS = 5_000L;
 
-    /** Window that must stay silent when no further callback is expected. */
+    /**
+     * Window that must stay silent when no further callback is expected.
+     */
     private static final long QUIET_WINDOW_MS = 250L;
 
     /**
@@ -1425,7 +1429,9 @@ public class H264EncoderTest {
         assertEquals(message, expected.isFullRange(), actual.isFullRange());
     }
 
-    /** Renders the callback counters of a failed-expectation message, useful in the RED log. */
+    /**
+     * Renders the callback counters of a failed-expectation message, useful in the RED log.
+     */
     private static String evidence(RecordingOutput output) {
         return " (failureCount=" + output.getFailureCount()
                 + ", configCount=" + output.getConfigCount()
@@ -1440,7 +1446,9 @@ public class H264EncoderTest {
         return H264Fixtures.annexB(H264Fixtures.pSlice());
     }
 
-    /** Same PPS and IDR as {@link #idrSample()} with a modified SPS, i.e. a different config. */
+    /**
+     * Same PPS and IDR as {@link #idrSample()} with a modified SPS, i.e. a different config.
+     */
     private static byte[] changedConfigIdrSample() {
         byte[] changedSps = H264Fixtures.sps();
         changedSps[changedSps.length - 1] ^= 0x01;
@@ -1678,7 +1686,9 @@ public class H264EncoderTest {
         }
     }
 
-    /** Delegating bridge that serves a caller-supplied output-format snapshot. */
+    /**
+     * Delegating bridge that serves a caller-supplied output-format snapshot.
+     */
     private static final class OutputFormatBridge implements MediaCodecEncoderBridge {
 
         private final MediaCodecEncoderBridge delegate;

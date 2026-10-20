@@ -121,7 +121,9 @@ public final class StreamDescriptor {
         return new Builder(streamKey, configEpoch, codecId, mime, bitstreamFormat);
     }
 
-    /** Returns the stream identity. */
+    /**
+     * Returns the stream identity.
+     */
     public StreamKey getStreamKey() {
         return streamKey;
     }
@@ -134,47 +136,65 @@ public final class StreamDescriptor {
         return configEpoch;
     }
 
-    /** Returns the codec id used as the registry key. */
+    /**
+     * Returns the codec id used as the registry key.
+     */
     public String getCodecId() {
         return codecId;
     }
 
-    /** Returns the codec MIME type. */
+    /**
+     * Returns the codec MIME type.
+     */
     public String getMime() {
         return mime;
     }
 
-    /** Returns the optional codec profile name, or null when unspecified. */
+    /**
+     * Returns the optional codec profile name, or null when unspecified.
+     */
     public String getProfile() {
         return profile;
     }
 
-    /** Returns the optional codec level name, or null when unspecified. */
+    /**
+     * Returns the optional codec level name, or null when unspecified.
+     */
     public String getLevel() {
         return level;
     }
 
-    /** Returns the encoder's coded width, including alignment padding. */
+    /**
+     * Returns the encoder's coded width, including alignment padding.
+     */
     public int getCodedWidth() {
         return codedWidth;
     }
 
-    /** Returns the encoder's coded height, including alignment padding. */
+    /**
+     * Returns the encoder's coded height, including alignment padding.
+     */
     public int getCodedHeight() {
         return codedHeight;
     }
 
-    /** Returns the width of the region that should be displayed. */
+    /**
+     * Returns the width of the region that should be displayed.
+     */
     public int getVisibleWidth() {
         return visibleWidth;
     }
 
-    /** Returns the height of the region that should be displayed. */
+    /**
+     * Returns the height of the region that should be displayed.
+     */
     public int getVisibleHeight() {
         return visibleHeight;
     }
 
-    /** Returns the display rotation in degrees: 0, 90, 180 or 270. */
+    /**
+     * Returns the display rotation in degrees: 0, 90, 180 or 270.
+     */
     public int getRotationDegrees() {
         return rotationDegrees;
     }
@@ -191,12 +211,16 @@ public final class StreamDescriptor {
         return configParts;
     }
 
-    /** Returns the color description; never null, but may be {@link ColorInfo#UNSPECIFIED}. */
+    /**
+     * Returns the color description; never null, but may be {@link ColorInfo#UNSPECIFIED}.
+     */
     public ColorInfo getColorInfo() {
         return colorInfo;
     }
 
-    /** Returns the stable lowercase-hex SHA-256 digest of the decode configuration. */
+    /**
+     * Returns the stable lowercase-hex SHA-256 digest of the decode configuration.
+     */
     public String getConfigHash() {
         return configHash;
     }
@@ -323,13 +347,17 @@ public final class StreamDescriptor {
             this.colorInfo = ColorInfo.UNSPECIFIED;
         }
 
-        /** Sets the optional codec profile name; null means unspecified. */
+        /**
+         * Sets the optional codec profile name; null means unspecified.
+         */
         public Builder profile(String profile) {
             this.profile = profile;
             return this;
         }
 
-        /** Sets the optional codec level name; null means unspecified. */
+        /**
+         * Sets the optional codec level name; null means unspecified.
+         */
         public Builder level(String level) {
             this.level = level;
             return this;
@@ -355,7 +383,9 @@ public final class StreamDescriptor {
             return this;
         }
 
-        /** Sets the display rotation in degrees; must be 0, 90, 180 or 270. Defaults to zero. */
+        /**
+         * Sets the display rotation in degrees; must be 0, 90, 180 or 270. Defaults to zero.
+         */
         public Builder rotationDegrees(int rotationDegrees) {
             this.rotationDegrees = rotationDegrees;
             return this;
@@ -370,7 +400,9 @@ public final class StreamDescriptor {
             return this;
         }
 
-        /** Sets the color description; null defaults to {@link ColorInfo#UNSPECIFIED}. */
+        /**
+         * Sets the color description; null defaults to {@link ColorInfo#UNSPECIFIED}.
+         */
         public Builder colorInfo(ColorInfo colorInfo) {
             this.colorInfo = colorInfo;
             return this;

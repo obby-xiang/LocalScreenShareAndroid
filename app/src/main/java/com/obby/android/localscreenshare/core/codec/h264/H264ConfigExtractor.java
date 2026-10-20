@@ -89,12 +89,16 @@ public final class H264ConfigExtractor {
         return new H264ConfigExtractor().extract(payload);
     }
 
-    /** Returns the unique SPS raw NAL payload (defensive copy), or throws when missing or duplicated. */
+    /**
+     * Returns the unique SPS raw NAL payload (defensive copy), or throws when missing or duplicated.
+     */
     public static byte[] sps(List<CodecConfigPart> parts) throws H264FormatException {
         return findUnique(parts, "sps").getPayload();
     }
 
-    /** Returns the unique PPS raw NAL payload (defensive copy), or throws when missing or duplicated. */
+    /**
+     * Returns the unique PPS raw NAL payload (defensive copy), or throws when missing or duplicated.
+     */
     public static byte[] pps(List<CodecConfigPart> parts) throws H264FormatException {
         return findUnique(parts, "pps").getPayload();
     }

@@ -45,7 +45,9 @@ public final class ServiceProtocol {
     public static final String ACTION_IDENTITY_RESET =
         "com.obby.android.localscreenshare.ACTION_IDENTITY_RESET";
 
-    /** Intent extra carrying the MediaProjection consent result passed to the capture service. */
+    /**
+     * Intent extra carrying the MediaProjection consent result passed to the capture service.
+     */
     public static final String EXTRA_MEDIA_PROJECTION_RESULT = "mediaProjectionResult";
 
     /**
@@ -63,21 +65,33 @@ public final class ServiceProtocol {
     public static final int FLOATING_WINDOW_TYPE = Build.VERSION.SDK_INT < Build.VERSION_CODES.O
         ? WindowManager.LayoutParams.TYPE_SYSTEM_ALERT : WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
 
-    /** Client-to-service message: registers {@code msg.replyTo} for server state notifications. */
+    /**
+     * Client-to-service message: registers {@code msg.replyTo} for server state notifications.
+     */
     public static final int MSG_REGISTER_SERVICE_CLIENT = 1;
 
-    /** Client-to-service message: removes {@code msg.replyTo} from the notification list. */
+    /**
+     * Client-to-service message: removes {@code msg.replyTo} from the notification list.
+     */
     public static final int MSG_UNREGISTER_SERVICE_CLIENT = 2;
 
-    /** Service-to-client message: the server started; carries no payload. */
+    /**
+     * Service-to-client message: the server started; carries no payload.
+     */
     public static final int MSG_SERVER_STARTED = 3;
 
-    /** Service-to-client message: the server stopped; carries no payload. */
+    /**
+     * Service-to-client message: the server stopped; carries no payload.
+     */
     public static final int MSG_SERVER_STOPPED = 4;
 
-    /** Service-to-client message: {@code msg.obj} is the current server info snapshot. */
+    /**
+     * Service-to-client message: {@code msg.obj} is the current server info snapshot.
+     */
     public static final int MSG_SERVER_INFO_CHANGED = 5;
 
-    /** Service-to-client message: {@code msg.obj} is the current server stats snapshot. */
+    /**
+     * Service-to-client message: {@code msg.obj} is the current server stats snapshot.
+     */
     public static final int MSG_SERVER_STATS_CHANGED = 6;
 }

@@ -22,10 +22,14 @@ import java.util.Objects;
  */
 public final class DeviceIdentity {
 
-    /** Characters of {@link #getId()} used for the {@code LSS-} instance name and the UI fallback. */
+    /**
+     * Characters of {@link #getId()} used for the {@code LSS-} instance name and the UI fallback.
+     */
     public static final int SHORT_ID_LENGTH = 8;
 
-    /** Prefix of the NSD instance name built from {@link #shortId()}. */
+    /**
+     * Prefix of the NSD instance name built from {@link #shortId()}.
+     */
     public static final String NAME_PREFIX = "LSS-";
 
     @NonNull
@@ -89,13 +93,17 @@ public final class DeviceIdentity {
         return new DeviceIdentity(SpkiId.deviceId(spkiDer), fingerprint, changed);
     }
 
-    /** Returns the 26-character Crockford base32 device id. */
+    /**
+     * Returns the 26-character Crockford base32 device id.
+     */
     @NonNull
     public String getId() {
         return mId;
     }
 
-    /** Returns the 43-character unpadded base64url fingerprint of the public key. */
+    /**
+     * Returns the 43-character unpadded base64url fingerprint of the public key.
+     */
     @NonNull
     public String getFingerprint() {
         return mFingerprint;
@@ -110,13 +118,17 @@ public final class DeviceIdentity {
         return mChanged;
     }
 
-    /** Returns the first eight id characters, the suffix of the NSD instance name. */
+    /**
+     * Returns the first eight id characters, the suffix of the NSD instance name.
+     */
     @NonNull
     public String shortId() {
         return mId.substring(0, SHORT_ID_LENGTH).toUpperCase(Locale.ROOT);
     }
 
-    /** Returns the NSD instance name built from the short id. */
+    /**
+     * Returns the NSD instance name built from the short id.
+     */
     @NonNull
     public String instanceName() {
         return NAME_PREFIX + shortId();

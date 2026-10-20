@@ -36,12 +36,16 @@ public final class JoinInfo {
                 : Collections.unmodifiableList(new ArrayList<>(requiredConfigParts));
     }
 
-    /** Returns the config epoch these parts belong to. */
+    /**
+     * Returns the config epoch these parts belong to.
+     */
     public int getConfigEpoch() {
         return configEpoch;
     }
 
-    /** Returns the unmodifiable configuration parts; may be empty. */
+    /**
+     * Returns the unmodifiable configuration parts; may be empty.
+     */
     public List<CodecConfigPart> getRequiredConfigParts() {
         return requiredConfigParts;
     }

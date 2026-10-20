@@ -22,17 +22,23 @@ public final class DecodedOutput {
         this.endOfStream = endOfStream;
     }
 
-    /** Presentation timestamp in microseconds, or {@code 0} for a format-change entry. */
+    /**
+     * Presentation timestamp in microseconds, or {@code 0} for a format-change entry.
+     */
     public long getPtsUs() {
         return ptsUs;
     }
 
-    /** True when this entry only announces an output-format change and carries no frame. */
+    /**
+     * True when this entry only announces an output-format change and carries no frame.
+     */
     public boolean isFormatChanged() {
         return formatChanged;
     }
 
-    /** True when the codec reported the end of the stream. */
+    /**
+     * True when the codec reported the end of the stream.
+     */
     public boolean isEndOfStream() {
         return endOfStream;
     }

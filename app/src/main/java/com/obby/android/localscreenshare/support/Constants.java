@@ -15,7 +15,9 @@ import lombok.NoArgsConstructor;
  */
 @NoArgsConstructor(access = AccessLevel.PRIVATE)
 public final class Constants {
-    /** Processor count read when the class is initialized; sizes the gRPC executor pools. */
+    /**
+     * Processor count read when the class is initialized; sizes the gRPC executor pools.
+     */
     public static final int CPU_COUNT = Runtime.getRuntime().availableProcessors();
 
     /**

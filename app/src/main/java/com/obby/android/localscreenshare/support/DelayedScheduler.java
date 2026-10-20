@@ -21,7 +21,9 @@ import java.util.concurrent.TimeUnit;
  */
 public interface DelayedScheduler {
 
-    /** Returns a scheduler backed by one daemon thread named {@code threadName}. */
+    /**
+     * Returns a scheduler backed by one daemon thread named {@code threadName}.
+     */
     @NonNull
     static DelayedScheduler newSingleThread(@NonNull final String threadName) {
         final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor(runnable -> {
@@ -45,17 +47,25 @@ public interface DelayedScheduler {
         };
     }
 
-    /** Runs {@code task} once after {@code delayMs}; a negative delay runs it as soon as possible. */
+    /**
+     * Runs {@code task} once after {@code delayMs}; a negative delay runs it as soon as possible.
+     */
     @NonNull
     Cancellable schedule(long delayMs, @NonNull Runnable task);
 
-    /** Stops accepting tasks and releases the executor; pending tasks are discarded. */
+    /**
+     * Stops accepting tasks and releases the executor; pending tasks are discarded.
+     */
     void shutdown();
 
-    /** Handle of one scheduled task. */
+    /**
+     * Handle of one scheduled task.
+     */
     @FunctionalInterface
     interface Cancellable {
-        /** Prevents the task from running; a no-op when it already ran. */
+        /**
+         * Prevents the task from running; a no-op when it already ran.
+         */
         void cancel();
     }
 }

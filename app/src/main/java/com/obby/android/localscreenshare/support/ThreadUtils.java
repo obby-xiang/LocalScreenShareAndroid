@@ -58,29 +58,39 @@ public final class ThreadUtils {
         }
     }
 
-    /** Always posts to the main looper, including when called from the main thread. */
+    /**
+     * Always posts to the main looper, including when called from the main thread.
+     */
     public static void executeOnMainThread(@NonNull final Runnable runnable) {
         getMainThreadExecutor().execute(runnable);
     }
 
-    /** Always hands the runnable to the worker executor, even from a background thread. */
+    /**
+     * Always hands the runnable to the worker executor, even from a background thread.
+     */
     public static void executeOnWorkerThread(@NonNull final Runnable runnable) {
         getWorkerThreadExecutor().execute(runnable);
     }
 
-    /** Returns the shared executor that posts to the main looper. */
+    /**
+     * Returns the shared executor that posts to the main looper.
+     */
     @NonNull
     public static Executor getMainThreadExecutor() {
         return MAIN_THREAD_EXECUTOR_SUPPLIER.get();
     }
 
-    /** Returns the shared worker executor backed by the common ForkJoinPool. */
+    /**
+     * Returns the shared worker executor backed by the common ForkJoinPool.
+     */
     @NonNull
     public static Executor getWorkerThreadExecutor() {
         return WORKER_THREAD_EXECUTOR_SUPPLIER.get();
     }
 
-    /** True when the current thread has a looper and it is the main looper. */
+    /**
+     * True when the current thread has a looper and it is the main looper.
+     */
     public static boolean isMainThread() {
         final Looper looper = Looper.myLooper();
         return looper != null && looper == Looper.getMainLooper();

@@ -38,16 +38,24 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public final class AddressScanner {
 
-    /** Default number of probes in flight. */
+    /**
+     * Default number of probes in flight.
+     */
     public static final int DEFAULT_MAX_CONCURRENCY = 50;
 
-    /** Deadline of one probe, in milliseconds. */
+    /**
+     * Deadline of one probe, in milliseconds.
+     */
     public static final long PROBE_TIMEOUT_MS = 500L;
 
-    /** Budget of one interface scan, in milliseconds. */
+    /**
+     * Budget of one interface scan, in milliseconds.
+     */
     public static final long DEFAULT_BUDGET_MS = 8_000L;
 
-    /** Candidates that may wait for a worker before dispatch blocks. */
+    /**
+     * Candidates that may wait for a worker before dispatch blocks.
+     */
     public static final int QUEUE_CAPACITY = 128;
 
     private static final AtomicInteger THREAD_IDS = new AtomicInteger();
@@ -90,7 +98,9 @@ public final class AddressScanner {
         mTimeSource = Objects.requireNonNull(timeSource, "timeSource");
     }
 
-    /** Creates a scanner with the default concurrency, probe deadline and budget. */
+    /**
+     * Creates a scanner with the default concurrency, probe deadline and budget.
+     */
     @NonNull
     public static AddressScanner create(@NonNull final AddressProbe probe,
         @NonNull final TimeSource timeSource) {
@@ -255,7 +265,9 @@ public final class AddressScanner {
         }
     }
 
-    /** Result of one interface scan. */
+    /**
+     * Result of one interface scan.
+     */
     public static final class ScanResult {
 
         private final int mScanned;
@@ -275,34 +287,46 @@ public final class AddressScanner {
             mPartial = partial;
         }
 
-        /** Returns how many probes were actually issued. */
+        /**
+         * Returns how many probes were actually issued.
+         */
         public int getScanned() {
             return mScanned;
         }
 
-        /** Returns the peers that answered, in completion order. */
+        /**
+         * Returns the peers that answered, in completion order.
+         */
         @NonNull
         public List<ScanHit> getConfirmed() {
             return mConfirmed;
         }
 
-        /** Returns how many peers answered. */
+        /**
+         * Returns how many peers answered.
+         */
         public int getConfirmedCount() {
             return mConfirmed.size();
         }
 
-        /** True when {@link #cancel()} stopped this scan early. */
+        /**
+         * True when {@link #cancel()} stopped this scan early.
+         */
         public boolean isCancelled() {
             return mCancelled;
         }
 
-        /** True when the candidate list was truncated to the local {@code /24}. */
+        /**
+         * True when the candidate list was truncated to the local {@code /24}.
+         */
         public boolean isPartial() {
             return mPartial;
         }
     }
 
-    /** One peer that answered during a scan. */
+    /**
+     * One peer that answered during a scan.
+     */
     public static final class ScanHit {
 
         @NonNull

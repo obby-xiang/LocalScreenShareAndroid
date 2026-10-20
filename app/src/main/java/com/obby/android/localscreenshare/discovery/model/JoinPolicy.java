@@ -12,19 +12,29 @@ import java.util.Locale;
  * to an approval prompt, or nowhere at all.</p>
  */
 public enum JoinPolicy {
-    /** Any viewer is admitted without interaction. */
+    /**
+     * Any viewer is admitted without interaction.
+     */
     OPEN,
 
-    /** The owner has to approve each viewer. */
+    /**
+     * The owner has to approve each viewer.
+     */
     APPROVAL,
 
-    /** New viewers are rejected; existing sessions continue. */
+    /**
+     * New viewers are rejected; existing sessions continue.
+     */
     CLOSED,
 
-    /** Policy not advertised or not understood. */
+    /**
+     * Policy not advertised or not understood.
+     */
     UNKNOWN;
 
-    /** Maps a wire value to a policy; null, blank and unknown values return {@link #UNKNOWN}. */
+    /**
+     * Maps a wire value to a policy; null, blank and unknown values return {@link #UNKNOWN}.
+     */
     @NonNull
     public static JoinPolicy fromWire(@Nullable final String value) {
         if (value == null) {
@@ -42,7 +52,9 @@ public enum JoinPolicy {
         }
     }
 
-    /** Returns the lowercase wire value of this policy. */
+    /**
+     * Returns the lowercase wire value of this policy.
+     */
     @NonNull
     public String toWire() {
         return name().toLowerCase(Locale.ROOT);

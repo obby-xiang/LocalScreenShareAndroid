@@ -11,9 +11,13 @@ import androidx.annotation.NonNull;
  */
 public interface DiscoveryProviderListener {
 
-    /** Called for every sighting, loss and goodbye observed by the provider. */
+    /**
+     * Called for every sighting, loss and goodbye observed by the provider.
+     */
     void onObserved(@NonNull DeviceObservation observation);
 
-    /** Reports a provider-level failure that did not produce an observation. */
+    /**
+     * Reports a provider-level failure that did not produce an observation.
+     */
     void onProviderError(@NonNull String reason);
 }

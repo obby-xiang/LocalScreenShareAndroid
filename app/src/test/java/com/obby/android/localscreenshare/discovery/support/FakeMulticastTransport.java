@@ -40,7 +40,9 @@ public final class FakeMulticastTransport implements MulticastTransport {
         mListener = null;
     }
 
-    /** Delivers one datagram as if it arrived from {@code sender}. */
+    /**
+     * Delivers one datagram as if it arrived from {@code sender}.
+     */
     public void deliver(@NonNull final byte[] payload, @NonNull final InetAddress sender) {
         final Listener listener = mListener;
         if (listener != null) {
@@ -48,7 +50,9 @@ public final class FakeMulticastTransport implements MulticastTransport {
         }
     }
 
-    /** Reports a transport-level failure through the listener. */
+    /**
+     * Reports a transport-level failure through the listener.
+     */
     public void fail(@NonNull final String reason) {
         final Listener listener = mListener;
         if (listener != null) {
@@ -56,7 +60,9 @@ public final class FakeMulticastTransport implements MulticastTransport {
         }
     }
 
-    /** Returns every payload passed to {@link #send(byte[])}. */
+    /**
+     * Returns every payload passed to {@link #send(byte[])}.
+     */
     @NonNull
     public List<byte[]> payloads() {
         return mPayloads;

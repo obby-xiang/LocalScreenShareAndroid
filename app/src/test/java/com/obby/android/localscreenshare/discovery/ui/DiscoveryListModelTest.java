@@ -19,7 +19,9 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
-/** Unit tests for {@link DiscoveryListModel}. */
+/**
+ * Unit tests for {@link DiscoveryListModel}.
+ */
 public class DiscoveryListModelTest {
 
     private static final String SERVER_ID = "AAAAAAAAAAAAAAAAAAAAAAAAAA";

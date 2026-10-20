@@ -26,28 +26,44 @@ import java.util.function.Supplier;
  */
 public final class NsdDiscoveryCoordinator {
 
-    /** Debounce applied to connectivity callbacks before discovery is restarted. */
+    /**
+     * Debounce applied to connectivity callbacks before discovery is restarted.
+     */
     public static final long NETWORK_CHANGE_DEBOUNCE_MS = 500L;
 
-    /** The start/stop surface of {@code NsdManager} used by this coordinator. */
+    /**
+     * The start/stop surface of {@code NsdManager} used by this coordinator.
+     */
     public interface Discovery {
-        /** Starts discovery for {@code serviceType}. */
+        /**
+         * Starts discovery for {@code serviceType}.
+         */
         void startDiscovery(@NonNull String serviceType);
 
-        /** Stops discovery for {@code serviceType}. */
+        /**
+         * Stops discovery for {@code serviceType}.
+         */
         void stopDiscovery(@NonNull String serviceType);
     }
 
-    /** Delayed execution surface; production uses the main-thread handler. */
+    /**
+     * Delayed execution surface; production uses the main-thread handler.
+     */
     public interface Scheduler {
-        /** Runs {@code task} after {@code delayMs}; the returned handle cancels it. */
+        /**
+         * Runs {@code task} after {@code delayMs}; the returned handle cancels it.
+         */
         @NonNull
         Cancellable schedule(long delayMs, @NonNull Runnable task);
     }
 
-    /** Handle for a scheduled task. */
+    /**
+     * Handle for a scheduled task.
+     */
     public interface Cancellable {
-        /** Cancels the task; idempotent. */
+        /**
+         * Cancels the task; idempotent.
+         */
         void cancel();
     }
 
@@ -86,7 +102,9 @@ public final class NsdDiscoveryCoordinator {
         }
     }
 
-    /** Starts discovery for every service type; calling it twice restarts nothing extra. */
+    /**
+     * Starts discovery for every service type; calling it twice restarts nothing extra.
+     */
     public void startAll() {
         if (mActive) {
             return;
@@ -114,7 +132,9 @@ public final class NsdDiscoveryCoordinator {
         }
     }
 
-    /** Reports that discovery for {@code serviceType} started; clears its backoff. */
+    /**
+     * Reports that discovery for {@code serviceType} started; clears its backoff.
+     */
     public void onDiscoveryStarted(@NonNull final String serviceType) {
         final Session session = mSessions.get(serviceType);
         if (session == null) {
@@ -125,7 +145,9 @@ public final class NsdDiscoveryCoordinator {
         session.backoff.reset();
     }
 
-    /** Reports a stop that was requested rather than a restart. */
+    /**
+     * Reports a stop that was requested rather than a restart.
+     */
     public void onDiscoveryStopped(@NonNull final String serviceType) {
         final Session session = mSessions.get(serviceType);
         if (session != null) {
@@ -174,18 +196,24 @@ public final class NsdDiscoveryCoordinator {
         mNetworkChangeTask = mScheduler.schedule(NETWORK_CHANGE_DEBOUNCE_MS, this::restartAll);
     }
 
-    /** True while discovery is wanted. */
+    /**
+     * True while discovery is wanted.
+     */
     public boolean isActive() {
         return mActive;
     }
 
-    /** True when the given type is believed to be discovering. */
+    /**
+     * True when the given type is believed to be discovering.
+     */
     public boolean isRunning(@NonNull final String serviceType) {
         final Session session = mSessions.get(serviceType);
         return session != null && session.running;
     }
 
-    /** Number of service types with a pending retry. */
+    /**
+     * Number of service types with a pending retry.
+     */
     public int pendingRetryCount() {
         int count = 0;
         for (final Session session : mSessions.values()) {
@@ -196,12 +224,16 @@ public final class NsdDiscoveryCoordinator {
         return count;
     }
 
-    /** True when a network-change restart is scheduled but not yet executed. */
+    /**
+     * True when a network-change restart is scheduled but not yet executed.
+     */
     public boolean isNetworkRestartPending() {
         return mNetworkChangeTask != null;
     }
 
-    /** Returns the service types this coordinator owns. */
+    /**
+     * Returns the service types this coordinator owns.
+     */
     @NonNull
     public List<String> serviceTypes() {
         return new ArrayList<>(mSessions.keySet());
@@ -246,7 +278,9 @@ public final class NsdDiscoveryCoordinator {
         }
     }
 
-    /** Per-type running flag, retry handle and backoff. */
+    /**
+     * Per-type running flag, retry handle and backoff.
+     */
     private static final class Session {
         @NonNull
         final String serviceType;

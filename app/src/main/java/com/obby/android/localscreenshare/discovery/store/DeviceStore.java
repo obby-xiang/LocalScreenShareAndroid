@@ -47,19 +47,29 @@ import java.util.concurrent.CopyOnWriteArrayList;
  */
 public final class DeviceStore {
 
-    /** A heard device becomes stale after three active heartbeat periods. */
+    /**
+     * A heard device becomes stale after three active heartbeat periods.
+     */
     public static final long HEARD_TTL_MS = 15_000L;
 
-    /** A confirmed address stays usable for three idle heartbeat periods. */
+    /**
+     * A confirmed address stays usable for three idle heartbeat periods.
+     */
     public static final long CONFIRMED_TTL_MS = 45_000L;
 
-    /** Non-favorite entries are removed two confirmed windows after their last observation. */
+    /**
+     * Non-favorite entries are removed two confirmed windows after their last observation.
+     */
     public static final long REMOVE_AFTER_MS = 90_000L;
 
-    /** Upper bound of retained devices; oldest stale entries are evicted first. */
+    /**
+     * Upper bound of retained devices; oldest stale entries are evicted first.
+     */
     public static final int CAPACITY = 256;
 
-    /** Interval of the store-wide main-thread tick. */
+    /**
+     * Interval of the store-wide main-thread tick.
+     */
     public static final long TICK_INTERVAL_MS = 1_000L;
 
     private static final Comparator<DeviceInfo> SNAPSHOT_COMPARATOR =
@@ -87,14 +97,18 @@ public final class DeviceStore {
         mTimeSource = Objects.requireNonNull(timeSource, "timeSource");
     }
 
-    /** Subscribes a listener; a duplicate subscription is ignored. */
+    /**
+     * Subscribes a listener; a duplicate subscription is ignored.
+     */
     public void addListener(@NonNull final DeviceStoreListener listener) {
         if (!mListeners.contains(listener)) {
             mListeners.add(listener);
         }
     }
 
-    /** Unsubscribes a listener; an unknown listener is ignored. */
+    /**
+     * Unsubscribes a listener; an unknown listener is ignored.
+     */
     public void removeListener(@NonNull final DeviceStoreListener listener) {
         mListeners.remove(listener);
     }
@@ -226,7 +240,9 @@ public final class DeviceStore {
         return true;
     }
 
-    /** Recomputes presence and expires entries; the periodic main-thread maintenance step. */
+    /**
+     * Recomputes presence and expires entries; the periodic main-thread maintenance step.
+     */
     public void tick() {
         refresh(mTimeSource.nowMs());
     }
@@ -252,13 +268,17 @@ public final class DeviceStore {
         return false;
     }
 
-    /** Drops every entry and publishes an empty snapshot. */
+    /**
+     * Drops every entry and publishes an empty snapshot.
+     */
     public void clear() {
         mEntries.clear();
         refresh(mTimeSource.nowMs());
     }
 
-    /** Returns the current immutable snapshot, ordered by presence, favorite, confirmation and name. */
+    /**
+     * Returns the current immutable snapshot, ordered by presence, favorite, confirmation and name.
+     */
     @NonNull
     public List<DeviceInfo> snapshot() {
         return mSnapshot;
@@ -291,7 +311,9 @@ public final class DeviceStore {
         return Collections.unmodifiableList(services);
     }
 
-    /** Returns the current description of one device, or null when it is unknown or expired. */
+    /**
+     * Returns the current description of one device, or null when it is unknown or expired.
+     */
     @Nullable
     public DeviceInfo device(@NonNull final String id) {
         for (final DeviceInfo device : mSnapshot) {
@@ -302,7 +324,9 @@ public final class DeviceStore {
         return null;
     }
 
-    /** Returns the number of retained devices. */
+    /**
+     * Returns the number of retained devices.
+     */
     public int size() {
         return mEntries.size();
     }

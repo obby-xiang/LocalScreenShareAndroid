@@ -4,7 +4,9 @@ package com.obby.android.localscreenshare.core.codec;
  * How a codec's stream behaves when a receiver overflows.
  */
 public enum OverflowAction {
-    /** Drop older queued units and keep only the newest one; valid when every frame decodes alone. */
+    /**
+     * Drop older queued units and keep only the newest one; valid when every frame decodes alone.
+     */
     KEEP_LATEST_FRAME,
 
     /**

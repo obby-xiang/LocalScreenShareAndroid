@@ -23,7 +23,9 @@ import com.obby.android.localscreenshare.core.model.StreamKey;
  */
 public interface StreamRuntimeListener {
 
-    /** Called for an access unit of the current epoch, already filtered by generation and epoch. */
+    /**
+     * Called for an access unit of the current epoch, already filtered by generation and epoch.
+     */
     void onAccessUnit(EncodedAccessUnit accessUnit);
 
     /**

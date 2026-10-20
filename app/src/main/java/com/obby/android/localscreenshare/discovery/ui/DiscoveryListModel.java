@@ -38,7 +38,9 @@ import java.util.Objects;
  */
 public final class DiscoveryListModel {
 
-    /** Type of one list row. */
+    /**
+     * Type of one list row.
+     */
     public enum RowType {
         HEADER_SERVERS,
         HEADER_CLIENTS,
@@ -46,7 +48,9 @@ public final class DiscoveryListModel {
         EMPTY_HINT
     }
 
-    /** Placeholder shown while the list is empty. */
+    /**
+     * Placeholder shown while the list is empty.
+     */
     public enum EmptyState {
         DISABLED,
         SEARCHING,
@@ -68,7 +72,9 @@ public final class DiscoveryListModel {
         IDLE
     }
 
-    /** One row of the discovery list. */
+    /**
+     * One row of the discovery list.
+     */
     public static final class Row {
 
         @NonNull
@@ -87,7 +93,9 @@ public final class DiscoveryListModel {
             return mType;
         }
 
-        /** Returns the device of a {@link RowType#DEVICE} row, or null for every other type. */
+        /**
+         * Returns the device of a {@link RowType#DEVICE} row, or null for every other type.
+         */
         @Nullable
         public DeviceInfo getDevice() {
             return mDevice;
@@ -180,7 +188,9 @@ public final class DiscoveryListModel {
         return manualHintVisible ? EmptyState.NOT_FOUND : EmptyState.SEARCHING;
     }
 
-    /** Returns the status displayed next to one device. */
+    /**
+     * Returns the status displayed next to one device.
+     */
     @NonNull
     public static DeviceStatus status(@NonNull final DeviceInfo device) {
         if (device.getPresence() == DevicePresence.UNREACHABLE) {
@@ -195,20 +205,26 @@ public final class DiscoveryListModel {
         return device.getState() == ShareState.LIVE ? DeviceStatus.LIVE : DeviceStatus.IDLE;
     }
 
-    /** Returns whether the row should be drawn dimmed, which marks a stale or unreachable device. */
+    /**
+     * Returns whether the row should be drawn dimmed, which marks a stale or unreachable device.
+     */
     public static boolean isDimmed(@NonNull final DeviceInfo device) {
         return device.getPresence() == DevicePresence.STALE
             || device.getPresence() == DevicePresence.UNREACHABLE;
     }
 
-    /** Returns the address text of one device, or an empty string when no address is known. */
+    /**
+     * Returns the address text of one device, or an empty string when no address is known.
+     */
     @NonNull
     public static String addressText(@NonNull final DeviceInfo device) {
         final DeviceAddress address = device.primaryAddress();
         return address == null ? "" : address.getHost() + ":" + address.getPort();
     }
 
-    /** Returns whether the primary address is IPv4. */
+    /**
+     * Returns whether the primary address is IPv4.
+     */
     public static boolean hasIpv4Address(@NonNull final DeviceInfo device) {
         final DeviceAddress address = device.primaryAddress();
         return address != null && address.getFamily() == DeviceAddress.FAMILY_IPV4;

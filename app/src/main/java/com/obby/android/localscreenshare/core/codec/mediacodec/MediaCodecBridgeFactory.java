@@ -17,9 +17,13 @@ package com.obby.android.localscreenshare.core.codec.mediacodec;
  */
 public interface MediaCodecBridgeFactory {
 
-    /** Creates an encoder bridge for {@code mime}, or throws an unchecked exception on failure. */
+    /**
+     * Creates an encoder bridge for {@code mime}, or throws an unchecked exception on failure.
+     */
     MediaCodecEncoderBridge createEncoder(String mime);
 
-    /** Creates a decoder bridge for {@code mime}, or throws an unchecked exception on failure. */
+    /**
+     * Creates a decoder bridge for {@code mime}, or throws an unchecked exception on failure.
+     */
     MediaCodecDecoderBridge createDecoder(String mime);
 }

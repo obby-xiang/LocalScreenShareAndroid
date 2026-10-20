@@ -31,7 +31,9 @@ public final class DeviceObservation {
     @NonNull
     private final DiscoveryChannel source;
 
-    /** Stable device id, or null when the provider could not read an id at all. */
+    /**
+     * Stable device id, or null when the provider could not read an id at all.
+     */
     private final String id;
 
     private final String fingerprint;
@@ -44,7 +46,9 @@ public final class DeviceObservation {
 
     private final JoinPolicy join;
 
-    /** Secure-transport flag; null when the provider did not advertise it. */
+    /**
+     * Secure-transport flag; null when the provider did not advertise it.
+     */
     private final Boolean secure;
 
     private final AuthMode auth;
@@ -59,13 +63,19 @@ public final class DeviceObservation {
 
     private final Integer port;
 
-    /** Random per-start identifier used to discard out-of-order announcements. */
+    /**
+     * Random per-start identifier used to discard out-of-order announcements.
+     */
     private final String boot;
 
-    /** Monotonic sequence within one {@link #getBoot() boot}. */
+    /**
+     * Monotonic sequence within one {@link #getBoot() boot}.
+     */
     private final Long seq;
 
-    /** Observation time in milliseconds; null means "use the store clock". */
+    /**
+     * Observation time in milliseconds; null means "use the store clock".
+     */
     private final Long lastSeenMs;
 
     private final boolean lost;
@@ -102,12 +112,16 @@ public final class DeviceObservation {
         this.goodbye = goodbye;
     }
 
-    /** True when this observation carries a complete address. */
+    /**
+     * True when this observation carries a complete address.
+     */
     public boolean hasAddress() {
         return host != null && !host.trim().isEmpty() && port != null;
     }
 
-    /** True when the observation can be merged into a device entry. */
+    /**
+     * True when the observation can be merged into a device entry.
+     */
     public boolean hasIdentity() {
         return id != null && !id.trim().isEmpty();
     }

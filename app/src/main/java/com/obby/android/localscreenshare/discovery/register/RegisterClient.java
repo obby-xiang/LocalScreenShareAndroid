@@ -38,12 +38,18 @@ import java.util.concurrent.Executor;
  */
 public final class RegisterClient {
 
-    /** Receives the outcome of one registration on the callback executor. */
+    /**
+     * Receives the outcome of one registration on the callback executor.
+     */
     public interface Callback {
-        /** Called with the accepted response. */
+        /**
+         * Called with the accepted response.
+         */
         void onSuccess(@NonNull RegisterResponse response);
 
-        /** Called with a short reason when the call failed or was rejected. */
+        /**
+         * Called with a short reason when the call failed or was rejected.
+         */
         void onFailure(@NonNull String reason);
     }
 
@@ -78,7 +84,9 @@ public final class RegisterClient {
             BackoffPolicy.randomJitter(0.2d, new Random()));
     }
 
-    /** Creates a client with an explicit retry jitter; tests pass {@link BackoffPolicy#NO_JITTER}. */
+    /**
+     * Creates a client with an explicit retry jitter; tests pass {@link BackoffPolicy#NO_JITTER}.
+     */
     public RegisterClient(@NonNull final RegisterStub stub, @NonNull final DelayedScheduler scheduler,
         @NonNull final Executor callbackExecutor, @NonNull final BackoffPolicy.Jitter retryJitter) {
         mStub = Objects.requireNonNull(stub, "stub");
@@ -110,7 +118,9 @@ public final class RegisterClient {
         return true;
     }
 
-    /** Returns the number of calls currently in flight. */
+    /**
+     * Returns the number of calls currently in flight.
+     */
     public int pendingCount() {
         synchronized (mPending) {
             return mPending.size();
@@ -127,7 +137,9 @@ public final class RegisterClient {
         mTimeoutMs = timeoutMs > 0L ? timeoutMs : RegisterConstants.REGISTER_TIMEOUT_MS;
     }
 
-    /** Cancels every in-flight call and suppresses their callbacks. */
+    /**
+     * Cancels every in-flight call and suppresses their callbacks.
+     */
     public void cancelAll() {
         final List<Pending> pending;
         synchronized (mPending) {
@@ -255,7 +267,9 @@ public final class RegisterClient {
         return address.getHost() + "|" + address.getPort();
     }
 
-    /** Mutable state of one in-flight registration. */
+    /**
+     * Mutable state of one in-flight registration.
+     */
     private static final class Pending {
         @NonNull
         final String key;

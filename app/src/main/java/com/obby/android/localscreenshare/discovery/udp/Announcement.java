@@ -32,10 +32,14 @@ import lombok.ToString;
 @ToString
 public final class Announcement {
 
-    /** Schema version understood by this implementation. */
+    /**
+     * Schema version understood by this implementation.
+     */
     public static final int VERSION = 1;
 
-    /** Maximum accepted length of every string field, in characters. */
+    /**
+     * Maximum accepted length of every string field, in characters.
+     */
     public static final int MAX_STRING_LENGTH = 64;
 
     private final int version;
@@ -67,23 +71,33 @@ public final class Announcement {
 
     private final int capabilities;
 
-    /** gRPC port the sender accepts Register and stream calls on; 0 when it serves nothing. */
+    /**
+     * gRPC port the sender accepts Register and stream calls on; 0 when it serves nothing.
+     */
     private final int port;
 
     @Nullable
     private final String platform;
 
-    /** Random per-start identifier; null when the sender did not provide one. */
+    /**
+     * Random per-start identifier; null when the sender did not provide one.
+     */
     @Nullable
     private final String boot;
 
-    /** Monotonic sequence within one {@link #getBoot() boot}; negative when unknown. */
+    /**
+     * Monotonic sequence within one {@link #getBoot() boot}; negative when unknown.
+     */
     private final long seq;
 
-    /** Seconds the sender considers this announcement fresh. */
+    /**
+     * Seconds the sender considers this announcement fresh.
+     */
     private final int ttlSeconds;
 
-    /** False for a goodbye. */
+    /**
+     * False for a goodbye.
+     */
     private final boolean announces;
 
     /**
@@ -127,7 +141,9 @@ public final class Announcement {
         this.announces = announces;
     }
 
-    /** True when this announcement says the sender is leaving. */
+    /**
+     * True when this announcement says the sender is leaving.
+     */
     public boolean isGoodbye() {
         return !announces;
     }

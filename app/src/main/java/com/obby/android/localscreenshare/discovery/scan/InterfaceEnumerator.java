@@ -14,7 +14,9 @@ import java.util.List;
  */
 public interface InterfaceEnumerator {
 
-    /** Returns the eligible IPv4 interfaces of this device, possibly empty. */
+    /**
+     * Returns the eligible IPv4 interfaces of this device, possibly empty.
+     */
     @NonNull
     List<LocalInterface> enumerate();
 }

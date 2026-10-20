@@ -19,19 +19,27 @@ import java.util.Objects;
 @SuppressLint("ApplySharedPref")
 public final class SharedPreferencesFavoriteStorage implements FavoriteStorage {
 
-    /** Preference file holding favorites; independent of the settings file. */
+    /**
+     * Preference file holding favorites; independent of the settings file.
+     */
     public static final String PREF_FILE_NAME = "lss-favorites";
 
-    /** Key of the current favorite document. */
+    /**
+     * Key of the current favorite document.
+     */
     public static final String KEY_FAVORITES = "favorites";
 
-    /** Key of the pre-identity favorite document, read once by the migration hook. */
+    /**
+     * Key of the pre-identity favorite document, read once by the migration hook.
+     */
     public static final String KEY_LEGACY_FAVORITES = "legacy_favorites";
 
     @NonNull
     private final SharedPreferences mPreferences;
 
-    /** Creates the storage from an application context. */
+    /**
+     * Creates the storage from an application context.
+     */
     public SharedPreferencesFavoriteStorage(@NonNull final Context context) {
         mPreferences = Objects.requireNonNull(context, "context")
             .getSharedPreferences(PREF_FILE_NAME, Context.MODE_PRIVATE);

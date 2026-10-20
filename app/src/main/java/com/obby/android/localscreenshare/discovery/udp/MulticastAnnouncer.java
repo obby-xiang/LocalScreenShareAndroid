@@ -32,12 +32,18 @@ import java.util.function.Supplier;
  */
 public final class MulticastAnnouncer {
 
-    /** Sends and closes the underlying transport. */
+    /**
+     * Sends and closes the underlying transport.
+     */
     public interface Sender {
-        /** Sends one encoded announcement. */
+        /**
+         * Sends one encoded announcement.
+         */
         void send(@NonNull byte[] payload);
 
-        /** Releases the transport after the goodbye burst. */
+        /**
+         * Releases the transport after the goodbye burst.
+         */
         void close();
     }
 
@@ -97,7 +103,9 @@ public final class MulticastAnnouncer {
         this(sender, scheduler, templateSupplier, new Random());
     }
 
-    /** Creates an announcer with an explicit random source, so tests get a fixed boot. */
+    /**
+     * Creates an announcer with an explicit random source, so tests get a fixed boot.
+     */
     public MulticastAnnouncer(@NonNull final Sender sender, @NonNull final DelayedScheduler scheduler,
         @NonNull final Supplier<Announcement> templateSupplier, @NonNull final Random random) {
         this(sender, scheduler, templateSupplier, random, MulticastConstants.MULTICAST_HEARTBEAT_ACTIVE_MS,
@@ -127,7 +135,9 @@ public final class MulticastAnnouncer {
             ? heartbeatIdleMs : MulticastConstants.MULTICAST_HEARTBEAT_IDLE_MS;
     }
 
-    /** Starts the startup burst; a second call while running is ignored. */
+    /**
+     * Starts the startup burst; a second call while running is ignored.
+     */
     public synchronized void start() {
         if (mRunning || mClosed) {
             return;
@@ -194,12 +204,16 @@ public final class MulticastAnnouncer {
         });
     }
 
-    /** True while the startup burst or the heartbeat is running. */
+    /**
+     * True while the startup burst or the heartbeat is running.
+     */
     public synchronized boolean isRunning() {
         return mRunning;
     }
 
-    /** Returns the session boot, or null before {@link #start()}. */
+    /**
+     * Returns the session boot, or null before {@link #start()}.
+     */
     @Nullable
     public synchronized String boot() {
         return mBoot;

@@ -15,7 +15,9 @@ import java.net.InetAddress;
  */
 public interface MulticastTransport extends Closeable {
 
-    /** Receives datagrams and transport-level failures from the receiver threads. */
+    /**
+     * Receives datagrams and transport-level failures from the receiver threads.
+     */
     interface Listener {
         /**
          * Called on a receiver thread for every datagram.
@@ -25,7 +27,9 @@ public interface MulticastTransport extends Closeable {
          */
         void onPacket(@NonNull byte[] payload, @NonNull InetAddress sender);
 
-        /** Reports a transport-level failure that did not produce a packet. */
+        /**
+         * Reports a transport-level failure that did not produce a packet.
+         */
         void onTransportError(@NonNull String reason);
     }
 
@@ -35,10 +39,14 @@ public interface MulticastTransport extends Closeable {
      */
     void start(@Nullable Listener listener);
 
-    /** Sends one datagram through every open endpoint; failures are reported, never thrown. */
+    /**
+     * Sends one datagram through every open endpoint; failures are reported, never thrown.
+     */
     void send(@NonNull byte[] payload);
 
-    /** Stops receiving, closes every socket and releases the rebuild scheduler. */
+    /**
+     * Stops receiving, closes every socket and releases the rebuild scheduler.
+     */
     @Override
     void close();
 }

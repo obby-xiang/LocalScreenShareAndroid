@@ -16,6 +16,8 @@ import java.util.List;
 @FunctionalInterface
 public interface DeviceStoreListener {
 
-    /** Called with the new snapshot; {@code devices} is never null and never mutated. */
+    /**
+     * Called with the new snapshot; {@code devices} is never null and never mutated.
+     */
     void onDevicesChanged(@NonNull List<DeviceInfo> devices);
 }

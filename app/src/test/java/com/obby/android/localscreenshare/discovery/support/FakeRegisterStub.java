@@ -28,33 +28,45 @@ public final class FakeRegisterStub implements RegisterStub {
         mCalls.add(new Call(address, request, timeoutMs, callback));
     }
 
-    /** Returns the number of calls issued so far. */
+    /**
+     * Returns the number of calls issued so far.
+     */
     public int callCount() {
         return mCalls.size();
     }
 
-    /** Returns the last issued call, or null when none was made. */
+    /**
+     * Returns the last issued call, or null when none was made.
+     */
     public Call last() {
         return mCalls.isEmpty() ? null : mCalls.get(mCalls.size() - 1);
     }
 
-    /** Returns every issued call in order. */
+    /**
+     * Returns every issued call in order.
+     */
     @NonNull
     public List<Call> calls() {
         return mCalls;
     }
 
-    /** Completes the last call with a response. */
+    /**
+     * Completes the last call with a response.
+     */
     public void respondLast(@NonNull final RegisterResponse response) {
         last().callback.onResponse(response);
     }
 
-    /** Fails the last call. */
+    /**
+     * Fails the last call.
+     */
     public void failLast(@NonNull final String reason) {
         last().callback.onFailure(reason);
     }
 
-    /** One recorded call. */
+    /**
+     * One recorded call.
+     */
     public static final class Call {
         @NonNull
         public final DeviceAddress address;

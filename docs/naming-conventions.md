@@ -138,6 +138,12 @@ ui / service
 - 单例 getter 统一为 `get()`，不使用 `getInstance()`、`instance()` 等别名。
 - 常量使用 `UPPER_SNAKE`，按域加前缀，例如 `NSD_SERVICE_TYPE`、`GRPC_FLOW_CONTROL_WINDOW`、`MULTICAST_PORT`。
 
+### 3.4 Javadoc 排版
+
+- Javadoc 一律使用多行块格式：`/**` 单独一行，内容行以 ` * ` 开头，` */` 独立成行；禁止单行 `/** ... */`。
+- `//` 行注释与普通块注释（`/* ... */`）不受此限。
+- 判定标准：`git grep -nP '/\*\*.*\*/' -- 'app/src/**/*.java'` 不应有命中。
+
 ## 4. 资源
 
 ### 4.1 前缀表

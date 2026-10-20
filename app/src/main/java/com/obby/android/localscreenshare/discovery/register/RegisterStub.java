@@ -26,12 +26,18 @@ public interface RegisterStub {
     void register(@NonNull DeviceAddress address, @NonNull RegisterRequest request, long timeoutMs,
         @NonNull Callback callback);
 
-    /** Completion of one call. */
+    /**
+     * Completion of one call.
+     */
     interface Callback {
-        /** Called with the response, whether accepted or rejected. */
+        /**
+         * Called with the response, whether accepted or rejected.
+         */
         void onResponse(@NonNull RegisterResponse response);
 
-        /** Called when no response arrived; {@code reason} is a short diagnostic code. */
+        /**
+         * Called when no response arrived; {@code reason} is a short diagnostic code.
+         */
         void onFailure(@NonNull String reason);
     }
 }

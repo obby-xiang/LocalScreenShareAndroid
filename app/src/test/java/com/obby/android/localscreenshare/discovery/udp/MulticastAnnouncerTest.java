@@ -166,7 +166,9 @@ public class MulticastAnnouncerTest {
             .build();
     }
 
-    /** Records encoded announcements and decodes them for assertions. */
+    /**
+     * Records encoded announcements and decodes them for assertions.
+     */
     private static final class RecordingSender implements MulticastAnnouncer.Sender {
         private final List<byte[]> mPayloads = new ArrayList<>();
 

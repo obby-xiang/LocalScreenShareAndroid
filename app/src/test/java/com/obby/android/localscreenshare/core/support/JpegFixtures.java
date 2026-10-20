@@ -19,7 +19,9 @@ public final class JpegFixtures {
      */
     public static final byte[] REAL_JPEG = Base64.getDecoder().decode(REAL_JPEG_1X1_BASE64);
 
-    /** Smallest marker-only frame: SOI immediately followed by EOI. */
+    /**
+     * Smallest marker-only frame: SOI immediately followed by EOI.
+     */
     public static final byte[] VALID_FRAME = {(byte) 0xFF, (byte) 0xD8, (byte) 0xFF, (byte) 0xD9};
 
     public static final byte[] TRUNCATED_FRAME = {(byte) 0xFF, (byte) 0xD8, 0x00};
@@ -42,7 +44,9 @@ public final class JpegFixtures {
         return padded;
     }
 
-    /** A complete frame followed by bytes after EOI, so it does not end with EOI. */
+    /**
+     * A complete frame followed by bytes after EOI, so it does not end with EOI.
+     */
     public static byte[] frameWithTrailingGarbage() {
         byte[] frame = new byte[REAL_JPEG.length + 2];
         System.arraycopy(REAL_JPEG, 0, frame, 0, REAL_JPEG.length);

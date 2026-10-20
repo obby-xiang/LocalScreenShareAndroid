@@ -174,22 +174,30 @@ public final class BoundedAccessUnitQueue {
         return QueuePollResult.frame(head.accessUnit);
     }
 
-    /** Returns the number of queued units. */
+    /**
+     * Returns the number of queued units.
+     */
     public synchronized int size() {
         return entries.size();
     }
 
-    /** Returns the total payload bytes currently queued. */
+    /**
+     * Returns the total payload bytes currently queued.
+     */
     public synchronized long bytes() {
         return totalBytes;
     }
 
-    /** Returns the number of units dropped since this queue was created. */
+    /**
+     * Returns the number of units dropped since this queue was created.
+     */
     public synchronized long droppedUnits() {
         return droppedUnits;
     }
 
-    /** Returns the payload bytes dropped since this queue was created. */
+    /**
+     * Returns the payload bytes dropped since this queue was created.
+     */
     public synchronized long droppedBytes() {
         return droppedBytes;
     }
@@ -219,7 +227,9 @@ public final class BoundedAccessUnitQueue {
         totalBytes += accessUnit.getPayloadLength();
     }
 
-    /** Drops every entry and counts it, so a clear is visible in the drop statistics. */
+    /**
+     * Drops every entry and counts it, so a clear is visible in the drop statistics.
+     */
     private void clearEntriesCounted() {
         while (!entries.isEmpty()) {
             dropped(entries.pollFirst());

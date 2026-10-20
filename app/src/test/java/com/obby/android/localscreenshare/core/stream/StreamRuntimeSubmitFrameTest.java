@@ -19,7 +19,9 @@ import org.junit.Test;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Unit tests for {@link StreamRuntime#submitFrame}. */
+/**
+ * Unit tests for {@link StreamRuntime#submitFrame}.
+ */
 public class StreamRuntimeSubmitFrameTest {
 
     private static final StreamKey KEY = new StreamKey("session", "stream");

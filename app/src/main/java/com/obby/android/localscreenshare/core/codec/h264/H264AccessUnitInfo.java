@@ -39,17 +39,23 @@ public final class H264AccessUnitInfo {
         return ppsCount > 0;
     }
 
-    /** True when a type 5 NAL with nal_ref_idc != 0 is present. */
+    /**
+     * True when a type 5 NAL with nal_ref_idc != 0 is present.
+     */
     public boolean hasIdr() {
         return hasIdr;
     }
 
-    /** True when any VCL NAL carries a B slice_type (1 or 6). */
+    /**
+     * True when any VCL NAL carries a B slice_type (1 or 6).
+     */
     public boolean hasBSlice() {
         return hasBSlice;
     }
 
-    /** True when the access unit contains at least one VCL NAL. */
+    /**
+     * True when the access unit contains at least one VCL NAL.
+     */
     public boolean hasVcl() {
         return vclCount > 0;
     }
@@ -105,7 +111,9 @@ public final class H264AccessUnitInfo {
         return vclCount;
     }
 
-    /** Slice header of the first VCL NAL in the access unit, or {@code null}. */
+    /**
+     * Slice header of the first VCL NAL in the access unit, or {@code null}.
+     */
     public H264SliceHeader getFirstSliceHeader() {
         return firstSliceHeader;
     }

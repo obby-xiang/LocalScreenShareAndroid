@@ -17,7 +17,9 @@ import java.net.InetAddress;
  */
 public interface MulticastEndpoint extends Closeable {
 
-    /** Returns the name of the interface this endpoint is bound to, for logs and diagnostics. */
+    /**
+     * Returns the name of the interface this endpoint is bound to, for logs and diagnostics.
+     */
     @NonNull
     String interfaceName();
 
@@ -37,6 +39,8 @@ public interface MulticastEndpoint extends Closeable {
     @Nullable
     InetAddress lastSender();
 
-    /** Sends one datagram to the configured group; called from the announcement scheduler. */
+    /**
+     * Sends one datagram to the configured group; called from the announcement scheduler.
+     */
     void send(@NonNull byte[] payload) throws IOException;
 }

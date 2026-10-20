@@ -310,21 +310,27 @@ public final class StreamRuntime {
         }
     }
 
-    /** Returns whether {@link #close()} has been called; a closed runtime never reopens. */
+    /**
+     * Returns whether {@link #close()} has been called; a closed runtime never reopens.
+     */
     public boolean isClosed() {
         synchronized (lock) {
             return closed;
         }
     }
 
-    /** Returns the current lifecycle state, read atomically with the rest of the runtime state. */
+    /**
+     * Returns the current lifecycle state, read atomically with the rest of the runtime state.
+     */
     public RuntimeState getState() {
         synchronized (lock) {
             return state;
         }
     }
 
-    /** Returns the stream identity this runtime serves; never null and never changes. */
+    /**
+     * Returns the stream identity this runtime serves; never null and never changes.
+     */
     public StreamKey getStreamKey() {
         return streamKey;
     }
@@ -353,7 +359,9 @@ public final class StreamRuntime {
         }
     }
 
-    /** Returns the rate and cadence hints last accepted by {@link #updateParameters}. */
+    /**
+     * Returns the rate and cadence hints last accepted by {@link #updateParameters}.
+     */
     public StreamParameters getParameters() {
         synchronized (lock) {
             return parameters;
@@ -612,7 +620,9 @@ public final class StreamRuntime {
         }
     }
 
-    /** Removes a listener; removing one that was never added is a no-op. */
+    /**
+     * Removes a listener; removing one that was never added is a no-op.
+     */
     public void removeListener(StreamRuntimeListener listener) {
         synchronized (lock) {
             listeners.remove(listener);

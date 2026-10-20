@@ -43,25 +43,43 @@ import java.util.Objects;
  */
 public final class FavoriteStore {
 
-    /** Result of comparing a stored fingerprint with a just-observed one. */
+    /**
+     * Result of comparing a stored fingerprint with a just-observed one.
+     */
     public enum IdentityStatus {
-        /** Both fingerprints are known and equal. */
+        /**
+         * Both fingerprints are known and equal.
+         */
         MATCH,
-        /** Both fingerprints are known and differ. */
+        /**
+         * Both fingerprints are known and differ.
+         */
         CHANGED,
-        /** At least one side has no fingerprint, so no conclusion can be drawn. */
+        /**
+         * At least one side has no fingerprint, so no conclusion can be drawn.
+         */
         UNKNOWN
     }
 
-    /** Result of applying a remote observation to a favorite. */
+    /**
+     * Result of applying a remote observation to a favorite.
+     */
     public enum SyncOutcome {
-        /** The device is not a favorite. */
+        /**
+         * The device is not a favorite.
+         */
         NOT_FAVORITE,
-        /** Nothing about the favorite changed. */
+        /**
+         * Nothing about the favorite changed.
+         */
         UNCHANGED,
-        /** The address or the automatic alias changed. */
+        /**
+         * The address or the automatic alias changed.
+         */
         UPDATED,
-        /** The remote answered with a different fingerprint; the favorite was not rebound. */
+        /**
+         * The remote answered with a different fingerprint; the favorite was not rebound.
+         */
         IDENTITY_CHANGED
     }
 
@@ -78,7 +96,9 @@ public final class FavoriteStore {
     @NonNull
     private final List<FavoriteDevice> mFavorites = new ArrayList<>();
 
-    /** Creates a store over the given storage and loads what is already persisted. */
+    /**
+     * Creates a store over the given storage and loads what is already persisted.
+     */
     public FavoriteStore(@NonNull final FavoriteStorage storage) {
         mStorage = Objects.requireNonNull(storage, "storage");
         load();
@@ -94,18 +114,24 @@ public final class FavoriteStore {
         return InstanceHolder.INSTANCE;
     }
 
-    /** Returns every favorite, most recently added first. */
+    /**
+     * Returns every favorite, most recently added first.
+     */
     @NonNull
     public synchronized List<FavoriteDevice> favorites() {
         return Collections.unmodifiableList(new ArrayList<>(mFavorites));
     }
 
-    /** Returns whether {@code id} is a favorite. */
+    /**
+     * Returns whether {@code id} is a favorite.
+     */
     public synchronized boolean isFavorite(@NonNull final String id) {
         return find(id) != null;
     }
 
-    /** Returns the favorite of {@code id}, or null. */
+    /**
+     * Returns the favorite of {@code id}, or null.
+     */
     @Nullable
     public synchronized FavoriteDevice find(@NonNull final String id) {
         for (final FavoriteDevice favorite : mFavorites) {
@@ -116,7 +142,9 @@ public final class FavoriteStore {
         return null;
     }
 
-    /** Returns the favorite whose last known address is {@code host:port}, or null. */
+    /**
+     * Returns the favorite whose last known address is {@code host:port}, or null.
+     */
     @Nullable
     public synchronized FavoriteDevice findByAddress(@NonNull final String host, final int port) {
         for (final FavoriteDevice favorite : mFavorites) {
@@ -148,7 +176,9 @@ public final class FavoriteStore {
         return stored;
     }
 
-    /** Removes the favorite of {@code id}; returns false when it was not a favorite. */
+    /**
+     * Removes the favorite of {@code id}; returns false when it was not a favorite.
+     */
     public synchronized boolean remove(@NonNull final String id) {
         final FavoriteDevice existing = find(id);
         if (existing == null) {
@@ -176,7 +206,9 @@ public final class FavoriteStore {
         return true;
     }
 
-    /** Records that a connection to {@code host:port} succeeded; unknown ids are ignored. */
+    /**
+     * Records that a connection to {@code host:port} succeeded; unknown ids are ignored.
+     */
     public synchronized boolean recordSuccess(@NonNull final String id, @NonNull final String host,
         final int port, final long nowMs) {
         final FavoriteDevice existing = find(id);
@@ -316,7 +348,9 @@ public final class FavoriteStore {
         return imported;
     }
 
-    /** Compares a stored fingerprint with an observed one. */
+    /**
+     * Compares a stored fingerprint with an observed one.
+     */
     @NonNull
     public static IdentityStatus checkIdentity(@Nullable final String stored,
         @Nullable final String observed) {
@@ -439,12 +473,16 @@ public final class FavoriteStore {
         return new FavoriteStore(new SharedPreferencesFavoriteStorage(App.get()));
     }
 
-    /** Lazily holds the process-wide favorite store; class loading stays out of JVM tests. */
+    /**
+     * Lazily holds the process-wide favorite store; class loading stays out of JVM tests.
+     */
     private static final class InstanceHolder {
         private static final FavoriteStore INSTANCE = createDefault();
     }
 
-    /** Gson shape of one record; kept separate so the value object stays immutable. */
+    /**
+     * Gson shape of one record; kept separate so the value object stays immutable.
+     */
     private static final class FavoriteRecord {
         private String id;
         private String fp;

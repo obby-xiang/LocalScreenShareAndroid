@@ -30,7 +30,9 @@ import org.junit.Test;
 
 import java.util.Collections;
 
-/** Unit tests for {@link StreamCallHandler}. */
+/**
+ * Unit tests for {@link StreamCallHandler}.
+ */
 public class StreamCallHandlerTest {
 
     private static final StreamKey STREAM_KEY = new StreamKey("session-1", "stream-1");

@@ -287,7 +287,9 @@ public final class ScreenShareClient {
         mMainHandler.postDelayed(mUpdateClientStatsRunnable, UPDATE_CLIENT_STATS_INTERVAL_MS);
     }
 
-    /** Asks the server for a random-access point; a no-op before start or after stop. */
+    /**
+     * Asks the server for a random-access point; a no-op before start or after stop.
+     */
     public void requestKeyframe() {
         final StreamObserver<ClientMessage> observer = mRequestObserver;
         if (observer == null || mIsStopped) {

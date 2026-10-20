@@ -56,7 +56,9 @@ public final class CodecCapability {
         this.adaptive = adaptive;
     }
 
-    /** Returns an unconstrained capability for {@code codecId}. */
+    /**
+     * Returns an unconstrained capability for {@code codecId}.
+     */
     public static CodecCapability any(String codecId) {
         return new CodecCapability(codecId, null, null, null, 0, 0, 0, 0, false, false);
     }

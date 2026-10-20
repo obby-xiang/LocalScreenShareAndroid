@@ -28,10 +28,14 @@ import java.util.Locale;
  */
 public final class VisibilityPolicy {
 
-    /** Length of the temporary visibility window. */
+    /**
+     * Length of the temporary visibility window.
+     */
     public static final long VISIBLE_DURATION_MS = 10L * 60_000L;
 
-    /** Preset chosen by the user. */
+    /**
+     * Preset chosen by the user.
+     */
     public enum Visibility {
         HIDDEN("hidden"),
         FAVORITES("favorites"),
@@ -45,7 +49,9 @@ public final class VisibilityPolicy {
             mWire = wire;
         }
 
-        /** Returns the persisted wire value. */
+        /**
+         * Returns the persisted wire value.
+         */
         @NonNull
         public String wire() {
             return mWire;
@@ -104,34 +110,46 @@ public final class VisibilityPolicy {
         return new VisibilityPolicy(visibility, normalizedExpiry);
     }
 
-    /** Returns the preset the user chose, which may have expired. */
+    /**
+     * Returns the preset the user chose, which may have expired.
+     */
     @NonNull
     public Visibility getVisibility() {
         return mVisibility;
     }
 
-    /** Returns the absolute expiry of {@link Visibility#VISIBLE_10_MIN}, or {@code 0} when none. */
+    /**
+     * Returns the absolute expiry of {@link Visibility#VISIBLE_10_MIN}, or {@code 0} when none.
+     */
     public long getExpiresAtMs() {
         return mExpiresAtMs;
     }
 
-    /** Returns whether the temporary window is over at {@code nowMs}. */
+    /**
+     * Returns whether the temporary window is over at {@code nowMs}.
+     */
     public boolean isExpired(final long nowMs) {
         return mVisibility == Visibility.VISIBLE_10_MIN && nowMs >= mExpiresAtMs;
     }
 
-    /** Returns the preset that applies at {@code nowMs}, collapsing an expired window to hidden. */
+    /**
+     * Returns the preset that applies at {@code nowMs}, collapsing an expired window to hidden.
+     */
     @NonNull
     public Visibility effective(final long nowMs) {
         return isExpired(nowMs) ? Visibility.HIDDEN : mVisibility;
     }
 
-    /** Returns whether this device announces itself at {@code nowMs}. */
+    /**
+     * Returns whether this device announces itself at {@code nowMs}.
+     */
     public boolean isAnnouncing(final long nowMs) {
         return effective(nowMs) != Visibility.HIDDEN;
     }
 
-    /** Returns the join policy advertised at {@code nowMs}. */
+    /**
+     * Returns the join policy advertised at {@code nowMs}.
+     */
     @NonNull
     public JoinPolicy joinPolicy(final long nowMs) {
         switch (effective(nowMs)) {

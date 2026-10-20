@@ -33,39 +33,67 @@ import java.util.function.IntSupplier;
  */
 public final class ScanCoordinator {
 
-    /** Length of the window in which announcements and favorite probes can confirm a device. */
+    /**
+     * Length of the window in which announcements and favorite probes can confirm a device.
+     */
     public static final long GRACE_MS = 1_000L;
 
-    /** State of the coordinator. */
+    /**
+     * State of the coordinator.
+     */
     public enum State {
-        /** Nothing scheduled. */
+        /**
+         * Nothing scheduled.
+         */
         IDLE,
-        /** Waiting for announcements and probes to confirm a device. */
+        /**
+         * Waiting for announcements and probes to confirm a device.
+         */
         GRACE,
-        /** Probing the interface candidates. */
+        /**
+         * Probing the interface candidates.
+         */
         SCANNING,
-        /** The last run ended; a new trigger may start another one. */
+        /**
+         * The last run ended; a new trigger may start another one.
+         */
         DONE
     }
 
-    /** What asked for the scan. */
+    /**
+     * What asked for the scan.
+     */
     public enum Trigger {
-        /** Discovery was just started. */
+        /**
+         * Discovery was just started.
+         */
         DISCOVERY_START,
-        /** The user asked to search again. */
+        /**
+         * The user asked to search again.
+         */
         MANUAL_REFRESH,
-        /** The device list stayed empty after the initial window. */
+        /**
+         * The device list stayed empty after the initial window.
+         */
         EMPTY_LIST,
-        /** Connectivity changed; interfaces may differ from the previous run. */
+        /**
+         * Connectivity changed; interfaces may differ from the previous run.
+         */
         NETWORK_CHANGED
     }
 
-    /** Receives state changes and the aggregate result of one run on the callback executor. */
+    /**
+     * Receives state changes and the aggregate result of one run on the callback executor.
+     */
     public interface Listener {
-        /** Called after a state transition. */
+        /**
+         * Called after a state transition.
+         */
         void onStateChanged(@NonNull State state);
 
-        /** Called once per run, including runs that were cancelled or skipped. */
+        /**
+         * Called once per run, including runs that were cancelled or skipped.
+         */
         void onScanCompleted(@NonNull AddressScanner.ScanResult result);
     }
 
@@ -128,7 +156,9 @@ public final class ScanCoordinator {
         mPortSupplier = Objects.requireNonNull(portSupplier, "portSupplier");
     }
 
-    /** Subscribes the listener that receives state changes and results. */
+    /**
+     * Subscribes the listener that receives state changes and results.
+     */
     public void setListener(@Nullable final Listener listener) {
         synchronized (this) {
             mListener = listener;
@@ -178,7 +208,9 @@ public final class ScanCoordinator {
         notifyState(State.IDLE);
     }
 
-    /** Returns the current state. */
+    /**
+     * Returns the current state.
+     */
     @NonNull
     public State state() {
         synchronized (this) {
@@ -186,7 +218,9 @@ public final class ScanCoordinator {
         }
     }
 
-    /** Returns how many scans were started; used by tests and diagnostics. */
+    /**
+     * Returns how many scans were started; used by tests and diagnostics.
+     */
     public int runs() {
         synchronized (this) {
             return mRuns;

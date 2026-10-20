@@ -82,12 +82,16 @@ public final class ClientMediaReceiver {
         }
     }
 
-    /** Returns the session driven by this receiver. */
+    /**
+     * Returns the session driven by this receiver.
+     */
     public ClientMediaSession getSession() {
         return session;
     }
 
-    /** Closes the underlying session; idempotent. */
+    /**
+     * Closes the underlying session; idempotent.
+     */
     public void close() {
         session.close();
     }

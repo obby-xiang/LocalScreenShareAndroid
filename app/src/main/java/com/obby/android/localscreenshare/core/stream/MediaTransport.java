@@ -42,6 +42,8 @@ public interface MediaTransport {
      */
     void sendAccessUnit(EncodedAccessUnit accessUnit) throws IOException;
 
-    /** Releases the connection; idempotent and non-throwing. */
+    /**
+     * Releases the connection; idempotent and non-throwing.
+     */
     void close();
 }

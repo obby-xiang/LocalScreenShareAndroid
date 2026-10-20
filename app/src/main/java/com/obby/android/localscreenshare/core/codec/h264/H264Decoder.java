@@ -46,7 +46,9 @@ public final class H264Decoder implements Decoder {
 
     private static final String H264_MIME = "video/avc";
 
-    /** Total budget for acquiring an input buffer, in nanoseconds (~20ms). */
+    /**
+     * Total budget for acquiring an input buffer, in nanoseconds (~20ms).
+     */
     private static final long INPUT_BUDGET_NANOS = 20_000_000L;
 
     private final StreamKey streamKey;
@@ -241,7 +243,9 @@ public final class H264Decoder implements Decoder {
         releaseBridgeQuietly(bridge, started);
     }
 
-    /** Returns the unique config part payload for {@code id}, or throws on missing/duplicate. */
+    /**
+     * Returns the unique config part payload for {@code id}, or throws on missing/duplicate.
+     */
     private static byte[] requireSingleConfigPart(List<CodecConfigPart> parts, String id)
             throws DecoderException {
         byte[] found = null;
@@ -261,7 +265,9 @@ public final class H264Decoder implements Decoder {
         return found;
     }
 
-    /** Best-effort stop (when started) and release of a bridge; never throws. */
+    /**
+     * Best-effort stop (when started) and release of a bridge; never throws.
+     */
     private static void releaseBridgeQuietly(MediaCodecDecoderBridge bridge, boolean started) {
         if (bridge == null) {
             return;

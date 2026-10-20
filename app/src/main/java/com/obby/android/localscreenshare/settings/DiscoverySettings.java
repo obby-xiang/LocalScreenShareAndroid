@@ -32,22 +32,34 @@ import com.obby.android.localscreenshare.discovery.udp.MulticastConstants;
  */
 public final class DiscoverySettings {
 
-    /** Lowest accepted multicast port. */
+    /**
+     * Lowest accepted multicast port.
+     */
     public static final int MIN_MULTICAST_PORT = 1024;
 
-    /** Highest accepted multicast port. */
+    /**
+     * Highest accepted multicast port.
+     */
     public static final int MAX_MULTICAST_PORT = 65535;
 
-    /** Lower bound of the administratively scoped multicast range (224.0.0.0/4). */
+    /**
+     * Lower bound of the administratively scoped multicast range (224.0.0.0/4).
+     */
     private static final int MULTICAST_FIRST_OCTET_MIN = 224;
 
-    /** Upper bound of the administratively scoped multicast range (224.0.0.0/4). */
+    /**
+     * Upper bound of the administratively scoped multicast range (224.0.0.0/4).
+     */
     private static final int MULTICAST_FIRST_OCTET_MAX = 239;
 
-    /** Number of octets in an IPv4 literal. */
+    /**
+     * Number of octets in an IPv4 literal.
+     */
     private static final int IPV4_OCTETS = 4;
 
-    /** Highest value of one IPv4 octet. */
+    /**
+     * Highest value of one IPv4 octet.
+     */
     private static final int MAX_OCTET = 255;
 
     /**
@@ -80,23 +92,31 @@ public final class DiscoverySettings {
             mHeartbeatIdleMs = heartbeatIdleMs;
         }
 
-        /** Returns the persisted wire value. */
+        /**
+         * Returns the persisted wire value.
+         */
         @NonNull
         public String wire() {
             return mWire;
         }
 
-        /** Returns the Register deadline of this preset. */
+        /**
+         * Returns the Register deadline of this preset.
+         */
         public long getRegisterTimeoutMs() {
             return mRegisterTimeoutMs;
         }
 
-        /** Returns the announcement period while a capture session is live. */
+        /**
+         * Returns the announcement period while a capture session is live.
+         */
         public long getHeartbeatActiveMs() {
             return mHeartbeatActiveMs;
         }
 
-        /** Returns the announcement period while the server is idle. */
+        /**
+         * Returns the announcement period while the server is idle.
+         */
         public long getHeartbeatIdleMs() {
             return mHeartbeatIdleMs;
         }
@@ -149,7 +169,9 @@ public final class DiscoverySettings {
         mCompatOnly = compatOnly;
     }
 
-    /** Returns the default settings: multicast on, visible, balanced refresh, mDNS and multicast. */
+    /**
+     * Returns the default settings: multicast on, visible, balanced refresh, mDNS and multicast.
+     */
     @NonNull
     public static DiscoverySettings defaults() {
         return new DiscoverySettings(true, MulticastConstants.MULTICAST_GROUP, MulticastConstants.MULTICAST_PORT,
@@ -223,12 +245,16 @@ public final class DiscoverySettings {
         return octets[0] >= MULTICAST_FIRST_OCTET_MIN && octets[0] <= MULTICAST_FIRST_OCTET_MAX;
     }
 
-    /** Returns whether the supplied port is inside the accepted multicast range. */
+    /**
+     * Returns whether the supplied port is inside the accepted multicast range.
+     */
     public static boolean isValidPort(final int port) {
         return port >= MIN_MULTICAST_PORT && port <= MAX_MULTICAST_PORT;
     }
 
-    /** Returns whether the user enabled the multicast channel (announcement and reception). */
+    /**
+     * Returns whether the user enabled the multicast channel (announcement and reception).
+     */
     public boolean isMulticastEnabled() {
         return mMulticastEnabled;
     }
@@ -252,22 +278,30 @@ public final class DiscoverySettings {
         return mVisibility;
     }
 
-    /** Returns the persisted expiry of the temporary preset, or {@code 0} when there is none. */
+    /**
+     * Returns the persisted expiry of the temporary preset, or {@code 0} when there is none.
+     */
     public long getVisibilityExpiresAtMs() {
         return mVisibilityExpiresAtMs;
     }
 
-    /** Returns whether the device is restricted to mDNS discovery and registration. */
+    /**
+     * Returns whether the device is restricted to mDNS discovery and registration.
+     */
     public boolean isCompatOnly() {
         return mCompatOnly;
     }
 
-    /** Returns whether the multicast provider should run; compatibility mode always disables it. */
+    /**
+     * Returns whether the multicast provider should run; compatibility mode always disables it.
+     */
     public boolean isMulticastChannelEnabled() {
         return mMulticastEnabled && !mCompatOnly;
     }
 
-    /** Returns whether the address scan may run; compatibility mode never scans. */
+    /**
+     * Returns whether the address scan may run; compatibility mode never scans.
+     */
     public boolean isScanEnabled() {
         return !mCompatOnly;
     }
@@ -287,14 +321,18 @@ public final class DiscoverySettings {
             Arrays.asList(NsdConstants.NSD_SERVICE_TYPE, NsdConstants.NSD_SERVICE_TYPE_LEGACY));
     }
 
-    /** Returns the capability bitmap to advertise for this mode. */
+    /**
+     * Returns the capability bitmap to advertise for this mode.
+     */
     public int capabilities() {
         return mCompatOnly
             ? NsdConstants.DEVICE_CAPABILITY_H264
             : NsdConstants.DEVICE_CAPABILITY_H264 | NsdConstants.DEVICE_CAPABILITY_JPEG;
     }
 
-    /** Returns the visibility policy of this snapshot, anchored at the persisted window. */
+    /**
+     * Returns the visibility policy of this snapshot, anchored at the persisted window.
+     */
     @NonNull
     public VisibilityPolicy visibilityPolicy(final long nowMs) {
         if (mVisibility == VisibilityPolicy.Visibility.VISIBLE_10_MIN && mVisibilityExpiresAtMs > 0L) {

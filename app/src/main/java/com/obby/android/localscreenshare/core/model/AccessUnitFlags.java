@@ -30,22 +30,30 @@ public final class AccessUnitFlags {
         return new AccessUnitFlags(syncPoint, joinPoint, config);
     }
 
-    /** Returns a flag set with every flag cleared. */
+    /**
+     * Returns a flag set with every flag cleared.
+     */
     public static AccessUnitFlags none() {
         return new AccessUnitFlags(false, false, false);
     }
 
-    /** True when the codec can start decoding at this unit. */
+    /**
+     * True when the codec can start decoding at this unit.
+     */
     public boolean isSyncPoint() {
         return syncPoint;
     }
 
-    /** True when a late or resynchronizing receiver may join at this unit. */
+    /**
+     * True when a late or resynchronizing receiver may join at this unit.
+     */
     public boolean isJoinPoint() {
         return joinPoint;
     }
 
-    /** True when the unit carries codec configuration rather than displayable data. */
+    /**
+     * True when the unit carries codec configuration rather than displayable data.
+     */
     public boolean isConfig() {
         return config;
     }

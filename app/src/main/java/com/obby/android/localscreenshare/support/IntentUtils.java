@@ -35,14 +35,18 @@ public final class IntentUtils {
         }
     }
 
-    /** Overlay permission page for this app, addressed through a {@code package:} URI. */
+    /**
+     * Overlay permission page for this app, addressed through a {@code package:} URI.
+     */
     @NonNull
     public static Intent createManageOverlayPermissionIntent(@NonNull final Context context) {
         return new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION)
             .setData(Uri.fromParts(SCHEME_PACKAGE, context.getPackageName(), null));
     }
 
-    /** Application details page for this app, addressed through a {@code package:} URI. */
+    /**
+     * Application details page for this app, addressed through a {@code package:} URI.
+     */
     @NonNull
     public static Intent createApplicationDetailsSettings(@NonNull final Context context) {
         return new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)

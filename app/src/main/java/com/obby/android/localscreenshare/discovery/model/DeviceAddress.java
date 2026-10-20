@@ -20,7 +20,9 @@ import java.util.Objects;
  */
 public final class DeviceAddress implements Comparable<DeviceAddress>, Parcelable {
 
-    /** Restores an address from a parcel written by {@link #writeToParcel(Parcel, int)}. */
+    /**
+     * Restores an address from a parcel written by {@link #writeToParcel(Parcel, int)}.
+     */
     public static final Creator<DeviceAddress> CREATOR = new Creator<>() {
         @Override
         public DeviceAddress createFromParcel(final Parcel in) {
@@ -33,10 +35,14 @@ public final class DeviceAddress implements Comparable<DeviceAddress>, Parcelabl
         }
     };
 
-    /** Address family of IPv4 literals. */
+    /**
+     * Address family of IPv4 literals.
+     */
     public static final int FAMILY_IPV4 = 4;
 
-    /** Address family of IPv6 literals, stored with surrounding brackets. */
+    /**
+     * Address family of IPv6 literals, stored with surrounding brackets.
+     */
     public static final int FAMILY_IPV6 = 6;
 
     @NonNull
@@ -90,13 +96,17 @@ public final class DeviceAddress implements Comparable<DeviceAddress>, Parcelabl
         mLastConfirmedMs = lastConfirmedMs;
     }
 
-    /** Restores an address written by {@link #writeToParcel(Parcel, int)}. */
+    /**
+     * Restores an address written by {@link #writeToParcel(Parcel, int)}.
+     */
     private DeviceAddress(@NonNull final Parcel in) {
         this(in.readString(), in.readInt(), DiscoveryChannel.valueOf(in.readString()),
             in.readInt() != 0, in.readLong());
     }
 
-    /** Derives the address family from a formatted literal. */
+    /**
+     * Derives the address family from a formatted literal.
+     */
     public static int familyOf(@NonNull final String host) {
         return host.startsWith("[") || host.indexOf(':') >= 0 ? FAMILY_IPV6 : FAMILY_IPV4;
     }
@@ -141,13 +151,17 @@ public final class DeviceAddress implements Comparable<DeviceAddress>, Parcelabl
         return mLastConfirmedMs;
     }
 
-    /** Returns the merge key: channel, host and port separated by {@code |}. */
+    /**
+     * Returns the merge key: channel, host and port separated by {@code |}.
+     */
     @NonNull
     public String getKey() {
         return mChannel.name() + "|" + mHost + "|" + mPort;
     }
 
-    /** Returns an address for the same host, port and channel with the given confirmation state. */
+    /**
+     * Returns an address for the same host, port and channel with the given confirmation state.
+     */
     @NonNull
     public DeviceAddress withConfirmation(final boolean confirmed, final long lastConfirmedMs) {
         return new DeviceAddress(mHost, mPort, mChannel, confirmed, lastConfirmedMs);

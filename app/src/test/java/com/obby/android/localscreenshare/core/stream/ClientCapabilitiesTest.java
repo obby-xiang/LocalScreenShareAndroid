@@ -11,7 +11,9 @@ import org.junit.Test;
 import java.util.HashMap;
 import java.util.Map;
 
-/** Unit tests for {@link ClientCapabilities} and {@link CodecCapability}. */
+/**
+ * Unit tests for {@link ClientCapabilities} and {@link CodecCapability}.
+ */
 public class ClientCapabilitiesTest {
 
     @Test

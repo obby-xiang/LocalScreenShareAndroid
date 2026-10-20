@@ -82,7 +82,9 @@ public final class SurfaceRenderTarget implements RenderTarget {
                 "surface render target does not render encoded images");
     }
 
-    /** Releases the cached surface; call when the window is torn down. */
+    /**
+     * Releases the cached surface; call when the window is torn down.
+     */
     public void release() {
         releaseSurface();
         lastTexture = null;

@@ -49,10 +49,14 @@ import java.util.function.Predicate;
  */
 public final class NsdDiscoveryProvider implements DiscoveryProvider {
 
-    /** Stable provider id. */
+    /**
+     * Stable provider id.
+     */
     public static final String PROVIDER_ID = "nsd";
 
-    /** Resolve timeout; keeps one unresponsive service from blocking the resolver queue. */
+    /**
+     * Resolve timeout; keeps one unresponsive service from blocking the resolver queue.
+     */
     public static final long RESOLVE_TIMEOUT_MS = 2_000L;
 
     private static final String TAG = "NsdDiscoveryProvider";
@@ -270,7 +274,9 @@ public final class NsdDiscoveryProvider implements DiscoveryProvider {
             .build());
     }
 
-    /** Forwards NsdManager discovery callbacks for one service type onto the main thread. */
+    /**
+     * Forwards NsdManager discovery callbacks for one service type onto the main thread.
+     */
     private final class TypeDiscoveryListener implements NsdManager.DiscoveryListener {
         @NonNull
         private final String mServiceType;
@@ -328,7 +334,9 @@ public final class NsdDiscoveryProvider implements DiscoveryProvider {
         }
     }
 
-    /** Bridges the coordinator onto {@link NsdManager}. */
+    /**
+     * Bridges the coordinator onto {@link NsdManager}.
+     */
     private final class NsdDiscovery implements NsdDiscoveryCoordinator.Discovery {
         @Override
         public void startDiscovery(@NonNull String serviceType) {
@@ -367,7 +375,9 @@ public final class NsdDiscoveryProvider implements DiscoveryProvider {
         }
     }
 
-    /** Schedules coordinator work on the main handler. */
+    /**
+     * Schedules coordinator work on the main handler.
+     */
     private final class MainThreadScheduler implements NsdDiscoveryCoordinator.Scheduler {
         @NonNull
         @Override
@@ -405,7 +415,9 @@ public final class NsdDiscoveryProvider implements DiscoveryProvider {
         }
     };
 
-    /** Last found service and what resolution learned about it. */
+    /**
+     * Last found service and what resolution learned about it.
+     */
     private static final class TrackedService {
         @NonNull
         final NsdServiceInfo serviceInfo;

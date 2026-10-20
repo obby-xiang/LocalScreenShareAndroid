@@ -20,22 +20,32 @@ import java.util.Random;
  */
 public final class BackoffPolicy {
 
-    /** Default schedule used for NSD discovery and registration retries. */
+    /**
+     * Default schedule used for NSD discovery and registration retries.
+     */
     public static final long[] DEFAULT_DELAYS_MS = {1_000L, 2_000L, 4_000L, 8_000L, 16_000L, 30_000L};
 
-    /** Default jitter as a fraction of the base delay, applied both earlier and later. */
+    /**
+     * Default jitter as a fraction of the base delay, applied both earlier and later.
+     */
     public static final double DEFAULT_JITTER_RATIO = 0.1d;
 
     private static final long MIN_DELAY_MS = 1L;
 
-    /** Maps a base delay to the delay actually used. */
+    /**
+     * Maps a base delay to the delay actually used.
+     */
     @FunctionalInterface
     public interface Jitter {
-        /** Returns the delay to use for {@code delayMs}; implementations must return a positive value. */
+        /**
+         * Returns the delay to use for {@code delayMs}; implementations must return a positive value.
+         */
         long apply(long delayMs);
     }
 
-    /** Jitter that returns the base delay unchanged; used by tests for exact sequences. */
+    /**
+     * Jitter that returns the base delay unchanged; used by tests for exact sequences.
+     */
     public static final Jitter NO_JITTER = delayMs -> delayMs;
 
     @NonNull
@@ -51,19 +61,25 @@ public final class BackoffPolicy {
         mJitter = jitter;
     }
 
-    /** Returns a policy with the default schedule and 10% random jitter. */
+    /**
+     * Returns a policy with the default schedule and 10% random jitter.
+     */
     @NonNull
     public static BackoffPolicy defaults() {
         return withDelays(DEFAULT_DELAYS_MS, randomJitter(DEFAULT_JITTER_RATIO, new Random()));
     }
 
-    /** Returns a policy with the default schedule and no jitter. */
+    /**
+     * Returns a policy with the default schedule and no jitter.
+     */
     @NonNull
     public static BackoffPolicy defaultsWithoutJitter() {
         return withDelays(DEFAULT_DELAYS_MS, NO_JITTER);
     }
 
-    /** Returns a jitter-free policy with the given delays. */
+    /**
+     * Returns a jitter-free policy with the given delays.
+     */
     @NonNull
     public static BackoffPolicy withoutJitter(@NonNull final long... delaysMs) {
         return withDelays(delaysMs, NO_JITTER);
@@ -105,19 +121,25 @@ public final class BackoffPolicy {
         };
     }
 
-    /** Returns the delay for the next retry and advances the schedule. */
+    /**
+     * Returns the delay for the next retry and advances the schedule.
+     */
     public long nextDelayMs() {
         final long base = mDelaysMs[Math.min(mAttempts, mDelaysMs.length - 1)];
         mAttempts++;
         return Math.max(MIN_DELAY_MS, mJitter.apply(base));
     }
 
-    /** Returns the number of delays handed out since construction or the last {@link #reset()}. */
+    /**
+     * Returns the number of delays handed out since construction or the last {@link #reset()}.
+     */
     public int attempts() {
         return mAttempts;
     }
 
-    /** Returns to the first step of the schedule. */
+    /**
+     * Returns to the first step of the schedule.
+     */
     public void reset() {
         mAttempts = 0;
     }

@@ -12,19 +12,29 @@ import java.util.Locale;
  * {@link #NONE}.</p>
  */
 public enum AuthMode {
-    /** No authentication. */
+    /**
+     * No authentication.
+     */
     NONE,
 
-    /** Pairing PIN entered by the viewer. */
+    /**
+     * Pairing PIN entered by the viewer.
+     */
     PIN,
 
-    /** Mutual TLS with a pinned device certificate. */
+    /**
+     * Mutual TLS with a pinned device certificate.
+     */
     MTLS,
 
-    /** Mode not advertised or not understood. */
+    /**
+     * Mode not advertised or not understood.
+     */
     UNKNOWN;
 
-    /** Maps a wire value to a mode; null, blank and unknown values return {@link #UNKNOWN}. */
+    /**
+     * Maps a wire value to a mode; null, blank and unknown values return {@link #UNKNOWN}.
+     */
     @NonNull
     public static AuthMode fromWire(@Nullable final String value) {
         if (value == null) {
@@ -42,7 +52,9 @@ public enum AuthMode {
         }
     }
 
-    /** Returns the lowercase wire value of this mode. */
+    /**
+     * Returns the lowercase wire value of this mode.
+     */
     @NonNull
     public String toWire() {
         return name().toLowerCase(Locale.ROOT);

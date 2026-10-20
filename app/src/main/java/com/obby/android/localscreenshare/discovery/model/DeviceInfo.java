@@ -34,16 +34,24 @@ import lombok.ToString;
 @ToString
 public final class DeviceInfo implements Parcelable {
 
-    /** Length of the short id used for the display-name fallback and the NSD instance name. */
+    /**
+     * Length of the short id used for the display-name fallback and the NSD instance name.
+     */
     public static final int SHORT_ID_LENGTH = 8;
 
-    /** Placeholder used for the display name when the device does not advertise one. */
+    /**
+     * Placeholder used for the display name when the device does not advertise one.
+     */
     public static final String NAME_PREFIX = "LSS-";
 
-    /** Default protocol version when a device does not advertise one. */
+    /**
+     * Default protocol version when a device does not advertise one.
+     */
     public static final String DEFAULT_PROTOCOL_VERSION = "1.0";
 
-    /** Restores a device description from a parcel written by {@link #writeToParcel(Parcel, int)}. */
+    /**
+     * Restores a device description from a parcel written by {@link #writeToParcel(Parcel, int)}.
+     */
     public static final Creator<DeviceInfo> CREATOR = new Creator<>() {
         @Override
         public DeviceInfo createFromParcel(final Parcel in) {
@@ -141,7 +149,9 @@ public final class DeviceInfo implements Parcelable {
         this.identityChanged = identityChanged;
     }
 
-    /** Restores a device description written by {@link #writeToParcel(Parcel, int)}. */
+    /**
+     * Restores a device description written by {@link #writeToParcel(Parcel, int)}.
+     */
     private DeviceInfo(@NonNull final Parcel in) {
         this(in.readString(), in.readString(), in.readString(),
             DeviceRole.valueOf(in.readString()), ShareState.valueOf(in.readString()),
@@ -177,26 +187,34 @@ public final class DeviceInfo implements Parcelable {
         dest.writeInt(identityChanged ? 1 : 0);
     }
 
-    /** Returns the first {@link #SHORT_ID_LENGTH} characters of {@link #getId()}, uppercased. */
+    /**
+     * Returns the first {@link #SHORT_ID_LENGTH} characters of {@link #getId()}, uppercased.
+     */
     @NonNull
     public String shortId() {
         final String upper = id.toUpperCase(Locale.ROOT);
         return upper.length() <= SHORT_ID_LENGTH ? upper : upper.substring(0, SHORT_ID_LENGTH);
     }
 
-    /** Returns the advertised name, or {@code LSS-<short id>} when no name is advertised. */
+    /**
+     * Returns the advertised name, or {@code LSS-<short id>} when no name is advertised.
+     */
     @NonNull
     public String displayName() {
         return name != null ? name : NAME_PREFIX + shortId();
     }
 
-    /** Returns the best address to connect to, or {@code null} when no address is known. */
+    /**
+     * Returns the best address to connect to, or {@code null} when no address is known.
+     */
     @Nullable
     public DeviceAddress primaryAddress() {
         return addresses.isEmpty() ? null : addresses.get(0);
     }
 
-    /** True when this device has an application-level confirmation still inside its window. */
+    /**
+     * True when this device has an application-level confirmation still inside its window.
+     */
     public boolean isConfirmed() {
         return presence == DevicePresence.CONFIRMED;
     }
