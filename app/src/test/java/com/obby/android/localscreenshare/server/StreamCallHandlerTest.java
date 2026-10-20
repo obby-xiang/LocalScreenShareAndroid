@@ -2,18 +2,22 @@ package com.obby.android.localscreenshare.server;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 import com.obby.android.localscreenshare.core.codec.CodecRegistry;
 import com.obby.android.localscreenshare.core.codec.EncoderConfig;
 import com.obby.android.localscreenshare.core.model.BitstreamFormat;
+import com.obby.android.localscreenshare.core.model.ClientSessionKey;
 import com.obby.android.localscreenshare.core.model.ClientState;
 import com.obby.android.localscreenshare.core.model.CodecConfigPart;
 import com.obby.android.localscreenshare.core.model.ColorInfo;
 import com.obby.android.localscreenshare.core.model.StreamDescriptor;
 import com.obby.android.localscreenshare.core.model.StreamKey;
 import com.obby.android.localscreenshare.core.model.StreamParameters;
+import com.obby.android.localscreenshare.core.stream.ClientSendSession;
 import com.obby.android.localscreenshare.core.stream.StreamHub;
 import com.obby.android.localscreenshare.core.stream.StreamRuntime;
 import com.obby.android.localscreenshare.core.support.FakeCodec;
@@ -147,7 +151,73 @@ public class StreamCallHandlerTest {
         assertFalse(second.isClosed());
         assertNull(second.getJoinFailure());
         assertEquals(1, fixture.hub.getSessionCount());
-        assertEquals(1, firstTransport.getCloseCount());
+        // The replaced call is terminated with an explicit reason instead of being left open.
+        assertEquals(1, firstTransport.getAbortCount());
+        assertEquals(0, firstTransport.getCloseCount());
+        assertEquals(StreamHub.SESSION_TAKEOVER_REASON, firstTransport.getAbortReason());
+    }
+
+    @Test
+    public void staleHandlerStopsAfterTakeoverWithoutDetachingTheReplacement() throws Exception {
+        Fixture fixture = fixture(FakeCodec.DEFAULT_CODEC_ID);
+        ClientSessionKey sessionKey = new ClientSessionKey(STREAM_KEY, "client-1");
+
+        RecordingStreamCallListener firstListener = new RecordingStreamCallListener();
+        FakeTransport firstTransport = new FakeTransport();
+        StreamCallHandler first =
+                new StreamCallHandler(fixture.hub, fixture.runtime, firstTransport, firstListener);
+        first.onClientMessage(hello(FakeCodec.DEFAULT_CODEC_ID));
+        assertTrue(first.drainOnce());
+
+        FakeTransport secondTransport = new FakeTransport();
+        StreamCallHandler second =
+                new StreamCallHandler(fixture.hub, fixture.runtime, secondTransport);
+        second.onClientMessage(hello(FakeCodec.DEFAULT_CODEC_ID));
+        assertTrue(second.drainOnce());
+        ClientSendSession replacement = fixture.hub.getSession(sessionKey);
+
+        // The stale call notices that its key now maps to another session and stops draining.
+        assertFalse(first.drainOnce());
+        assertTrue(first.isClosed());
+        assertEquals(1, firstListener.takeoverCount);
+        assertEquals(sessionKey, firstListener.takeoverKey);
+        assertEquals("FakeTransport#"
+                        + Integer.toHexString(System.identityHashCode(firstTransport)),
+                firstListener.takeoverTransportId);
+
+        // The replacement is untouched and keeps streaming.
+        assertSame(replacement, fixture.hub.getSession(sessionKey));
+        assertFalse(replacement.isDetached());
+        assertFalse(second.isClosed());
+        assertEquals(0, secondTransport.getAbortCount());
+        assertEquals(0, secondTransport.getCloseCount());
+        fixture.codec.emitJoin(new byte[]{0x02});
+        assertTrue(second.drainOnce());
+        assertEquals(2, secondTransport.getEvents().size());
+        assertTrue(secondTransport.getEvents().get(1).isAccessUnit());
+    }
+
+    @Test
+    public void joinRejectionIsReportedToTheListener() {
+        Fixture fixture = fixture(FakeCodec.DEFAULT_CODEC_ID);
+        RecordingStreamCallListener listener = new RecordingStreamCallListener();
+        FakeTransport transport = new FakeTransport();
+        StreamCallHandler handler =
+                new StreamCallHandler(fixture.hub, fixture.runtime, transport, listener);
+
+        handler.onClientMessage(hello("unsupported-codec"));
+
+        assertTrue(handler.isClosed());
+        assertNotNull(handler.getJoinFailure());
+        assertEquals(1, listener.rejectionCount);
+        assertEquals(new ClientSessionKey(STREAM_KEY, "client-1"), listener.rejectionKey);
+        assertEquals("FakeTransport#"
+                        + Integer.toHexString(System.identityHashCode(transport)),
+                listener.rejectionTransportId);
+        assertEquals(handler.getJoinFailure(), listener.rejectionReason);
+        assertEquals(0, fixture.hub.getSessionCount());
+        assertEquals(1, transport.getCloseCount());
+        assertEquals(0, transport.getAbortCount());
     }
 
     private static Fixture fixture(String codecId) {
@@ -222,6 +292,34 @@ public class StreamCallHandlerTest {
             this.codec = codec;
             this.runtime = runtime;
             this.hub = hub;
+        }
+    }
+
+    /**
+     * Records the lifecycle events reported by a handler.
+     */
+    private static final class RecordingStreamCallListener implements StreamCallListener {
+        int takeoverCount;
+        ClientSessionKey takeoverKey;
+        String takeoverTransportId;
+        int rejectionCount;
+        ClientSessionKey rejectionKey;
+        String rejectionTransportId;
+        String rejectionReason;
+
+        @Override
+        public void onSessionTakenOver(ClientSessionKey key, String transportId) {
+            takeoverCount++;
+            takeoverKey = key;
+            takeoverTransportId = transportId;
+        }
+
+        @Override
+        public void onJoinRejected(ClientSessionKey key, String transportId, String reason) {
+            rejectionCount++;
+            rejectionKey = key;
+            rejectionTransportId = transportId;
+            rejectionReason = reason;
         }
     }
 }

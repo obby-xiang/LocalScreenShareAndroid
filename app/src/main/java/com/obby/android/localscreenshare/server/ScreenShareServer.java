@@ -21,6 +21,7 @@ import androidx.annotation.Nullable;
 import androidx.core.content.ContextCompat;
 
 import com.obby.android.localscreenshare.core.codec.CodecRegistry;
+import com.obby.android.localscreenshare.core.model.ClientSessionKey;
 import com.obby.android.localscreenshare.core.stream.StreamHub;
 import com.obby.android.localscreenshare.core.stream.StreamRuntime;
 import com.obby.android.localscreenshare.core.util.TimeSource;
@@ -248,6 +249,26 @@ public final class ScreenShareServer {
 
     @NonNull
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
+
+    // Stream-call lifecycle events that are worth a log line. Kept separate from StreamCallHandler
+    // because that handler runs in JVM unit tests, where android.util.Log is not available.
+    @NonNull
+    private final StreamCallListener mStreamCallListener = new StreamCallListener() {
+        @Override
+        public void onSessionTakenOver(final ClientSessionKey key, final String transportId) {
+            Log.i(mTag, String.format("stream: session taken over"
+                + ", streamKey = %s, clientId = %s, transport = %s",
+                key.getStreamKey().getValue(), key.getClientId(), transportId));
+        }
+
+        @Override
+        public void onJoinRejected(final ClientSessionKey key, final String transportId,
+                                   final String reason) {
+            Log.w(mTag, String.format("stream: join rejected"
+                + ", streamKey = %s, clientId = %s, transport = %s, reason = %s",
+                key.getStreamKey().getValue(), key.getClientId(), transportId, reason));
+        }
+    };
 
     // Serves gRPC callbacks only. Media fan-out now runs on per-client drain threads driven by the
     // stream hub, so rejected work is aborted instead of running on the caller's thread.
@@ -963,7 +984,7 @@ public final class ScreenShareServer {
                 return new NoopClientObserver();
             }
             final StreamCallHandler handler = new StreamCallHandler(mStreamHub, mStreamRuntime,
-                    new GrpcMediaTransport(responseObserver, mSecure));
+                    new GrpcMediaTransport(responseObserver, mSecure), mStreamCallListener);
             final Thread drain = new Thread(() -> drainLoop(handler, responseObserver),
                     "lss-stream-drain-" + handler.hashCode());
             drain.setDaemon(true);
@@ -991,11 +1012,11 @@ public final class ScreenShareServer {
                 }
             }
 
-            // Terminate the outbound stream so a rejected client never hangs waiting for media that
-            // will not come. A join failure is surfaced as an error; a normal close completes.
+            // Terminate the outbound stream so a closed client never hangs waiting for media that
+            // will not come. A join failure is surfaced as an error (already logged by the
+            // listener when the join was refused); a normal close completes.
             final String joinFailure = handler.getJoinFailure();
             if (joinFailure != null) {
-                Log.w(mTag, String.format("drainLoop: join rejected, reason = %s", joinFailure));
                 try {
                     responseObserver.onError(Status.PERMISSION_DENIED
                             .withDescription(joinFailure)

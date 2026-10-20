@@ -500,6 +500,44 @@ public class ClientSendSessionTest {
     }
 
     @Test
+    public void detachWithReason_terminatesTransportAbnormallyOnlyOnce() throws Exception {
+        FakeTransport transport = new FakeTransport();
+        ClientSendSession session = jpegSession(transport, new MutableClock(), 64L, 4);
+        assertTrue(session.onDescriptor(jpegDescriptor(1)));
+        assertTrue(session.drainOne());
+        streamTo(session, jpegJoin(1, 0L));
+
+        session.detach("session taken over");
+        session.detach("session taken over");
+
+        assertTrue(session.isDetached());
+        assertEquals(ClientState.CLOSED, session.getState());
+        assertEquals(1, transport.getAbortCount());
+        assertEquals("session taken over", transport.getAbortReason());
+        assertEquals(0, transport.getCloseCount());
+        assertEquals(QueueOfferResult.REJECTED_CLOSED, session.offer(jpegJoin(1, 1L)));
+        assertFalse(session.drainOne());
+
+        // A later plain detach must not touch the terminated transport again.
+        session.detach();
+        assertEquals(1, transport.getAbortCount());
+        assertEquals(0, transport.getCloseCount());
+    }
+
+    @Test
+    public void detachWithReasonAfterPlainDetachIsIgnored() throws Exception {
+        FakeTransport transport = new FakeTransport();
+        ClientSendSession session = jpegSession(transport, new MutableClock(), 64L, 4);
+
+        session.detach();
+        session.detach("session taken over");
+
+        assertTrue(session.isDetached());
+        assertEquals(1, transport.getCloseCount());
+        assertEquals(0, transport.getAbortCount());
+    }
+
+    @Test
     public void stats_reportQueuedDroppedResyncSentAndDescriptorCounts() throws Exception {
         FakeTransport transport = new FakeTransport();
         ClientSendSession session = referenceSession(transport, new MutableClock(), 64L, 1);

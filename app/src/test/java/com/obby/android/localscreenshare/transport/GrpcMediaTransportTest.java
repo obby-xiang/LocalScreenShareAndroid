@@ -1,6 +1,9 @@
 package com.obby.android.localscreenshare.transport;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
@@ -22,6 +25,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 
 /**
@@ -71,6 +75,53 @@ public class GrpcMediaTransportTest {
         GrpcMediaTransport transport = new GrpcMediaTransport(observer, false);
         transport.close();
         transport.close();
+
+        // close() only releases the outbound side; the owner of the call ends the RPC.
+        assertNull(observer.error);
+        assertFalse(observer.completed);
+    }
+
+    @Test
+    public void abortTerminatesTheRpcWithAbortedStatus() {
+        RecordingObserver observer = new RecordingObserver();
+        GrpcMediaTransport transport = new GrpcMediaTransport(observer, false);
+
+        transport.abort("session taken over by a newer connection");
+
+        assertNotNull(observer.error);
+        assertEquals(1, observer.errorCount);
+        assertEquals(Status.Code.ABORTED, Status.fromThrowable(observer.error).getCode());
+        assertEquals("session taken over by a newer connection",
+                Status.fromThrowable(observer.error).getDescription());
+        assertFalse(observer.completed);
+    }
+
+    @Test
+    public void abortIsIdempotentAndWinsOverClose() {
+        RecordingObserver observer = new RecordingObserver();
+        GrpcMediaTransport transport = new GrpcMediaTransport(observer, false);
+
+        transport.abort("session taken over");
+        transport.abort("session taken over");
+        transport.close();
+
+        assertEquals(1, observer.errorCount);
+        assertFalse(observer.completed);
+        assertThrows(IOException.class, () -> transport.sendDescriptor(
+                StreamDescriptor.builder(KEY, 1, "jpeg", "image/jpeg", BitstreamFormat.JPEG_FRAME)
+                        .codedSize(1, 1).build()));
+    }
+
+    @Test
+    public void abortAfterCloseIsIgnored() {
+        RecordingObserver observer = new RecordingObserver();
+        GrpcMediaTransport transport = new GrpcMediaTransport(observer, false);
+
+        transport.close();
+        transport.abort("session taken over");
+
+        assertNull(observer.error);
+        assertFalse(observer.completed);
     }
 
     @Test
@@ -81,6 +132,38 @@ public class GrpcMediaTransportTest {
         assertThrows(IOException.class, () -> transport.sendDescriptor(
                 StreamDescriptor.builder(KEY, 1, "jpeg", "image/jpeg", BitstreamFormat.JPEG_FRAME)
                         .codedSize(1, 1).build()));
+    }
+
+    @Test
+    public void concurrentCloseAndAbortTerminateOnlyOnce() throws Exception {
+        RecordingObserver observer = new RecordingObserver();
+        GrpcMediaTransport transport = new GrpcMediaTransport(observer, false);
+
+        int threads = 8;
+        ExecutorService executor = Executors.newFixedThreadPool(threads);
+        CountDownLatch start = new CountDownLatch(1);
+        List<java.util.concurrent.Future<?>> futures = new ArrayList<>();
+        for (int i = 0; i < threads; i++) {
+            final boolean abort = i % 2 == 0;
+            futures.add(executor.submit(() -> {
+                start.await();
+                if (abort) {
+                    transport.abort("session taken over");
+                } else {
+                    transport.close();
+                }
+                return null;
+            }));
+        }
+        start.countDown();
+        for (java.util.concurrent.Future<?> future : futures) {
+            future.get(10, TimeUnit.SECONDS);
+        }
+        executor.shutdown();
+
+        // Whichever termination runs first wins; no call may fire a second callback.
+        assertTrue("abort must fire at most one onError", observer.errorCount <= 1);
+        assertFalse(observer.completed);
     }
 
     @Test
@@ -127,6 +210,9 @@ public class GrpcMediaTransportTest {
      */
     private static final class RecordingObserver implements StreamObserver<ServerMessage> {
         final List<ServerMessage> messages = new ArrayList<>();
+        Throwable error;
+        int errorCount;
+        boolean completed;
 
         @Override
         public void onNext(ServerMessage value) {
@@ -135,10 +221,13 @@ public class GrpcMediaTransportTest {
 
         @Override
         public void onError(Throwable t) {
+            error = t;
+            errorCount++;
         }
 
         @Override
         public void onCompleted() {
+            completed = true;
         }
     }
 

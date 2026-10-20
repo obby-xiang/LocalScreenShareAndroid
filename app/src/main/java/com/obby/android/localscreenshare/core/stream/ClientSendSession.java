@@ -36,7 +36,9 @@ import java.util.concurrent.locks.ReentrantLock;
  * <p><b>Failure.</b> Any transport failure detaches the session - clearing the queue, moving to
  * {@code CLOSED} and closing the transport exactly once - and is rethrown so the owning
  * {@link StreamHub} can drop the session. A detached session accepts no units and never drains
- * again.</p>
+ * again. Detaching with a reason ({@link #detach(String)}) terminates the transport abnormally
+ * instead of only closing it, which is what tells a peer whose session was replaced by a newer
+ * connection that the stream is over.</p>
  */
 public final class ClientSendSession {
 
@@ -326,8 +328,12 @@ public final class ClientSendSession {
             }
             return true;
         } catch (IOException | RuntimeException e) {
+            boolean terminate;
             synchronized (stateLock) {
-                detachInternalLocked();
+                terminate = detachInternalLocked();
+            }
+            if (terminate) {
+                transport.close();
             }
             throw e;
         } finally {
@@ -363,8 +369,38 @@ public final class ClientSendSession {
      * because the post-send update checks the detached flag.</p>
      */
     public void detach() {
+        boolean terminate;
         synchronized (stateLock) {
-            detachInternalLocked();
+            terminate = detachInternalLocked();
+        }
+        if (terminate) {
+            transport.close();
+        }
+    }
+
+    /**
+     * Detaches the session and terminates its transport with {@code reason}.
+     *
+     * <p>Used when the session is revoked while the peer may still be waiting for media, for
+     * example when a newer connection takes over its client id: the transport reports the reason
+     * to the peer instead of only being released. All other detach guarantees apply unchanged;
+     * the first detach wins, so a later plain {@link #detach()} does not touch the transport
+     * again. The transport call runs outside the state lock, so a terminal callback that blocks on
+     * the peer never blocks offers.</p>
+     *
+     * @param reason short English description of the termination; null closes without a reason
+     */
+    public void detach(String reason) {
+        boolean terminate;
+        synchronized (stateLock) {
+            terminate = detachInternalLocked();
+        }
+        if (terminate) {
+            if (reason != null) {
+                transport.abort(reason);
+            } else {
+                transport.close();
+            }
         }
     }
 
@@ -382,18 +418,22 @@ public final class ClientSendSession {
     }
 
     /**
-     * Marks the session closed, clears its queue and closes the transport once. The caller must
-     * hold the state lock.
+     * Marks the session closed, clears its queue and claims the single transport termination.
+     * The caller must hold the state lock; the transport call itself is made outside it.
+     *
+     * @return true when this call claimed the transport termination, false when another detach or
+     *         failed drain already did
      */
-    private void detachInternalLocked() {
+    private boolean detachInternalLocked() {
         detached = true;
         state = ClientState.CLOSED;
         if (queue != null) {
             queue.clear();
         }
-        if (!transportClosed) {
-            transportClosed = true;
-            transport.close();
+        if (transportClosed) {
+            return false;
         }
+        transportClosed = true;
+        return true;
     }
 }

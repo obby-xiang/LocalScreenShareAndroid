@@ -31,9 +31,10 @@ import java.util.concurrent.ConcurrentHashMap;
  * client that cannot decode the active codec is never attached: the hub reports the lowest
  * {@code fallbackPriority} codec supported by both that client and every existing client, or
  * rejects the join when no common codec exists. A join for an already-attached key takes over the
- * stale session: the old session is detached and the new one takes its place, so a reconnect is
- * never rejected for holding a duplicate key. Fallback is metadata only; the hub never switches
- * the active runtime or the active descriptor by itself.</p>
+ * stale session: the old session is detached and terminated with
+ * {@link #SESSION_TAKEOVER_REASON}, and the new one takes its place, so a reconnect is never
+ * rejected for holding a duplicate key. Fallback is metadata only; the hub never switches the
+ * active runtime or the active descriptor by itself.</p>
  *
  * <p><b>Locking and broadcast.</b> A private lock serializes compound changes of the runtime map,
  * the session map, the capabilities map and the active runtime reference; the maps themselves are
@@ -47,6 +48,15 @@ import java.util.concurrent.ConcurrentHashMap;
  * caller that drove the drain.</p>
  */
 public final class StreamHub implements StreamRuntimeListener {
+
+    /**
+     * Termination reason reported to a client whose session was replaced by a newer connection.
+     *
+     * <p>Short, English, and free of peer identity, because the transport forwards it to the
+     * remote client as the gRPC status description.</p>
+     */
+    public static final String SESSION_TAKEOVER_REASON =
+            "session taken over by a newer connection";
 
     private final CodecRegistry registry;
     private final StreamQueueLimits limits;
@@ -181,7 +191,10 @@ public final class StreamHub implements StreamRuntimeListener {
      * {@link JoinDecision.Status#REJECTED}; a runtime that is not {@link RuntimeState#READY} or
      * has no published descriptor is {@link JoinDecision.Status#NOT_READY}, which reserves nothing
      * and may be retried later; a join for an already-attached key takes over the stale session
-     * (it is detached and replaced), so a reconnect is never rejected for holding a duplicate key.
+     * when the client can decode the active codec (the old session is detached outside the lock and
+     * terminated with {@link #SESSION_TAKEOVER_REASON}), so a reconnect is never rejected for
+     * holding a duplicate key; a join that cannot decode the active codec is decided like any
+     * other fallback and leaves the attached session in place.
      * When the client supports the active codec, a session is created, primed with the active
      * descriptor as its pending descriptor, stored with its capabilities and reported as
      * {@link JoinDecision.Status#ACCEPTED}. Otherwise the decision describes a required explicit
@@ -224,13 +237,15 @@ public final class StreamHub implements StreamRuntimeListener {
             if (!key.getStreamKey().equals(active.getStreamKey())) {
                 return JoinDecision.rejected("stream key mismatch");
             }
-            // Take over: a join for an already-attached key means the old connection is dead (for
-            // example a client that reconnected with the same id). Detach the stale session and
-            // attach the new one instead of rejecting the reconnect.
-            replacedSession = sessions.remove(key);
-            capabilities.remove(key);
 
             if (caps.supports(activeDescriptor.getCodecId())) {
+                // Take over: a join for an already-attached key means the old connection is dead
+                // (for example a client that reconnected with the same id). Detach the stale
+                // session and attach the new one instead of rejecting the reconnect. The stale
+                // session is only replaced once the new one can actually attach, so a refused
+                // join never kills a live session.
+                replacedSession = sessions.remove(key);
+                capabilities.remove(key);
                 createdSession =
                         new ClientSendSession(key, registry, limits, transport, timeSource);
                 createdSession.onDescriptor(activeDescriptor);
@@ -244,7 +259,7 @@ public final class StreamHub implements StreamRuntimeListener {
         }
 
         if (replacedSession != null) {
-            replacedSession.detach();
+            replacedSession.detach(SESSION_TAKEOVER_REASON);
         }
 
         if (toRequestJoin != null) {
@@ -282,6 +297,31 @@ public final class StreamHub implements StreamRuntimeListener {
             }
         }
         if (session != null) {
+            session.detach();
+        }
+    }
+
+    /**
+     * Removes a client's session only while the key still maps to {@code session}.
+     *
+     * <p>This is the detach a call handler needs: after a takeover, the key maps to the newer
+     * session, and an old handler that ends for any reason (client cancellation, drain failure)
+     * must not detach the replacement. The mapping is removed under the lock and the session is
+     * detached outside it. Idempotent; a null key, a null session, or a key that maps to another
+     * session does nothing.</p>
+     */
+    public void detachIfCurrent(ClientSessionKey key, ClientSendSession session) {
+        if (key == null || session == null) {
+            return;
+        }
+        boolean removed;
+        synchronized (lock) {
+            removed = sessions.remove(key, session);
+            if (removed) {
+                capabilities.remove(key);
+            }
+        }
+        if (removed) {
             session.detach();
         }
     }

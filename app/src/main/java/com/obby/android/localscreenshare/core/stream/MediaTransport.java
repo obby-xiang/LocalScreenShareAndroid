@@ -23,6 +23,13 @@ import java.io.IOException;
  * the client is unrecoverable: the session detaches, calls {@link #close()} exactly once and
  * rethrows, and the hub removes the session. {@link #close()} must be idempotent and must not
  * throw; it is called by the session, never by the hub, and may follow a failed send.</p>
+ *
+ * <p><b>Abnormal termination.</b> {@link #abort(String)} releases the connection and additionally
+ * signals the failure to the peer, which {@link #close()} does not have to do. A session uses it
+ * when it is revoked while the client may still be waiting for media - for example when a newer
+ * connection takes over the same client id - so the client learns about the termination instead of
+ * waiting for its own timeout. Both methods are idempotent, may be called from any thread, and only
+ * the first one that runs releases the connection; a later call is a no-op.</p>
  */
 public interface MediaTransport {
 
@@ -46,4 +53,16 @@ public interface MediaTransport {
      * Releases the connection; idempotent and non-throwing.
      */
     void close();
+
+    /**
+     * Releases the connection and reports {@code reason} to the peer as a terminal failure.
+     *
+     * <p>Called instead of {@link #close()} when the session is revoked while the peer may still
+     * be waiting for media, so the peer does not have to wait for its own deadline. Like
+     * {@link #close()} this is idempotent and must not throw; when the connection was already
+     * released by either method, the call is a no-op.</p>
+     *
+     * @param reason short English description of the termination, safe to send to the peer
+     */
+    void abort(String reason);
 }

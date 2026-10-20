@@ -7,6 +7,7 @@ import com.obby.android.localscreenshare.grpc.screenstream.ServerMessage;
 
 import java.io.IOException;
 
+import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 
 /**
@@ -19,6 +20,12 @@ import io.grpc.stub.StreamObserver;
  *
  * <p>The {@code secure} flag is fixed at construction and attached to every descriptor; it is
  * session-level metadata, not a per-unit property.</p>
+ *
+ * <p><b>Termination.</b> {@link #close()} only releases the outbound side: the owner of the call
+ * decides how the RPC ends. {@link #abort(String)} instead ends the RPC itself with
+ * {@link Status#ABORTED} and the given description, so a peer whose session was taken over stops
+ * waiting for media immediately. Both are serialized with sends behind the same lock, so an
+ * {@code onError} never races an in-flight {@code onNext}.</p>
  */
 public final class GrpcMediaTransport implements MediaTransport {
 
@@ -61,6 +68,22 @@ public final class GrpcMediaTransport implements MediaTransport {
     public void close() {
         synchronized (sendLock) {
             closed = true;
+        }
+    }
+
+    @Override
+    public void abort(String reason) {
+        synchronized (sendLock) {
+            if (closed) {
+                return;
+            }
+            closed = true;
+            final String description = reason == null ? "transport aborted" : reason;
+            try {
+                observer.onError(Status.ABORTED.withDescription(description).asRuntimeException());
+            } catch (RuntimeException ignored) {
+                // The observer was already completed or the client cancelled the call.
+            }
         }
     }
 

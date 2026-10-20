@@ -15,8 +15,9 @@ import java.util.List;
  * <p>Events keep the descriptor and access unit references as passed, without copying, and
  * {@link #getEvents()} returns a snapshot of the synchronized list. Each failure injection is
  * one-shot: the checked failure applies to the next send of either kind, and the unchecked
- * variants are separate for descriptors and access units. {@code close()} counts only the first
- * call and is idempotent. The fake does not enforce lifecycle, so a send after close is still
+ * variants are separate for descriptors and access units. {@code close()} and {@code abort()}
+ * count only the first termination call of either kind, whichever comes first, and are otherwise
+ * idempotent. The fake does not enforce lifecycle, so a send after termination is still
  * recorded.</p>
  */
 public class FakeTransport implements MediaTransport {
@@ -73,6 +74,8 @@ public class FakeTransport implements MediaTransport {
     private boolean failNextDescriptorSendUnchecked;
     private boolean failNextAccessUnitSendUnchecked;
     private int closeCount;
+    private int abortCount;
+    private String abortReason;
     private boolean closed;
 
     public synchronized void failNextSend() {
@@ -109,12 +112,29 @@ public class FakeTransport implements MediaTransport {
         }
     }
 
+    @Override
+    public synchronized void abort(String reason) {
+        if (!closed) {
+            closed = true;
+            abortCount++;
+            abortReason = reason;
+        }
+    }
+
     public synchronized boolean isClosed() {
         return closed;
     }
 
     public synchronized int getCloseCount() {
         return closeCount;
+    }
+
+    public synchronized int getAbortCount() {
+        return abortCount;
+    }
+
+    public synchronized String getAbortReason() {
+        return abortReason;
     }
 
     public List<Event> getEvents() {

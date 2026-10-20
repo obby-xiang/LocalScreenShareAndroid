@@ -351,7 +351,120 @@ public class StreamHubTest {
         assertNotSame(firstSession, hub.getSession(CLIENT_A));
         assertSame(decision.getSession(), hub.getSession(CLIENT_A));
         assertTrue(firstSession.isDetached());
-        assertEquals(1, firstTransport.getCloseCount());
+        // The replaced transport is terminated with an explicit reason, not just released, so the
+        // old client does not wait for its own deadline.
+        assertEquals(1, firstTransport.getAbortCount());
+        assertEquals(0, firstTransport.getCloseCount());
+        assertEquals(StreamHub.SESSION_TAKEOVER_REASON, firstTransport.getAbortReason());
+        assertEquals(0, secondTransport.getAbortCount());
+        assertEquals(0, secondTransport.getCloseCount());
+    }
+
+    @Test
+    public void join_duplicateSessionKey_leavesOtherSessionsAndTheNewSessionUsable()
+            throws Exception {
+        MutableClock clock = new MutableClock();
+        FakeCodec fake = new FakeCodec(ACTIVE_CODEC_ID, 0, false, false);
+        fake.setAutoEmitJoinOnRequest(false);
+        CodecRegistry registry = registry(fake);
+        StreamRuntime runtime = startedRuntime(registry, STREAM_KEY, ACTIVE_CODEC_ID, clock);
+        StreamHub hub = newHub(registry, clock);
+        hub.register(runtime);
+        hub.activate(STREAM_KEY);
+
+        FakeTransport firstTransport = new FakeTransport();
+        assertEquals(JoinDecision.Status.ACCEPTED,
+                hub.join(CLIENT_A, capabilities(ACTIVE_CODEC_ID), firstTransport).getStatus());
+        FakeTransport otherTransport = new FakeTransport();
+        assertEquals(JoinDecision.Status.ACCEPTED,
+                hub.join(CLIENT_B, capabilities(ACTIVE_CODEC_ID), otherTransport).getStatus());
+
+        FakeTransport secondTransport = new FakeTransport();
+        assertEquals(JoinDecision.Status.ACCEPTED,
+                hub.join(CLIENT_A, capabilities(ACTIVE_CODEC_ID), secondTransport).getStatus());
+
+        // Only the replaced transport is terminated; another client's stream is untouched.
+        assertEquals(1, firstTransport.getAbortCount());
+        assertEquals(0, otherTransport.getAbortCount());
+        assertEquals(0, otherTransport.getCloseCount());
+        assertNotNull(hub.getSession(CLIENT_B));
+        assertEquals(2, hub.getSessionCount());
+
+        // Both the replacement and the unaffected client can still be drained.
+        assertTrue(hub.drainOne(CLIENT_A));
+        assertTrue(secondTransport.getEvents().get(0).isDescriptor());
+        assertTrue(hub.drainOne(CLIENT_B));
+        assertTrue(otherTransport.getEvents().get(0).isDescriptor());
+        assertTrue(firstTransport.getEvents().isEmpty());
+    }
+
+    @Test
+    public void detachIfCurrent_doesNotDetachAReplacingSession() {
+        MutableClock clock = new MutableClock();
+        FakeCodec fake = new FakeCodec(ACTIVE_CODEC_ID, 0, false, false);
+        fake.setAutoEmitJoinOnRequest(false);
+        CodecRegistry registry = registry(fake);
+        StreamRuntime runtime = startedRuntime(registry, STREAM_KEY, ACTIVE_CODEC_ID, clock);
+        StreamHub hub = newHub(registry, clock);
+        hub.register(runtime);
+        hub.activate(STREAM_KEY);
+
+        FakeTransport firstTransport = new FakeTransport();
+        assertEquals(JoinDecision.Status.ACCEPTED,
+                hub.join(CLIENT_A, capabilities(ACTIVE_CODEC_ID), firstTransport).getStatus());
+        ClientSendSession firstSession = hub.getSession(CLIENT_A);
+
+        FakeTransport secondTransport = new FakeTransport();
+        JoinDecision decision =
+                hub.join(CLIENT_A, capabilities(ACTIVE_CODEC_ID), secondTransport);
+        assertEquals(JoinDecision.Status.ACCEPTED, decision.getStatus());
+
+        // An old handler ending after the takeover must not detach its replacement.
+        hub.detachIfCurrent(CLIENT_A, firstSession);
+        hub.detachIfCurrent(CLIENT_A, null);
+        hub.detachIfCurrent(null, decision.getSession());
+
+        assertSame(decision.getSession(), hub.getSession(CLIENT_A));
+        assertEquals(1, hub.getSessionCount());
+        assertFalse(decision.getSession().isDetached());
+        assertEquals(0, secondTransport.getAbortCount());
+        assertEquals(0, secondTransport.getCloseCount());
+
+        // The current session can still be detached through the same entry point.
+        hub.detachIfCurrent(CLIENT_A, decision.getSession());
+        assertNull(hub.getSession(CLIENT_A));
+        assertTrue(decision.getSession().isDetached());
+        assertEquals(1, secondTransport.getCloseCount());
+    }
+
+    @Test
+    public void join_duplicateKeyWithoutCommonCodec_keepsTheAttachedSession() {
+        MutableClock clock = new MutableClock();
+        FakeCodec fake = new FakeCodec(ACTIVE_CODEC_ID, 0, false, false);
+        CodecRegistry registry = registry(fake);
+        StreamRuntime runtime = startedRuntime(registry, STREAM_KEY, ACTIVE_CODEC_ID, clock);
+        StreamHub hub = newHub(registry, clock);
+        hub.register(runtime);
+        hub.activate(STREAM_KEY);
+
+        FakeTransport attachedTransport = new FakeTransport();
+        assertEquals(JoinDecision.Status.ACCEPTED,
+                hub.join(CLIENT_A, capabilities(ACTIVE_CODEC_ID), attachedTransport).getStatus());
+        ClientSendSession attached = hub.getSession(CLIENT_A);
+
+        FakeTransport rejectedTransport = new FakeTransport();
+        JoinDecision decision =
+                hub.join(CLIENT_A, capabilities("unsupported-codec"), rejectedTransport);
+
+        // A refused join is not a takeover: the attached session keeps the stream.
+        assertEquals(JoinDecision.Status.REJECTED, decision.getStatus());
+        assertSame(attached, hub.getSession(CLIENT_A));
+        assertFalse(attached.isDetached());
+        assertEquals(1, hub.getSessionCount());
+        assertEquals(0, attachedTransport.getAbortCount());
+        assertEquals(0, attachedTransport.getCloseCount());
+        assertEquals(0, rejectedTransport.getAbortCount());
+        assertEquals(0, rejectedTransport.getCloseCount());
     }
 
     @Test

@@ -2,6 +2,7 @@ package com.obby.android.localscreenshare.server;
 
 import com.obby.android.localscreenshare.core.model.ClientSessionKey;
 import com.obby.android.localscreenshare.core.stream.ClientCapabilities;
+import com.obby.android.localscreenshare.core.stream.ClientSendSession;
 import com.obby.android.localscreenshare.core.stream.JoinDecision;
 import com.obby.android.localscreenshare.core.stream.MediaTransport;
 import com.obby.android.localscreenshare.core.stream.StreamHub;
@@ -26,6 +27,13 @@ import java.util.UUID;
  * published a descriptor yet the join is retried on subsequent drain calls until it succeeds, and a
  * rejected or fallback-requiring client is closed. An empty capability set is treated as the H.264
  * compatibility baseline.</p>
+ *
+ * <p><b>Takeover.</b> A join for an already-attached key replaces the old session, so this handler
+ * may lose its session to a newer connection without being closed. The drain then detects that the
+ * key maps to another session, reports the takeover through the injected {@link StreamCallListener}
+ * and closes itself, and the hub terminates the replaced transport with an explicit status so the
+ * old client stops waiting for media. {@link #close()} detaches only the session this handler
+ * attached, so an old call ending never detaches its replacement.</p>
  */
 public final class StreamCallHandler {
 
@@ -35,7 +43,11 @@ public final class StreamCallHandler {
 
     private final MediaTransport transport;
 
+    private final StreamCallListener listener;
+
     private ClientSessionKey key;
+
+    private ClientSendSession attachedSession;
 
     private ClientCapabilities pendingCapabilities;
 
@@ -56,11 +68,21 @@ public final class StreamCallHandler {
     private String joinFailure;
 
     /**
-     * Creates a handler for one client.
+     * Creates a handler for one client that reports no events to a listener.
      *
      * @throws IllegalArgumentException if any argument is null
      */
     public StreamCallHandler(StreamHub hub, StreamRuntime runtime, MediaTransport transport) {
+        this(hub, runtime, transport, StreamCallListener.NO_OP);
+    }
+
+    /**
+     * Creates a handler for one client.
+     *
+     * @throws IllegalArgumentException if any argument is null
+     */
+    public StreamCallHandler(StreamHub hub, StreamRuntime runtime, MediaTransport transport,
+                             StreamCallListener listener) {
         if (hub == null) {
             throw new IllegalArgumentException("hub must not be null");
         }
@@ -70,9 +92,13 @@ public final class StreamCallHandler {
         if (transport == null) {
             throw new IllegalArgumentException("transport must not be null");
         }
+        if (listener == null) {
+            throw new IllegalArgumentException("listener must not be null");
+        }
         this.hub = hub;
         this.runtime = runtime;
         this.transport = transport;
+        this.listener = listener;
     }
 
     /**
@@ -107,6 +133,7 @@ public final class StreamCallHandler {
      */
     public boolean drainOnce() throws IOException {
         final ClientSessionKey sessionKey;
+        final ClientSendSession session;
         synchronized (this) {
             if (closed) {
                 return false;
@@ -118,6 +145,17 @@ public final class StreamCallHandler {
                 return false;
             }
             sessionKey = key;
+            session = attachedSession;
+        }
+        // A takeover replaces the mapping with a newer session: this call no longer owns the
+        // stream, so stop instead of driving the replacement's queue from this drain thread.
+        final ClientSendSession current = hub.getSession(sessionKey);
+        if (current != session) {
+            if (current != null) {
+                listener.onSessionTakenOver(sessionKey, transportId());
+            }
+            close();
+            return false;
         }
         // Drain outside the monitor: the transport send may block on a slow client, and a
         // concurrent close() detaches the session first, so this becomes a no-op or fails cleanly.
@@ -159,6 +197,9 @@ public final class StreamCallHandler {
 
     /**
      * Detaches the client's session and closes its transport; idempotent.
+     *
+     * <p>Only the session this handler attached is detached, so a call that lost its session to a
+     * takeover can end without detaching the replacement.</p>
      */
     public synchronized void close() {
         if (closed) {
@@ -166,9 +207,10 @@ public final class StreamCallHandler {
         }
         closed = true;
         if (key != null) {
-            hub.detach(key);
+            hub.detachIfCurrent(key, attachedSession);
             key = null;
         }
+        attachedSession = null;
         transport.close();
     }
 
@@ -204,6 +246,7 @@ public final class StreamCallHandler {
         switch (decision.getStatus()) {
             case ACCEPTED:
                 key = candidate;
+                attachedSession = decision.getSession();
                 attached = true;
                 pendingJoin = false;
                 break;
@@ -214,11 +257,26 @@ public final class StreamCallHandler {
             case REQUIRES_EXPLICIT_FALLBACK:
                 pendingJoin = false;
                 joinFailure = decision.getReason();
+                listener.onJoinRejected(candidate, transportId(), joinFailure);
                 close();
                 break;
             default:
                 break;
         }
+    }
+
+    /**
+     * Returns the identity of this call's transport for log lines.
+     *
+     * <p>The class name plus the JVM identity hash is stable for the life of the call and carries
+     * no peer identity, so it can be logged and correlated with the transport's own events.</p>
+     */
+    private String transportId() {
+        String type = transport.getClass().getSimpleName();
+        if (type.isEmpty()) {
+            type = transport.getClass().getName();
+        }
+        return type + "#" + Integer.toHexString(System.identityHashCode(transport));
     }
 
     /**
