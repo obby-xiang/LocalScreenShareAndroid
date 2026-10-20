@@ -89,6 +89,10 @@ public final class Preferences {
 
     private static final String KEY_SERVICE_NAME = "service_name";
 
+    private static final String KEY_DEVICE_ALIAS = "device_alias";
+
+    private static final String KEY_SHARE_NAME_ENABLED = "share_name_enabled";
+
     private static final int DEFAULT_SERVER_PORT = 8080;
 
     private static final int DEFAULT_PROJECTION_SCALE = 100;
@@ -179,9 +183,12 @@ public final class Preferences {
     }
 
     /**
-     * Returns the server display name, defaulting to the system device name. The first non-null
+     * Returns the local display name, defaulting to the system device name. The first non-null
      * value is persisted; while the system value is null the key stays absent, so the lookup runs
      * again on the next call.
+     *
+     * <p>This is a local label only. It is not broadcast unless name sharing is enabled; see
+     * {@link #isShareNameEnabled()}.</p>
      */
     @NonNull
     public String getServiceName() {
@@ -192,6 +199,43 @@ public final class Preferences {
                 mPreferences.edit().putString(KEY_SERVICE_NAME, serviceName).commit();
                 return serviceName;
             });
+    }
+
+    /**
+     * Returns the user-chosen alias of this device, or null when the user never set one.
+     *
+     * <p>Unlike {@link #getServiceName()} the alias is never seeded from the system device name,
+     * so it is safe to broadcast once the user opted in.</p>
+     */
+    @Nullable
+    public String getDeviceAlias() {
+        final String alias = mPreferences.getString(KEY_DEVICE_ALIAS, null);
+        return alias == null || alias.trim().isEmpty() ? null : alias;
+    }
+
+    /** Persists the device alias; a null or blank value removes it. */
+    public void setDeviceAlias(@Nullable final String alias) {
+        if (alias == null || alias.trim().isEmpty()) {
+            mPreferences.edit().remove(KEY_DEVICE_ALIAS).commit();
+        } else {
+            mPreferences.edit().putString(KEY_DEVICE_ALIAS, alias.trim()).commit();
+        }
+    }
+
+    /**
+     * Whether the device name may be broadcast in discovery records; defaults to false.
+     *
+     * <p>It is off by default because a device name often contains a person, a room or a model.
+     * When enabled, only the user-chosen alias is broadcast; when no alias exists the short-id
+     * placeholder is used.</p>
+     */
+    public boolean isShareNameEnabled() {
+        return mPreferences.getBoolean(KEY_SHARE_NAME_ENABLED, false);
+    }
+
+    /** Persists the name-sharing flag; the next advertisement picks it up. */
+    public void setShareNameEnabled(final boolean isEnabled) {
+        mPreferences.edit().putBoolean(KEY_SHARE_NAME_ENABLED, isEnabled).commit();
     }
 
     /** Server bind port; defaults to 8080. Read when the server is constructed. */

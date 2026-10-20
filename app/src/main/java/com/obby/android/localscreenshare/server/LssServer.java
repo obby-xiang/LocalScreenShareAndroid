@@ -23,11 +23,20 @@ import androidx.core.content.ContextCompat;
 import com.obby.android.localscreenshare.core.codec.CodecRegistry;
 import com.obby.android.localscreenshare.core.stream.StreamHub;
 import com.obby.android.localscreenshare.core.stream.StreamRuntime;
+import com.obby.android.localscreenshare.discovery.model.AuthMode;
+import com.obby.android.localscreenshare.discovery.model.DevicePresence;
+import com.obby.android.localscreenshare.discovery.model.DeviceRole;
+import com.obby.android.localscreenshare.discovery.model.JoinPolicy;
+import com.obby.android.localscreenshare.discovery.model.LssDeviceInfo;
+import com.obby.android.localscreenshare.discovery.model.ShareState;
+import com.obby.android.localscreenshare.discovery.nsd.NsdTxtRecord;
 import com.obby.android.localscreenshare.grpc.screenstream.ClientMessage;
 import com.obby.android.localscreenshare.grpc.screenstream.ScreenStreamServiceGrpc;
 import com.obby.android.localscreenshare.grpc.screenstream.ServerMessage;
+import com.obby.android.localscreenshare.support.BackoffPolicy;
 import com.obby.android.localscreenshare.support.Constants;
 import com.obby.android.localscreenshare.transport.GrpcMediaTransport;
+import com.obby.android.localscreenshare.transport.ScreenStreamProtoMapper;
 import com.obby.android.localscreenshare.support.Preferences;
 import com.obby.android.localscreenshare.utils.NetUtils;
 import com.obby.android.localscreenshare.utils.NsdUtils;
@@ -36,8 +45,11 @@ import org.apache.commons.lang3.concurrent.BasicThreadFactory;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -70,16 +82,24 @@ import lombok.experimental.Accessors;
  * Legacy gRPC server that advertises itself over NSD and streams JPEG frames to connected clients.
  *
  * <p><b>Lifecycle.</b> The constructor builds the gRPC server object and its executor but does not
- * bind a port. {@link #start()} binds the configured port, registers the NSD service, the
+ * bind a port. {@link #start()} binds the configured port, registers both NSD service types, the
  * default-network callback and the Wi-Fi AP state receiver, publishes an initial
  * {@link LssServerInfo} with a placeholder host address, and starts the periodic stats sampling.
  * {@link #stop()} releases all of them in reverse order and shuts the gRPC executor down; late
  * NSD, network and gRPC callbacks then observe nulled state and become no-ops.</p>
  *
+ * <p><b>Advertisement.</b> The primary registration uses the {@code _lss._tcp} type with the
+ * minimal TXT record; the legacy {@code _localscreenshare._udp} registration stays in place for
+ * clients that only know the old type. The instance name is {@code LSS-<id first 8>}, and the
+ * device name is only written when the user enabled name sharing. Registration and resolve
+ * failures are retried with {@link BackoffPolicy}; both types are retried independently so one
+ * failing type never unregisters the other.</p>
+ *
  * <p><b>Host address discovery.</b> The host address is not known when the gRPC port is bound. The
  * server resolves its own NSD registration and re-resolves it whenever the default network
  * changes, a network capability changes or the Wi-Fi AP state changes; resolve failures are
- * retried. {@link LssServerInfoListener} is notified whenever the resulting address changes.</p>
+ * retried with a bounded timeout and a backoff. {@link LssServerInfoListener} is notified whenever
+ * the resulting address changes.</p>
  *
  * <p><b>Threading.</b> {@link #start()}, {@link #stop()}, the info and stats listeners and all
  * state changes run on the main thread; NSD and connectivity callbacks are posted to the main
@@ -100,13 +120,27 @@ import lombok.experimental.Accessors;
 public final class LssServer {
     private static final long UPDATE_SERVER_STATS_INTERVAL_MS = 3000L;
 
+    // Schema version of the discovery metadata written into the NSD TXT record.
+    private static final int NSD_METADATA_VERSION = 1;
+
     // Published identity; null while stopped.
     @Nullable
     private LssServerInfo mServerInfo;
 
-    // Registration used for resolve and re-register attempts; null while stopped.
+    // Primary registration used for resolve and re-register attempts; null while stopped.
     @Nullable
     private NsdServiceInfo mNsdServiceInfo;
+
+    // One registration per service type: the current type and the legacy type kept for old clients.
+    @Nullable
+    private Registration mPrimaryRegistration;
+
+    @Nullable
+    private Registration mLegacyRegistration;
+
+    // Bounds re-resolve attempts after a failure; reset on success and on network changes.
+    @NonNull
+    private final BackoffPolicy mResolveBackoff = BackoffPolicy.defaults();
 
     // Per-transport accounting; null while stopped.
     @Nullable
@@ -254,7 +288,8 @@ public final class LssServer {
         @Override
         public void run() {
             if (mNsdServiceInfo != null) {
-                NsdUtils.resolveService(mNsdManager, mNsdServiceInfo, mNsdResolveListener);
+                NsdUtils.resolveService(mNsdManager, mNsdServiceInfo, NsdUtils.DEFAULT_RESOLVE_TIMEOUT_MS,
+                    mNsdResolveListener);
             }
         }
     };
@@ -286,44 +321,112 @@ public final class LssServer {
         }
     };
 
-    // Re-registers on every failure while a registration is still wanted; callbacks arrive on an
-    // NSD thread, so the retry is posted to the main thread.
-    @NonNull
-    private final NsdManager.RegistrationListener mNsdRegistrationListener = new NsdManager.RegistrationListener() {
+    /**
+     * NSD registration for one service type.
+     *
+     * <p>Each type owns its listener and its backoff schedule, so a failed registration only
+     * retries that type and never unregisters the type that is already published. Registration
+     * failures are retried on the main thread; a successful registration clears the schedule and
+     * (for the primary type) triggers the address resolve.</p>
+     */
+    private final class Registration implements NsdManager.RegistrationListener {
+        @NonNull
+        private final String mServiceType;
+
+        @NonNull
+        private final NsdServiceInfo mServiceInfo;
+
+        // Only the primary type resolves its own registration to learn the reachable address.
+        private final boolean mResolvesAddress;
+
+        @NonNull
+        private final BackoffPolicy mBackoff = BackoffPolicy.defaults();
+
+        @NonNull
+        private final Runnable mRetryRunnable = this::register;
+
+        private boolean mUnregistered;
+
+        private Registration(@NonNull final String serviceType, @NonNull final NsdServiceInfo serviceInfo,
+            final boolean resolvesAddress) {
+            mServiceType = serviceType;
+            mServiceInfo = serviceInfo;
+            mResolvesAddress = resolvesAddress;
+        }
+
+        private void register() {
+            if (mServerInfo == null || mUnregistered) {
+                return;
+            }
+            try {
+                mNsdManager.registerService(mServiceInfo, NsdManager.PROTOCOL_DNS_SD, this);
+                Log.i(mTag, String.format("Registration.register: registration requested, serviceType = %s",
+                    mServiceType));
+            } catch (RuntimeException e) {
+                Log.e(mTag, String.format("Registration.register: registration rejected, serviceType = %s",
+                    mServiceType), e);
+                postRetry();
+            }
+        }
+
+        private void unregister() {
+            mUnregistered = true;
+            mMainHandler.removeCallbacks(mRetryRunnable);
+            try {
+                mNsdManager.unregisterService(this);
+            } catch (RuntimeException e) {
+                // The framework already dropped the registration; nothing to release.
+            }
+        }
+
+        // Must run on the main thread: it reads server state and touches the main handler.
+        private void postRetry() {
+            if (mServerInfo == null || mUnregistered) {
+                return;
+            }
+            final long delayMs = mBackoff.nextDelayMs();
+            Log.i(mTag, String.format("Registration.postRetry: retry scheduled, serviceType = %s, delayMs = %d",
+                mServiceType, delayMs));
+            mMainHandler.removeCallbacks(mRetryRunnable);
+            mMainHandler.postDelayed(mRetryRunnable, delayMs);
+        }
+
         @Override
         public void onRegistrationFailed(NsdServiceInfo serviceInfo, int errorCode) {
-            Log.e(mTag, String.format("mNsdRegistrationListener.onRegistrationFailed: register service failed"
-                + ", serviceInfo = %s, errorCode = %d", serviceInfo, errorCode));
-            mMainHandler.post(() -> {
-                if (mNsdServiceInfo == null) {
-                    return;
-                }
-                Log.i(mTag, "mNsdRegistrationListener.onRegistrationFailed: re-register service");
-                mNsdManager.unregisterService(mNsdRegistrationListener);
-                mNsdManager.registerService(mNsdServiceInfo, NsdManager.PROTOCOL_DNS_SD, mNsdRegistrationListener);
-            });
+            Log.e(mTag, String.format("onRegistrationFailed: serviceType = %s, serviceInfo = %s, errorCode = %d",
+                mServiceType, serviceInfo, errorCode));
+            mMainHandler.post(this::postRetry);
         }
 
         @SuppressWarnings("SpellCheckingInspection")
         @Override
         public void onUnregistrationFailed(NsdServiceInfo serviceInfo, int errorCode) {
-            Log.e(mTag, String.format("mNsdRegistrationListener.onUnregistrationFailed: unregister service failed"
-                + ", serviceInfo = %s, errorCode = %d", serviceInfo, errorCode));
+            Log.e(mTag, String.format("onUnregistrationFailed: serviceType = %s, serviceInfo = %s, errorCode = %d",
+                mServiceType, serviceInfo, errorCode));
         }
 
         @Override
         public void onServiceRegistered(NsdServiceInfo serviceInfo) {
-            Log.i(mTag, String.format("mNsdRegistrationListener.onServiceRegistered: service registered"
-                + ", serviceInfo = %s", serviceInfo));
-            postResolveNsdServiceRunnable();
+            Log.i(mTag, String.format("onServiceRegistered: serviceType = %s, serviceInfo = %s",
+                mServiceType, serviceInfo));
+            mMainHandler.post(() -> {
+                if (mServerInfo == null || mUnregistered) {
+                    return;
+                }
+                mBackoff.reset();
+                if (mResolvesAddress) {
+                    mResolveBackoff.reset();
+                    postResolveNsdServiceRunnable();
+                }
+            });
         }
 
         @Override
         public void onServiceUnregistered(NsdServiceInfo serviceInfo) {
-            Log.i(mTag, String.format("mNsdRegistrationListener.onServiceUnregistered: service unregistered"
-                + ", serviceInfo = %s", serviceInfo));
+            Log.i(mTag, String.format("onServiceUnregistered: serviceType = %s, serviceInfo = %s",
+                mServiceType, serviceInfo));
         }
-    };
+    }
 
     // Applies a resolved host address to the published info, or schedules another attempt while the
     // address is still unknown. NsdUtils already delivers these callbacks on the main thread.
@@ -333,7 +436,7 @@ public final class LssServer {
         public void onResolveFailed(NsdServiceInfo serviceInfo, int errorCode) {
             Log.e(mTag, String.format("mNsdResolveListener.onResolveFailed: service resolve failed, serviceInfo = %s"
                 + ", errorCode = %d", serviceInfo, errorCode));
-            postResolveNsdServiceRunnable();
+            postResolveRetry();
         }
 
         @Override
@@ -345,8 +448,9 @@ public final class LssServer {
                 + ", hostAddress = %s", serviceInfo, hostAddress));
 
             if (TextUtils.isEmpty(hostAddress)) {
-                postResolveNsdServiceRunnable();
+                postResolveRetry();
             } else {
+                mResolveBackoff.reset();
                 mMainHandler.post(() -> {
                     if (mServerInfo != null) {
                         updateServerInfo(mServerInfo.toBuilder().hostAddress(hostAddress).build());
@@ -433,8 +537,16 @@ public final class LssServer {
             .hostAddress(Constants.UNKNOWN_HOST_ADDRESS)
             .port(mGrpcServer.getPort())
             .build();
-        mNsdServiceInfo = buildNsdServiceInfo(mServerInfo);
-        mNsdManager.registerService(mNsdServiceInfo, NsdManager.PROTOCOL_DNS_SD, mNsdRegistrationListener);
+
+        final LssDeviceInfo advertisement = buildAdvertisement(mServerInfo);
+        mPrimaryRegistration = new Registration(Constants.NSD_SERVICE_TYPE,
+            buildNsdServiceInfo(advertisement, NsdTxtRecord.Namespace.CURRENT), true);
+        mLegacyRegistration = new Registration(Constants.NSD_SERVICE_TYPE_LEGACY,
+            buildNsdServiceInfo(advertisement, NsdTxtRecord.Namespace.LEGACY), false);
+        mNsdServiceInfo = mPrimaryRegistration.mServiceInfo;
+
+        mPrimaryRegistration.register();
+        mLegacyRegistration.register();
         mConnectivityManager.registerDefaultNetworkCallback(mNetworkCallback);
 
         final IntentFilter intentFilter = new IntentFilter();
@@ -454,9 +566,10 @@ public final class LssServer {
      *
      * <p>Must be called on the main thread. State is nulled first, so pending callbacks turn into
      * no-ops; then pending main-thread callbacks are removed, the broadcast receiver, the network
-     * callback and the NSD registration are unregistered, and finally the gRPC server is shut down,
-     * active client observers are released and the executor is terminated. Unregistering callbacks
-     * that Android already released is tolerated by the surrounding {@code try} blocks.</p>
+     * callback and both NSD registrations are unregistered, and finally the gRPC server is shut
+     * down, active client observers are released and the executor is terminated. Unregistering
+     * callbacks that Android already released is tolerated by the surrounding {@code try}
+     * blocks.</p>
      */
     public void stop() {
         mIsStopped = true;
@@ -478,10 +591,15 @@ public final class LssServer {
             // ignored
         }
 
-        try {
-            mNsdManager.unregisterService(mNsdRegistrationListener);
-        } catch (Exception e) {
-            // ignored
+        // Both registrations are released here; each type is also retried independently while
+        // running, so a failed type never unregisters the type that is published.
+        if (mPrimaryRegistration != null) {
+            mPrimaryRegistration.unregister();
+            mPrimaryRegistration = null;
+        }
+        if (mLegacyRegistration != null) {
+            mLegacyRegistration.unregister();
+            mLegacyRegistration = null;
         }
 
         mGrpcServer.shutdownNow();
@@ -507,14 +625,57 @@ public final class LssServer {
         mMainHandler.post(mResolveNsdServiceRunnable);
     }
 
+    // Retries a failed resolve after a backoff delay instead of re-posting immediately, so a
+    // permanently failing resolve cannot spin the main thread.
+    private void postResolveRetry() {
+        if (mServerInfo == null) {
+            return;
+        }
+        final long delayMs = mResolveBackoff.nextDelayMs();
+        Log.i(mTag, String.format("postResolveRetry: resolve retry scheduled, delayMs = %d", delayMs));
+        mMainHandler.removeCallbacks(mResolveNsdServiceRunnable);
+        mMainHandler.postDelayed(mResolveNsdServiceRunnable, delayMs);
+    }
+
     @NonNull
-    private NsdServiceInfo buildNsdServiceInfo(@NonNull final LssServerInfo serverInfo) {
+    private LssDeviceInfo buildAdvertisement(@NonNull final LssServerInfo serverInfo) {
+        return LssDeviceInfo.builder()
+            .id(serverInfo.getId())
+            .name(Preferences.get().getDeviceAlias())
+            .role(DeviceRole.SERVER)
+            .state(ShareState.LIVE)
+            .join(JoinPolicy.OPEN)
+            .secure(mSecure)
+            .auth(AuthMode.NONE)
+            .protocolVersion(String.valueOf(ScreenStreamProtoMapper.PROTOCOL_VERSION))
+            .metadataVersion(NSD_METADATA_VERSION)
+            .capabilities(Constants.DEVICE_CAPABILITY_H264 | Constants.DEVICE_CAPABILITY_JPEG)
+            .addresses(Collections.emptyList())
+            .presence(DevicePresence.HEARD)
+            .build();
+    }
+
+    /**
+     * Builds one advertisement. The instance name is stable and readable but carries no identity:
+     * it is {@code LSS-<id first 8>}. The TXT record is minimal and never contains the system
+     * device name unless the user enabled name sharing.
+     */
+    @NonNull
+    private NsdServiceInfo buildNsdServiceInfo(@NonNull final LssDeviceInfo advertisement,
+        @NonNull final NsdTxtRecord.Namespace namespace) {
         final NsdServiceInfo nsdServiceInfo = new NsdServiceInfo();
-        nsdServiceInfo.setServiceName(serverInfo.getId());
-        nsdServiceInfo.setServiceType(Constants.NSD_SERVICE_TYPE);
+        nsdServiceInfo.setServiceName(LssDeviceInfo.NAME_PREFIX + advertisement.shortId());
+        nsdServiceInfo.setServiceType(namespace == NsdTxtRecord.Namespace.LEGACY
+            ? Constants.NSD_SERVICE_TYPE_LEGACY : Constants.NSD_SERVICE_TYPE);
         nsdServiceInfo.setPort(mGrpcServer.getPort());
-        nsdServiceInfo.setAttribute(Constants.NSD_SERVICE_ATTR_ID, serverInfo.getId());
-        nsdServiceInfo.setAttribute(Constants.NSD_SERVICE_ATTR_NAME, serverInfo.getName());
+
+        final Map<String, byte[]> attributes =
+            NsdTxtRecord.encode(advertisement, namespace, Preferences.get().isShareNameEnabled());
+        for (final Map.Entry<String, byte[]> attribute : attributes.entrySet()) {
+            // NsdManager only exposes the string setter; it encodes values as UTF-8 bytes.
+            nsdServiceInfo.setAttribute(attribute.getKey(),
+                new String(attribute.getValue(), StandardCharsets.UTF_8));
+        }
         return nsdServiceInfo;
     }
 
