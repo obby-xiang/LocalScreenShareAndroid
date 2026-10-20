@@ -64,6 +64,8 @@ final class DeviceEntry {
 
     boolean favorite;
 
+    boolean pinned;
+
     boolean identityChanged;
 
     boolean leaving;
@@ -185,7 +187,7 @@ final class DeviceEntry {
      */
     boolean isExpired(final long nowMs, final long heardTtlMs, final long confirmedTtlMs,
         final long removeAfterMs) {
-        if (favorite) {
+        if (favorite || pinned) {
             return false;
         }
         if (confirmed && nowMs - lastConfirmedMs <= confirmedTtlMs) {
@@ -201,7 +203,7 @@ final class DeviceEntry {
     DevicePresence presence(final long nowMs, final long confirmedTtlMs, final long heardTtlMs,
         final long removeAfterMs) {
         if (leaving) {
-            return favorite ? DevicePresence.UNREACHABLE : DevicePresence.STALE;
+            return favorite || pinned ? DevicePresence.UNREACHABLE : DevicePresence.STALE;
         }
         if (confirmed && nowMs - lastConfirmedMs <= confirmedTtlMs) {
             return DevicePresence.CONFIRMED;
@@ -213,7 +215,7 @@ final class DeviceEntry {
         if (nowMs - lastActivityMs <= removeAfterMs) {
             return DevicePresence.STALE;
         }
-        return favorite ? DevicePresence.UNREACHABLE : DevicePresence.STALE;
+        return favorite || pinned ? DevicePresence.UNREACHABLE : DevicePresence.STALE;
     }
 
     private boolean isOutOfOrder(@NonNull final DeviceObservation observation) {

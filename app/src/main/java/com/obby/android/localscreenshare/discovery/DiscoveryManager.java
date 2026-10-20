@@ -112,6 +112,9 @@ public final class DiscoveryManager {
     // Settings writes also arrive in bursts, because one picker change writes several keys.
     private static final long SETTINGS_DEBOUNCE_MS = 200L;
 
+    // Manually added addresses are re-probed on this cadence so they stay confirmed while reachable.
+    private static final long MANUAL_REPROBE_INTERVAL_MS = 15_000L;
+
     // Preference keys that change how discovery runs and therefore restart the providers.
     @NonNull
     private static final List<String> DISCOVERY_KEYS = Arrays.asList(
@@ -279,6 +282,20 @@ public final class DiscoveryManager {
             }
             mDeviceStore.tick();
             mMainHandler.postDelayed(mTickRunnable, DeviceStore.TICK_INTERVAL_MS);
+        }
+    };
+
+    // Re-arms itself while discovery is running and re-probes manually added addresses.
+    @NonNull
+    private final Runnable mManualReprobeRunnable = new Runnable() {
+        @Override
+        public void run() {
+            mMainHandler.removeCallbacks(mManualReprobeRunnable);
+            if (!mIsDiscovering) {
+                return;
+            }
+            mManualAddressProvider.probeManualTargets();
+            mMainHandler.postDelayed(mManualReprobeRunnable, MANUAL_REPROBE_INTERVAL_MS);
         }
     };
 
@@ -471,7 +488,20 @@ public final class DiscoveryManager {
     public boolean probeManualAddress(@NonNull final String input,
         @NonNull final ManualAddressProvider.ProbeCallback callback) {
         return mManualAddressProvider.probeManual(input, Preferences.get().getServerPort(),
-            callback);
+            new ManualAddressProvider.ProbeCallback() {
+                @Override
+                public void onConfirmed(@NonNull final String host, final int port,
+                    @NonNull final DeviceSummary peer) {
+                    callback.onConfirmed(host, port, peer);
+                }
+
+                @Override
+                public void onFailed(@NonNull final String reason) {
+                    Log.w(TAG, String.format("probeManualAddress: probe failed, input = %s, reason = %s",
+                        input, reason));
+                    callback.onFailed(reason);
+                }
+            });
     }
 
     /**
@@ -511,6 +541,8 @@ public final class DiscoveryManager {
         registerNetworkCallback();
         mMainHandler.removeCallbacks(mTickRunnable);
         mMainHandler.postDelayed(mTickRunnable, DeviceStore.TICK_INTERVAL_MS);
+        mMainHandler.removeCallbacks(mManualReprobeRunnable);
+        mMainHandler.postDelayed(mManualReprobeRunnable, MANUAL_REPROBE_INTERVAL_MS);
     }
 
     /**
@@ -577,6 +609,7 @@ public final class DiscoveryManager {
         Preferences.get().removeObserver(mPreferencesObserver);
         mMainHandler.removeCallbacks(mSettingsChangedRunnable);
         mMainHandler.removeCallbacks(mTickRunnable);
+        mMainHandler.removeCallbacks(mManualReprobeRunnable);
         mMainHandler.removeCallbacks(mEmptyListScanRunnable);
         mMainHandler.removeCallbacks(mNetworkChangedRunnable);
         mDeviceStore.removeListener(mDeviceStoreListener);
@@ -658,6 +691,11 @@ public final class DiscoveryManager {
         }
         mDeviceStore.onObserved(RegisterProtoMapper.toObservation(peer, channel, host, port, null));
         mDeviceStore.confirm(id, channel, host, port);
+        if (channel == DiscoveryChannel.MANUAL) {
+            // A manually added address must not silently disappear once its one-shot probe's TTL
+            // elapses; pin it so it degrades to unreachable and is re-probed instead of removed.
+            mDeviceStore.setPinned(id, true);
+        }
         mFavoriteStore.sync(id, emptyToNull(peer.getFingerprint()),
             emptyToNull(peer.getName()), host, port);
         applyFavoriteToStore(id);

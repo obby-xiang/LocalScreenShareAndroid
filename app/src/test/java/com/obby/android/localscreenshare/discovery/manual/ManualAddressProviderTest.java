@@ -118,6 +118,35 @@ public class ManualAddressProviderTest {
     }
 
     @Test
+    public void confirmedManualTargetsAreReprobed() throws InterruptedException {
+        mProvider.start(noopListener());
+        assertTrue(mProvider.probeManual("192.168.1.9:9000", 8080, mCallback));
+        waitFor(() -> mCallback.confirmed.size() == 1);
+
+        final int callsAfterFirstProbe = mProbe.callCount();
+        mProvider.probeManualTargets();
+        waitFor(() -> mProbe.callCount() > callsAfterFirstProbe);
+
+        assertTrue(mProbe.hosts().contains("192.168.1.9"));
+        assertEquals(2, mSink.confirmations.size());
+        assertEquals(DiscoveryChannel.MANUAL, mSink.confirmations.get(1).channel);
+    }
+
+    @Test
+    public void reprobeIsSuppressedWhenStopped() throws InterruptedException {
+        mProvider.start(noopListener());
+        assertTrue(mProvider.probeManual("192.168.1.9", 8080, mCallback));
+        waitFor(() -> mCallback.confirmed.size() == 1);
+        mProvider.stop();
+
+        final int calls = mProbe.callCount();
+        mProvider.probeManualTargets();
+        Thread.sleep(100L);
+
+        assertEquals(calls, mProbe.callCount());
+    }
+
+    @Test
     public void aFailedProbeIsReportedWithoutAConfirmation() throws InterruptedException {
         mProvider.shutdown();
         mProbe = FakeProbe.alwaysFailing();

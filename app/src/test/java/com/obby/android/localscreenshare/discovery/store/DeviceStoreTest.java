@@ -180,6 +180,35 @@ public class DeviceStoreTest {
     }
 
     @Test
+    public void pinnedEntryIsNeverRemovedByTtl() {
+        mStore.onObserved(heard(DEVICE_ID, "10.0.0.5", 8080, mClock.nowMs()));
+        assertTrue(mStore.setPinned(DEVICE_ID, true));
+        assertFalse(mStore.setPinned("unknown-device", true));
+
+        mClock.advance(DeviceStore.REMOVE_AFTER_MS * 4L);
+        mStore.tick();
+
+        assertEquals(1, mStore.size());
+        assertEquals(DevicePresence.UNREACHABLE, mStore.device(DEVICE_ID).getPresence());
+    }
+
+    @Test
+    public void goodbyeKeepsPinnedEntryAsUnreachable() {
+        mStore.onObserved(heard(DEVICE_ID, "10.0.0.5", 8080, mClock.nowMs()));
+        assertTrue(mStore.setPinned(DEVICE_ID, true));
+
+        mStore.onObserved(DeviceObservation.builder()
+            .source(DiscoveryChannel.MULTICAST)
+            .id(DEVICE_ID)
+            .lastSeenMs(mClock.nowMs())
+            .goodbye(true)
+            .build());
+
+        assertEquals(1, mStore.size());
+        assertEquals(DevicePresence.UNREACHABLE, mStore.device(DEVICE_ID).getPresence());
+    }
+
+    @Test
     public void capacityEvictsTheOldestStaleEntry() {
         mClock.set(100_000L);
         for (int i = 0; i < DeviceStore.CAPACITY; i++) {

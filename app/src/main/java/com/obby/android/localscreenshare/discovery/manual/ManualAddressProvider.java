@@ -11,6 +11,8 @@ import com.obby.android.localscreenshare.discovery.scan.AddressProbe;
 import com.obby.android.localscreenshare.discovery.scan.ProbeResult;
 import com.obby.android.localscreenshare.grpc.screenstream.DeviceSummary;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Executor;
@@ -94,6 +96,11 @@ public final class ManualAddressProvider implements DiscoveryProvider {
 
     private volatile boolean mStarted;
 
+    // Addresses the user typed and confirmed; re-probed periodically so they stay confirmed (or
+    // degrade to unreachable) instead of expiring out of the list after the one-shot probe.
+    @NonNull
+    private final Map<String, ManualAddress> mManualTargets = new LinkedHashMap<>();
+
     /**
      * Creates the provider.
      *
@@ -165,6 +172,7 @@ public final class ManualAddressProvider implements DiscoveryProvider {
                 final ProbeResult result = mProbe.probe(host, port, mProbeTimeoutMs);
                 mMainExecutor.execute(() -> {
                     if (result.isConfirmed() && result.getSummary() != null) {
+                        mManualTargets.put(addressKey(host, port), address);
                         mSink.onConfirmed(DiscoveryChannel.MANUAL, result.getSummary(), host, port);
                         callback.onConfirmed(host, port, result.getSummary());
                     } else {
@@ -177,6 +185,49 @@ public final class ManualAddressProvider implements DiscoveryProvider {
             return false;
         }
         return true;
+    }
+
+    /**
+     * Re-probes every manually added address so a reachable device stays confirmed and an
+     * unreachable one degrades to unreachable instead of being removed by the store TTL.
+     */
+    public void probeManualTargets() {
+        if (!mStarted) {
+            return;
+        }
+        for (final ManualAddress target : mManualTargets.values()) {
+            mProbeExecutor.execute(() -> probeManualTarget(target));
+        }
+    }
+
+    /**
+     * Returns the number of manually added addresses being re-probed.
+     */
+    public int manualTargetCount() {
+        return mManualTargets.size();
+    }
+
+    private void probeManualTarget(@NonNull final ManualAddress target) {
+        if (!mStarted) {
+            return;
+        }
+        final ProbeResult result = mProbe.probe(target.getHost(), target.getPort(), mProbeTimeoutMs);
+        if (!result.isConfirmed() || result.getSummary() == null || !mStarted) {
+            return;
+        }
+        final DeviceSummary summary = result.getSummary();
+        final String host = target.getHost();
+        final int port = target.getPort();
+        mMainExecutor.execute(() -> {
+            if (mStarted) {
+                mSink.onConfirmed(DiscoveryChannel.MANUAL, summary, host, port);
+            }
+        });
+    }
+
+    @NonNull
+    private static String addressKey(@NonNull final String host, final int port) {
+        return host + ":" + port;
     }
 
     /**

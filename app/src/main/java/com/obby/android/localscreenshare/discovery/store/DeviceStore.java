@@ -35,8 +35,9 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * An address confirmation expires after {@link #CONFIRMED_TTL_MS}.</p>
  *
  * <p><b>Time.</b> Entries expire {@link #REMOVE_AFTER_MS} after their last observation unless they
- * are favorites, which degrade to {@link DevicePresence#UNREACHABLE} instead. A goodbye removes a
- * non-favorite entry immediately. {@link #tick()} is meant to be driven once per
+ * are favorites or pinned manual entries, which degrade to {@link DevicePresence#UNREACHABLE}
+ * instead. A goodbye removes a non-favorite, non-pinned entry immediately. {@link #tick()} is meant
+ * to be driven once per
  * {@link #TICK_INTERVAL_MS} by the main thread; there is one timer for the whole table, not one
  * per device.</p>
  *
@@ -130,7 +131,7 @@ public final class DeviceStore {
 
         if (observation.isGoodbye()) {
             if (existing != null) {
-                if (existing.favorite) {
+                if (existing.favorite || existing.pinned) {
                     existing.leaving = true;
                 } else {
                     mEntries.remove(existing.id);
@@ -194,6 +195,25 @@ public final class DeviceStore {
             return false;
         }
         entry.favorite = favorite;
+        refresh(mTimeSource.nowMs());
+        return true;
+    }
+
+    /**
+     * Marks or clears the pinned flag of a manually added device.
+     *
+     * <p>Pinned entries, like favorites, are never removed by TTL or goodbye; they degrade to
+     * {@link DevicePresence#UNREACHABLE} instead, and are re-probed so a reachable device stays
+     * confirmed.</p>
+     *
+     * @return false when the device is unknown to the store
+     */
+    public boolean setPinned(@NonNull final String id, final boolean pinned) {
+        final DeviceEntry entry = mEntries.get(id);
+        if (entry == null) {
+            return false;
+        }
+        entry.pinned = pinned;
         refresh(mTimeSource.nowMs());
         return true;
     }
@@ -395,7 +415,7 @@ public final class DeviceStore {
         DeviceEntry oldestStale = null;
         DeviceEntry oldest = null;
         for (final DeviceEntry entry : mEntries.values()) {
-            if (entry.favorite) {
+            if (entry.favorite || entry.pinned) {
                 continue;
             }
             if (oldest == null || entry.lastSeenMs < oldest.lastSeenMs) {
