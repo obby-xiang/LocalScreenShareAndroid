@@ -85,6 +85,24 @@ public final class EncoderSizeAlignment {
         return align(height, heightAlignment);
     }
 
+    /**
+     * Returns {@code width} rounded up to a multiple of the width alignment.
+     *
+     * <p>Used by the minimum-size probe: an encoder minimum that is not itself a multiple of the
+     * alignment has to be raised before it is compared with an aligned capture size, because the
+     * capture rounds down and would otherwise fall below the minimum the encoder advertises.</p>
+     */
+    public int alignWidthUp(int width) {
+        return alignUp(width, widthAlignment);
+    }
+
+    /**
+     * Returns {@code height} rounded up to a multiple of the height alignment.
+     */
+    public int alignHeightUp(int height) {
+        return alignUp(height, heightAlignment);
+    }
+
     private static int align(int value, int alignment) {
         if (value < alignment) {
             // A capture smaller than one alignment step is unusable when rounded down to zero, so
@@ -92,5 +110,12 @@ public final class EncoderSizeAlignment {
             return alignment;
         }
         return value / alignment * alignment;
+    }
+
+    private static int alignUp(int value, int alignment) {
+        if (value < alignment) {
+            return alignment;
+        }
+        return (value + alignment - 1) / alignment * alignment;
     }
 }

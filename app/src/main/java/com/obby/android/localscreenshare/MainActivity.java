@@ -9,6 +9,7 @@ import android.content.Intent;
 import android.content.ServiceConnection;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.graphics.Rect;
 import android.media.projection.MediaProjectionConfig;
 import android.media.projection.MediaProjectionManager;
 import android.os.Build;
@@ -23,6 +24,7 @@ import android.provider.Settings;
 import android.text.InputType;
 import android.text.format.Formatter;
 import android.util.Log;
+import android.util.Size;
 import android.view.LayoutInflater;
 import android.view.MenuItem;
 import android.view.View;
@@ -64,6 +66,8 @@ import com.google.android.material.materialswitch.MaterialSwitch;
 import com.google.android.material.slider.LabelFormatter;
 import com.google.android.material.slider.Slider;
 import com.google.android.material.textview.MaterialTextView;
+import com.obby.android.localscreenshare.core.codec.h264.H264Codec;
+import com.obby.android.localscreenshare.core.codec.mediacodec.EncoderSizeLimitProbe;
 import com.obby.android.localscreenshare.discovery.DiscoveryManager;
 import com.obby.android.localscreenshare.discovery.favorite.FavoriteDevice;
 import com.obby.android.localscreenshare.discovery.favorite.FavoriteStore;
@@ -82,17 +86,22 @@ import com.obby.android.localscreenshare.service.ScreenShareService;
 import com.obby.android.localscreenshare.service.ScreenViewerService;
 import com.obby.android.localscreenshare.settings.DiscoverySettings;
 import com.obby.android.localscreenshare.settings.Preferences;
+import com.obby.android.localscreenshare.settings.ProjectionControlValues;
+import com.obby.android.localscreenshare.settings.ProjectionScalePolicy;
 import com.obby.android.localscreenshare.settings.ProjectionSettings;
 import com.obby.android.localscreenshare.settings.VisibilityPolicy;
 import com.obby.android.localscreenshare.support.Constants;
 import com.obby.android.localscreenshare.support.IntentUtils;
 import com.obby.android.localscreenshare.support.ServiceProtocol;
+import com.obby.android.localscreenshare.support.WindowUtils;
 
 import java.text.NumberFormat;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.IntStream;
 
 /**
@@ -128,22 +137,6 @@ public class MainActivity extends AppCompatActivity {
     private static final int SERVICE_STATUS_ONLINE = 1;
 
     private static final int SERVICE_STATUS_OFFLINE = 2;
-
-    private static final int PROJECTION_QUALITY_STEP = 1;
-
-    private static final int PROJECTION_SCALE_STEP = 1;
-
-    private static final int PROJECTION_FRAME_RATE_STEP = 1;
-
-    // Bitrate slider range and step, in megabits per second; stored in bits per second.
-    private static final float MIN_PROJECTION_BITRATE_MBPS = 0.5f;
-
-    private static final float MAX_PROJECTION_BITRATE_MBPS = 20f;
-
-    private static final float PROJECTION_BITRATE_STEP_MBPS = 0.5f;
-
-    // Key-frame interval slider step, in seconds; stored in milliseconds.
-    private static final float PROJECTION_IDR_INTERVAL_STEP_SECONDS = 1f;
 
     private static final int MIN_SERVER_PORT = 1024;
 
@@ -185,6 +178,35 @@ public class MainActivity extends AppCompatActivity {
     @Nullable
     private MaterialTextView mVideoSettingsSummaryView;
 
+    // Controls of the video settings sheet; null until the sheet is created. They are kept so a
+    // preference written by the service while the sheet is open refreshes the control that shows
+    // it, instead of only the summary next to the entry row.
+    @Nullable
+    private View mQualitySettingRow;
+
+    @Nullable
+    private Slider mQualitySettingView;
+
+    @Nullable
+    private Slider mScaleSettingView;
+
+    @Nullable
+    private Slider mFrameRateSettingView;
+
+    @Nullable
+    private Slider mBitrateSettingView;
+
+    @Nullable
+    private Slider mIdrIntervalSettingView;
+
+    @Nullable
+    private MaterialTextView mCodecSettingView;
+
+    // Sliders the user currently has a finger on; a preference refresh never moves a slider while
+    // it is being dragged.
+    @NonNull
+    private final Set<Slider> mTrackingSliders = new HashSet<>();
+
     private MaterialToolbar mServiceToolbarView;
 
     private MaterialTextView mServiceStatusView;
@@ -210,20 +232,26 @@ public class MainActivity extends AppCompatActivity {
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
 
     /**
-     * Rebuilds the video settings summary as soon as a projection value is stored.
+     * Refreshes the video settings views as soon as a projection value is stored.
      *
      * <p>The summary used to be refreshed only when the video sheet was dismissed, so a value the
      * user had just committed stayed invisible for as long as the sheet was open. The sheet writes
      * the preference and the running service applies it immediately, so the summary is rebuilt at
-     * that moment instead. Only keys the summary can show are considered; a null key means a bulk
-     * refresh.</p>
+     * that moment instead. The sheet's own controls follow the same event, because the service
+     * writes the applied percentage back when the encoder rejects a size: without that refresh the
+     * slider stays where the user dragged it until the sheet is closed and reopened. Only keys the
+     * controls can show are considered; a null key means a bulk refresh. The refresh runs on the
+     * main thread because it touches views.</p>
      */
     @NonNull
-    private final Preferences.Observer mProjectionSummaryObserver = key -> {
+    private final Preferences.Observer mProjectionObserver = key -> {
         if (key != null && !isProjectionSummaryKey(key)) {
             return;
         }
-        mMainHandler.post(this::updateVideoSettingsSummary);
+        mMainHandler.post(() -> {
+            updateVideoSettingsSummary();
+            syncVideoSettingsControls();
+        });
     };
 
     /**
@@ -503,7 +531,7 @@ public class MainActivity extends AppCompatActivity {
         mIsServiceBound = true;
         bindService(new Intent(this, ScreenShareService.class), mServiceConnection, Context.BIND_AUTO_CREATE);
 
-        Preferences.get().addObserver(mProjectionSummaryObserver);
+        Preferences.get().addObserver(mProjectionObserver);
 
         if (Preferences.get().isDiscoveryEnabled()) {
             DiscoveryManager.get().addDeviceListener(mDeviceListener);
@@ -529,7 +557,7 @@ public class MainActivity extends AppCompatActivity {
         mServiceMessenger = null;
         unbindService(mServiceConnection);
 
-        Preferences.get().removeObserver(mProjectionSummaryObserver);
+        Preferences.get().removeObserver(mProjectionObserver);
 
         DiscoveryManager.get().removeDeviceListener(mDeviceListener);
         mMainHandler.removeCallbacks(mDiscoveryHintRunnable);
@@ -1152,6 +1180,12 @@ public class MainActivity extends AppCompatActivity {
      * interval each cost an encoder rebuild. The quality row is only shown when the JPEG capture
      * path is selected; this build always shares H.264, where the value is unused. The codec row is
      * read-only because the client viewer has no JPEG path yet.</p>
+     *
+     * <p>The capture percentage slider starts at the minimum the current display and encoder can
+     * use, so it never offers a percentage whose capture size the encoder refuses (see
+     * {@link ProjectionScalePolicy}). While the sheet is open its controls follow every projection
+     * preference change, including the percentage the service writes back after a rejection (see
+     * {@link #syncVideoSettingsControls()}).</p>
      */
     @SuppressWarnings("DataFlowIssue")
     @NonNull
@@ -1161,19 +1195,22 @@ public class MainActivity extends AppCompatActivity {
         settingsDialog.setDismissWithAnimation(true);
         settingsDialog.getBehavior().setSkipCollapsed(true);
 
-        final View qualitySettingRow = settingsDialog.findViewById(R.id.quality_setting_row);
+        mQualitySettingRow = settingsDialog.findViewById(R.id.quality_setting_row);
         final Slider qualitySettingView = settingsDialog.findViewById(R.id.quality_setting);
+        mQualitySettingView = qualitySettingView;
         qualitySettingView.setValue(ProjectionSettings.MIN_JPEG_QUALITY);
         qualitySettingView.setValueFrom(ProjectionSettings.MIN_JPEG_QUALITY);
         qualitySettingView.setValueTo(ProjectionSettings.MAX_JPEG_QUALITY);
-        qualitySettingView.setStepSize(PROJECTION_QUALITY_STEP);
+        qualitySettingView.setStepSize(ProjectionControlValues.QUALITY_STEP);
         qualitySettingView.addOnSliderTouchListener(new Slider.OnSliderTouchListener() {
             @Override
             public void onStartTrackingTouch(@NonNull Slider slider) {
+                mTrackingSliders.add(slider);
             }
 
             @Override
             public void onStopTrackingTouch(@NonNull Slider slider) {
+                mTrackingSliders.remove(slider);
                 final int quality = (int) slider.getValue();
                 if (Preferences.get().getProjectionQuality() != quality) {
                     Preferences.get().setProjectionQuality(quality);
@@ -1182,10 +1219,11 @@ public class MainActivity extends AppCompatActivity {
         });
 
         final Slider scaleSettingView = settingsDialog.findViewById(R.id.scale_setting);
+        mScaleSettingView = scaleSettingView;
         scaleSettingView.setValue(ProjectionSettings.MIN_SCALE_PERCENT);
         scaleSettingView.setValueFrom(ProjectionSettings.MIN_SCALE_PERCENT);
         scaleSettingView.setValueTo(ProjectionSettings.MAX_SCALE_PERCENT);
-        scaleSettingView.setStepSize(PROJECTION_SCALE_STEP);
+        scaleSettingView.setStepSize(ProjectionControlValues.SCALE_STEP_PERCENT);
         scaleSettingView.setLabelFormatter(new LabelFormatter() {
             @NonNull
             @Override
@@ -1196,10 +1234,12 @@ public class MainActivity extends AppCompatActivity {
         scaleSettingView.addOnSliderTouchListener(new Slider.OnSliderTouchListener() {
             @Override
             public void onStartTrackingTouch(@NonNull Slider slider) {
+                mTrackingSliders.add(slider);
             }
 
             @Override
             public void onStopTrackingTouch(@NonNull Slider slider) {
+                mTrackingSliders.remove(slider);
                 final int scale = (int) slider.getValue();
                 if (Preferences.get().getProjectionScale() != scale) {
                     Preferences.get().setProjectionScale(scale);
@@ -1208,10 +1248,11 @@ public class MainActivity extends AppCompatActivity {
         });
 
         final Slider frameRateSettingView = settingsDialog.findViewById(R.id.frame_rate_setting);
+        mFrameRateSettingView = frameRateSettingView;
         frameRateSettingView.setValue(ProjectionSettings.MIN_FRAME_RATE);
         frameRateSettingView.setValueFrom(ProjectionSettings.MIN_FRAME_RATE);
         frameRateSettingView.setValueTo(ProjectionSettings.MAX_FRAME_RATE);
-        frameRateSettingView.setStepSize(PROJECTION_FRAME_RATE_STEP);
+        frameRateSettingView.setStepSize(ProjectionControlValues.FRAME_RATE_STEP);
         frameRateSettingView.setLabelFormatter(new LabelFormatter() {
             @NonNull
             @Override
@@ -1222,10 +1263,12 @@ public class MainActivity extends AppCompatActivity {
         frameRateSettingView.addOnSliderTouchListener(new Slider.OnSliderTouchListener() {
             @Override
             public void onStartTrackingTouch(@NonNull Slider slider) {
+                mTrackingSliders.add(slider);
             }
 
             @Override
             public void onStopTrackingTouch(@NonNull Slider slider) {
+                mTrackingSliders.remove(slider);
                 final int frameRate = (int) slider.getValue();
                 if (Preferences.get().getProjectionFrameRate() != frameRate) {
                     Preferences.get().setProjectionFrameRate(frameRate);
@@ -1234,10 +1277,11 @@ public class MainActivity extends AppCompatActivity {
         });
 
         final Slider bitrateSettingView = settingsDialog.findViewById(R.id.bitrate_setting);
-        bitrateSettingView.setValue(MIN_PROJECTION_BITRATE_MBPS);
-        bitrateSettingView.setValueFrom(MIN_PROJECTION_BITRATE_MBPS);
-        bitrateSettingView.setValueTo(MAX_PROJECTION_BITRATE_MBPS);
-        bitrateSettingView.setStepSize(PROJECTION_BITRATE_STEP_MBPS);
+        mBitrateSettingView = bitrateSettingView;
+        bitrateSettingView.setValue(ProjectionControlValues.MIN_BITRATE_MBPS);
+        bitrateSettingView.setValueFrom(ProjectionControlValues.MIN_BITRATE_MBPS);
+        bitrateSettingView.setValueTo(ProjectionControlValues.MAX_BITRATE_MBPS);
+        bitrateSettingView.setStepSize(ProjectionControlValues.BITRATE_STEP_MBPS);
         bitrateSettingView.setLabelFormatter(new LabelFormatter() {
             @NonNull
             @Override
@@ -1249,10 +1293,12 @@ public class MainActivity extends AppCompatActivity {
         bitrateSettingView.addOnSliderTouchListener(new Slider.OnSliderTouchListener() {
             @Override
             public void onStartTrackingTouch(@NonNull Slider slider) {
+                mTrackingSliders.add(slider);
             }
 
             @Override
             public void onStopTrackingTouch(@NonNull Slider slider) {
+                mTrackingSliders.remove(slider);
                 final int bitrate = toBitrateBps(slider.getValue());
                 if (Preferences.get().getProjectionBitrate() != bitrate) {
                     Preferences.get().setProjectionBitrate(bitrate);
@@ -1261,10 +1307,11 @@ public class MainActivity extends AppCompatActivity {
         });
 
         final Slider idrIntervalSettingView = settingsDialog.findViewById(R.id.idr_interval_setting);
+        mIdrIntervalSettingView = idrIntervalSettingView;
         idrIntervalSettingView.setValue(ProjectionSettings.MIN_IDR_INTERVAL_MS / 1000f);
         idrIntervalSettingView.setValueFrom(ProjectionSettings.MIN_IDR_INTERVAL_MS / 1000f);
         idrIntervalSettingView.setValueTo(ProjectionSettings.MAX_IDR_INTERVAL_MS / 1000f);
-        idrIntervalSettingView.setStepSize(PROJECTION_IDR_INTERVAL_STEP_SECONDS);
+        idrIntervalSettingView.setStepSize(ProjectionControlValues.IDR_INTERVAL_STEP_SECONDS);
         idrIntervalSettingView.setLabelFormatter(new LabelFormatter() {
             @NonNull
             @Override
@@ -1275,10 +1322,12 @@ public class MainActivity extends AppCompatActivity {
         idrIntervalSettingView.addOnSliderTouchListener(new Slider.OnSliderTouchListener() {
             @Override
             public void onStartTrackingTouch(@NonNull Slider slider) {
+                mTrackingSliders.add(slider);
             }
 
             @Override
             public void onStopTrackingTouch(@NonNull Slider slider) {
+                mTrackingSliders.remove(slider);
                 final int intervalMs = toIdrIntervalMs(slider.getValue());
                 if (Preferences.get().getProjectionIdrIntervalMs() != intervalMs) {
                     Preferences.get().setProjectionIdrIntervalMs(intervalMs);
@@ -1286,25 +1335,105 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        final MaterialTextView codecSettingView = settingsDialog.findViewById(R.id.codec_setting);
+        mCodecSettingView = settingsDialog.findViewById(R.id.codec_setting);
 
         settingsDialog.setOnShowListener(dialog -> {
             settingsDialog.getBehavior().setState(BottomSheetBehavior.STATE_EXPANDED);
-
-            final ProjectionSettings settings = currentProjectionSettings();
-            qualitySettingRow.setVisibility(settings.isH264() ? View.GONE : View.VISIBLE);
-            qualitySettingView.setValue(settings.getJpegQuality());
-            scaleSettingView.setValue(settings.getScalePercent());
-            frameRateSettingView.setValue(settings.getFrameRate());
-            bitrateSettingView.setValue(settings.getBitrateBps() / 1_000_000f);
-            idrIntervalSettingView.setValue(settings.getIdrIntervalMs() / 1000f);
-            codecSettingView.setText(settings.isH264()
-                ? R.string.projection_codec_value_h264
-                : R.string.projection_codec_value_jpeg);
+            applyVideoSettingsControls();
         });
-        settingsDialog.setOnDismissListener(dialog -> updateVideoSettingsSummary());
+        settingsDialog.setOnDismissListener(dialog -> {
+            mTrackingSliders.clear();
+            updateVideoSettingsSummary();
+        });
 
         return settingsDialog;
+    }
+
+    /**
+     * Refreshes the open video settings sheet after a projection preference changed.
+     *
+     * <p>The sheet may be closed or not created yet when the observer fires, in which case there is
+     * nothing to refresh; the values are applied from the preferences on the next show anyway.</p>
+     */
+    private void syncVideoSettingsControls() {
+        if (mVideoSettingsDialog == null || !mVideoSettingsDialog.isShowing()) {
+            return;
+        }
+        applyVideoSettingsControls();
+    }
+
+    /**
+     * Applies the stored projection values to the video settings controls.
+     *
+     * <p>Called when the sheet is shown and again on every projection preference change while it
+     * is open. The refresh matters most for the capture percentage: when the encoder refuses a
+     * size, the service writes the percentage it kept back into the preferences, and the slider has
+     * to move to that value while the user is still looking at it instead of only after the sheet
+     * is reopened. A slider the user is currently dragging is skipped, because the drag owns the
+     * value until the finger is lifted; moving it under the finger would fight the gesture, and the
+     * release handler would then persist a value the user never chose. A stored percentage below
+     * the current usable minimum is displayed at that minimum, which is the lowest value the slider
+     * still offers.</p>
+     */
+    private void applyVideoSettingsControls() {
+        final int minimumScalePercent = getMinimumProjectionScalePercent();
+        final ProjectionControlValues values =
+            ProjectionControlValues.of(currentProjectionSettings(), minimumScalePercent);
+
+        if (mQualitySettingRow != null) {
+            mQualitySettingRow.setVisibility(values.isH264() ? View.GONE : View.VISIBLE);
+        }
+        if (mQualitySettingView != null && !mTrackingSliders.contains(mQualitySettingView)) {
+            mQualitySettingView.setValue(values.getJpegQuality());
+        }
+        if (mScaleSettingView != null && !mTrackingSliders.contains(mScaleSettingView)) {
+            // A lower bound equal to the upper bound would leave a single-valued slider, which the
+            // widget rejects; that only happens when even 100% is below the encoder minimum, and
+            // no percentage helps then.
+            if (minimumScalePercent < ProjectionSettings.MAX_SCALE_PERCENT) {
+                mScaleSettingView.setValueFrom(minimumScalePercent);
+            }
+            mScaleSettingView.setValue(values.getScalePercent());
+        }
+        if (mFrameRateSettingView != null && !mTrackingSliders.contains(mFrameRateSettingView)) {
+            mFrameRateSettingView.setValue(values.getFrameRate());
+        }
+        if (mBitrateSettingView != null && !mTrackingSliders.contains(mBitrateSettingView)) {
+            mBitrateSettingView.setValue(values.getBitrateMbps());
+        }
+        if (mIdrIntervalSettingView != null
+            && !mTrackingSliders.contains(mIdrIntervalSettingView)) {
+            mIdrIntervalSettingView.setValue(values.getIdrIntervalSeconds());
+        }
+        if (mCodecSettingView != null) {
+            mCodecSettingView.setText(values.isH264()
+                ? R.string.projection_codec_value_h264
+                : R.string.projection_codec_value_jpeg);
+        }
+    }
+
+    /**
+     * Returns the lowest capture percentage the current display and encoder can use.
+     *
+     * <p>The encoder minimum comes from {@link EncoderSizeLimitProbe} and falls back to the generic
+     * floor inside {@link ProjectionScalePolicy} when the platform does not report it. The
+     * reference bounds are the maximum window bounds the service derives the capture size from, so
+     * the sheet cannot offer a percentage that the service would turn into a size the encoder
+     * refuses. The bounds are read again on every call because a rotation changes them.</p>
+     */
+    private int getMinimumProjectionScalePercent() {
+        final Size minimumSize = EncoderSizeLimitProbe.probeMinimumSize(H264Codec.MIME);
+        final Rect bounds = WindowUtils.getMaximumWindowBounds(this);
+        final int minimumPercent = ProjectionScalePolicy.getMinimumPercent(
+            minimumSize == null ? 0 : minimumSize.getWidth(),
+            minimumSize == null ? 0 : minimumSize.getHeight(),
+            bounds.width(), bounds.height(), ProjectionControlValues.SCALE_STEP_PERCENT);
+        Log.i(mTag, "getMinimumProjectionScalePercent: " + minimumPercent + "% (encoder minimum "
+            + (minimumSize == null
+                ? "unknown"
+                : minimumSize.getWidth() + "x" + minimumSize.getHeight())
+            + ", window " + bounds.width() + 'x' + bounds.height() + ')');
+        return minimumPercent;
     }
 
     /**
