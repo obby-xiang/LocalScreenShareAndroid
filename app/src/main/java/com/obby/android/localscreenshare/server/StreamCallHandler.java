@@ -49,6 +49,9 @@ public final class StreamCallHandler {
 
     private boolean closed;
 
+    // Reason the join was rejected, or null when the client attached or never attempted to join.
+    private String joinFailure;
+
     /**
      * Creates a handler for one client.
      *
@@ -139,6 +142,13 @@ public final class StreamCallHandler {
     }
 
     /**
+     * Returns the reason the join was rejected, or null when the client attached or never joined.
+     */
+    public String getJoinFailure() {
+        return joinFailure;
+    }
+
+    /**
      * Detaches the client's session and closes its transport; idempotent.
      */
     public void close() {
@@ -192,6 +202,7 @@ public final class StreamCallHandler {
             case REJECTED:
             case REQUIRES_EXPLICIT_FALLBACK:
                 pendingJoin = false;
+                joinFailure = decision.getReason();
                 close();
                 break;
             default:

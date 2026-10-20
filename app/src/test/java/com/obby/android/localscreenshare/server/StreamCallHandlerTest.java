@@ -130,6 +130,25 @@ public class StreamCallHandlerTest {
         assertTrue(transport.getEvents().get(0).isDescriptor());
     }
 
+    @Test
+    public void duplicateClientId_isRejectedWithFailureReason() throws Exception {
+        Fixture fixture = fixture(FakeCodec.DEFAULT_CODEC_ID);
+        StreamCallHandler first = new StreamCallHandler(fixture.hub, fixture.runtime,
+                new FakeTransport());
+        first.onClientMessage(hello(FakeCodec.DEFAULT_CODEC_ID));
+        assertTrue(first.drainOnce());
+
+        FakeTransport secondTransport = new FakeTransport();
+        StreamCallHandler second = new StreamCallHandler(fixture.hub, fixture.runtime, secondTransport);
+        second.onClientMessage(hello(FakeCodec.DEFAULT_CODEC_ID));
+
+        assertFalse(second.drainOnce());
+
+        assertTrue(second.isClosed());
+        assertEquals("session already exists", second.getJoinFailure());
+        assertEquals(1, secondTransport.getCloseCount());
+    }
+
     private static Fixture fixture(String codecId) {
         FakeCodec codec = new FakeCodec(codecId, 0, false, false);
         CodecRegistry registry = new CodecRegistry();

@@ -974,6 +974,26 @@ public final class ScreenShareServer {
                     return;
                 }
             }
+
+            // Terminate the outbound stream so a rejected client never hangs waiting for media that
+            // will not come. A join failure is surfaced as an error; a normal close completes.
+            final String joinFailure = handler.getJoinFailure();
+            if (joinFailure != null) {
+                Log.w(mTag, String.format("drainLoop: join rejected, reason = %s", joinFailure));
+                try {
+                    responseObserver.onError(Status.PERMISSION_DENIED
+                            .withDescription(joinFailure)
+                            .asRuntimeException());
+                } catch (RuntimeException ignored) {
+                    // the observer was already completed or the client cancelled
+                }
+            } else {
+                try {
+                    responseObserver.onCompleted();
+                } catch (RuntimeException ignored) {
+                    // the observer was already completed or the client cancelled
+                }
+            }
         }
     }
 
