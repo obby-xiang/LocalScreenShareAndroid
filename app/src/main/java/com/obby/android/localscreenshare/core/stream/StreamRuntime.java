@@ -52,15 +52,16 @@ import java.util.List;
  * once a descriptor has been published, a failure is terminal for this runtime instance and the
  * owner has to close and rebuild it.</p>
  *
- * <p><b>Locking and callbacks.</b> Internal state is guarded by a private lock. Outside a
- * descriptor switch, encoder creation, close and start happen outside that lock, and every
- * listener notification is always delivered outside it. The deliberate exception is
- * {@link #switchDescriptor(StreamDescriptor)}, which prewarms, starts and stops encoders while
- * holding the lock. Listener callbacks run on the thread that produced the event - an encoder
- * drain thread for access units, deferred configuration and encoder failures, the caller's thread
- * for a descriptor switch - so listeners must not call back into blocking runtime methods. An
- * exception thrown by one listener is isolated and does not prevent the remaining listeners from
- * running.</p>
+ * <p><b>Locking and callbacks.</b> Internal state is guarded by a private lock, and descriptor
+ * switches are serialized by a second, dedicated switch lock. The lock order is always switch lock
+ * before state lock, and no state lock is ever taken while an encoder is created, started, stopped
+ * or closed, so an encoder drain thread that enters {@link #onAccessUnit} while its encoder is
+ * being superseded can always finish instead of waiting for the caller that waits for it.
+ * Listener notifications are always delivered outside the state lock. Listener callbacks run on the
+ * thread that produced the event - an encoder drain thread for access units, deferred
+ * configuration and encoder failures, the caller's thread for a descriptor switch - so listeners
+ * must not call back into blocking runtime methods. An exception thrown by one listener is isolated
+ * and does not prevent the remaining listeners from running.</p>
  */
 public final class StreamRuntime {
 
@@ -72,6 +73,11 @@ public final class StreamRuntime {
     private final long joinPointMinIntervalMs;
 
     private final Object lock = new Object();
+
+    // Serializes descriptor switches without being held while an encoder is created or stopped, so
+    // the state lock stays available to encoder callbacks for the whole switch.
+    private final Object switchLock = new Object();
+
     private final List<StreamRuntimeListener> listeners = new ArrayList<>();
     private final List<Encoder> retiredEncoders = new ArrayList<>();
 
@@ -495,31 +501,39 @@ public final class StreamRuntime {
     /**
      * Switches to the next descriptor by prewarming a new encoder and retiring the old one.
      *
-     * <p>The request is validated under the lock before any encoder is created: the stream key must
-     * match and the epoch must be exactly one greater than the current one (otherwise
-     * {@link ConfigEpochException}). The new encoder is then created, surface-checked and started,
-     * and the old encoder is stopped, all while the lock is held. This synchronous prewarm is the
-     * deliberate exception to the rule that encoder lifecycle calls happen outside the runtime
-     * lock.</p>
+     * <p><b>Phases.</b> The request is validated and the attempt generation reserved under the
+     * state lock, which is then released: the stream key must match and the epoch must be exactly
+     * one greater than the current one (otherwise {@link ConfigEpochException}). The new encoder is
+     * created, surface-checked and started outside every lock, and only then is the superseded
+     * encoder stopped, again outside every lock. Stopping it while holding the state lock is what
+     * used to deadlock: the old drain thread enters {@link #onAccessUnit} to forward its last unit
+     * and needs that lock, whereas the caller waited for the thread to terminate with a bounded
+     * join. Concurrent switches are serialized by the switch lock, which is always taken before the
+     * state lock and never held while an encoder lifecycle call runs.</p>
      *
-     * <p>If creating, validating or starting the new encoder fails, it is closed and the old
-     * encoder, descriptor, epoch and state are kept, wrapped in {@link CodecSwitchException}. If
-     * stopping the old encoder throws, the new encoder is closed and the original exception
-     * propagates with the old encoder still active. In both cases nothing is published and no
-     * listener is notified.</p>
+     * <p><b>Commit.</b> In one critical section the runtime adopts the new encoder, advances the
+     * attempt generation and records the new descriptor, then retires the superseded encoder. A
+     * codec without configuration parts also publishes {@code next} and moves to
+     * {@link RuntimeState#READY}; a codec with configuration parts stays
+     * {@link RuntimeState#CONFIGURING} and publishes the final descriptor when the new encoder
+     * reports its configuration, exactly like a first start. Listeners are notified outside the
+     * lock and a join point is requested. The retired encoder is closed after the first join point
+     * of the new epoch has been forwarded, which is also the point by which the owner has
+     * re-pointed the capture display at the new encoder's input surface.</p>
      *
-     * <p>On success the runtime adopts {@code next} as its requested descriptor and advances the
-     * attempt generation. A codec without configuration parts publishes {@code next} immediately,
-     * moves to {@link RuntimeState#READY}, notifies listeners outside the lock and requests a join
-     * point. A codec with configuration parts stays {@link RuntimeState#CONFIGURING} and publishes
-     * the final descriptor when the new encoder reports its configuration, exactly like a first
-     * start. The retired encoder is kept until the first join point of the new epoch has been
-     * forwarded, then closed.</p>
+     * <p><b>Failure.</b> A failure while creating, validating or starting the new encoder closes it
+     * and keeps the old encoder, descriptor, epoch and state, wrapped in
+     * {@link CodecSwitchException}; nothing is published and no listener is notified, so the owner
+     * can retry with the same epoch. A failure of {@code stop()} on the old encoder does not abort
+     * the switch: that encoder has already been told to stop and cannot produce another usable
+     * frame, so keeping it active would bind the runtime - and the capture display that points at
+     * its surface - to a dead encoder. The switch is committed instead and the encoder is retired
+     * for closing like any other, which is what makes a switch recoverable rather than terminal.</p>
      *
      * @throws IllegalArgumentException if {@code next} is null or belongs to another stream
      * @throws ConfigEpochException     if the epoch is not exactly one greater than the current
      * @throws CodecSwitchException     if the new encoder cannot be prewarmed
-     * @throws IllegalStateException    if the runtime is closed
+     * @throws IllegalStateException    if the runtime is closed, before or during the switch
      */
     public void switchDescriptor(StreamDescriptor next) {
         if (next == null) {
@@ -527,65 +541,91 @@ public final class StreamRuntime {
         }
         List<StreamRuntimeListener> descriptorSnapshot = null;
         boolean requestJoin = false;
-        synchronized (lock) {
-            if (closed) {
-                throw new IllegalStateException("runtime is closed");
-            }
-            if (!next.getStreamKey().equals(streamKey)) {
-                throw new IllegalArgumentException("stream key mismatch");
-            }
-            int expectedEpoch = requested.getConfigEpoch() + 1;
-            if (next.getConfigEpoch() != expectedEpoch) {
-                throw new ConfigEpochException(expectedEpoch, next.getConfigEpoch());
+        synchronized (switchLock) {
+            final CodecRegistration nextRegistration;
+            final boolean nextDeferred;
+            final StreamParameters nextParameters;
+            final long attempt;
+            synchronized (lock) {
+                if (closed) {
+                    throw new IllegalStateException("runtime is closed");
+                }
+                if (!next.getStreamKey().equals(streamKey)) {
+                    throw new IllegalArgumentException("stream key mismatch");
+                }
+                int expectedEpoch = requested.getConfigEpoch() + 1;
+                if (next.getConfigEpoch() != expectedEpoch) {
+                    throw new ConfigEpochException(expectedEpoch, next.getConfigEpoch());
+                }
+                nextRegistration = registry.require(next.getCodecId());
+                nextDeferred = nextRegistration.getDescriptor().hasConfigParts();
+                nextParameters = parameters;
+                attempt = ++nextAttemptGeneration;
             }
 
-            CodecRegistration nextRegistration = registry.require(next.getCodecId());
-            boolean nextDeferred = nextRegistration.getDescriptor().hasConfigParts();
-
-            long attempt = ++nextAttemptGeneration;
-            Encoder newEncoder = null;
+            // Phase one: prewarm the new encoder outside the lock. The old encoder keeps draining
+            // meanwhile; its units still carry the current generation, so they are forwarded as
+            // usual, and units from the new encoder are dropped until the commit below.
+            Encoder created = null;
             try {
-                newEncoder = nextRegistration.getEncoderFactory().create(streamKey, next,
-                        parameters, outputForGeneration(attempt));
+                created = nextRegistration.getEncoderFactory().create(streamKey, next,
+                        nextParameters, outputForGeneration(attempt));
                 if (nextRegistration.getDescriptor().isSurfaceInputRequired()
-                        && newEncoder.getInputSurface() == null) {
+                        && created.getInputSurface() == null) {
                     throw new IllegalStateException(
                             "surface input required but encoder returned a null surface");
                 }
-                newEncoder.start();
+                created.start();
             } catch (RuntimeException e) {
-                if (newEncoder != null) {
-                    newEncoder.close();
+                if (created != null) {
+                    closeQuietly(created);
                 }
                 throw new CodecSwitchException(
                         "failed to prewarm encoder for epoch " + next.getConfigEpoch(), e);
             }
+            final Encoder newEncoder = created;
 
-            Encoder old = activeEncoder;
-            try {
-                if (old != null) {
-                    old.stop();
-                    retiredEncoders.add(old);
+            // Phase two: commit under the lock. A close that won the race closes the prewarmed
+            // encoder instead of installing it into a closed runtime.
+            final Encoder oldEncoder;
+            synchronized (lock) {
+                if (closed) {
+                    closeQuietly(newEncoder);
+                    throw new IllegalStateException("runtime is closed");
                 }
-            } catch (RuntimeException e) {
-                newEncoder.close();
-                throw e;
+                oldEncoder = activeEncoder;
+                activeEncoder = newEncoder;
+                generation = attempt;
+                requested = next;
+                deferred = nextDeferred;
+                pendingJoin = false;
+                lastJoinMs = Long.MIN_VALUE;
+                if (nextDeferred) {
+                    // The new descriptor is published when the encoder reports its configuration.
+                    state = RuntimeState.CONFIGURING;
+                    publishedDescriptor = null;
+                } else {
+                    publishedDescriptor = next;
+                    state = RuntimeState.READY;
+                    descriptorSnapshot = new ArrayList<>(listeners);
+                    requestJoin = true;
+                }
             }
-            activeEncoder = newEncoder;
-            generation = attempt;
-            requested = next;
-            deferred = nextDeferred;
-            pendingJoin = false;
-            lastJoinMs = Long.MIN_VALUE;
-            if (nextDeferred) {
-                // The new descriptor is published when the encoder reports its configuration.
-                state = RuntimeState.CONFIGURING;
-                publishedDescriptor = null;
-            } else {
-                publishedDescriptor = next;
-                state = RuntimeState.READY;
-                descriptorSnapshot = new ArrayList<>(listeners);
-                requestJoin = true;
+
+            // Phase three: stop the superseded encoder outside the lock. The runtime is already
+            // pointing at the new encoder, so a failure here can only affect the old one.
+            if (oldEncoder != null) {
+                stopQuietly(oldEncoder);
+                final boolean runtimeClosed;
+                synchronized (lock) {
+                    runtimeClosed = closed;
+                    if (!runtimeClosed) {
+                        retiredEncoders.add(oldEncoder);
+                    }
+                }
+                if (runtimeClosed) {
+                    closeQuietly(oldEncoder);
+                }
             }
         }
 
@@ -876,6 +916,34 @@ public final class StreamRuntime {
             } catch (RuntimeException ignored) {
                 // isolate listener exceptions
             }
+        }
+    }
+
+    /**
+     * Stops a superseded encoder without letting its outcome change the switch result.
+     *
+     * <p>Called outside the state lock. The encoder has already been replaced in the runtime, so a
+     * join timeout or a bridge failure must not be reported as a failed switch: the encoder is
+     * retired either way and closing it later retries the release. The exception is intentionally
+     * not propagated, because a caller that saw a failure would retry a switch that already
+     * happened.</p>
+     */
+    private static void stopQuietly(Encoder encoder) {
+        try {
+            encoder.stop();
+        } catch (RuntimeException ignored) {
+            // The encoder is already superseded; retiring it is the recovery.
+        }
+    }
+
+    /**
+     * Closes an encoder without letting a failure escape; used on switch failure paths.
+     */
+    private static void closeQuietly(Encoder encoder) {
+        try {
+            encoder.close();
+        } catch (RuntimeException ignored) {
+            // A failing close must not hide the switch outcome.
         }
     }
 }

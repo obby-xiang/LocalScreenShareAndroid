@@ -118,6 +118,15 @@ public final class FakeCodec {
         requireEncoder().failNextStop();
     }
 
+    /**
+     * Runs {@code onStop} once from inside the next {@code stop()} of the current encoder, before
+     * the stop outcome is decided. A test uses this to observe the caller's lock state from inside
+     * the encoder lifecycle call itself.
+     */
+    public void setOnStop(Runnable onStop) {
+        requireEncoder().setOnStop(onStop);
+    }
+
     public void failNextRequestSyncPoint() {
         requireEncoder().failNextRequestSyncPoint(null);
     }
@@ -229,6 +238,8 @@ public final class FakeCodec {
 
         private Runnable beforeNextRequestSyncPointFailure;
 
+        private Runnable onStop;
+
         private boolean started;
 
         private boolean stopped;
@@ -265,6 +276,11 @@ public final class FakeCodec {
 
         @Override
         public void stop() {
+            final Runnable callback = onStop;
+            onStop = null;
+            if (callback != null) {
+                callback.run();
+            }
             if (failOnStop) {
                 failOnStop = false;
                 throw new IllegalStateException("injected encoder stop failure");
@@ -310,6 +326,10 @@ public final class FakeCodec {
 
         public void failNextStop() {
             this.failOnStop = true;
+        }
+
+        public void setOnStop(Runnable onStop) {
+            this.onStop = onStop;
         }
 
         public void failNextRequestSyncPoint(Runnable beforeFailure) {

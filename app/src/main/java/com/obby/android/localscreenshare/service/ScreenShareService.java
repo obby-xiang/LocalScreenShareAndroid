@@ -165,6 +165,10 @@ public class ScreenShareService extends Service {
     // Merges a burst of encoder-affecting preference changes into one rebuild.
     private static final long ENCODER_REBUILD_DEBOUNCE_MS = 300L;
 
+    // Attempts per encoder switch; the second one covers a transient codec resource shortage
+    // without turning a permanently invalid request into an endless rebuild loop.
+    private static final int ENCODER_SWITCH_MAX_ATTEMPTS = 2;
+
     // Main-thread state; non-null only between a successful start and stopService().
     @Nullable
     private ScreenShareServer mServer;
@@ -500,15 +504,12 @@ public class ScreenShareService extends Service {
     }
 
     /**
-     * Rebuilds the encoder with the current parameters, then points the display at its input
-     * surface.
+     * Rebuilds the encoder with the current parameters and re-points the capture display.
      *
-     * <p>Order is fixed: the runtime parameters are replaced first so the new encoder is created
-     * with them, then the descriptor advances by one epoch, then the capture display is handed the
-     * new input surface. Only the H.264 path has an encoder to rebuild; the JPEG path resizes the
-     * reader instead. A failure keeps the previous encoder active; because the encoder only
-     * hot-applies the bitrate, its frame rate and key-frame interval are unchanged and the picture
-     * continues. Does nothing while capture is stopped.</p>
+     * <p>Only the H.264 path has an encoder to rebuild; the JPEG path resizes the reader instead.
+     * Does nothing while capture is stopped. A failed switch keeps the previous encoder active, so
+     * the picture continues with the old frame rate and key-frame interval, and one bounded retry
+     * follows immediately because the common failure is a transient codec resource shortage.</p>
      */
     private void rebuildEncoder() {
         if (!mIsH264 || mStreamRuntime == null || mVirtualDisplay == null
@@ -516,14 +517,60 @@ public class ScreenShareService extends Service {
             return;
         }
 
-        try {
-            mStreamRuntime.updateParameters(buildProjectionSettings().toStreamParameters());
-            mStreamRuntime.switchDescriptor(
-                buildRequestedDescriptor(mStreamRuntime.getConfigEpoch() + 1));
-            mVirtualDisplay.setSurface(mStreamRuntime.getInputSurface());
+        if (switchEncoderToCurrentSettings()) {
             Log.i(mTag, "rebuildEncoder: encoder rebuilt for the new parameters");
-        } catch (RuntimeException e) {
-            Log.w(mTag, "rebuildEncoder: encoder rebuild failed", e);
+        } else {
+            Log.w(mTag, "rebuildEncoder: encoder rebuild failed after "
+                + ENCODER_SWITCH_MAX_ATTEMPTS + " attempts");
+        }
+    }
+
+    /**
+     * Switches the running encoder to a descriptor that carries the current projection geometry and
+     * parameters, then points the capture display at the encoder's input surface.
+     *
+     * <p>Order is fixed: the runtime parameters are replaced first so the new encoder is created
+     * with them, then the descriptor advances by one epoch, then the display is handed the new
+     * input surface. The display is re-pointed in every outcome, including a failed switch, because
+     * a display that keeps rendering into the surface of an encoder that was already told to stop
+     * produces a permanent stream of {@code dequeueBuffer -19} errors and no frames. A failed
+     * attempt is retried at most {@link #ENCODER_SWITCH_MAX_ATTEMPTS}-1 more times; a failed switch
+     * does not advance the epoch, so the retry asks for the same epoch the first attempt used.</p>
+     *
+     * @return {@code true} when the runtime adopted the new descriptor
+     */
+    private boolean switchEncoderToCurrentSettings() {
+        boolean switched = false;
+        for (int attempt = 1; attempt <= ENCODER_SWITCH_MAX_ATTEMPTS && !switched; attempt++) {
+            try {
+                mStreamRuntime.updateParameters(buildProjectionSettings().toStreamParameters());
+                mStreamRuntime.switchDescriptor(
+                    buildRequestedDescriptor(mStreamRuntime.getConfigEpoch() + 1));
+                switched = true;
+            } catch (RuntimeException e) {
+                Log.w(mTag, "switchEncoderToCurrentSettings: encoder switch failed (attempt "
+                    + attempt + ')', e);
+            }
+        }
+        bindEncoderInputSurface();
+        return switched;
+    }
+
+    /**
+     * Points the virtual display at the input surface of the runtime's current encoder.
+     *
+     * <p>Called after every switch attempt so the display never keeps a surface that the runtime
+     * no longer feeds. A runtime without a usable surface leaves the display untouched rather than
+     * detaching it: an unusable runtime cannot capture anyway, and detaching the display would also
+     * lose the platform's own recovery path.</p>
+     */
+    private void bindEncoderInputSurface() {
+        if (mVirtualDisplay == null || mStreamRuntime == null) {
+            return;
+        }
+        final Surface surface = mStreamRuntime.getInputSurface();
+        if (surface != null) {
+            mVirtualDisplay.setSurface(surface);
         }
     }
 
@@ -941,9 +988,10 @@ public class ScreenShareService extends Service {
         NotificationManagerCompat.from(this).notify(NOTIFICATION_ID, buildNotification());
     }
 
-    // Recomputes the capture size from the window bounds and the scale preference. An ImageReader
-    // size is fixed at creation, so the reader is recreated under the lock and the display is
-    // pointed at the new surface. Does nothing while stopped.
+    // Recomputes the capture size from the window bounds and the scale preference. The virtual
+    // display keeps the resolution it was created with, so a rotation or a scale change has to
+    // resize it first; an ImageReader size is fixed at creation, so the reader is recreated under
+    // the lock. Does nothing while stopped.
     private void updateProjectionSize() {
         if (mProjectionSize == null || mVirtualDisplay == null) {
             return;
@@ -956,20 +1004,18 @@ public class ScreenShareService extends Service {
 
         mProjectionSize = size;
 
+        // A rotation changes the usable bounds, and the display would otherwise keep composing the
+        // new screen content at the old resolution and let the encoder surface stretch it.
+        mVirtualDisplay.resize(mProjectionSize.getWidth(), mProjectionSize.getHeight(),
+            getResources().getConfiguration().densityDpi);
+
         if (mIsH264 && mStreamRuntime != null) {
-            // Rebuild the encoder for the new size, then point the display at its input surface.
-            try {
-                mStreamRuntime.switchDescriptor(
-                    buildRequestedDescriptor(mStreamRuntime.getConfigEpoch() + 1));
-                mVirtualDisplay.setSurface(mStreamRuntime.getInputSurface());
-            } catch (RuntimeException e) {
-                Log.w(mTag, "updateProjectionSize: encoder switch failed", e);
+            // Rebuild the encoder for the new size and re-point the display at its input surface.
+            if (!switchEncoderToCurrentSettings()) {
+                Log.w(mTag, "updateProjectionSize: encoder switch failed");
             }
             return;
         }
-
-        mVirtualDisplay.resize(mProjectionSize.getWidth(), mProjectionSize.getHeight(),
-            getResources().getConfiguration().densityDpi);
 
         synchronized (mImageReaderLock) {
             if (mImageReader == null) {

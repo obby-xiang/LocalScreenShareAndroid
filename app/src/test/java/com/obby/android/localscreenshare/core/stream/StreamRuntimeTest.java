@@ -15,6 +15,7 @@ import org.junit.Test;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
@@ -647,8 +648,47 @@ public class StreamRuntimeTest {
     }
 
     @Test
-    public void switchDescriptor_oldStopFailure_closesNewEncoderAndKeepsOldActive() {
+    public void switchDescriptor_stopsTheOldEncoderOutsideTheRuntimeLock() {
         FakeCodec fake = new FakeCodec(FakeCodec.DEFAULT_CODEC_ID, 0, false, false);
+        StreamRuntime runtime = newRuntime(fake, new MutableClock(), descriptor(1, 64, 48));
+        runtime.start();
+        FakeCodec.FakeEncoder oldEncoder = fake.getLastEncoder();
+
+        // The deadlock was structural: the switch held the runtime lock while stopping the old
+        // encoder, so the drain thread could not finish the access unit it was forwarding. The
+        // probe asks the runtime for its state from a second thread during stop() and reports
+        // whether that thread got through, which is exactly what the drain thread needs.
+        AtomicBoolean lockFreeDuringStop = new AtomicBoolean(false);
+        oldEncoder.setOnStop(() -> lockFreeDuringStop.set(
+                canReadRuntimeStateFromAnotherThread(runtime)));
+
+        runtime.switchDescriptor(descriptor(2, 32, 24));
+
+        assertTrue("the superseded encoder must be stopped without holding the runtime lock",
+                lockFreeDuringStop.get());
+        assertEquals(2, runtime.getConfigEpoch());
+    }
+
+    /**
+     * Returns whether another thread can read the runtime state while the caller is inside an
+     * encoder lifecycle call; a bounded join turns the answer into a boolean instead of a hang.
+     */
+    private static boolean canReadRuntimeStateFromAnotherThread(StreamRuntime runtime) {
+        Thread probe = new Thread(runtime::getState, "runtime-lock-probe");
+        probe.setDaemon(true);
+        probe.start();
+        try {
+            probe.join(500L);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        return !probe.isAlive();
+    }
+
+    @Test
+    public void switchDescriptor_oldStopFailure_stillCommitsTheNewEncoder() {
+        FakeCodec fake = new FakeCodec(FakeCodec.DEFAULT_CODEC_ID, 0, false, false);
+        fake.setAutoEmitJoinOnRequest(false);
         StreamRuntime runtime = newRuntime(fake, new MutableClock(), descriptor(1, 64, 48));
         RecordingListener listener = new RecordingListener();
         runtime.addListener(listener);
@@ -656,27 +696,58 @@ public class StreamRuntimeTest {
         FakeCodec.FakeEncoder oldEncoder = fake.getLastEncoder();
         fake.failNextStop();
 
-        try {
-            runtime.switchDescriptor(descriptor(2, 32, 24));
-            fail("old encoder stop failure must abort the switch");
-        } catch (RuntimeException expected) {
-            assertNotNull(expected);
-        }
+        // A stop failure must not abort the switch: the old encoder has already been told to stop,
+        // so keeping it active would leave the runtime bound to a dead encoder and the capture
+        // display pointing at a dead surface. The switch commits and the old encoder is retired.
+        runtime.switchDescriptor(descriptor(2, 32, 24));
 
-        FakeCodec.FakeEncoder rejectedEncoder = fake.getLastEncoder();
-        assertNotSame(oldEncoder, rejectedEncoder);
-        assertTrue(rejectedEncoder.isStarted());
-        assertTrue(rejectedEncoder.isClosed());
+        FakeCodec.FakeEncoder newEncoder = fake.getLastEncoder();
+        assertNotSame(oldEncoder, newEncoder);
+        assertTrue(newEncoder.isStarted());
+        assertFalse(newEncoder.isClosed());
         assertFalse(oldEncoder.isStopped());
-        assertFalse(oldEncoder.isClosed());
-        assertEquals(1, runtime.getConfigEpoch());
+        assertEquals(2, runtime.getConfigEpoch());
+        assertEquals(1, newEncoder.getRequestCount());
 
-        byte[] oldPayload = new byte[]{0x53};
-        byte[] stalePayload = new byte[]{0x54};
-        oldEncoder.emitNonJoin(oldPayload);
-        rejectedEncoder.emit(1, false, stalePayload);
+        // Frames from the superseded encoder are dropped; the new epoch keeps the stream alive.
+        byte[] stalePayload = new byte[]{0x53};
+        byte[] newPayload = new byte[]{0x54};
+        oldEncoder.emitNonJoin(stalePayload);
+        newEncoder.emitNonJoin(newPayload);
         assertEquals(1, listener.accessUnits.size());
-        assertArrayEquals(oldPayload, listener.accessUnits.get(0).getPayload());
+        assertArrayEquals(newPayload, listener.accessUnits.get(0).getPayload());
+        assertEquals(2, listener.accessUnits.get(0).getConfigEpoch());
+    }
+
+    @Test
+    public void switchDescriptor_afterOldStopFailure_keepsAdvancingEpochs() {
+        FakeCodec fake = new FakeCodec(FakeCodec.DEFAULT_CODEC_ID, 0, false, false);
+        fake.setAutoEmitJoinOnRequest(false);
+        StreamRuntime runtime = newRuntime(fake, new MutableClock(), descriptor(1, 64, 48));
+        RecordingListener listener = new RecordingListener();
+        runtime.addListener(listener);
+        runtime.start();
+        FakeCodec.FakeEncoder firstEncoder = fake.getLastEncoder();
+        fake.failNextStop();
+
+        // The device symptom was "the first switch fails and the stream stays dead": the retry has
+        // to work without restarting the capture, so a second switch must be accepted as well.
+        runtime.switchDescriptor(descriptor(2, 32, 24));
+        FakeCodec.FakeEncoder secondEncoder = fake.getLastEncoder();
+        runtime.switchDescriptor(descriptor(3, 64, 48));
+        FakeCodec.FakeEncoder thirdEncoder = fake.getLastEncoder();
+
+        assertNotSame(firstEncoder, secondEncoder);
+        assertNotSame(secondEncoder, thirdEncoder);
+        assertEquals(3, runtime.getConfigEpoch());
+        assertTrue(thirdEncoder.isStarted());
+        assertFalse(runtime.isClosed());
+
+        byte[] payload = new byte[]{0x55};
+        thirdEncoder.emitNonJoin(payload);
+        assertEquals(1, listener.accessUnits.size());
+        assertEquals(3, listener.accessUnits.get(0).getConfigEpoch());
+        assertArrayEquals(payload, listener.accessUnits.get(0).getPayload());
     }
 
     @Test
@@ -726,7 +797,7 @@ public class StreamRuntimeTest {
     }
 
     @Test
-    public void switchOldStopFailureThenRetry_dropsLateAccessUnitFromFailedAttempt() {
+    public void switchOldStopFailure_retiresOldEncoderAndDropsItsLateUnits() {
         FakeCodec fake = new FakeCodec(FakeCodec.DEFAULT_CODEC_ID, 0, false, false);
         fake.setAutoEmitJoinOnRequest(false);
         StreamRuntime runtime = newRuntime(fake, new MutableClock(), descriptor(1, 64, 48));
@@ -736,34 +807,19 @@ public class StreamRuntimeTest {
         FakeCodec.FakeEncoder oldActive = fake.getLastEncoder();
 
         fake.failNextStop();
-        try {
-            runtime.switchDescriptor(descriptor(2, 32, 24));
-            fail("old encoder stop failure must abort the switch");
-        } catch (RuntimeException expected) {
-            assertNotNull(expected);
-        }
-        FakeCodec.FakeEncoder failedAttempt = fake.getLastEncoder();
-        assertNotSame(oldActive, failedAttempt);
-        assertTrue(failedAttempt.isStarted());
-        assertTrue(failedAttempt.isClosed());
-        assertFalse(oldActive.isStopped());
-        assertFalse(oldActive.isClosed());
-
-        byte[] oldPayload = new byte[]{0x41};
-        oldActive.emitNonJoin(oldPayload);
-        assertEquals(1, listener.accessUnits.size());
-        assertArrayEquals(oldPayload, listener.accessUnits.get(0).getPayload());
-
         runtime.switchDescriptor(descriptor(2, 32, 24));
         FakeCodec.FakeEncoder active = fake.getLastEncoder();
-        assertNotSame(failedAttempt, active);
+        assertNotSame(oldActive, active);
         assertTrue(active.isStarted());
+        assertFalse(active.isClosed());
         assertEquals(2, runtime.getConfigEpoch());
 
+        // Late units of the superseded encoder belong to the previous attempt generation and must
+        // not reach the current epoch, even though its stop() failed.
         int before = listener.accessUnits.size();
-        failedAttempt.emit(2, false, new byte[]{0x42});
-        failedAttempt.emit(2, true, new byte[]{0x43});
-        assertEquals("late AUs from the failed old-stop attempt must not be forwarded",
+        oldActive.emit(1, false, new byte[]{0x42});
+        oldActive.emit(1, true, new byte[]{0x43});
+        assertEquals("late AUs from the superseded encoder must not be forwarded",
                 before, listener.accessUnits.size());
 
         byte[] activePayload = new byte[]{0x44};
@@ -771,6 +827,13 @@ public class StreamRuntimeTest {
         assertEquals(before + 1, listener.accessUnits.size());
         assertArrayEquals(activePayload,
                 listener.accessUnits.get(listener.accessUnits.size() - 1).getPayload());
+
+        // The retired encoder is closed on the first join point of the new epoch, which is also the
+        // point by which the owner has re-pointed the capture display at the new input surface.
+        assertFalse(oldActive.isClosed());
+        active.emit(2, true, new byte[]{0x45});
+        assertTrue(oldActive.isClosed());
+        assertEquals(before + 2, listener.accessUnits.size());
     }
 
     private static StreamRuntime newRuntime(FakeCodec fake, MutableClock clock,
