@@ -31,8 +31,9 @@
 | 4 | [悬浮窗与全屏会话设计](windowing-session-design.md) | minSdk 25 下如何互切窗口而不断连？动画与窗口技术怎么选？ | 设计裁决，未实现 |
 | 5 | [渐进优化路线图](optimization-roadmap.md) | 先改什么、后改什么？每阶段如何验收？ | 计划，未执行 |
 | 6 | [可扩展编码框架设计](codec-framework.md) | 编码如何扩展？描述符、运行参数、可加入点与客户端状态如何定义？ | 设计已批准，未实施 |
+| 7 | [局域网设备发现调研](discovery-research.md) | 局域网发现机制有哪些？LocalSend 怎么做？设备身份与字段如何分层？分几阶段落地？ | 调研结论，未实施（已立项，实施中） |
 
-如果只想快速了解结论，先读本页的“结论速览”，再读第 1 篇和第 5 篇；如果只想了解进展，先读两个看板。
+如果只想快速了解结论，先读本页的“结论速览”，再读第 1 篇和第 5 篇；如果只想了解进展，先读两个看板。第 7 篇是设备发现的专项调研，只在处理发现与设备身份时按需阅读。
 
 ## 文档索引
 
@@ -47,6 +48,7 @@
 | [windowing-session-design.md](windowing-session-design.md) | ClientSession 与 RenderTarget 解耦、悬浮窗展开与 Activity 互切、最后帧快照、`RenderTarget.getSurface()` 与 `retryConfigure()` 恢复、TextureView/SurfaceView、窗口技术选型、状态机 |
 | [optimization-roadmap.md](optimization-roadmap.md) | 可观测性、并发与资源清理、Session 解耦、H.264、窗口切换、客户端画质、音频、单客户端反控、传输决策的阶段与验收标准 |
 | [codec-framework.md](codec-framework.md) | 静态 Codec SPI、单活动流核心与 StreamHub、责任边界、描述符与运行参数分离、访问单元、可加入点与客户端状态、慢客户端、编码切换、传输映射、落地顺序、验收标准与非目标 |
+| [discovery-research.md](discovery-research.md) | 业界发现机制与平台矩阵、LocalSend 源码深挖、设备身份与字段的三层分配、可靠性参数、方案对比与分阶段落地建议；调研结论，未实施 |
 
 ## 结论速览
 
