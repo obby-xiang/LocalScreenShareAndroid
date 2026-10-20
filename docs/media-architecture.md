@@ -187,6 +187,12 @@ HEVC 与 AV1 的边界：
 
 分辨率不是只由 VirtualDisplay 决定。VirtualDisplay 决定采集缓冲尺寸，编码器决定输出码流的宽高；两者必须匹配，并按编码器能力对齐。只 resize VirtualDisplay 而不同步编码器，通常只会得到缩放后的采集内容，不会改变码流尺寸。分辨率或旋转变化时，通常需要重建编码器与输入 Surface，发布新的 `configEpoch`、SPS/PPS 与 IDR；网络会话与客户端连接不必断开，客户端收到新配置后重新等待 IDR，而不是继续用旧参数解新码流。
 
+采集尺寸的对齐与生效顺序（当前实现，对应 2026-10-21 设备复测的 Q-07）：
+
+- **对齐在尺寸源头做**：`ScreenShareService.getProjectionSize()` 把「比例 × 可用窗口」的结果交给编码器对齐步长向下取整（纯 JVM `core/codec/EncoderSizeAlignment`，小于一步时取一步），步长来自 `core/codec/mediacodec/EncoderAlignmentProbe`：按 `MediaCodecList` 首选编码器广告的 `VideoCapabilities` 宽高对齐取值，取不到才回落偶数。对齐策略与能力探测同源，不写死 2 或 16。VirtualDisplay、descriptor 的 coded/visible 尺寸与编码器因此共用同一几何；只对齐 coded 尺寸会让显示按另一宽度合成，画面仍会被挤压。
+- **先编码器、后显示**：尺寸变化由 `service/ProjectionSizeCoordinator` 固定顺序——先切编码器到新尺寸，成功后才 resize VirtualDisplay。编码器拒绝新尺寸时显示与编码器都留在旧几何，失败没有副作用；代价是切换与 resize 之间最多一两帧按旧尺寸被编码面拉伸。
+- **失败要可感知**：拒绝时记 `Log.e`（请求尺寸、保持尺寸、生效比例）、Toast 告知实际保持的尺寸，并把 `projection_scale` 回写为实际生效值，避免出现「偏好已落盘但画面没变」的假状态。
+
 `KEY_FRAME_RATE` 是目标提示，不是严格上限。静态画面、VFR 或编码器内部调度都可能让实际输出低于该值，部分设备也可能短时超过。需要严格限帧时，应在 GPU/采集上游做调度，或按系统版本与设备能力逐项验证；minSdk 25 基线不能依赖高版本才有的参数或行为。
 
 分辨率和帧率的向上扩展规则：
