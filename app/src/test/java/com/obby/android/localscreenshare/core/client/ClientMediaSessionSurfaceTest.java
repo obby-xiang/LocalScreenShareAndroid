@@ -23,6 +23,7 @@ import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.function.IntSupplier;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -50,6 +51,11 @@ public class ClientMediaSessionSurfaceTest {
     private static final int CODED_WIDTH = 64;
 
     private static final int CODED_HEIGHT = 48;
+
+    // Landscape-like geometry used to model a rotation in the middle of a session.
+    private static final int ROTATED_WIDTH = 96;
+
+    private static final int ROTATED_HEIGHT = 32;
 
     @Test
     public void surfaceRequiredCodec_withSurfacePresentAtDescriptorTime_streams() {
@@ -89,6 +95,49 @@ public class ClientMediaSessionSurfaceTest {
         assertEquals(1, target.images.size());
     }
 
+    @Test
+    public void newEpochWithANewSize_reportsTheCodedSizeToTheRenderTarget() {
+        FakeCodec codec = new FakeCodec(CODEC_ID, 0, false, true);
+        SwitchableSurfaceTarget target = new SwitchableSurfaceTarget(true, codec::getDecoderCreateCount);
+        ClientMediaSession session = newSession(codec, target);
+
+        assertTrue(session.onDescriptor(descriptor(1, CODED_WIDTH, CODED_HEIGHT)));
+        assertEquals(1, target.contentSizes.size());
+        assertSize(target.contentSizes.get(0), CODED_WIDTH, CODED_HEIGHT);
+
+        // The device symptom: the server re-encodes at a new resolution and the viewer keeps the
+        // buffer geometry of the previous one, so only a corner of the window is filled until the
+        // viewer reconnects. The session has to report the new coded size before the decoder that
+        // will write into it exists.
+        assertTrue(session.onDescriptor(descriptor(2, ROTATED_WIDTH, ROTATED_HEIGHT)));
+
+        assertEquals(2, target.contentSizes.size());
+        assertSize(target.contentSizes.get(1), ROTATED_WIDTH, ROTATED_HEIGHT);
+        assertEquals("the size must be reported before the new decoder is created",
+                1, (int) target.decoderCountsAtContentSize.get(1));
+        assertEquals(ClientState.WAIT_RANDOM_ACCESS, session.getState());
+        assertEquals(2, codec.getDecoderCreateCount());
+    }
+
+    @Test
+    public void sameSizeNewEpoch_reportTheSameContentSizeAgain() {
+        FakeCodec codec = new FakeCodec(CODEC_ID, 0, false, true);
+        SwitchableSurfaceTarget target = new SwitchableSurfaceTarget(true);
+        ClientMediaSession session = newSession(codec, target);
+
+        assertTrue(session.onDescriptor(descriptor(1, CODED_WIDTH, CODED_HEIGHT)));
+        assertTrue(session.onDescriptor(descriptor(2, CODED_WIDTH, CODED_HEIGHT)));
+
+        // A switch that only advances the epoch reports the same size; the target ignores repeats.
+        assertEquals(2, target.contentSizes.size());
+        assertSize(target.contentSizes.get(1), CODED_WIDTH, CODED_HEIGHT);
+    }
+
+    private static void assertSize(int[] size, int width, int height) {
+        assertEquals(width, size[0]);
+        assertEquals(height, size[1]);
+    }
+
     private static ClientMediaSession newSession(FakeCodec codec, RenderTarget target) {
         CodecRegistry registry = new CodecRegistry();
         registry.register(codec.registration());
@@ -97,10 +146,14 @@ public class ClientMediaSessionSurfaceTest {
     }
 
     private static StreamDescriptor descriptor(int configEpoch) {
+        return descriptor(configEpoch, CODED_WIDTH, CODED_HEIGHT);
+    }
+
+    private static StreamDescriptor descriptor(int configEpoch, int width, int height) {
         return StreamDescriptor.builder(STREAM_KEY, configEpoch, CODEC_ID, FakeCodec.DEFAULT_MIME,
                         BitstreamFormat.ANNEX_B)
-                .codedSize(CODED_WIDTH, CODED_HEIGHT)
-                .visibleSize(CODED_WIDTH, CODED_HEIGHT)
+                .codedSize(width, height)
+                .visibleSize(width, height)
                 .build();
     }
 
@@ -129,20 +182,41 @@ public class ClientMediaSessionSurfaceTest {
 
     /**
      * Render target whose surface is absent while the viewer is not mounted and present once it is.
+     *
+     * <p>Also records every reported content size together with the number of decoders that
+     * existed at that moment, so a test can show that the size reaches the target before the
+     * decoder that will write into it is created.</p>
      */
     private static final class SwitchableSurfaceTarget implements RenderTarget {
 
         private final List<EncodedImageFrame> images = new ArrayList<>();
 
+        private final List<int[]> contentSizes = new ArrayList<>();
+
+        private final List<Integer> decoderCountsAtContentSize = new ArrayList<>();
+
+        private final IntSupplier decoderCounter;
+
         Surface surface;
 
         SwitchableSurfaceTarget(boolean surfaceAvailable) {
+            this(surfaceAvailable, () -> -1);
+        }
+
+        SwitchableSurfaceTarget(boolean surfaceAvailable, IntSupplier decoderCounter) {
             surface = surfaceAvailable ? emptySurface() : null;
+            this.decoderCounter = decoderCounter;
         }
 
         @Override
         public Surface getSurface() {
             return surface;
+        }
+
+        @Override
+        public void setContentSize(int width, int height) {
+            contentSizes.add(new int[]{width, height});
+            decoderCountsAtContentSize.add(decoderCounter.getAsInt());
         }
 
         @Override

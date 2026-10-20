@@ -428,6 +428,10 @@ public class ClientMediaSessionRecoveryTest {
         }
 
         @Override
+        public void setContentSize(int width, int height) {
+        }
+
+        @Override
         public void renderEncodedImage(EncodedImageFrame frame) {
         }
 

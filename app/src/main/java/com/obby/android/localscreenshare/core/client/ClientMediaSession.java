@@ -40,6 +40,13 @@ import com.obby.android.localscreenshare.core.stream.ClientCapabilities;
  * thread while the monitor is held, and only on real transitions; a listener must therefore not
  * block or call into code that could try to enter another session. The session never closes the
  * {@link RenderTarget}, which is owned by the display side.</p>
+ *
+ * <p><b>Surface geometry.</b> Before a decoder is created for a descriptor the session reports the
+ * descriptor's coded size to the render target through
+ * {@link RenderTarget#setContentSize(int, int)}. A surface target keeps a texture whose buffer
+ * geometry was fixed when the view was created, so a stream that changes its resolution in the
+ * middle of a session has to resize those buffers; otherwise the decoder output lands in a
+ * fraction of the window until the viewer reconnects.</p>
  */
 public final class ClientMediaSession {
 
@@ -271,9 +278,12 @@ public final class ClientMediaSession {
      * Creates and configures a decoder for the descriptor, replacing any previous decoder.
      *
      * <p>The state moves to {@code WAIT_CONFIG} first, so listeners see the reconfiguration before
-     * the old decoder is closed. Configuration failure closes the newly created decoder (if any),
-     * records the descriptor and policy, and leaves the session in {@code RESYNCING} so the caller
-     * can retry; success installs the decoder and waits for a random-access point.</p>
+     * the old decoder is closed. The render target is then told the new coded size, before any
+     * decoder exists for it: a surface target keeps the buffer geometry of its texture, and the
+     * old decoder has to be gone before that geometry changes. Configuration failure closes the
+     * newly created decoder (if any), records the descriptor and policy, and leaves the session in
+     * {@code RESYNCING} so the caller can retry; success installs the decoder and waits for a
+     * random-access point.</p>
      */
     private boolean applyDescriptor(StreamDescriptor descriptor,
                                     CodecRegistration registration) {
@@ -282,6 +292,7 @@ public final class ClientMediaSession {
             decoder.close();
             decoder = null;
         }
+        renderTarget.setContentSize(descriptor.getCodedWidth(), descriptor.getCodedHeight());
         Decoder newDecoder = null;
         try {
             newDecoder = registration.getDecoderFactory().create(

@@ -35,6 +35,15 @@ public final class BitmapRenderTarget implements RenderTarget {
         return null;
     }
 
+    /**
+     * Ignored: the encoded-image path decodes into a bitmap and never allocates a surface buffer,
+     * so the frame size only matters to the view that draws the bitmap.
+     */
+    @Override
+    public void setContentSize(int width, int height) {
+        // No surface buffer to size.
+    }
+
     @Override
     public void renderEncodedImage(EncodedImageFrame frame) {
         if (frame == null) {

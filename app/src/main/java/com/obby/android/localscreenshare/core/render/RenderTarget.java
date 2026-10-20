@@ -27,6 +27,24 @@ public interface RenderTarget {
     Surface getSurface();
 
     /**
+     * Declares the pixel size of the frames the decoder will render into {@link #getSurface()}.
+     *
+     * <p>A surface-backed target has to be told the frame size explicitly: the surface texture it
+     * wraps keeps the buffer geometry of the view it was created from, so after a stream changes
+     * its coded size in the middle of a session the texture would keep allocating buffers of the
+     * previous size and the picture would be drawn into a corner of the window until the viewer
+     * reconnected. The session reports the size before it creates the decoder for a descriptor, and
+     * a target without a surface path may ignore the call.</p>
+     *
+     * <p>The size is the decoder's coded size, not the visible size: it describes the buffers the
+     * codec writes, which may include alignment padding.</p>
+     *
+     * @param width  coded frame width in pixels; non-positive means "unknown"
+     * @param height coded frame height in pixels; non-positive means "unknown"
+     */
+    void setContentSize(int width, int height);
+
+    /**
      * Renders one compressed image frame.
      *
      * <p>Used by codecs that deliver encoded images instead of a surface. The payload is

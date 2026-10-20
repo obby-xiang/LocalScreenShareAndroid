@@ -17,6 +17,15 @@ import com.obby.android.localscreenshare.core.render.RenderTarget;
  * resynchronizing state until the window is ready. When the texture is destroyed the cached surface
  * is released and the framework is asked to release the old texture, so a later re-attach starts
  * from a fresh texture and re-runs the availability callback.</p>
+ *
+ * <p><b>Buffer geometry.</b> The surface texture allocates its buffers with a default size that it
+ * takes from the view at creation time, and a producer such as a hardware decoder only overrides
+ * that size when it is told to. A stream whose coded size changes during a session therefore has to
+ * report the new size through {@link #setContentSize(int, int)}, which forwards it to
+ * {@link SurfaceTexture#setDefaultBufferSize(int, int)}: without it the texture keeps allocating
+ * buffers of the previous size and the decoder output is drawn into a fraction of the window until
+ * the viewer reconnects. The requested size is remembered and re-applied whenever a new texture
+ * appears, so a window that is re-attached after being torn down starts with the right geometry.</p>
  */
 public final class SurfaceRenderTarget implements RenderTarget {
 
@@ -27,6 +36,16 @@ public final class SurfaceRenderTarget implements RenderTarget {
     private SurfaceTexture lastTexture;
 
     private Surface surface;
+
+    // Frame size requested by the session and the size last pushed into the current texture; both
+    // zero until a descriptor arrives or a new texture needs the size again.
+    private int contentWidth;
+
+    private int contentHeight;
+
+    private int appliedWidth;
+
+    private int appliedHeight;
 
     /**
      * Creates a target over {@code textureView}.
@@ -77,9 +96,36 @@ public final class SurfaceRenderTarget implements RenderTarget {
         if (texture != lastTexture) {
             releaseSurface();
             lastTexture = texture;
+        }
+        applyBufferSize(texture);
+        if (surface == null) {
             surface = new Surface(texture);
         }
         return surface;
+    }
+
+    /**
+     * Stores the coded frame size and pushes it into the current texture, if there is one.
+     *
+     * <p>Called by the client session after the previous decoder was closed and before the new one
+     * is configured, so no producer is connected while the buffer geometry changes. A texture that
+     * does not exist yet keeps the size for {@link #getSurface()}.</p>
+     */
+    @Override
+    public void setContentSize(int width, int height) {
+        if (width <= 0 || height <= 0) {
+            return;
+        }
+        contentWidth = width;
+        contentHeight = height;
+        SurfaceTexture texture = textureView.getSurfaceTexture();
+        if (texture != null) {
+            if (texture != lastTexture) {
+                releaseSurface();
+                lastTexture = texture;
+            }
+            applyBufferSize(texture);
+        }
     }
 
     @Override
@@ -94,6 +140,20 @@ public final class SurfaceRenderTarget implements RenderTarget {
     public void release() {
         releaseSurface();
         lastTexture = null;
+        appliedWidth = 0;
+        appliedHeight = 0;
+    }
+
+    private void applyBufferSize(SurfaceTexture texture) {
+        if (contentWidth <= 0 || contentHeight <= 0) {
+            return;
+        }
+        if (appliedWidth == contentWidth && appliedHeight == contentHeight) {
+            return;
+        }
+        texture.setDefaultBufferSize(contentWidth, contentHeight);
+        appliedWidth = contentWidth;
+        appliedHeight = contentHeight;
     }
 
     private void releaseSurface() {

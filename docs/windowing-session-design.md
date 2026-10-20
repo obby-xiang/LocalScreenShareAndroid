@@ -243,6 +243,7 @@ sequenceDiagram
 
 - 框架不支持 `MediaCodec.setOutputSurface`，不能把执行中的解码器热切换到另一个 Surface。
 - 会话只通过 `RenderTarget.getSurface()` 取得当前输出 Surface；Surface 为 null 时 `ClientMediaSession` 进入 `RESYNCING`，不配置解码器。
+- 会话中码流分辨率变化时，复用中的渲染目标必须跟着改缓冲尺寸：`ClientMediaSession` 在关闭旧解码器之后、创建新解码器之前调用 `RenderTarget.setContentSize(codedWidth, codedHeight)`，`SurfaceRenderTarget` 把它转成 `SurfaceTexture.setDefaultBufferSize()`。不更新时纹理仍按旧尺寸分配缓冲，新分辨率的画面只填满窗口一角，必须重连才恢复（2026-10-21 真机回归，见 [TB-CLIENT-003](task-board.md#tb-client-003)）。
 - 窗口切换 = 同一会话内 attach/detach 渲染目标，不停 Service、不重连；需要切换输出 Surface 时，新目标 attach 后调用 `ClientMediaSession.retryConfigure()`。
 - `retryConfigure()` 是 Surface 失效后的唯一恢复入口：关闭旧解码器，按最新 descriptor 重新 configure（config + IDR）；网络会话、认证、音频和反控不受影响。
 - 新 Surface 必须有效；`SurfaceView` 要等 `surfaceCreated`，`TextureView` 要等 `SurfaceTexture` 可用。
