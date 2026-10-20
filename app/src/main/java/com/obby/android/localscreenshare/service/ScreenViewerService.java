@@ -87,6 +87,7 @@ import com.obby.android.localscreenshare.discovery.model.DeviceAddress;
 import com.obby.android.localscreenshare.discovery.model.DeviceInfo;
 import com.obby.android.localscreenshare.render.SurfaceRenderTarget;
 import com.obby.android.localscreenshare.render.ViewerFitPolicy;
+import com.obby.android.localscreenshare.render.ViewerScaleMenuModel;
 import com.obby.android.localscreenshare.render.ViewerZoomMenuModel;
 import com.obby.android.localscreenshare.render.ZoomMode;
 import com.obby.android.localscreenshare.settings.Preferences;
@@ -1090,6 +1091,12 @@ public class ScreenViewerService extends Service {
          * preset is left out when it only repeats the actual-size window. The current preset is
          * preselected, and when it was the omitted integer preset the size-equivalent actual-size
          * row is preselected instead.</p>
+         *
+         * <p>The selected row also carries a visible marker in its own label: the theme's
+         * single-choice item renders no indicator on the device the menu was tested on, so the
+         * checked state existed only in the accessibility tree. The last row opens the
+         * viewing-percentage menu, because the percentage is stored separately from the preset and
+         * one single-choice list cannot mark both.</p>
          */
         private void showZoomModeDialog() {
             getMaxLayoutBounds(mBounds);
@@ -1099,7 +1106,7 @@ public class ScreenViewerService extends Service {
                 mContentWidth, mContentHeight, mRotationDegrees, mBounds.width(), mBounds.height(),
                 mScale, minSize, mZoomMode);
 
-            final CharSequence[] labels = new CharSequence[entries.size()];
+            final CharSequence[] labels = new CharSequence[entries.size() + 1];
             int checked = 0;
             for (int i = 0; i < entries.size(); i++) {
                 final ViewerZoomMenuModel.Entry entry = entries.get(i);
@@ -1108,11 +1115,50 @@ public class ScreenViewerService extends Service {
                     checked = i;
                 }
             }
+            labels[entries.size()] = mContext.getString(R.string.viewer_scale_menu_entry_percent,
+                mContext.getString(R.string.viewer_scale_setting_label), mScale);
 
             final AlertDialog dialog = new MaterialAlertDialogBuilder(mContext)
                 .setTitle(R.string.viewer_zoom_mode_title)
                 .setSingleChoiceItems(labels, checked, (target, which) -> {
-                    setZoomMode(entries.get(which).getMode());
+                    target.dismiss();
+                    if (which < entries.size()) {
+                        setZoomMode(entries.get(which).getMode());
+                    } else {
+                        showViewerScaleDialog();
+                    }
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .create();
+            dialog.getWindow().setType(ServiceProtocol.FLOATING_WINDOW_TYPE);
+            dialog.show();
+        }
+
+        /**
+         * Opens the viewing-percentage menu.
+         *
+         * <p>Rows come from {@link ViewerScaleMenuModel}: the presets plus the applied percentage
+         * when it is not one of them, so the menu never marks a neighbouring preset as current. A
+         * row applies and persists its percentage immediately, on top of whatever zoom preset is
+         * active, and the window is re-fitted in place.</p>
+         */
+        private void showViewerScaleDialog() {
+            final List<ViewerScaleMenuModel.Entry> entries = ViewerScaleMenuModel.build(mScale);
+            final CharSequence[] labels = new CharSequence[entries.size()];
+            int checked = 0;
+            for (int i = 0; i < entries.size(); i++) {
+                final ViewerScaleMenuModel.Entry entry = entries.get(i);
+                labels[i] = markSelection(mContext.getString(R.string.viewer_scale_option_percent,
+                    entry.getPercent()), entry.isSelected());
+                if (entry.isSelected()) {
+                    checked = i;
+                }
+            }
+
+            final AlertDialog dialog = new MaterialAlertDialogBuilder(mContext)
+                .setTitle(R.string.viewer_scale_setting_label)
+                .setSingleChoiceItems(labels, checked, (target, which) -> {
+                    setViewerScale(entries.get(which).getPercent());
                     target.dismiss();
                 })
                 .setNegativeButton(android.R.string.cancel, null)
@@ -1122,22 +1168,37 @@ public class ScreenViewerService extends Service {
         }
 
         /**
-         * Returns the label of one zoom menu row, including the scale it would apply.
+         * Returns the label of one zoom menu row, including the scale it would apply and the
+         * marker of the currently applied preset.
          */
         @NonNull
         private String labelOf(@NonNull final ViewerZoomMenuModel.Entry entry) {
             final int percent = entry.getEffectivePercent();
+            final String label;
             switch (entry.getMode()) {
                 case ONE_TO_ONE:
-                    return mContext.getString(entry.isClamped()
+                    label = mContext.getString(entry.isClamped()
                         ? R.string.viewer_zoom_mode_one_to_one_clamped_percent
                         : R.string.viewer_zoom_mode_one_to_one_percent, percent);
+                    break;
                 case INTEGER:
-                    return mContext.getString(R.string.viewer_zoom_mode_integer_percent, percent);
+                    label = mContext.getString(R.string.viewer_zoom_mode_integer_percent, percent);
+                    break;
                 case FIT:
                 default:
-                    return mContext.getString(R.string.viewer_zoom_mode_fit_percent, percent);
+                    label = mContext.getString(R.string.viewer_zoom_mode_fit_percent, percent);
+                    break;
             }
+            return markSelection(label, entry.isSelected());
+        }
+
+        /**
+         * Prefixes the marker of the applied value, so the menu shows a selection on screen and not
+         * only in the accessibility tree.
+         */
+        @NonNull
+        private String markSelection(@NonNull final String label, final boolean isSelected) {
+            return isSelected ? mContext.getString(R.string.viewer_menu_current, label) : label;
         }
 
         /**
@@ -1149,6 +1210,20 @@ public class ScreenViewerService extends Service {
             }
             mZoomMode = mode;
             Preferences.get().setViewerZoomMode(mode.wire());
+            if (mTextureView.getParent() != null) {
+                updateView();
+            }
+        }
+
+        /**
+         * Persists and applies a viewing percentage; the zoom preset is left untouched.
+         */
+        private void setViewerScale(final int percent) {
+            if (mScale == percent) {
+                return;
+            }
+            mScale = percent;
+            Preferences.get().setViewerScale(percent);
             if (mTextureView.getParent() != null) {
                 updateView();
             }

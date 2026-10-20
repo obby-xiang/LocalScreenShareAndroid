@@ -20,6 +20,9 @@
     <string name="viewer_zoom_mode_one_to_one_percent">"原始大小（1:1，%1$d%%）"</string>
     <string name="viewer_zoom_mode_one_to_one_clamped_percent">"原始大小（1:1，%1$d%%，超出屏幕，已按屏幕缩放）"</string>
     <string name="viewer_zoom_mode_integer_percent">"整数缩放（%1$d%%）"</string>
+    <string name="viewer_menu_current">"✓ %1$s"</string>
+    <string name="viewer_scale_menu_entry_percent">"%1$s（%2$d%%）"</string>
+    <string name="viewer_scale_option_percent">"%1$d%%"</string>
     <string name="keep_screen_on_setting_label">"屏幕常亮"</string>
     <string name="viewer_opacity_setting_label">"不透明度"</string>
     <string name="viewer_scale_setting_label">"显示大小"</string>

@@ -20,6 +20,9 @@
     <string name="viewer_zoom_mode_one_to_one_percent">"Actual size (1:1, %1$d%%)"</string>
     <string name="viewer_zoom_mode_one_to_one_clamped_percent">"Actual size (1:1, %1$d%%, larger than screen, scaled to fit)"</string>
     <string name="viewer_zoom_mode_integer_percent">"Integer scaling (%1$d%%)"</string>
+    <string name="viewer_menu_current">"✓ %1$s"</string>
+    <string name="viewer_scale_menu_entry_percent">"%1$s (%2$d%%)"</string>
+    <string name="viewer_scale_option_percent">"%1$d%%"</string>
     <string name="keep_screen_on_setting_label">"Keep screen on"</string>
     <string name="viewer_opacity_setting_label">"Opacity"</string>
     <string name="viewer_scale_setting_label">"Display size"</string>
