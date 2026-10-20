@@ -29,7 +29,8 @@
 - 编码框架隔离核心（契约、StreamHub、有界队列、六状态机、JPEG 参考适配）已完成并通过 JVM 验证，见 [TB-FW-001](#tb-fw-001)、[TB-FW-004](#tb-fw-004)、[TB-FW-005](#tb-fw-005)、[TB-FW-002](#tb-fw-002)。
 - 问题 3 尚未由用户明确关闭，不能标记完成；代码完成 ≠ 问题关闭，API 25 只是兼容下限，能力按运行时探测分档。
 - 编码框架待收尾：TB-FW-003、TB-FW-006、TB-MEDIA-001、TB-MEDIA-003 等待设备验证；TB-FW-002 仍部分完成；TB-FW-007、TB-FW-008 未完成。
-- 设备发现功能（[TB-DISC-001](#tb-disc-001)..[TB-DISC-009](#tb-disc-009)）B1–B5 已全部完成：B1（[TB-DISC-002](#tb-disc-002)、[TB-DISC-003](#tb-disc-003)）、B2（[TB-DISC-004](#tb-disc-004)）、B3（[TB-DISC-005](#tb-disc-005)、[TB-DISC-006](#tb-disc-006)）、B4（[TB-DISC-007](#tb-disc-007)、[TB-DISC-008](#tb-disc-008)）与 B5（[TB-DISC-009](#tb-disc-009)）；全量 **670 tests / 0 failures / 0 errors / 0 skipped**（58 个测试类），各批 Build 与 Checks CI 均 success。后续待办：[TB-DISC-010](#tb-disc-010)（自签 TLS + TOFU pinning）后置，[TB-ENG-011](#tb-eng-011)（代码结构梳理与命名统一）待用户确认模型分工；设备验证仍未解禁。
+- 设备发现功能（[TB-DISC-001](#tb-disc-001)..[TB-DISC-009](#tb-disc-009)）B1–B5 已全部完成：B1（[TB-DISC-002](#tb-disc-002)、[TB-DISC-003](#tb-disc-003)）、B2（[TB-DISC-004](#tb-disc-004)）、B3（[TB-DISC-005](#tb-disc-005)、[TB-DISC-006](#tb-disc-006)）、B4（[TB-DISC-007](#tb-disc-007)、[TB-DISC-008](#tb-disc-008)）与 B5（[TB-DISC-009](#tb-disc-009)）；全量 **670 tests / 0 failures / 0 errors / 0 skipped**（58 个测试类），各批 Build 与 Checks CI 均 success。后续待办：[TB-DISC-010](#tb-disc-010)（自签 TLS + TOFU pinning）后置；设备验证仍未解禁。
+- 代码结构梳理（[TB-ENG-011](#tb-eng-011)）已完成 R0–R4：命名规范 [naming-conventions.md](naming-conventions.md) 自 2026-10-20 生效，五个批次均为纯移动/改名，行为零变化核验通过，全量仍为 **670 tests / 0 failures**（58 个测试类）；新代码与后续批次按该规范执行，遗留观察（`ClientObserver` 同名、`service` 上帝包、`core.codec` 包环）见条目详情。
 - B3 已落地 UDP 组播公告（启动 3 连发、5/15 s 心跳、停服告别、`MulticastLock` 引用计数）与 Register 双向握手（成功才确认、`announces` 单跳防回环、限速与限包长）；仅经 JVM/fake 与编译验证，同网段互见、真实组播与 Reverse Register 未做设备实测。
 - B4 已落地分级扫描（按接口前缀生成候选、1 s grace 零确认才升级、50 并发/500 ms 探测/8 s 预算、可取消）、收藏持久化与上次成功地址优先探测、手动 IP 常驻入口与 8 s 空列表提示、连接前指纹校验；仅经 JVM/fake 与编译验证，真实网段扫描、组播被过滤场景与手动探测未做设备实测。
 - B5 已落地发现设置（组播开关/组地址/端口、三档刷新、四档可见性、仅 mDNS 兼容模式、广播设备名）、`DeviceStore` 统一列表与共享屏/观看者分区、状态徽标与 STALE/UNREACHABLE 灰显、`LssDeviceInfo` 的 `Intent` 契约迁移；仅经 JVM/fake、编译与 lint 验证，真实设置生效、可见性对公告/Register 的影响与列表状态未做设备实测。
@@ -51,7 +52,6 @@
 | ID | 状态 | 优先级 | 标题 | 创建 | 完成 | 关联 |
 | --- | --- | --- | --- | --- | --- | --- |
 | TB-DISC-010 | 📋 待办 | 🟡 P2 | 传输加密与身份 pinning | 2026-10-20 | — | [发现调研](discovery-research.md) |
-| TB-ENG-011 | 📋 待办 | 🟡 P2 | 代码结构梳理与命名统一 | 2026-10-20 | — | [发现实施计划](superpowers/plans/2026-10-20-device-discovery.md) |
 | TB-ENG-005 | 📋 待办 | 🟡 P2 | 新偏好设置界面控件 | 2026-10-19 | — | [问题3接线计划](superpowers/plans/2026-10-19-media-path-wiring.md) |
 | TB-ENG-006 | 📋 待办 | 🟡 P2 | JPEG 降级客户端查看器接回 | 2026-10-19 | — | [问题3接线计划](superpowers/plans/2026-10-19-media-path-wiring.md) |
 | TB-ENG-007 | 📋 待办 | 🟡 P2 | 客户端发送统计并入服务端统计 | 2026-10-19 | — | [问题3接线计划](superpowers/plans/2026-10-19-media-path-wiring.md) |
@@ -85,6 +85,7 @@
 | TB-DISC-007 | ✅ 已完成 | 🟡 P2 | 分级扫描 | 2026-10-20 | 2026-10-20 | [实施计划](superpowers/plans/2026-10-20-device-discovery.md) |
 | TB-DISC-009 | ✅ 已完成 | 🟡 P2 | 发现设置与 UI 集成 | 2026-10-20 | 2026-10-20 | [实施计划](superpowers/plans/2026-10-20-device-discovery.md) |
 | TB-DISC-008 | ✅ 已完成 | 🟡 P2 | 手动 IP 与收藏 | 2026-10-20 | 2026-10-20 | [实施计划](superpowers/plans/2026-10-20-device-discovery.md) |
+| TB-ENG-011 | ✅ 已完成 | 🟡 P2 | 代码结构梳理与命名统一 | 2026-10-20 | 2026-10-20 | [命名规范](naming-conventions.md) |
 | TB-ENG-003 | ✅ 已完成 | 🟡 P2 | 代码文档与英文注释 | 2026-10-18 | 2026-10-19 | [实施计划](superpowers/plans/2026-10-19-code-docs-i18n.md) |
 | TB-ENG-004 | ✅ 已完成 | 🟡 P2 | 中英双语资源 | 2026-10-18 | 2026-10-19 | [决策看板](decision-board.md) |
 | TB-DOC-008 | ✅ 已完成 | 🔴 P0 | 框架实施计划 | 2026-10-17 | 2026-10-18 | [实施计划](superpowers/plans/2026-10-17-codec-framework.md) |
@@ -144,17 +145,6 @@
 - **任务**：自签 TLS + TOFU 指纹确认；Register 与媒体流加密；与 [TB-SEC-001](#tb-sec-001) 协同；本项可后置。
 - **交付物 / 验证证据**：交付：TLS 配置、指纹确认流程、pinning 校验与测试。验证：首次连接需确认指纹、指纹变化被拒绝、Register 与媒体流均加密；当前未实施，设备验证未解禁。
 - **关联文档**：[发现调研](discovery-research.md)、[TB-SEC-001](#tb-sec-001)
-
-</details>
-
-<a id="tb-eng-011"></a>
-<details><summary>TB-ENG-011 代码结构梳理与命名统一（📋 待办）</summary>
-
-- **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟡 P2 / 2026-10-20 / —
-- **任务**：梳理项目代码结构，检查包路径的合理性与命名规范性。根包 `com.obby.android.localscreenshare` 限定不可改，只调整其子包；命名范围覆盖包名、类名、方法名、字段名与资源命名。先盘点现状并给出调整方案，经用户确认后分批做纯结构性重构（移动/改名），不得夹带行为变化；每批需编译、全量 JVM 测试与 CI 绿。
-- **交付物 / 验证证据**：交付：盘点报告、调整方案、分批重构提交。验证：编译与全量测试通过，`git diff` 仅含结构性变化；当前未实施。
-- **备注**：排在 [TB-DISC-001](#tb-disc-001)..[TB-DISC-009](#tb-disc-009) 之后（均已完成）；模型分工（Flash 或 Pro）待用户确认。
-- **关联文档**：[发现实施计划](superpowers/plans/2026-10-20-device-discovery.md)
 
 </details>
 
@@ -330,6 +320,17 @@
 </details>
 
 ### ✅ 已完成条目
+
+<a id="tb-eng-011"></a>
+<details><summary>TB-ENG-011 代码结构梳理与命名统一（✅ 2026-10-20）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：✅ 已完成 / 🟡 P2 / 2026-10-20 / 2026-10-20
+- **任务**：梳理项目代码结构，检查包路径的合理性与命名规范性。根包 `com.obby.android.localscreenshare` 限定不可改，只调整其子包；命名范围覆盖包名、类名、方法名、字段名与资源命名。先盘点现状并给出调整方案，经用户确认后分批做纯结构性重构（移动/改名），不得夹带行为变化；每批需编译、全量 JVM 测试与 CI 绿。
+- **交付物 / 验证证据**：交付（批次提交 `b6e12bc` R0 规范、`3fe7953` R1 包结构、`890cbab` R2 命名、`51080cf` R3 常量拆分、`59589fe` R4 去 `Lss` 前缀与桥类归位，Javadoc 常量引用补正 `5b1525d`）：R0 落地 `docs/naming-conventions.md`（包/类/方法/字段/资源/常量规则与依赖方向、例外清单）。R1 取消 `utils` 包（`IntentUtils`/`NetUtils`/`NsdResolver`/`ResourceUtils`/`ThreadUtils`/`WindowUtils` 并入 `support`），新建 `settings`、`discovery/legacy`、`discovery/ui`、`core/codec/mediacodec`、`core/util`。R2 统一端点与角色命名（`LssService`→`ScreenShareService`、`LssClientService`→`ScreenViewerService`、`LssServer`→`ScreenShareServer`、`LssClient`→`ScreenShareClient`、`LssDeviceInfo`→`DeviceInfo`、`DeviceListModel`→`DiscoveryListModel`），`discoverServices`/`stopServiceDiscovery` 对称化为 `startDiscovery`/`stopDiscovery`，资源键与主题改为领域前置与 `Theme.<App>.*` 形式。R3 把 `Constants` 的 55 个常量按域拆为 `ServiceProtocol`（12）、`NsdConstants`（17）、`MulticastConstants`（10）、`RegisterConstants`（8）、`ScanConstants`（4）、`GrpcConstants`（2），`support/Constants` 仅余 `CPU_COUNT` 与 `UNKNOWN_HOST_ADDRESS`（2），逐项比对名称、类型与取值 1:1，无遗漏、无重复、无取值变化。R4 去掉 13 个 `Lss*` 类型的前缀，`core/codec/h264` 中 11 个 MIME 通用桥迁入 `core/codec/mediacodec`，`TimeSource` 迁入 `core/util`。验证：**行为零变化**——`git diff --stat 067b7f3..59589fe` 共 112 个文件（46 处 rename、59 处修改、6 个新增常量类），对 258 个在 HEAD 仍存在的 Java 文件逐对剥离 package/import/注释后比对 token 流：251 对完全一致，其余 7 个文件的差异全部是改名映射（类名、方法名、常量持有类、资源键、`toString` 标签）与 R3 常量拆分，无语句、控制流、表达式或字面值变化；`*.proto` 无改动，Manifest 仅主题名与两个 Service 类名（`CHANGE_WIFI_MULTICAST_STATE` 属 TB-DISC-005，早于本任务）。**结构目标**——`support` 对 `com.obby.*` 的 import 为 0（叶子；基线曾依赖 `core.codec`、`core.stream`、`discovery`），`utils` 目录不存在，`core/codec/h264` 仅 13 个 H.264 专属文件，`core/codec/mediacodec` 11 个桥类，`core/util/TimeSource`、`settings`（3 类）、`discovery/legacy`（2 类）、`discovery/ui`（1 类）就位，`git grep "Lss" -- 'app/src/**/*.java'` 为 0；包级强连通分量从 15 个包缩小到 13 个，`support` 已移出环，`settings` 只依赖 `App`、`discovery.model.JoinPolicy` 与 3 个 `*Constants`（规范 §7.2 例外）。**全量与 CI**——`./gradlew :app:testDebugUnitTest --offline` **670 tests / 0 failures / 0 errors / 0 skipped（58 个测试类）**，与重构前基线一致；`:app:assembleDebug --offline` 成功；`check_strings.py`（79 键双语言一致）、`check_cjk.py`、`check_docs.py` 通过；五批 Build 与 Checks 均 success：R0 Build [39382205518](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39382205518)/Checks [39382205525](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39382205525)、R1 Build [39382923189](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39382923189)/Checks [39382923187](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39382923187)、R2 Build [39383896097](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39383896097)/Checks [39383896058](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39383896058)、R3 Build [39384709405](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39384709405)/Checks [39384709353](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39384709353)、R4 Build [39385566774](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39385566774)/Checks [39385566832](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39385566832)。
+- **备注（遗留观察）**：① `server/ScreenShareServer` 的私有嵌套类 `ClientObserver` 与 `client/ClientObserver` 简单名相同，作用域不同无冲突，后续可评估改名；② `settings/VisibilityPolicy` 仍依赖 `discovery.model.JoinPolicy`（纯模型包，不反向依赖 `settings`，无环；`settings` 对 feature `*Constants` 的依赖属规范 §7.2 例外）；③ `service` 仍是上帝包，两个 1.3k+ 行 Service 内含私有嵌套视图类，拆分会牵动可见性与文件归属之外的改动，非纯移动，建议另立任务；④ `core.codec` 硬编码注册 `JpegCodec` 形成的 `core.codec ↔ core.codec.jpeg` 包环未修，需改注册逻辑，另行处理。
+- **关联文档**：[命名规范](naming-conventions.md)、[发现实施计划](superpowers/plans/2026-10-20-device-discovery.md)
+
+</details>
 
 <a id="tb-disc-009"></a>
 <details><summary>TB-DISC-009 发现设置与 UI 集成（✅ 2026-10-20）</summary>
