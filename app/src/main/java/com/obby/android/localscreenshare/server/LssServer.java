@@ -23,14 +23,24 @@ import androidx.core.content.ContextCompat;
 import com.obby.android.localscreenshare.core.codec.CodecRegistry;
 import com.obby.android.localscreenshare.core.stream.StreamHub;
 import com.obby.android.localscreenshare.core.stream.StreamRuntime;
+import com.obby.android.localscreenshare.core.stream.TimeSource;
 import com.obby.android.localscreenshare.discovery.model.AuthMode;
+import com.obby.android.localscreenshare.discovery.model.DeviceAddress;
 import com.obby.android.localscreenshare.discovery.model.DevicePresence;
 import com.obby.android.localscreenshare.discovery.model.DeviceRole;
+import com.obby.android.localscreenshare.discovery.model.DiscoveryChannel;
 import com.obby.android.localscreenshare.discovery.model.JoinPolicy;
 import com.obby.android.localscreenshare.discovery.model.LssDeviceInfo;
 import com.obby.android.localscreenshare.discovery.model.ShareState;
 import com.obby.android.localscreenshare.discovery.nsd.NsdTxtRecord;
+import com.obby.android.localscreenshare.discovery.register.GrpcRegisterStub;
+import com.obby.android.localscreenshare.discovery.register.RegisterClient;
+import com.obby.android.localscreenshare.discovery.register.RegisterProtoMapper;
+import com.obby.android.localscreenshare.discovery.store.DeviceStore;
 import com.obby.android.localscreenshare.grpc.screenstream.ClientMessage;
+import com.obby.android.localscreenshare.grpc.screenstream.DeviceSummary;
+import com.obby.android.localscreenshare.grpc.screenstream.RegisterRequest;
+import com.obby.android.localscreenshare.grpc.screenstream.RegisterResponse;
 import com.obby.android.localscreenshare.grpc.screenstream.ScreenStreamServiceGrpc;
 import com.obby.android.localscreenshare.grpc.screenstream.ServerMessage;
 import com.obby.android.localscreenshare.identity.DeviceIdentity;
@@ -38,11 +48,13 @@ import com.obby.android.localscreenshare.identity.IdentityManager;
 import com.obby.android.localscreenshare.identity.IdentityUnavailableException;
 import com.obby.android.localscreenshare.support.BackoffPolicy;
 import com.obby.android.localscreenshare.support.Constants;
+import com.obby.android.localscreenshare.support.DelayedScheduler;
 import com.obby.android.localscreenshare.transport.GrpcMediaTransport;
 import com.obby.android.localscreenshare.transport.ScreenStreamProtoMapper;
 import com.obby.android.localscreenshare.support.Preferences;
 import com.obby.android.localscreenshare.utils.NetUtils;
 import com.obby.android.localscreenshare.utils.NsdUtils;
+import com.obby.android.localscreenshare.utils.ThreadUtils;
 
 import org.apache.commons.lang3.concurrent.BasicThreadFactory;
 
@@ -50,11 +62,13 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Random;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
@@ -66,10 +80,14 @@ import java.util.concurrent.locks.LockSupport;
 import java.util.stream.Collectors;
 
 import io.grpc.Attributes;
+import io.grpc.Contexts;
 import io.grpc.Grpc;
 import io.grpc.InsecureServerCredentials;
 import io.grpc.Metadata;
 import io.grpc.Server;
+import io.grpc.ServerCall;
+import io.grpc.ServerCallHandler;
+import io.grpc.ServerInterceptor;
 import io.grpc.ServerStreamTracer;
 import io.grpc.ServerTransportFilter;
 import io.grpc.Status;
@@ -126,6 +144,22 @@ public final class LssServer {
     // Schema version of the discovery metadata written into the NSD TXT record.
     private static final int NSD_METADATA_VERSION = 1;
 
+    // Remote address of the current call, published by the interceptor below so the unary
+    // Register handler can rate-limit per caller without reaching into gRPC internals.
+    private static final io.grpc.Context.Key<InetSocketAddress> REMOTE_ADDRESS =
+        io.grpc.Context.key("lss-remote-address");
+
+    private static final ServerInterceptor REMOTE_ADDRESS_INTERCEPTOR = new ServerInterceptor() {
+        @Override
+        public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(final ServerCall<ReqT, RespT> call,
+            final Metadata headers, final ServerCallHandler<ReqT, RespT> next) {
+            final InetSocketAddress remoteAddress =
+                (InetSocketAddress) call.getAttributes().get(Grpc.TRANSPORT_ATTR_REMOTE_ADDR);
+            return Contexts.interceptCall(
+                io.grpc.Context.current().withValue(REMOTE_ADDRESS, remoteAddress), call, headers, next);
+        }
+    };
+
     // Published identity; null while stopped.
     @Nullable
     private LssServerInfo mServerInfo;
@@ -168,6 +202,22 @@ public final class LssServer {
 
     @Nullable
     private StreamRuntime mStreamRuntime;
+
+    // Store shared with the activity-side discovery, so a peer learned through Register shows up
+    // in the device list. Optional: a server without it simply does not learn callers.
+    @Nullable
+    private DeviceStore mDeviceStore;
+
+    // Built by start() and cleared by stop(); handles unary Register calls.
+    @Nullable
+    private RegisterCallHandler mRegisterHandler;
+
+    // Reverse Register of the discovery handshake; stopped with the server.
+    @Nullable
+    private RegisterClient mReverseRegisterClient;
+
+    @Nullable
+    private DelayedScheduler mRegisterScheduler;
 
     // Session-level secure flag applied to every descriptor; set by LssService.
     private volatile boolean mSecure;
@@ -281,6 +331,7 @@ public final class LssServer {
             .executor(mGrpcServerExecutor)
             .addTransportFilter(mServerTransportFilter)
             .addStreamTracerFactory(mServerStreamTracerFactory)
+            .intercept(REMOTE_ADDRESS_INTERCEPTOR)
             .addService(mStreamService)
             .build();
 
@@ -522,6 +573,17 @@ public final class LssServer {
     }
 
     /**
+     * Attaches the device store shared with the activity-side discovery.
+     *
+     * <p>Must be called on the main thread before {@link #start()}. With a store, a peer learned
+     * through Register is written as a confirmed device and appears in the same list the UI
+     * renders; without one, Register calls are still answered but nothing is learned.</p>
+     */
+    public void setDeviceStore(@NonNull final DeviceStore deviceStore) {
+        mDeviceStore = deviceStore;
+    }
+
+    /**
      * Binds the gRPC port and starts advertising the service.
      *
      * <p>Must be called once on the main thread. When this method returns, the gRPC server is
@@ -573,6 +635,15 @@ public final class LssServer {
 
         mServerProfile = new ServerProfile();
         mMainHandler.postDelayed(mUpdateServerStatsRunnable, UPDATE_SERVER_STATS_INTERVAL_MS);
+
+        // Register is served on the same channel as the stream; the reverse call is only made
+        // when a caller announced itself, and it never announces again.
+        mRegisterScheduler = DelayedScheduler.newSingleThread("lss-register-reverse");
+        mReverseRegisterClient = new RegisterClient(new GrpcRegisterStub(), mRegisterScheduler,
+            ThreadUtils.getMainThreadExecutor());
+        mRegisterHandler = new RegisterCallHandler(this::buildDeviceSummary, mDeviceStore,
+            ThreadUtils.getMainThreadExecutor(), TimeSource.MONOTONIC, mReverseRegisterClient::register,
+            mRegisterScheduler, new Random(), DiscoveryChannel.MULTICAST);
     }
 
     /**
@@ -591,6 +662,15 @@ public final class LssServer {
         mNsdServiceInfo = null;
         mServerProfile = null;
         mServerStats = null;
+        mRegisterHandler = null;
+        if (mReverseRegisterClient != null) {
+            mReverseRegisterClient.cancelAll();
+            mReverseRegisterClient = null;
+        }
+        if (mRegisterScheduler != null) {
+            mRegisterScheduler.shutdown();
+            mRegisterScheduler = null;
+        }
         mMainHandler.removeCallbacksAndMessages(null);
 
         try {
@@ -651,9 +731,56 @@ public final class LssServer {
         mMainHandler.postDelayed(mResolveNsdServiceRunnable, delayMs);
     }
 
+    /**
+     * Returns this device's Register summary, or null while the server is stopping.
+     *
+     * <p>The summary carries the identity, the advertised flags and the reachable gRPC address.
+     * The address is omitted while NSD has not resolved one, because a placeholder host would
+     * make a peer call the wrong destination.</p>
+     */
+    @Nullable
+    private DeviceSummary buildDeviceSummary() {
+        final LssServerInfo serverInfo = mServerInfo;
+        if (serverInfo == null) {
+            return null;
+        }
+        final List<DeviceAddress> addresses = new ArrayList<>(1);
+        final String hostAddress = serverInfo.getHostAddress();
+        if (hostAddress != null && !hostAddress.trim().isEmpty()
+            && !Constants.UNKNOWN_HOST_ADDRESS.equals(hostAddress) && serverInfo.getPort() > 0) {
+            addresses.add(new DeviceAddress(hostAddress, serverInfo.getPort(), DiscoveryChannel.MULTICAST));
+        }
+
+        final LssDeviceInfo device = LssDeviceInfo.builder()
+            .id(serverInfo.getDeviceId())
+            .fingerprint(serverInfo.getFingerprint())
+            .name(Preferences.get().isShareNameEnabled() ? Preferences.get().getDeviceAlias() : null)
+            .role(DeviceRole.SERVER)
+            .state(ShareState.LIVE)
+            .join(JoinPolicy.OPEN)
+            .secure(mSecure)
+            .auth(AuthMode.NONE)
+            .protocolVersion(String.valueOf(ScreenStreamProtoMapper.PROTOCOL_VERSION))
+            .metadataVersion(NSD_METADATA_VERSION)
+            .capabilities(Constants.DEVICE_CAPABILITY_H264 | Constants.DEVICE_CAPABILITY_JPEG)
+            .addresses(addresses)
+            .build();
+        return RegisterProtoMapper.toSummary(device);
+    }
+
+    // Remote host of the current Register call; the interceptor publishes it, and an unknown
+    // address is rate-limited under one shared key instead of being rejected.
     @NonNull
-    private LssDeviceInfo buildAdvertisement(@NonNull final LssServerInfo serverInfo) {
-        // The fingerprint is deliberately absent: it never goes into the mDNS record and travels
+    private static String remoteHost() {
+        final InetSocketAddress remoteAddress = REMOTE_ADDRESS.get();
+        if (remoteAddress == null || remoteAddress.getAddress() == null) {
+            return "unknown";
+        }
+        return NetUtils.getHostAddress(remoteAddress.getAddress());
+    }
+
+    @NonNull
+    private LssDeviceInfo buildAdvertisement(@NonNull final LssServerInfo serverInfo) {        // The fingerprint is deliberately absent: it never goes into the mDNS record and travels
         // with the application-level handshake (Register and HELLO) instead.
         return LssDeviceInfo.builder()
             .id(serverInfo.getDeviceId())
@@ -697,14 +824,49 @@ public final class LssServer {
     }
 
     /**
-     * gRPC service implementation for the bidirectional media stream.
+     * gRPC service implementation for the media stream and the discovery handshake.
      *
-     * <p>Each call creates a {@link StreamCallHandler} that joins the shared stream hub and drives
-     * one per-client drain thread. The inbound observer only forwards client control messages to
-     * the handler; media is pushed out by the drain thread through the handler's transport, so a
-     * slow client never blocks gRPC callbacks or the encoder.</p>
+     * <p>Each stream call creates a {@link StreamCallHandler} that joins the shared stream hub and
+     * drives one per-client drain thread. The inbound observer only forwards client control
+     * messages to the handler; media is pushed out by the drain thread through the handler's
+     * transport, so a slow client never blocks gRPC callbacks or the encoder.</p>
+     *
+     * <p>{@code register} is the unary discovery handshake on the same channel. It delegates to
+     * {@link RegisterCallHandler}, which validates, rate-limits, learns the caller and answers
+     * with this device's summary; a stopped server answers {@code unavailable} instead of failing
+     * the call.</p>
      */
     private final class StreamService extends ScreenStreamServiceGrpc.ScreenStreamServiceImplBase {
+        @Override
+        public void register(final RegisterRequest request,
+            final StreamObserver<RegisterResponse> responseObserver) {
+            final RegisterCallHandler handler = mRegisterHandler;
+            if (mIsStopped || handler == null) {
+                responseObserver.onNext(RegisterResponse.newBuilder()
+                    .setProtocolVersion(ScreenStreamProtoMapper.PROTOCOL_VERSION)
+                    .setAccepted(false)
+                    .setRejectReason(RegisterCallHandler.REASON_UNAVAILABLE)
+                    .build());
+                responseObserver.onCompleted();
+                return;
+            }
+
+            try {
+                handler.handle(request, remoteHost(), response -> {
+                    responseObserver.onNext(response);
+                    responseObserver.onCompleted();
+                });
+            } catch (RuntimeException e) {
+                Log.e(mTag, "register: handling failed", e);
+                responseObserver.onNext(RegisterResponse.newBuilder()
+                    .setProtocolVersion(ScreenStreamProtoMapper.PROTOCOL_VERSION)
+                    .setAccepted(false)
+                    .setRejectReason(RegisterCallHandler.REASON_INVALID_REQUEST)
+                    .build());
+                responseObserver.onCompleted();
+            }
+        }
+
         @Override
         public StreamObserver<ClientMessage> stream(StreamObserver<ServerMessage> responseObserver) {
             if (mIsStopped || mStreamHub == null || mStreamRuntime == null) {

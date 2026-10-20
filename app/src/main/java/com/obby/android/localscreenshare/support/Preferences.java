@@ -83,6 +83,15 @@ public final class Preferences {
     /** Discovery toggle; see {@link #isDiscoveryEnabled()}. */
     public static final String KEY_DISCOVERY_ENABLED = "discovery_enabled";
 
+    /** Multicast announcement group; see {@link #getMulticastGroup()}. */
+    public static final String KEY_MULTICAST_GROUP = "multicast_group";
+
+    /** Multicast announcement port; see {@link #getMulticastPort()}. */
+    public static final String KEY_MULTICAST_PORT = "multicast_port";
+
+    /** Multicast announcement toggle; see {@link #isMulticastAnnounceEnabled()}. */
+    public static final String KEY_MULTICAST_ANNOUNCE_ENABLED = "multicast_announce_enabled";
+
     private static final String PREF_FILE_NAME = "lss-preferences";
 
     private static final String KEY_SERVICE_ID = "service_id";
@@ -488,6 +497,50 @@ public final class Preferences {
     /** Persists the discovery toggle; the activity and discovery manager read it on next use. */
     public void setDiscoveryEnabled(final boolean isEnabled) {
         mPreferences.edit().putBoolean(KEY_DISCOVERY_ENABLED, isEnabled).commit();
+    }
+
+    /**
+     * Multicast group used by the announcement channel; defaults to
+     * {@link Constants#MULTICAST_GROUP}. It is read when the channel starts, so a change applies
+     * to the next start.
+     */
+    @NonNull
+    public String getMulticastGroup() {
+        final String group = mPreferences.getString(KEY_MULTICAST_GROUP, Constants.MULTICAST_GROUP);
+        return group == null || group.trim().isEmpty() ? Constants.MULTICAST_GROUP : group.trim();
+    }
+
+    /** Persists the multicast group; the next channel start uses it. */
+    public void setMulticastGroup(@Nullable final String group) {
+        if (group == null || group.trim().isEmpty()) {
+            mPreferences.edit().remove(KEY_MULTICAST_GROUP).commit();
+        } else {
+            mPreferences.edit().putString(KEY_MULTICAST_GROUP, group.trim()).commit();
+        }
+    }
+
+    /** Multicast port used by the announcement channel; defaults to {@link Constants#MULTICAST_PORT}. */
+    public int getMulticastPort() {
+        return mPreferences.getInt(KEY_MULTICAST_PORT, Constants.MULTICAST_PORT);
+    }
+
+    /** Persists the multicast port; the next channel start uses it. */
+    public void setMulticastPort(final int port) {
+        mPreferences.edit().putInt(KEY_MULTICAST_PORT, port).commit();
+    }
+
+    /**
+     * Whether the server announces itself over multicast; defaults to true. Reception is
+     * independent of this flag, so disabling announcements only makes this device invisible and
+     * keeps discovery of peers working.
+     */
+    public boolean isMulticastAnnounceEnabled() {
+        return mPreferences.getBoolean(KEY_MULTICAST_ANNOUNCE_ENABLED, true);
+    }
+
+    /** Persists the announcement toggle; the running server applies it on the next start. */
+    public void setMulticastAnnounceEnabled(final boolean isEnabled) {
+        mPreferences.edit().putBoolean(KEY_MULTICAST_ANNOUNCE_ENABLED, isEnabled).commit();
     }
 
     /**

@@ -592,6 +592,7 @@ public class MainActivity extends AppCompatActivity {
                 }
 
                 LssServiceDiscoveryManager.get().onIdentityReset();
+                sendBroadcast(new Intent(Constants.ACTION_IDENTITY_RESET).setPackage(getPackageName()));
                 updateDeviceIdentityView();
                 Toast.makeText(this, R.string.reset_device_identity_done, Toast.LENGTH_LONG).show();
             })

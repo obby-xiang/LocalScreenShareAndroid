@@ -6,6 +6,11 @@ option java_outer_classname = "ScreenStream";
 
 service ScreenStreamService {
   rpc Stream(stream ClientMessage) returns (stream ServerMessage) {}
+
+  // Unary discovery handshake on the same port as the media stream. The request carries the
+  // caller's discovery summary; the response carries the server's, so both sides learn each
+  // other and can confirm reachability before a stream is opened.
+  rpc Register(RegisterRequest) returns (RegisterResponse) {}
 }
 
 message ClientMessage {
@@ -18,8 +23,50 @@ message ClientMessage {
 
 message Hello {
   int32 protocol_version = 1;
+  // Session key of the stream hub; it may change when the same device reconnects.
   string client_id = 2;
   Capabilities capabilities = 3;
+  // Stable discovery key and trust anchor; they bind the session to a discovery entry but do
+  // not replace client_id as the session key.
+  string device_id = 4;
+  string fingerprint = 5;
+}
+
+// Discovery handshake. announces=true means the caller announced itself over multicast, so the
+// server may send at most one announces=false Register back; announces=false ends the chain.
+message RegisterRequest {
+  int32 protocol_version = 1;
+  bool announces = 2;
+  DeviceSummary self = 3;
+}
+
+message RegisterResponse {
+  int32 protocol_version = 1;
+  bool accepted = 2;
+  string reject_reason = 3;
+  DeviceSummary self = 4;
+}
+
+// Discovery fields shared by the request and the response. The address list carries the
+// endpoints the device accepts calls on; boot, seq and ttl stay multicast-only.
+message DeviceSummary {
+  string device_id = 1;
+  string fingerprint = 2;
+  string name = 3;
+  string role = 4;
+  string state = 5;
+  string join = 6;
+  bool secure = 7;
+  string auth = 8;
+  int32 metadata_version = 9;
+  uint32 capabilities = 10;
+  repeated DeviceAddress addresses = 11;
+}
+
+message DeviceAddress {
+  string host = 1;
+  int32 port = 2;
+  int32 family = 3;
 }
 
 message Ready {}

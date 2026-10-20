@@ -5,16 +5,36 @@ import android.os.Looper;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import com.obby.android.localscreenshare.App;
 import com.obby.android.localscreenshare.core.stream.TimeSource;
+import com.obby.android.localscreenshare.discovery.model.DeviceRole;
+import com.obby.android.localscreenshare.discovery.model.DiscoveryChannel;
+import com.obby.android.localscreenshare.discovery.model.JoinPolicy;
+import com.obby.android.localscreenshare.discovery.model.LssDeviceInfo;
+import com.obby.android.localscreenshare.discovery.model.ShareState;
 import com.obby.android.localscreenshare.discovery.nsd.NsdDiscoveryProvider;
 import com.obby.android.localscreenshare.discovery.provider.DeviceObservation;
 import com.obby.android.localscreenshare.discovery.provider.DiscoveryProviderListener;
+import com.obby.android.localscreenshare.discovery.register.GrpcRegisterStub;
+import com.obby.android.localscreenshare.discovery.register.RegisterClient;
+import com.obby.android.localscreenshare.discovery.register.RegisterProtoMapper;
 import com.obby.android.localscreenshare.discovery.store.DeviceStore;
 import com.obby.android.localscreenshare.discovery.store.DeviceStoreListener;
+import com.obby.android.localscreenshare.discovery.udp.AndroidMulticastSocketFactory;
+import com.obby.android.localscreenshare.discovery.udp.MulticastConfig;
+import com.obby.android.localscreenshare.discovery.udp.MulticastLockManager;
+import com.obby.android.localscreenshare.discovery.udp.SocketMulticastTransport;
+import com.obby.android.localscreenshare.discovery.udp.UdpMulticastDiscoveryProvider;
+import com.obby.android.localscreenshare.grpc.screenstream.DeviceSummary;
+import com.obby.android.localscreenshare.identity.DeviceIdentity;
 import com.obby.android.localscreenshare.identity.IdentityManager;
 import com.obby.android.localscreenshare.identity.IdentityUnavailableException;
+import com.obby.android.localscreenshare.support.Constants;
+import com.obby.android.localscreenshare.support.DelayedScheduler;
+import com.obby.android.localscreenshare.support.Preferences;
+import com.obby.android.localscreenshare.utils.ThreadUtils;
 
 import java.util.Collections;
 import java.util.List;
@@ -28,23 +48,29 @@ import lombok.NoArgsConstructor;
  * Process-wide discovery facade that publishes the LAN screen-stream servers it can reach.
  *
  * <p>The manager keeps the original public contract — subscribe, unsubscribe and receive an
- * {@link LssServiceInfo} snapshot — while the state itself lives in {@link DeviceStore}. An
- * {@link NsdDiscoveryProvider} feeds observations into the store, the store merges them with what
- * every other discovery channel reports, and this class projects the result onto the legacy list
- * the UI already renders. The activity therefore needs no change when the store or the NSD
- * hardening evolves.</p>
+ * {@link LssServiceInfo} snapshot — while the state itself lives in {@link DeviceStore}. Two
+ * providers feed observations into the store in parallel: {@link NsdDiscoveryProvider} for mDNS
+ * and {@link UdpMulticastDiscoveryProvider} for the multicast announcement channel. The store
+ * merges what both report, and this class projects the result onto the legacy list the UI already
+ * renders.</p>
  *
- * <p><b>Threading.</b> All manager state is confined to the main thread: NSD callbacks are
- * marshaled by the provider, the store is main-thread confined and is driven from here, and
- * {@link LssServiceDiscoveryListener} callbacks are therefore main-thread callbacks. The public
- * methods must be called on the main thread. Listener notifications carry an unmodifiable snapshot
- * that is replaced, never mutated, on change.</p>
+ * <p>The multicast provider also confirms peers through Register: only an accepted handshake
+ * promotes a device to confirmed, so a received announcement alone never makes a device look
+ * reachable. The store is exposed through {@link #deviceStore()} so the capture server can write
+ * the peers it learns through its own Register handler into the same table.</p>
+ *
+ * <p><b>Threading.</b> All manager state is confined to the main thread: NSD and multicast
+ * callbacks are marshaled by the providers, the store is main-thread confined and is driven from
+ * here, and {@link LssServiceDiscoveryListener} callbacks are therefore main-thread callbacks. The
+ * public methods must be called on the main thread. Listener notifications carry an unmodifiable
+ * snapshot that is replaced, never mutated, on change.</p>
  *
  * <p><b>Lifecycle.</b> Discovery starts when the first listener subscribes with
  * {@link #discoverServices(LssServiceDiscoveryListener)} and stops when the last listener leaves
  * through {@link #stopServiceDiscovery(LssServiceDiscoveryListener)}. A one-second main-thread
  * tick drives the store TTL while discovery is running. Subscribing does not clear cached results:
- * a new listener immediately receives the current snapshot.</p>
+ * a new listener immediately receives the current snapshot. The multicast group and port are read
+ * when the provider starts, so a changed setting applies to the next discovery start.</p>
  */
 @NoArgsConstructor(access = AccessLevel.PRIVATE)
 public final class LssServiceDiscoveryManager {
@@ -59,6 +85,18 @@ public final class LssServiceDiscoveryManager {
 
     @NonNull
     private final DeviceStore mDeviceStore = new DeviceStore(TimeSource.MONOTONIC);
+
+    @NonNull
+    private final RegisterClient mRegisterClient = new RegisterClient(new GrpcRegisterStub(),
+        DelayedScheduler.newSingleThread("lss-register"), ThreadUtils.getMainThreadExecutor());
+
+    @NonNull
+    private final UdpMulticastDiscoveryProvider mMulticastProvider = new UdpMulticastDiscoveryProvider(
+        () -> new SocketMulticastTransport(new AndroidMulticastSocketFactory(), multicastConfig(),
+            DelayedScheduler.newSingleThread("lss-multicast-socket")),
+        MulticastLockManager.get(), this::isSelfDeviceId, TimeSource.MONOTONIC,
+        ThreadUtils.getMainThreadExecutor(), mRegisterClient, this::selfSummary,
+        this::onConfirmed);
 
     @NonNull
     private final NsdDiscoveryProvider mDiscoveryProvider = new NsdDiscoveryProvider(App.get(),
@@ -165,7 +203,19 @@ public final class LssServiceDiscoveryManager {
     }
 
     /**
-     * Starts the NSD provider, attaches the store listener and arms the TTL tick.
+     * Returns the process-wide device store.
+     *
+     * <p>The capture server writes the peers it learns through Register into the same store, so a
+     * device that dialled in is visible in the list without waiting for its next announcement.
+     * Must be called on the main thread; the store itself is main-thread confined.</p>
+     */
+    @NonNull
+    public DeviceStore deviceStore() {
+        return mDeviceStore;
+    }
+
+    /**
+     * Starts both discovery providers.
      *
      * <p>Must be called on the main thread.</p>
      */
@@ -173,23 +223,76 @@ public final class LssServiceDiscoveryManager {
         Log.i(TAG, "startDiscovery: start discovery");
         mDeviceStore.addListener(mDeviceStoreListener);
         mDiscoveryProvider.start(mDiscoveryProviderListener);
+        mMulticastProvider.start(mDiscoveryProviderListener);
         mMainHandler.removeCallbacks(mTickRunnable);
         mMainHandler.postDelayed(mTickRunnable, DeviceStore.TICK_INTERVAL_MS);
     }
 
     /**
-     * Stops discovery and drops cached devices. The resulting empty snapshot is dispatched while
-     * the listener list is already empty, so no listener observes it.
+     * Stops both discovery providers and drops cached devices. The resulting empty snapshot is
+     * dispatched while the listener list is already empty, so no listener observes it.
      *
      * <p>Must be called on the main thread, after the last listener has been removed.</p>
      */
     private void stopDiscovery() {
         Log.i(TAG, "stopDiscovery: stop service discovery");
         mDiscoveryProvider.stop();
+        mMulticastProvider.stop();
         mMainHandler.removeCallbacks(mTickRunnable);
         mDeviceStore.removeListener(mDeviceStoreListener);
         mDeviceStore.clear();
         updateServiceInfoList();
+    }
+
+    /** Reads the multicast configuration for one provider start. */
+    @NonNull
+    private static MulticastConfig multicastConfig() {
+        return new MulticastConfig(Preferences.get().getMulticastGroup(),
+            Preferences.get().getMulticastPort(), Constants.MULTICAST_TTL,
+            Constants.MULTICAST_MAX_INTERFACES);
+    }
+
+    /**
+     * Builds this device's Register summary, or null when the identity is unavailable.
+     *
+     * <p>A viewer device has no server address, so the summary carries an empty address list; the
+     * responding server still learns the caller's identity from it.</p>
+     */
+    @Nullable
+    private DeviceSummary selfSummary() {
+        try {
+            final DeviceIdentity identity = IdentityManager.get().getIdentity();
+            final LssDeviceInfo self = LssDeviceInfo.builder()
+                .id(identity.getId())
+                .fingerprint(identity.getFingerprint())
+                .role(DeviceRole.BOTH)
+                .state(ShareState.IDLE)
+                .join(JoinPolicy.UNKNOWN)
+                .secure(Preferences.get().isProjectionSecure())
+                .capabilities(Constants.DEVICE_CAPABILITY_H264 | Constants.DEVICE_CAPABILITY_JPEG)
+                .metadataVersion(1)
+                .build();
+            return RegisterProtoMapper.toSummary(self);
+        } catch (IdentityUnavailableException e) {
+            Log.w(TAG, "selfSummary: device identity unavailable");
+            return null;
+        }
+    }
+
+    /**
+     * Applies a successful Register to the store: the peer is written with the fingerprint the
+     * handshake returned and then confirmed at the announced address.
+     *
+     * <p>Runs on the main thread through the register client's callback executor.</p>
+     */
+    private void onConfirmed(@NonNull final DeviceSummary peer, @NonNull final String host,
+        final int port) {
+        if (port <= 0) {
+            return;
+        }
+        mDeviceStore.onObserved(RegisterProtoMapper.toObservation(peer, DiscoveryChannel.MULTICAST,
+            host, port, null));
+        mDeviceStore.confirm(peer.getDeviceId(), DiscoveryChannel.MULTICAST, host, port);
     }
 
     /**

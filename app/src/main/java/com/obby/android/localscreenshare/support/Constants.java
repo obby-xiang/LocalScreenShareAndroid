@@ -82,6 +82,64 @@ public final class Constants {
     /** Capability bit: the device can encode JPEG. */
     public static final int DEVICE_CAPABILITY_JPEG = 1 << 1;
 
+    /** Platform value advertised in multicast announcements. */
+    public static final String DEVICE_PLATFORM_ANDROID = "android";
+
+    /**
+     * Default multicast group used by the discovery channel. It is administratively scoped
+     * (224.0.0.0/8) and never routed, so announcements stay on the local link; the group and the
+     * port are user-configurable through {@link Preferences}.
+     */
+    public static final String MULTICAST_GROUP = "224.0.0.167";
+
+    /** Default multicast port; distinct from other local-discovery products on the same group. */
+    public static final int MULTICAST_PORT = 53535;
+
+    /** Multicast hop limit: 1 keeps announcements on the local link. */
+    public static final int MULTICAST_TTL = 1;
+
+    /** Maximum number of interfaces that get their own announcement socket. */
+    public static final int MULTICAST_MAX_INTERFACES = 4;
+
+    /** Receive buffer of one multicast socket; announcements are at most 512 bytes. */
+    public static final int MULTICAST_RECEIVE_BUFFER = 65_536;
+
+    /** Delays of the three startup announcements, in milliseconds. */
+    public static final long[] MULTICAST_BURST_DELAYS_MS = {100L, 500L, 2_000L};
+
+    /** Delays of the three goodbye announcements sent when the server stops. */
+    public static final long[] MULTICAST_GOODBYE_DELAYS_MS = {0L, 100L, 300L};
+
+    /** Heartbeat period while a capture session is live. */
+    public static final long MULTICAST_HEARTBEAT_ACTIVE_MS = 5_000L;
+
+    /** Heartbeat period while the server is idle. */
+    public static final long MULTICAST_HEARTBEAT_IDLE_MS = 15_000L;
+
+    /** Consecutive receive errors after which one socket is rebuilt. */
+    public static final int MULTICAST_MAX_RECEIVE_ERRORS = 10;
+
+    /** Windows in which one address triggers at most one Register call. */
+    public static final long REGISTER_MERGE_WINDOW_MS = 300L;
+
+    /** Deadline of one Register call, in milliseconds. */
+    public static final long REGISTER_TIMEOUT_MS = 500L;
+
+    /** Retry delays of a Register call whose attempt failed or timed out. */
+    public static final long[] REGISTER_RETRY_DELAYS_MS = {200L, 500L};
+
+    /** Register calls accepted per remote address within one minute. */
+    public static final int REGISTER_REQUESTS_PER_ADDRESS_PER_MINUTE = 10;
+
+    /** Register calls accepted globally within one minute. */
+    public static final int REGISTER_REQUESTS_PER_MINUTE = 100;
+
+    /** Unsolicited reverse Register calls sent within one minute. */
+    public static final int REGISTER_REVERSE_PER_MINUTE = 30;
+
+    /** Upper bound of a reverse Register delay, in milliseconds; the delay is random. */
+    public static final long REGISTER_REVERSE_MAX_DELAY_MS = 200L;
+
     /**
      * Hidden system broadcast reporting Wi-Fi access point state changes. The server listens for
      * it because a hotspot change can change the local address that clients can reach.
@@ -102,6 +160,15 @@ public final class Constants {
     @SuppressWarnings("SpellCheckingInspection")
     public static final String ACTION_STOP_CLIENT_SERVICE =
         "com.obby.android.localscreenshare.ACTION_STOP_CLIENT_SERVICE";
+
+    /**
+     * Package-scoped broadcast reporting that the device identity was replaced. The capture
+     * service restarts its multicast announcements with the new identity; it deliberately keeps
+     * the running projection, because nothing in the media path depends on the identity.
+     */
+    @SuppressWarnings("SpellCheckingInspection")
+    public static final String ACTION_IDENTITY_RESET =
+        "com.obby.android.localscreenshare.ACTION_IDENTITY_RESET";
 
     /** Intent extra carrying the MediaProjection consent result passed to the capture service. */
     public static final String EXTRA_MEDIA_PROJECTION_RESULT = "mediaProjectionResult";

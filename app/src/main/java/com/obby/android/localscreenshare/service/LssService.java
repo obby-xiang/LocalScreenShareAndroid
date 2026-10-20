@@ -70,13 +70,30 @@ import com.obby.android.localscreenshare.core.model.StreamKey;
 import com.obby.android.localscreenshare.core.model.StreamParameters;
 import com.obby.android.localscreenshare.core.stream.StreamHub;
 import com.obby.android.localscreenshare.core.stream.StreamRuntime;
+import com.obby.android.localscreenshare.discovery.LssServiceDiscoveryManager;
+import com.obby.android.localscreenshare.discovery.model.AuthMode;
+import com.obby.android.localscreenshare.discovery.model.DeviceRole;
+import com.obby.android.localscreenshare.discovery.model.JoinPolicy;
+import com.obby.android.localscreenshare.discovery.model.ShareState;
+import com.obby.android.localscreenshare.discovery.udp.AndroidMulticastSocketFactory;
+import com.obby.android.localscreenshare.discovery.udp.Announcement;
+import com.obby.android.localscreenshare.discovery.udp.MulticastAnnouncer;
+import com.obby.android.localscreenshare.discovery.udp.MulticastConfig;
+import com.obby.android.localscreenshare.discovery.udp.MulticastLockManager;
+import com.obby.android.localscreenshare.discovery.udp.MulticastTransport;
+import com.obby.android.localscreenshare.discovery.udp.SocketMulticastTransport;
+import com.obby.android.localscreenshare.identity.DeviceIdentity;
+import com.obby.android.localscreenshare.identity.IdentityManager;
+import com.obby.android.localscreenshare.identity.IdentityUnavailableException;
 import com.obby.android.localscreenshare.server.LssServer;
 import com.obby.android.localscreenshare.server.LssServerInfo;
 import com.obby.android.localscreenshare.server.LssServerInfoListener;
 import com.obby.android.localscreenshare.server.LssServerStats;
 import com.obby.android.localscreenshare.server.LssServerStatsListener;
 import com.obby.android.localscreenshare.support.Constants;
+import com.obby.android.localscreenshare.support.DelayedScheduler;
 import com.obby.android.localscreenshare.support.Preferences;
+import com.obby.android.localscreenshare.transport.ScreenStreamProtoMapper;
 import com.obby.android.localscreenshare.utils.WindowUtils;
 
 import org.apache.commons.lang3.time.DurationFormatUtils;
@@ -144,6 +161,10 @@ public class LssService extends Service {
     // Main-thread state; non-null only between a successful start and stopService().
     @Nullable
     private LssServer mServer;
+
+    // Multicast announcer; non-null only while the server advertises itself.
+    @Nullable
+    private MulticastAnnouncer mAnnouncer;
 
     // Media stream wiring: the runtime owns the encoder and the hub owns per-client sessions. All
     // are assembled on start and torn down before the capture resources are released.
@@ -363,14 +384,16 @@ public class LssService extends Service {
         }
     };
 
-    // Stops the service when the notification action, the chip confirmation or the activity
-    // broadcasts it.
+    // Handles the stop command and restarts announcements after an identity reset. Both actions
+    // are package-scoped and delivered to a not-exported receiver.
     @NonNull
     private final BroadcastReceiver mBroadcastReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
             if (Constants.ACTION_STOP_SERVICE.equals(intent.getAction())) {
                 stopService();
+            } else if (Constants.ACTION_IDENTITY_RESET.equals(intent.getAction())) {
+                restartAnnouncements();
             }
         }
     };
@@ -428,6 +451,7 @@ public class LssService extends Service {
 
         final IntentFilter intentFilter = new IntentFilter();
         intentFilter.addAction(Constants.ACTION_STOP_SERVICE);
+        intentFilter.addAction(Constants.ACTION_IDENTITY_RESET);
         ContextCompat.registerReceiver(this, mBroadcastReceiver, intentFilter, ContextCompat.RECEIVER_NOT_EXPORTED);
 
         mIsProjectionSecure = Preferences.get().isProjectionSecure();
@@ -448,6 +472,7 @@ public class LssService extends Service {
 
         unregisterReceiver(mBroadcastReceiver);
         Preferences.get().removeObserver(mPreferencesObserver);
+        stopAnnouncements();
     }
 
     /**
@@ -527,12 +552,14 @@ public class LssService extends Service {
         }
 
         // The server binds the configured port and starts advertising over NSD; its listeners
-        // are invoked on the main thread.
+        // are invoked on the main thread. The discovery store is shared with the activity side so
+        // Register-learned peers appear in the device list.
         mServer = new LssServer(this);
         mServer.setServerInfoListener(mServerInfoListener);
         mServer.setServerStatsListener(mServerStatsListener);
         mServer.setStream(mStreamHub, mStreamRuntime);
         mServer.setSecure(mIsProjectionSecure);
+        mServer.setDeviceStore(LssServiceDiscoveryManager.get().deviceStore());
 
         try {
             mServer.start();
@@ -542,6 +569,8 @@ public class LssService extends Service {
             stopService();
             return START_NOT_STICKY;
         }
+
+        startAnnouncements();
 
         // The virtual display renders the captured screen into the codec's input: the encoder
         // surface for H.264, or an image reader feeding the frame-input JPEG path.
@@ -648,6 +677,10 @@ public class LssService extends Service {
             mMediaProjection = null;
         }
 
+        // The goodbye burst goes out before the server stops, so it still carries the announced
+        // port; the announcer closes its sockets after the last goodbye.
+        stopAnnouncements();
+
         if (mServer != null) {
             mServer.stop();
             mServer = null;
@@ -657,6 +690,117 @@ public class LssService extends Service {
 
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE);
         stopSelf();
+    }
+
+    /**
+     * Starts the multicast announcer for the running server.
+     *
+     * <p>Runs on the main thread after the server bound its port. The group and port come from the
+     * preferences, a disabled announcement toggle or an unusable group leaves the server
+     * discoverable over NSD only. The announcement content is captured per session: an identity
+     * reset stops this announcer (which says goodbye with the old identity) and starts a new one,
+     * so peers never see one identity's goodbye carrying another identity's key.</p>
+     */
+    private void startAnnouncements() {
+        if (mAnnouncer != null || !Preferences.get().isMulticastAnnounceEnabled()) {
+            return;
+        }
+        final Announcement announcement = buildAnnouncement();
+        if (announcement == null) {
+            Log.w(mTag, "startAnnouncements: announcement not available");
+            return;
+        }
+
+        final MulticastConfig config;
+        try {
+            config = new MulticastConfig(Preferences.get().getMulticastGroup(),
+                Preferences.get().getMulticastPort());
+        } catch (IllegalArgumentException e) {
+            Log.w(mTag, "startAnnouncements: invalid multicast configuration", e);
+            return;
+        }
+
+        final MulticastLockManager lockManager = MulticastLockManager.get();
+        final MulticastTransport transport = new SocketMulticastTransport(
+            new AndroidMulticastSocketFactory(), config,
+            DelayedScheduler.newSingleThread("lss-announce-socket"));
+        lockManager.acquire();
+        transport.start(null);
+
+        mAnnouncer = new MulticastAnnouncer(new MulticastAnnouncer.Sender() {
+            @Override
+            public void send(@NonNull final byte[] payload) {
+                transport.send(payload);
+            }
+
+            @Override
+            public void close() {
+                transport.close();
+                lockManager.release();
+            }
+        }, DelayedScheduler.newSingleThread("lss-announcer"), () -> announcement);
+        mAnnouncer.setLive(true);
+        mAnnouncer.start();
+        Log.i(mTag, "startAnnouncements: multicast announcements started");
+    }
+
+    /** Stops the announcer; it sends its goodbye burst and releases the sockets and the lock. */
+    private void stopAnnouncements() {
+        if (mAnnouncer == null) {
+            return;
+        }
+        mAnnouncer.stop();
+        mAnnouncer = null;
+        Log.i(mTag, "stopAnnouncements: multicast announcements stopped");
+    }
+
+    /**
+     * Stops the current announcer and starts a fresh one with the new identity.
+     *
+     * <p>Called after {@link IdentityManager#reset()} through the package-scoped reset broadcast.
+     * The capture pipeline and the gRPC server keep running; only the announced identity changes.</p>
+     */
+    private void restartAnnouncements() {
+        Log.i(mTag, "restartAnnouncements: restart announcements after identity reset");
+        stopAnnouncements();
+        startAnnouncements();
+    }
+
+    /**
+     * Builds the announcement template of the running session.
+     *
+     * <p>The fingerprint is deliberately absent and the device name is only present when the user
+     * enabled name sharing. The port is the bound gRPC port, which is what a peer uses to call
+     * {@code Register}.</p>
+     */
+    @Nullable
+    private Announcement buildAnnouncement() {
+        final LssServerInfo serverInfo = mServerInfo;
+        if (serverInfo == null || serverInfo.getPort() <= 0) {
+            return null;
+        }
+        final DeviceIdentity identity;
+        try {
+            identity = IdentityManager.get().getIdentity();
+        } catch (IdentityUnavailableException e) {
+            Log.w(mTag, "buildAnnouncement: device identity unavailable");
+            return null;
+        }
+
+        return Announcement.builder()
+            .id(identity.getId())
+            .name(Preferences.get().isShareNameEnabled() ? Preferences.get().getDeviceAlias() : null)
+            .role(DeviceRole.SERVER)
+            .state(ShareState.LIVE)
+            .join(JoinPolicy.OPEN)
+            .secure(mIsProjectionSecure)
+            .auth(AuthMode.NONE)
+            .protocolVersion(String.valueOf(ScreenStreamProtoMapper.PROTOCOL_VERSION))
+            .metadataVersion(1)
+            .capabilities(Constants.DEVICE_CAPABILITY_H264 | Constants.DEVICE_CAPABILITY_JPEG)
+            .port(serverInfo.getPort())
+            .platform(Constants.DEVICE_PLATFORM_ANDROID)
+            .build();
     }
 
     // Replays the latest server info to every registered client.

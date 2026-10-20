@@ -14,6 +14,9 @@ import com.obby.android.localscreenshare.grpc.screenstream.Hello;
 import com.obby.android.localscreenshare.grpc.screenstream.RequestKeyframe;
 import com.obby.android.localscreenshare.grpc.screenstream.ScreenStreamServiceGrpc;
 import com.obby.android.localscreenshare.grpc.screenstream.ServerMessage;
+import com.obby.android.localscreenshare.identity.DeviceIdentity;
+import com.obby.android.localscreenshare.identity.IdentityManager;
+import com.obby.android.localscreenshare.identity.IdentityUnavailableException;
 import com.obby.android.localscreenshare.support.CodecCapabilityProbe;
 import com.obby.android.localscreenshare.support.Constants;
 import com.obby.android.localscreenshare.transport.ScreenStreamProtoMapper;
@@ -261,13 +264,23 @@ public final class LssClient {
                 }
             });
 
+        final Hello.Builder hello = Hello.newBuilder()
+            .setProtocolVersion(ScreenStreamProtoMapper.PROTOCOL_VERSION)
+            .setClientId("client-" + UUID.randomUUID())
+            .setCapabilities(ScreenStreamProtoMapper.toProtoCapabilities(
+                CodecCapabilityProbe.probeClientDecoders()));
+        // The discovery identity binds this session to the device entry peers already know. The
+        // client id above stays the stream hub's session key, so a reconnect of the same device is
+        // still a new session.
+        try {
+            final DeviceIdentity identity = IdentityManager.get().getIdentity();
+            hello.setDeviceId(identity.getId()).setFingerprint(identity.getFingerprint());
+        } catch (IdentityUnavailableException e) {
+            Log.w(mTag, "start: device identity unavailable, HELLO carries no discovery key");
+        }
+
         mRequestObserver.onNext(ClientMessage.newBuilder()
-            .setHello(Hello.newBuilder()
-                .setProtocolVersion(1)
-                .setClientId("client-" + UUID.randomUUID())
-                .setCapabilities(ScreenStreamProtoMapper.toProtoCapabilities(
-                    CodecCapabilityProbe.probeClientDecoders()))
-                .build())
+            .setHello(hello.build())
             .build());
 
         mClientProfile = new ClientProfile();
