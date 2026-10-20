@@ -39,6 +39,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.appcompat.view.ContextThemeWrapper;
 import androidx.core.app.ActivityCompat;
 import androidx.core.app.NotificationManagerCompat;
 import androidx.core.content.ContextCompat;
@@ -807,13 +808,18 @@ public class MainActivity extends AppCompatActivity {
             mDialog.dismiss();
         }
 
-        mDialog = new MaterialAlertDialogBuilder(this)
+        // The confirmation is a floating overlay, not an activity window: while a viewer is
+        // streaming its APPLICATION_OVERLAY window sits above the activity, so a plain activity
+        // dialog would be covered and the stop action would be unreachable from the main screen.
+        final Context themedContext = new ContextThemeWrapper(App.get(), R.style.Theme_ScreenShare);
+        mDialog = new MaterialAlertDialogBuilder(themedContext)
             .setMessage(R.string.screen_share_stop_confirm)
             .setPositiveButton(android.R.string.ok, (dialog, which) -> sendBroadcast(
                 new Intent(ServiceProtocol.ACTION_STOP_SERVICE).setPackage(getPackageName())))
             .setNegativeButton(android.R.string.cancel, null)
             .setCancelable(false)
             .create();
+        mDialog.getWindow().setType(ServiceProtocol.FLOATING_WINDOW_TYPE);
         mDialog.show();
     }
 
