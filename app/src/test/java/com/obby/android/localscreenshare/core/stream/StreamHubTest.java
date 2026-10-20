@@ -325,7 +325,7 @@ public class StreamHubTest {
     }
 
     @Test
-    public void join_duplicateSessionKeyRejected() {
+    public void join_duplicateSessionKey_takesOver() {
         MutableClock clock = new MutableClock();
         FakeCodec fake = new FakeCodec(ACTIVE_CODEC_ID, 0, false, false);
         fake.setAutoEmitJoinOnRequest(false);
@@ -344,11 +344,14 @@ public class StreamHubTest {
         JoinDecision decision =
                 hub.join(CLIENT_A, capabilities(ACTIVE_CODEC_ID), secondTransport);
 
-        assertEquals(JoinDecision.Status.REJECTED, decision.getStatus());
-        assertNull(decision.getSession());
+        // A duplicate key takes over the stale session instead of being rejected.
+        assertEquals(JoinDecision.Status.ACCEPTED, decision.getStatus());
+        assertNotNull(decision.getSession());
         assertEquals(1, hub.getSessionCount());
-        assertSame(firstSession, hub.getSession(CLIENT_A));
-        assertTrue(secondTransport.getEvents().isEmpty());
+        assertNotSame(firstSession, hub.getSession(CLIENT_A));
+        assertSame(decision.getSession(), hub.getSession(CLIENT_A));
+        assertTrue(firstSession.isDetached());
+        assertEquals(1, firstTransport.getCloseCount());
     }
 
     @Test

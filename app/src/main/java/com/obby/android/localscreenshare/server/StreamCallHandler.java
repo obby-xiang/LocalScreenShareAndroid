@@ -19,10 +19,13 @@ import java.util.UUID;
  *
  * <p>The handler owns the join, keyframe-request and drain lifecycle for a single client. It never
  * starts threads itself: {@link #drainOnce()} is driven by the owner (a per-client drain thread in
- * {@link ScreenShareServer}), so the handler stays synchronous and unit-testable. A join is attempted on
- * the first HELLO; when the active runtime has not published a descriptor yet the join is retried
- * on subsequent drain calls until it succeeds, and a rejected or fallback-requiring client is
- * closed. An empty capability set is treated as the H.264 compatibility baseline.</p>
+ * {@link ScreenShareServer}), while client control messages arrive on the gRPC callback thread.
+ * Every state-mutating method is therefore synchronized so the join and detach transitions stay
+ * atomic; only the transport send itself runs outside the monitor, so a slow client cannot block
+ * control-message handling. A join is attempted on the first HELLO; when the active runtime has not
+ * published a descriptor yet the join is retried on subsequent drain calls until it succeeds, and a
+ * rejected or fallback-requiring client is closed. An empty capability set is treated as the H.264
+ * compatibility baseline.</p>
  */
 public final class StreamCallHandler {
 
@@ -75,7 +78,7 @@ public final class StreamCallHandler {
     /**
      * Handles one client control message; a second HELLO after joining is ignored.
      */
-    public void onClientMessage(ClientMessage message) {
+    public synchronized void onClientMessage(ClientMessage message) {
         if (closed || message == null) {
             return;
         }
@@ -103,22 +106,28 @@ public final class StreamCallHandler {
      * @throws IOException if the transport failed, after the session detached
      */
     public boolean drainOnce() throws IOException {
-        if (closed) {
-            return false;
+        final ClientSessionKey sessionKey;
+        synchronized (this) {
+            if (closed) {
+                return false;
+            }
+            if (!attached) {
+                tryJoin();
+            }
+            if (!attached) {
+                return false;
+            }
+            sessionKey = key;
         }
-        if (!attached) {
-            tryJoin();
-        }
-        if (!attached) {
-            return false;
-        }
-        return hub.drainOne(key);
+        // Drain outside the monitor: the transport send may block on a slow client, and a
+        // concurrent close() detaches the session first, so this becomes a no-op or fails cleanly.
+        return hub.drainOne(sessionKey);
     }
 
     /**
      * Returns whether the handler has been closed and its session detached.
      */
-    public boolean isClosed() {
+    public synchronized boolean isClosed() {
         return closed;
     }
 
@@ -130,28 +139,28 @@ public final class StreamCallHandler {
      * but a server can now attribute the session to a known device instead of an opaque
      * per-connection value.</p>
      */
-    public String getDeviceId() {
+    public synchronized String getDeviceId() {
         return deviceId;
     }
 
     /**
      * Returns the fingerprint the client declared in its HELLO, or null when it declared none.
      */
-    public String getFingerprint() {
+    public synchronized String getFingerprint() {
         return fingerprint;
     }
 
     /**
      * Returns the reason the join was rejected, or null when the client attached or never joined.
      */
-    public String getJoinFailure() {
+    public synchronized String getJoinFailure() {
         return joinFailure;
     }
 
     /**
      * Detaches the client's session and closes its transport; idempotent.
      */
-    public void close() {
+    public synchronized void close() {
         if (closed) {
             return;
         }
@@ -163,6 +172,7 @@ public final class StreamCallHandler {
         transport.close();
     }
 
+    // Called under the handler monitor from onClientMessage or drainOnce; never called directly.
     private void onHello(Hello hello) {
         if (attached || pendingJoin) {
             return;
@@ -184,6 +194,7 @@ public final class StreamCallHandler {
         tryJoin();
     }
 
+    // Called under the handler monitor from onHello or drainOnce; never called directly.
     private void tryJoin() {
         if (!pendingJoin || attached || closed) {
             return;

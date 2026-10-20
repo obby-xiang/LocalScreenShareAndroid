@@ -131,10 +131,10 @@ public class StreamCallHandlerTest {
     }
 
     @Test
-    public void duplicateClientId_isRejectedWithFailureReason() throws Exception {
+    public void duplicateClientId_takesOverTheStaleSession() throws Exception {
         Fixture fixture = fixture(FakeCodec.DEFAULT_CODEC_ID);
-        StreamCallHandler first = new StreamCallHandler(fixture.hub, fixture.runtime,
-                new FakeTransport());
+        FakeTransport firstTransport = new FakeTransport();
+        StreamCallHandler first = new StreamCallHandler(fixture.hub, fixture.runtime, firstTransport);
         first.onClientMessage(hello(FakeCodec.DEFAULT_CODEC_ID));
         assertTrue(first.drainOnce());
 
@@ -142,11 +142,12 @@ public class StreamCallHandlerTest {
         StreamCallHandler second = new StreamCallHandler(fixture.hub, fixture.runtime, secondTransport);
         second.onClientMessage(hello(FakeCodec.DEFAULT_CODEC_ID));
 
-        assertFalse(second.drainOnce());
-
-        assertTrue(second.isClosed());
-        assertEquals("session already exists", second.getJoinFailure());
-        assertEquals(1, secondTransport.getCloseCount());
+        // A second connection with the same client id takes over instead of being rejected.
+        assertTrue(second.drainOnce());
+        assertFalse(second.isClosed());
+        assertNull(second.getJoinFailure());
+        assertEquals(1, fixture.hub.getSessionCount());
+        assertEquals(1, firstTransport.getCloseCount());
     }
 
     private static Fixture fixture(String codecId) {

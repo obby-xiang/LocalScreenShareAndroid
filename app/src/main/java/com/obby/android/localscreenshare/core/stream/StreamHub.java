@@ -30,7 +30,9 @@ import java.util.concurrent.ConcurrentHashMap;
  * {@link RuntimeState#READY} with a published descriptor and the client supports that codec. A
  * client that cannot decode the active codec is never attached: the hub reports the lowest
  * {@code fallbackPriority} codec supported by both that client and every existing client, or
- * rejects the join when no common codec exists. Fallback is metadata only; the hub never switches
+ * rejects the join when no common codec exists. A join for an already-attached key takes over the
+ * stale session: the old session is detached and the new one takes its place, so a reconnect is
+ * never rejected for holding a duplicate key. Fallback is metadata only; the hub never switches
  * the active runtime or the active descriptor by itself.</p>
  *
  * <p><b>Locking and broadcast.</b> A private lock serializes compound changes of the runtime map,
@@ -178,11 +180,12 @@ public final class StreamHub implements StreamRuntimeListener {
      * <p>The checks run in this order: no active stream and a stream key mismatch are
      * {@link JoinDecision.Status#REJECTED}; a runtime that is not {@link RuntimeState#READY} or
      * has no published descriptor is {@link JoinDecision.Status#NOT_READY}, which reserves nothing
-     * and may be retried later; a duplicate session key is rejected. When the client supports the
-     * active codec, a session is created, primed with the active descriptor as its pending
-     * descriptor, stored with its capabilities and reported as
+     * and may be retried later; a join for an already-attached key takes over the stale session
+     * (it is detached and replaced), so a reconnect is never rejected for holding a duplicate key.
+     * When the client supports the active codec, a session is created, primed with the active
+     * descriptor as its pending descriptor, stored with its capabilities and reported as
      * {@link JoinDecision.Status#ACCEPTED}. Otherwise the decision describes a required explicit
-     * fallback or a rejection, and no session, capability or presence change is made.</p>
+     * fallback or a rejection, and no new session is created.</p>
      *
      * <p>The join-point request is issued outside the lock after a successful attach, so the
      * encoder is asked for a random-access point new clients can start on. If that request throws,
@@ -204,6 +207,7 @@ public final class StreamHub implements StreamRuntimeListener {
 
         StreamRuntime toRequestJoin = null;
         ClientSendSession createdSession = null;
+        ClientSendSession replacedSession = null;
         JoinDecision decision;
         synchronized (lock) {
             StreamRuntime active = activeRuntime;
@@ -220,9 +224,11 @@ public final class StreamHub implements StreamRuntimeListener {
             if (!key.getStreamKey().equals(active.getStreamKey())) {
                 return JoinDecision.rejected("stream key mismatch");
             }
-            if (sessions.containsKey(key)) {
-                return JoinDecision.rejected("session already exists");
-            }
+            // Take over: a join for an already-attached key means the old connection is dead (for
+            // example a client that reconnected with the same id). Detach the stale session and
+            // attach the new one instead of rejecting the reconnect.
+            replacedSession = sessions.remove(key);
+            capabilities.remove(key);
 
             if (caps.supports(activeDescriptor.getCodecId())) {
                 createdSession =
@@ -235,6 +241,10 @@ public final class StreamHub implements StreamRuntimeListener {
             } else {
                 decision = computeFallback(caps);
             }
+        }
+
+        if (replacedSession != null) {
+            replacedSession.detach();
         }
 
         if (toRequestJoin != null) {
