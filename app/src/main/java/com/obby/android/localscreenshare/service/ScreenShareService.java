@@ -92,6 +92,7 @@ import com.obby.android.localscreenshare.server.ServerStats;
 import com.obby.android.localscreenshare.server.ServerStatsListener;
 import com.obby.android.localscreenshare.settings.DiscoverySettings;
 import com.obby.android.localscreenshare.settings.Preferences;
+import com.obby.android.localscreenshare.settings.ProjectionSettings;
 import com.obby.android.localscreenshare.settings.VisibilityPolicy;
 import com.obby.android.localscreenshare.support.DelayedScheduler;
 import com.obby.android.localscreenshare.support.ServiceProtocol;
@@ -161,6 +162,9 @@ public class ScreenShareService extends Service {
 
     private static final int IMAGE_READER_MAX_IMAGES = 2;
 
+    // Merges a burst of encoder-affecting preference changes into one rebuild.
+    private static final long ENCODER_REBUILD_DEBOUNCE_MS = 300L;
+
     // Main-thread state; non-null only between a successful start and stopService().
     @Nullable
     private ScreenShareServer mServer;
@@ -169,12 +173,16 @@ public class ScreenShareService extends Service {
     @Nullable
     private MulticastAnnouncer mAnnouncer;
 
-    // Main-thread handler for the temporary-visibility expiry.
+    // Main-thread handler for the temporary-visibility expiry and the encoder rebuild.
     @NonNull
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
 
     @NonNull
     private final Runnable mVisibilityExpiryRunnable = this::restartAnnouncements;
+
+    // Debounced encoder rebuild raised by frame-rate and key-frame-interval changes.
+    @NonNull
+    private final Runnable mEncoderRebuildRunnable = this::rebuildEncoder;
 
     // Media stream wiring: the runtime owns the encoder and the hub owns per-client sessions. All
     // are assembled on start and torn down before the capture resources are released.
@@ -409,8 +417,10 @@ public class ScreenShareService extends Service {
     };
 
     // Applies projection settings changed from the UI. A null key refreshes every projection
-    // value and the capture size; a single key updates only what it affects. Quality, security
-    // and frame rate are read by the next encoded frame, while the scale also resizes the display.
+    // value and the capture size; a single key updates only what it affects. Quality and security
+    // are read by the next encoded frame, the scale resizes the display, the bitrate is hot-applied
+    // and the frame rate and key-frame interval rebuild the encoder because the encoder only reads
+    // them when it is created.
     @NonNull
     private final Preferences.Observer mPreferencesObserver = key -> {
         if (key == null) {
@@ -419,6 +429,7 @@ public class ScreenShareService extends Service {
             mProjectionQuality = Preferences.get().getProjectionQuality();
             mProjectionFrameRate = Preferences.get().getProjectionFrameRate();
             updateProjectionSize();
+            scheduleEncoderRebuild();
             return;
         }
 
@@ -435,15 +446,22 @@ public class ScreenShareService extends Service {
                 break;
             case Preferences.KEY_PROJECTION_FRAME_RATE:
                 mProjectionFrameRate = Preferences.get().getProjectionFrameRate();
+                scheduleEncoderRebuild();
+                break;
+            case Preferences.KEY_PROJECTION_IDR_INTERVAL:
+                scheduleEncoderRebuild();
                 break;
             case Preferences.KEY_PROJECTION_BITRATE:
                 // Bitrate is hot-applied; frame rate and IDR interval only change on a rebuild.
                 if (mStreamRuntime != null) {
-                    mStreamRuntime.updateParameters(new StreamParameters(
-                        Preferences.get().getProjectionBitrate(),
-                        Preferences.get().getProjectionFrameRate(),
-                        Preferences.get().getProjectionIdrIntervalMs()));
+                    mStreamRuntime.updateParameters(buildProjectionSettings().toStreamParameters());
                 }
+                break;
+            case Preferences.KEY_PROJECTION_CODEC:
+                // Deliberately not applied: switching the codec needs a new capture path and a
+                // client that can display it (JPEG), which this build does not have. The stored
+                // value takes effect on the next capture session start.
+                Log.i(mTag, "mPreferencesObserver: codec change applies on the next start");
                 break;
             case Preferences.KEY_MULTICAST_ANNOUNCE_ENABLED:
             case Preferences.KEY_MULTICAST_GROUP:
@@ -466,6 +484,48 @@ public class ScreenShareService extends Service {
                 break;
         }
     };
+
+    /**
+     * Schedules one encoder rebuild after the current burst of preference changes.
+     *
+     * <p>Every frame-rate or key-frame-interval change would otherwise rebuild the encoder on its
+     * own, and each rebuild costs a new configuration epoch plus a client resynchronization. The
+     * main-thread handler merges changes that arrive within the debounce window, and because both
+     * this path and the size path run on the main thread, two rebuilds can never race for the same
+     * configuration epoch.</p>
+     */
+    private void scheduleEncoderRebuild() {
+        mMainHandler.removeCallbacks(mEncoderRebuildRunnable);
+        mMainHandler.postDelayed(mEncoderRebuildRunnable, ENCODER_REBUILD_DEBOUNCE_MS);
+    }
+
+    /**
+     * Rebuilds the encoder with the current parameters, then points the display at its input
+     * surface.
+     *
+     * <p>Order is fixed: the runtime parameters are replaced first so the new encoder is created
+     * with them, then the descriptor advances by one epoch, then the capture display is handed the
+     * new input surface. Only the H.264 path has an encoder to rebuild; the JPEG path resizes the
+     * reader instead. A failure keeps the previous encoder active; because the encoder only
+     * hot-applies the bitrate, its frame rate and key-frame interval are unchanged and the picture
+     * continues. Does nothing while capture is stopped.</p>
+     */
+    private void rebuildEncoder() {
+        if (!mIsH264 || mStreamRuntime == null || mVirtualDisplay == null
+            || mProjectionSize == null) {
+            return;
+        }
+
+        try {
+            mStreamRuntime.updateParameters(buildProjectionSettings().toStreamParameters());
+            mStreamRuntime.switchDescriptor(
+                buildRequestedDescriptor(mStreamRuntime.getConfigEpoch() + 1));
+            mVirtualDisplay.setSurface(mStreamRuntime.getInputSurface());
+            Log.i(mTag, "rebuildEncoder: encoder rebuilt for the new parameters");
+        } catch (RuntimeException e) {
+            Log.w(mTag, "rebuildEncoder: encoder rebuild failed", e);
+        }
+    }
 
     /**
      * Registers the stop receiver, snapshots the projection preferences and subscribes the
@@ -499,6 +559,7 @@ public class ScreenShareService extends Service {
 
         unregisterReceiver(mBroadcastReceiver);
         Preferences.get().removeObserver(mPreferencesObserver);
+        mMainHandler.removeCallbacks(mEncoderRebuildRunnable);
         stopAnnouncements();
     }
 
@@ -1014,7 +1075,8 @@ public class ScreenShareService extends Service {
      * <p>The registry registers JPEG by default and adds H.264 explicitly; H.264 is the primary
      * capture mode and requires an input surface, which the virtual display is pointed at once this
      * method returns. The stream identity uses the configured service id as its session instance.
-     * Parameters use {@link StreamParameters#DEFAULT} until the preference wiring lands.</p>
+     * Parameters are the validated projection preferences, so an out-of-range stored value never
+     * reaches the encoder.</p>
      */
     private void startStreamPipeline() {
         mIsH264 = !"jpeg".equals(Preferences.get().getProjectionCodec());
@@ -1025,10 +1087,7 @@ public class ScreenShareService extends Service {
         }
 
         mStreamKey = new StreamKey(Preferences.get().getServiceId(), "screen");
-        final StreamParameters parameters = new StreamParameters(
-                Preferences.get().getProjectionBitrate(),
-                Preferences.get().getProjectionFrameRate(),
-                Preferences.get().getProjectionIdrIntervalMs());
+        final StreamParameters parameters = buildProjectionSettings().toStreamParameters();
 
         mStreamRuntime = new StreamRuntime(mCodecRegistry, mStreamKey,
                 buildRequestedDescriptor(1), parameters);
@@ -1036,6 +1095,17 @@ public class ScreenShareService extends Service {
         mStreamHub.register(mStreamRuntime);
         mStreamHub.activate(mStreamKey);
         mStreamRuntime.start();
+    }
+
+    /**
+     * Returns the validated projection settings snapshot read from the preferences.
+     */
+    @NonNull
+    private ProjectionSettings buildProjectionSettings() {
+        return ProjectionSettings.of(Preferences.get().getProjectionBitrate(),
+            Preferences.get().getProjectionFrameRate(), Preferences.get().getProjectionIdrIntervalMs(),
+            Preferences.get().getProjectionScale(), Preferences.get().getProjectionQuality(),
+            Preferences.get().getProjectionCodec());
     }
 
     /**

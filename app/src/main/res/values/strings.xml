@@ -51,6 +51,19 @@
     <string name="projection_frame_rate_setting_label">"Max frame rate"</string>
     <string name="projection_quality_setting_label">"Screen quality"</string>
     <string name="projection_frame_rate_value_label">"<xliff:g id="fps">%1$d</xliff:g>fps"</string>
+    <string name="projection_bitrate_setting_label">"Bitrate"</string>
+    <string name="projection_bitrate_value_label">"<xliff:g id="bitrate">%1$s</xliff:g> Mbps"</string>
+    <string name="projection_idr_interval_setting_label">"Key-frame interval"</string>
+    <string name="projection_idr_interval_value_label">"<xliff:g id="seconds">%1$d</xliff:g> s"</string>
+    <string name="projection_codec_setting_label">"Codec"</string>
+    <string name="projection_codec_value_h264">"H.264 (hardware)"</string>
+    <string name="projection_codec_value_jpeg">"JPEG"</string>
+    <string name="video_settings_title">"Video encoding"</string>
+    <string name="video_settings_entry_label">"Video encoding settings"</string>
+    <string name="video_settings_summary">"%1$s · %2$d fps · %3$s"</string>
+    <string name="video_settings_rebuild_hint">"Changing the screen size, frame rate or key-frame interval rebuilds the encoder; the picture may pause briefly and resynchronize."</string>
+    <string name="video_settings_frame_rate_note">"Rates above 60 fps require encoder support on this device."</string>
+    <string name="video_settings_codec_locked_note">"This version always uses H.264."</string>
     <string name="start_service_failed">"Failed to start the screen sharing service."</string>
     <string name="device_identity_label">"Device ID"</string>
     <string name="device_identity_unavailable">"Unavailable"</string>

@@ -51,6 +51,19 @@
     <string name="projection_frame_rate_setting_label">"最大帧率"</string>
     <string name="projection_quality_setting_label">"画面质量"</string>
     <string name="projection_frame_rate_value_label">"<xliff:g id="fps">%1$d</xliff:g>fps"</string>
+    <string name="projection_bitrate_setting_label">"码率"</string>
+    <string name="projection_bitrate_value_label">"<xliff:g id="bitrate">%1$s</xliff:g> Mbps"</string>
+    <string name="projection_idr_interval_setting_label">"关键帧间隔"</string>
+    <string name="projection_idr_interval_value_label">"<xliff:g id="seconds">%1$d</xliff:g> 秒"</string>
+    <string name="projection_codec_setting_label">"编码格式"</string>
+    <string name="projection_codec_value_h264">"H.264（硬件）"</string>
+    <string name="projection_codec_value_jpeg">"JPEG"</string>
+    <string name="video_settings_title">"视频编码"</string>
+    <string name="video_settings_entry_label">"视频编码设置"</string>
+    <string name="video_settings_summary">"%1$s · %2$d fps · %3$s"</string>
+    <string name="video_settings_rebuild_hint">"修改画面大小、帧率或关键帧间隔会重建编码器，画面可能短暂停顿并重新同步。"</string>
+    <string name="video_settings_frame_rate_note">"高于 60 fps 需要本机编码器支持。"</string>
+    <string name="video_settings_codec_locked_note">"当前版本固定使用 H.264。"</string>
     <string name="start_service_failed">"启动共享屏幕服务失败。"</string>
     <string name="device_identity_label">"设备 ID"</string>
     <string name="device_identity_unavailable">"不可用"</string>

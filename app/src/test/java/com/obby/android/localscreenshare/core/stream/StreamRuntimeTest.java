@@ -241,6 +241,28 @@ public class StreamRuntimeTest {
     }
 
     @Test
+    public void switchDescriptor_afterUpdateParameters_rebuildsWithNewParameters() {
+        FakeCodec fake = new FakeCodec(FakeCodec.DEFAULT_CODEC_ID, 0, false, false);
+        StreamRuntime runtime = newRuntime(fake, new MutableClock(), descriptor(1, 64, 48));
+        runtime.start();
+        FakeCodec.FakeEncoder oldEncoder = fake.getLastEncoder();
+
+        // Same size, new rate and cadence hints: the rebuild must hand the new hints to the new
+        // encoder, because the encoder only reads them when it is created.
+        StreamParameters updated = new StreamParameters(2_500_000, 30, 2_000);
+        runtime.updateParameters(updated);
+        runtime.switchDescriptor(descriptor(1, 64, 48).withConfigEpoch(2));
+
+        FakeCodec.FakeEncoder newEncoder = fake.getLastEncoder();
+        assertNotSame(oldEncoder, newEncoder);
+        assertEquals(2_500_000, newEncoder.getLastParameters().getTargetBitrateBps());
+        assertEquals(30, newEncoder.getLastParameters().getFrameRateHint());
+        assertEquals(2_000, newEncoder.getLastParameters().getKeyFrameIntervalMs());
+        assertEquals(2, runtime.getConfigEpoch());
+        assertEquals(updated.getTargetBitrateBps(), runtime.getParameters().getTargetBitrateBps());
+    }
+
+    @Test
     public void switchDescriptor_prewarmFailureKeepsOldEncoder() {
         FakeCodec fake = new FakeCodec(FakeCodec.DEFAULT_CODEC_ID, 0, false, false);
         StreamRuntime runtime = newRuntime(fake, new MutableClock(), descriptor(1, 64, 48));

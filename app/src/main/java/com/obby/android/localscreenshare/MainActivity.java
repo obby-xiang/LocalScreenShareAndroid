@@ -82,6 +82,7 @@ import com.obby.android.localscreenshare.service.ScreenShareService;
 import com.obby.android.localscreenshare.service.ScreenViewerService;
 import com.obby.android.localscreenshare.settings.DiscoverySettings;
 import com.obby.android.localscreenshare.settings.Preferences;
+import com.obby.android.localscreenshare.settings.ProjectionSettings;
 import com.obby.android.localscreenshare.settings.VisibilityPolicy;
 import com.obby.android.localscreenshare.support.Constants;
 import com.obby.android.localscreenshare.support.IntentUtils;
@@ -128,23 +129,21 @@ public class MainActivity extends AppCompatActivity {
 
     private static final int SERVICE_STATUS_OFFLINE = 2;
 
-    private static final int MIN_PROJECTION_QUALITY = 0;
-
-    private static final int MAX_PROJECTION_QUALITY = 100;
-
     private static final int PROJECTION_QUALITY_STEP = 1;
-
-    private static final int MIN_PROJECTION_SCALE = 5;
-
-    private static final int MAX_PROJECTION_SCALE = 100;
 
     private static final int PROJECTION_SCALE_STEP = 1;
 
-    private static final int MIN_PROJECTION_FRAME_RATE = 1;
-
-    private static final int MAX_PROJECTION_FRAME_RATE = 120;
-
     private static final int PROJECTION_FRAME_RATE_STEP = 1;
+
+    // Bitrate slider range and step, in megabits per second; stored in bits per second.
+    private static final float MIN_PROJECTION_BITRATE_MBPS = 0.5f;
+
+    private static final float MAX_PROJECTION_BITRATE_MBPS = 20f;
+
+    private static final float PROJECTION_BITRATE_STEP_MBPS = 0.5f;
+
+    // Key-frame interval slider step, in seconds; stored in milliseconds.
+    private static final float PROJECTION_IDR_INTERVAL_STEP_SECONDS = 1f;
 
     private static final int MIN_SERVER_PORT = 1024;
 
@@ -175,6 +174,16 @@ public class MainActivity extends AppCompatActivity {
     // Created on first use and reused while the activity lives.
     @Nullable
     private BottomSheetDialog mServiceSettingsDialog;
+
+    // Video settings sheet, opened from the entry row of the service settings sheet; created on
+    // first use and reused while the activity lives.
+    @Nullable
+    private BottomSheetDialog mVideoSettingsDialog;
+
+    // Current-value summary shown next to the video settings entry row; null until the service
+    // settings sheet is created.
+    @Nullable
+    private MaterialTextView mVideoSettingsSummaryView;
 
     private MaterialToolbar mServiceToolbarView;
 
@@ -505,6 +514,11 @@ public class MainActivity extends AppCompatActivity {
         if (mServiceSettingsDialog != null) {
             mServiceSettingsDialog.dismiss();
             mServiceSettingsDialog = null;
+        }
+
+        if (mVideoSettingsDialog != null) {
+            mVideoSettingsDialog.dismiss();
+            mVideoSettingsDialog = null;
         }
     }
 
@@ -953,51 +967,14 @@ public class MainActivity extends AppCompatActivity {
         settingsDialog.setDismissWithAnimation(true);
         settingsDialog.getBehavior().setSkipCollapsed(true);
 
-        final Slider qualitySettingView = settingsDialog.findViewById(R.id.quality_setting);
-        qualitySettingView.setValue(MIN_PROJECTION_QUALITY);
-        qualitySettingView.setValueFrom(MIN_PROJECTION_QUALITY);
-        qualitySettingView.setValueTo(MAX_PROJECTION_QUALITY);
-        qualitySettingView.setStepSize(PROJECTION_QUALITY_STEP);
-        qualitySettingView.addOnChangeListener((slider, value, fromUser) -> {
-            if (Preferences.get().getProjectionQuality() != (int) value) {
-                Preferences.get().setProjectionQuality((int) value);
+        // Projection encoding controls live in their own sheet; this row is the only entry point
+        // and carries the current values so the sheet does not hide them.
+        mVideoSettingsSummaryView = settingsDialog.findViewById(R.id.video_settings_summary);
+        settingsDialog.findViewById(R.id.video_settings_entry).setOnClickListener(view -> {
+            if (mVideoSettingsDialog == null) {
+                mVideoSettingsDialog = createVideoSettingsDialog();
             }
-        });
-
-        final Slider scaleSettingView = settingsDialog.findViewById(R.id.scale_setting);
-        scaleSettingView.setValue(MIN_PROJECTION_SCALE);
-        scaleSettingView.setValueFrom(MIN_PROJECTION_SCALE);
-        scaleSettingView.setValueTo(MAX_PROJECTION_SCALE);
-        scaleSettingView.setStepSize(PROJECTION_SCALE_STEP);
-        scaleSettingView.setLabelFormatter(new LabelFormatter() {
-            @NonNull
-            @Override
-            public String getFormattedValue(float value) {
-                return NumberFormat.getPercentInstance().format(value / 100f);
-            }
-        });
-        scaleSettingView.addOnChangeListener((slider, value, fromUser) -> {
-            if (Preferences.get().getProjectionScale() != (int) value) {
-                Preferences.get().setProjectionScale((int) value);
-            }
-        });
-
-        final Slider frameRateSettingView = settingsDialog.findViewById(R.id.frame_rate_setting);
-        frameRateSettingView.setValue(MIN_PROJECTION_FRAME_RATE);
-        frameRateSettingView.setValueFrom(MIN_PROJECTION_FRAME_RATE);
-        frameRateSettingView.setValueTo(MAX_PROJECTION_FRAME_RATE);
-        frameRateSettingView.setStepSize(PROJECTION_FRAME_RATE_STEP);
-        frameRateSettingView.setLabelFormatter(new LabelFormatter() {
-            @NonNull
-            @Override
-            public String getFormattedValue(float value) {
-                return getString(R.string.projection_frame_rate_value_label, (int) value);
-            }
-        });
-        frameRateSettingView.addOnChangeListener((slider, value, fromUser) -> {
-            if (Preferences.get().getProjectionFrameRate() != (int) value) {
-                Preferences.get().setProjectionFrameRate((int) value);
-            }
+            mVideoSettingsDialog.show();
         });
 
         final MaterialSwitch keepScreenOnSettingView = settingsDialog.findViewById(R.id.keep_screen_on_setting);
@@ -1104,9 +1081,7 @@ public class MainActivity extends AppCompatActivity {
 
         settingsDialog.setOnShowListener(dialog -> {
             settingsDialog.getBehavior().setState(BottomSheetBehavior.STATE_EXPANDED);
-            qualitySettingView.setValue(Preferences.get().getProjectionQuality());
-            scaleSettingView.setValue(Preferences.get().getProjectionScale());
-            frameRateSettingView.setValue(Preferences.get().getProjectionFrameRate());
+            updateVideoSettingsSummary();
             keepScreenOnSettingView.setChecked(Preferences.get().isProjectionKeepScreenOn());
             keepScreenOnSettingView.jumpDrawablesToCurrentState();
             secureSettingView.setChecked(Preferences.get().isProjectionSecure());
@@ -1128,6 +1103,222 @@ public class MainActivity extends AppCompatActivity {
         });
 
         return settingsDialog;
+    }
+
+    /**
+     * Builds the video encoding sheet.
+     *
+     * <p>The projection controls moved here from the service settings sheet, so there is exactly
+     * one place that writes each preference. Values are persisted when a slider is released: a
+     * drag would otherwise persist dozens of intermediate values, and the frame rate and key-frame
+     * interval each cost an encoder rebuild. The quality row is only shown when the JPEG capture
+     * path is selected; this build always shares H.264, where the value is unused. The codec row is
+     * read-only because the client viewer has no JPEG path yet.</p>
+     */
+    @SuppressWarnings("DataFlowIssue")
+    @NonNull
+    private BottomSheetDialog createVideoSettingsDialog() {
+        final BottomSheetDialog settingsDialog = new BottomSheetDialog(this);
+        settingsDialog.setContentView(R.layout.widget_screen_share_video_settings);
+        settingsDialog.setDismissWithAnimation(true);
+        settingsDialog.getBehavior().setSkipCollapsed(true);
+
+        final View qualitySettingRow = settingsDialog.findViewById(R.id.quality_setting_row);
+        final Slider qualitySettingView = settingsDialog.findViewById(R.id.quality_setting);
+        qualitySettingView.setValue(ProjectionSettings.MIN_JPEG_QUALITY);
+        qualitySettingView.setValueFrom(ProjectionSettings.MIN_JPEG_QUALITY);
+        qualitySettingView.setValueTo(ProjectionSettings.MAX_JPEG_QUALITY);
+        qualitySettingView.setStepSize(PROJECTION_QUALITY_STEP);
+        qualitySettingView.addOnSliderTouchListener(new Slider.OnSliderTouchListener() {
+            @Override
+            public void onStartTrackingTouch(@NonNull Slider slider) {
+            }
+
+            @Override
+            public void onStopTrackingTouch(@NonNull Slider slider) {
+                final int quality = (int) slider.getValue();
+                if (Preferences.get().getProjectionQuality() != quality) {
+                    Preferences.get().setProjectionQuality(quality);
+                }
+            }
+        });
+
+        final Slider scaleSettingView = settingsDialog.findViewById(R.id.scale_setting);
+        scaleSettingView.setValue(ProjectionSettings.MIN_SCALE_PERCENT);
+        scaleSettingView.setValueFrom(ProjectionSettings.MIN_SCALE_PERCENT);
+        scaleSettingView.setValueTo(ProjectionSettings.MAX_SCALE_PERCENT);
+        scaleSettingView.setStepSize(PROJECTION_SCALE_STEP);
+        scaleSettingView.setLabelFormatter(new LabelFormatter() {
+            @NonNull
+            @Override
+            public String getFormattedValue(float value) {
+                return NumberFormat.getPercentInstance().format(value / 100f);
+            }
+        });
+        scaleSettingView.addOnSliderTouchListener(new Slider.OnSliderTouchListener() {
+            @Override
+            public void onStartTrackingTouch(@NonNull Slider slider) {
+            }
+
+            @Override
+            public void onStopTrackingTouch(@NonNull Slider slider) {
+                final int scale = (int) slider.getValue();
+                if (Preferences.get().getProjectionScale() != scale) {
+                    Preferences.get().setProjectionScale(scale);
+                }
+            }
+        });
+
+        final Slider frameRateSettingView = settingsDialog.findViewById(R.id.frame_rate_setting);
+        frameRateSettingView.setValue(ProjectionSettings.MIN_FRAME_RATE);
+        frameRateSettingView.setValueFrom(ProjectionSettings.MIN_FRAME_RATE);
+        frameRateSettingView.setValueTo(ProjectionSettings.MAX_FRAME_RATE);
+        frameRateSettingView.setStepSize(PROJECTION_FRAME_RATE_STEP);
+        frameRateSettingView.setLabelFormatter(new LabelFormatter() {
+            @NonNull
+            @Override
+            public String getFormattedValue(float value) {
+                return getString(R.string.projection_frame_rate_value_label, (int) value);
+            }
+        });
+        frameRateSettingView.addOnSliderTouchListener(new Slider.OnSliderTouchListener() {
+            @Override
+            public void onStartTrackingTouch(@NonNull Slider slider) {
+            }
+
+            @Override
+            public void onStopTrackingTouch(@NonNull Slider slider) {
+                final int frameRate = (int) slider.getValue();
+                if (Preferences.get().getProjectionFrameRate() != frameRate) {
+                    Preferences.get().setProjectionFrameRate(frameRate);
+                }
+            }
+        });
+
+        final Slider bitrateSettingView = settingsDialog.findViewById(R.id.bitrate_setting);
+        bitrateSettingView.setValue(MIN_PROJECTION_BITRATE_MBPS);
+        bitrateSettingView.setValueFrom(MIN_PROJECTION_BITRATE_MBPS);
+        bitrateSettingView.setValueTo(MAX_PROJECTION_BITRATE_MBPS);
+        bitrateSettingView.setStepSize(PROJECTION_BITRATE_STEP_MBPS);
+        bitrateSettingView.setLabelFormatter(new LabelFormatter() {
+            @NonNull
+            @Override
+            public String getFormattedValue(float value) {
+                return getString(R.string.projection_bitrate_value_label,
+                    formatNumber(value, 1));
+            }
+        });
+        bitrateSettingView.addOnSliderTouchListener(new Slider.OnSliderTouchListener() {
+            @Override
+            public void onStartTrackingTouch(@NonNull Slider slider) {
+            }
+
+            @Override
+            public void onStopTrackingTouch(@NonNull Slider slider) {
+                final int bitrate = toBitrateBps(slider.getValue());
+                if (Preferences.get().getProjectionBitrate() != bitrate) {
+                    Preferences.get().setProjectionBitrate(bitrate);
+                }
+            }
+        });
+
+        final Slider idrIntervalSettingView = settingsDialog.findViewById(R.id.idr_interval_setting);
+        idrIntervalSettingView.setValue(ProjectionSettings.MIN_IDR_INTERVAL_MS / 1000f);
+        idrIntervalSettingView.setValueFrom(ProjectionSettings.MIN_IDR_INTERVAL_MS / 1000f);
+        idrIntervalSettingView.setValueTo(ProjectionSettings.MAX_IDR_INTERVAL_MS / 1000f);
+        idrIntervalSettingView.setStepSize(PROJECTION_IDR_INTERVAL_STEP_SECONDS);
+        idrIntervalSettingView.setLabelFormatter(new LabelFormatter() {
+            @NonNull
+            @Override
+            public String getFormattedValue(float value) {
+                return getString(R.string.projection_idr_interval_value_label, (int) value);
+            }
+        });
+        idrIntervalSettingView.addOnSliderTouchListener(new Slider.OnSliderTouchListener() {
+            @Override
+            public void onStartTrackingTouch(@NonNull Slider slider) {
+            }
+
+            @Override
+            public void onStopTrackingTouch(@NonNull Slider slider) {
+                final int intervalMs = toIdrIntervalMs(slider.getValue());
+                if (Preferences.get().getProjectionIdrIntervalMs() != intervalMs) {
+                    Preferences.get().setProjectionIdrIntervalMs(intervalMs);
+                }
+            }
+        });
+
+        final MaterialTextView codecSettingView = settingsDialog.findViewById(R.id.codec_setting);
+
+        settingsDialog.setOnShowListener(dialog -> {
+            settingsDialog.getBehavior().setState(BottomSheetBehavior.STATE_EXPANDED);
+
+            final ProjectionSettings settings = currentProjectionSettings();
+            qualitySettingRow.setVisibility(settings.isH264() ? View.GONE : View.VISIBLE);
+            qualitySettingView.setValue(settings.getJpegQuality());
+            scaleSettingView.setValue(settings.getScalePercent());
+            frameRateSettingView.setValue(settings.getFrameRate());
+            bitrateSettingView.setValue(settings.getBitrateBps() / 1_000_000f);
+            idrIntervalSettingView.setValue(settings.getIdrIntervalMs() / 1000f);
+            codecSettingView.setText(settings.isH264()
+                ? R.string.projection_codec_value_h264
+                : R.string.projection_codec_value_jpeg);
+        });
+        settingsDialog.setOnDismissListener(dialog -> updateVideoSettingsSummary());
+
+        return settingsDialog;
+    }
+
+    /**
+     * Returns the validated projection settings snapshot read from the preferences.
+     */
+    @NonNull
+    private ProjectionSettings currentProjectionSettings() {
+        return ProjectionSettings.of(Preferences.get().getProjectionBitrate(),
+            Preferences.get().getProjectionFrameRate(), Preferences.get().getProjectionIdrIntervalMs(),
+            Preferences.get().getProjectionScale(), Preferences.get().getProjectionQuality(),
+            Preferences.get().getProjectionCodec());
+    }
+
+    /**
+     * Renders the current codec, frame rate and bitrate next to the video settings entry row.
+     */
+    private void updateVideoSettingsSummary() {
+        if (mVideoSettingsSummaryView == null) {
+            return;
+        }
+        final ProjectionSettings settings = currentProjectionSettings();
+        mVideoSettingsSummaryView.setText(getString(R.string.video_settings_summary,
+            getString(settings.isH264()
+                ? R.string.projection_codec_value_h264
+                : R.string.projection_codec_value_jpeg),
+            settings.getFrameRate(),
+            getString(R.string.projection_bitrate_value_label,
+                formatNumber(settings.getBitrateBps() / 1_000_000d, 1))));
+    }
+
+    /**
+     * Formats {@code value} with at most {@code maxFractionDigits} fraction digits.
+     */
+    @NonNull
+    private static String formatNumber(final double value, final int maxFractionDigits) {
+        final NumberFormat format = NumberFormat.getNumberInstance();
+        format.setMaximumFractionDigits(maxFractionDigits);
+        return format.format(value);
+    }
+
+    /**
+     * Converts a slider value in megabits per second to bits per second.
+     */
+    private static int toBitrateBps(final float megabitsPerSecond) {
+        return Math.round(megabitsPerSecond * 1_000_000f);
+    }
+
+    /**
+     * Converts a slider value in seconds to a key-frame interval in milliseconds.
+     */
+    private static int toIdrIntervalMs(final float seconds) {
+        return Math.round(seconds * 1000f);
     }
 
     /**
