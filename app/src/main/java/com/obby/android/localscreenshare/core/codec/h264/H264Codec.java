@@ -3,6 +3,7 @@ package com.obby.android.localscreenshare.core.codec.h264;
 import com.obby.android.localscreenshare.core.codec.CodecDescriptor;
 import com.obby.android.localscreenshare.core.codec.CodecIds;
 import com.obby.android.localscreenshare.core.codec.CodecRegistration;
+import com.obby.android.localscreenshare.core.codec.KeyFrameRequester;
 import com.obby.android.localscreenshare.core.codec.mediacodec.AndroidMediaCodecBridgeFactory;
 import com.obby.android.localscreenshare.core.codec.mediacodec.MediaCodecBridgeFactory;
 import com.obby.android.localscreenshare.core.model.BitstreamFormat;
@@ -49,13 +50,29 @@ public final class H264Codec {
      * is metadata for that proposal only; it never switches an active stream by itself.</p>
      */
     public static CodecRegistration registration(MediaCodecBridgeFactory bridgeFactory) {
+        return registration(bridgeFactory, KeyFrameRequester.NONE);
+    }
+
+    /**
+     * Builds the H.264 codec registration whose decoders report dropped frames.
+     *
+     * <p>The requester travels with the registration, so every decoder created by the client
+     * session from this registration reports its need for a fresh random-access point without the
+     * session taking a dependency on the client endpoint.</p>
+     */
+    public static CodecRegistration registration(MediaCodecBridgeFactory bridgeFactory,
+                                                 KeyFrameRequester keyFrameRequester) {
         if (bridgeFactory == null) {
             throw new IllegalArgumentException("bridgeFactory must not be null");
+        }
+        if (keyFrameRequester == null) {
+            throw new IllegalArgumentException("keyFrameRequester must not be null");
         }
         CodecDescriptor descriptor = new CodecDescriptor(CodecIds.H264, MIME,
                 BitstreamFormat.ANNEX_B, true, true, true);
         return new CodecRegistration(descriptor, new H264EncoderFactory(bridgeFactory),
-                new H264DecoderFactory(bridgeFactory), new H264CodecPolicy(), 10);
+                new H264DecoderFactory(bridgeFactory, keyFrameRequester),
+                new H264CodecPolicy(), 10);
     }
 
     /**
@@ -70,5 +87,16 @@ public final class H264Codec {
      */
     public static CodecRegistration androidRegistration() {
         return registration(new AndroidMediaCodecBridgeFactory());
+    }
+
+    /**
+     * Builds the production registration whose decoders report dropped frames.
+     *
+     * <p>Used by the viewer service so a decoder that had to shed a frame asks the server for a
+     * fresh join point instead of waiting for the next periodic key frame.</p>
+     */
+    public static CodecRegistration androidRegistration(
+            final KeyFrameRequester keyFrameRequester) {
+        return registration(new AndroidMediaCodecBridgeFactory(), keyFrameRequester);
     }
 }

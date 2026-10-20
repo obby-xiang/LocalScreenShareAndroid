@@ -13,8 +13,11 @@ package com.obby.android.localscreenshare.core.codec.mediacodec;
  *
  * <p><b>Buffer protocol.</b> An input buffer index is obtained with
  * {@link #dequeueInputBuffer(long)}, filled and handed back with
- * {@link #queueInputBuffer(int, byte[], long)}; the index is invalid afterwards. Output buffers are
- * released inside {@link #dequeueOutput(long)}, so the caller never sees an output index.</p>
+ * {@link #queueInputBuffer(int, byte[], long)}; the index is invalid afterwards. An output buffer
+ * index is obtained with {@link #dequeueOutput(long)} and stays owned by the caller until it is
+ * released exactly once with {@link #present(int, long)} or {@link #discard(int)}; dequeueing never
+ * renders on its own. Every index reported by {@link DecodedOutput#getBufferIndex()} must be
+ * released, or the codec runs out of output buffers.</p>
  *
  * <p><b>Lifecycle.</b> {@link #configure(DecoderFormat)}, {@link #start()} and {@link #stop()} follow
  * the order and idempotency rules of the encoder bridge; only {@link #release()} frees the codec.</p>
@@ -54,8 +57,21 @@ public interface MediaCodecDecoderBridge {
 
     /**
      * Dequeues the next decoded output, or {@code null} when the timeout elapses with no output
-     * available. The Android implementation releases the underlying output buffer internally
-     * (rendering to the configured surface) before returning a non-null output.
+     * available. The output buffer is not released: the caller decides through
+     * {@link #present(int, long)} or {@link #discard(int)}.
      */
     DecodedOutput dequeueOutput(long timeoutUs);
+
+    /**
+     * Releases output buffer {@code index} for rendering at {@code renderTimestampNs}.
+     *
+     * <p>The timestamp is on the platform's monotonic clock in nanoseconds; a timestamp that is
+     * already in the past means "render as soon as possible".</p>
+     */
+    void present(int index, long renderTimestampNs);
+
+    /**
+     * Releases output buffer {@code index} without rendering it.
+     */
+    void discard(int index);
 }

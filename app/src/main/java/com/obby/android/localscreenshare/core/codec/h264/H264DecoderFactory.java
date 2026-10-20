@@ -2,6 +2,7 @@ package com.obby.android.localscreenshare.core.codec.h264;
 
 import com.obby.android.localscreenshare.core.codec.Decoder;
 import com.obby.android.localscreenshare.core.codec.DecoderFactory;
+import com.obby.android.localscreenshare.core.codec.KeyFrameRequester;
 import com.obby.android.localscreenshare.core.codec.mediacodec.MediaCodecBridgeFactory;
 import com.obby.android.localscreenshare.core.model.StreamDescriptor;
 import com.obby.android.localscreenshare.core.model.StreamKey;
@@ -19,16 +20,34 @@ public final class H264DecoderFactory implements DecoderFactory {
 
     private final MediaCodecBridgeFactory bridgeFactory;
 
+    private final KeyFrameRequester keyFrameRequester;
+
+    /**
+     * Creates a factory whose decoders do not report key-frame needs.
+     */
     public H264DecoderFactory(MediaCodecBridgeFactory bridgeFactory) {
+        this(bridgeFactory, KeyFrameRequester.NONE);
+    }
+
+    /**
+     * Creates a factory whose decoders report dropped frames to {@code keyFrameRequester}.
+     */
+    public H264DecoderFactory(MediaCodecBridgeFactory bridgeFactory,
+                              KeyFrameRequester keyFrameRequester) {
         if (bridgeFactory == null) {
             throw new IllegalArgumentException("bridgeFactory must not be null");
         }
+        if (keyFrameRequester == null) {
+            throw new IllegalArgumentException("keyFrameRequester must not be null");
+        }
         this.bridgeFactory = bridgeFactory;
+        this.keyFrameRequester = keyFrameRequester;
     }
 
     @Override
     public Decoder create(StreamKey streamKey, StreamDescriptor descriptor,
                           RenderTarget renderTarget) {
-        return new H264Decoder(streamKey, descriptor, renderTarget, bridgeFactory);
+        return new H264Decoder(streamKey, descriptor, renderTarget, bridgeFactory,
+                keyFrameRequester);
     }
 }

@@ -377,7 +377,7 @@ public class MediaCodecBridgeContractTest {
 
         assertNull(bridge.dequeueOutput(1_000L));
 
-        DecodedOutput output = new DecodedOutput(77L, false, false);
+        DecodedOutput output = new DecodedOutput(7, 77L, false, false);
         bridge.enqueueOutput(output);
 
         RuntimeException dequeueFailure = new IllegalStateException("dequeue failed");
@@ -387,6 +387,8 @@ public class MediaCodecBridgeContractTest {
 
         DecodedOutput recovered = bridge.dequeueOutput(1_000L);
         assertSame(output, recovered);
+        assertEquals(7, recovered.getBufferIndex());
+        assertTrue(recovered.hasBuffer());
         assertEquals(77L, recovered.getPtsUs());
         assertFalse(recovered.isFormatChanged());
         assertFalse(recovered.isEndOfStream());
@@ -419,8 +421,8 @@ public class MediaCodecBridgeContractTest {
     @Test
     public void fakeDecoder_reportsFormatChangeAndEndOfStreamOutputs() {
         FakeMediaCodecDecoderBridge bridge = new FakeMediaCodecDecoderBridge();
-        DecodedOutput formatChanged = new DecodedOutput(100L, true, false);
-        DecodedOutput endOfStream = new DecodedOutput(200L, false, true);
+        DecodedOutput formatChanged = new DecodedOutput(DecodedOutput.NO_BUFFER, 100L, true, false);
+        DecodedOutput endOfStream = new DecodedOutput(5, 200L, false, true);
 
         bridge.enqueueOutput(formatChanged);
         bridge.enqueueOutput(endOfStream);
@@ -431,12 +433,40 @@ public class MediaCodecBridgeContractTest {
         assertSame(formatChanged, first);
         assertSame(endOfStream, second);
         assertTrue(first.isFormatChanged());
+        assertFalse(first.hasBuffer());
         assertFalse(first.isEndOfStream());
         assertFalse(second.isFormatChanged());
+        assertTrue(second.hasBuffer());
         assertTrue(second.isEndOfStream());
         assertEquals(100L, first.getPtsUs());
         assertEquals(200L, second.getPtsUs());
         assertNull(bridge.dequeueOutput(0L));
+    }
+
+    @Test
+    public void fakeDecoder_tracksPresentDiscardAndLeaks() {
+        FakeMediaCodecDecoderBridge bridge = new FakeMediaCodecDecoderBridge();
+        bridge.enqueueOutput(new DecodedOutput(3, 10L, false, false));
+        bridge.enqueueOutput(new DecodedOutput(4, 20L, false, false));
+
+        DecodedOutput first = bridge.dequeueOutput(1_000L);
+        DecodedOutput second = bridge.dequeueOutput(1_000L);
+        assertNotNull(first);
+        assertNotNull(second);
+        assertEquals(Arrays.asList(3, 4), bridge.getDequeuedOutputIndices());
+        assertEquals(Arrays.asList(3, 4), bridge.getUnreleasedOutputIndices());
+
+        bridge.present(4, 123L);
+        bridge.discard(3);
+
+        assertTrue("every output must be released", bridge.getUnreleasedOutputIndices().isEmpty());
+        assertEquals(Arrays.asList(4), bridge.getPresentedIndices());
+        assertEquals(Arrays.asList(123L), bridge.getPresentedTimestampsNs());
+        assertEquals(Arrays.asList(3), bridge.getDiscardedIndices());
+        assertTrue(bridge.getDoubleReleasedOutputIndices().isEmpty());
+
+        bridge.discard(3);
+        assertEquals(Arrays.asList(3), bridge.getDoubleReleasedOutputIndices());
     }
 
     @Test
@@ -536,15 +566,21 @@ public class MediaCodecBridgeContractTest {
         assertClosedGetters(EncoderStreamFormat.class, "getCsd0", "getCsd1", "getWidth",
                 "getHeight", "getColorInfo");
 
-        DecodedOutput output = new DecodedOutput(55L, true, false);
+        DecodedOutput output = new DecodedOutput(DecodedOutput.NO_BUFFER, 55L, true, false);
+        assertEquals(DecodedOutput.NO_BUFFER, output.getBufferIndex());
+        assertFalse(output.hasBuffer());
         assertEquals(55L, output.getPtsUs());
         assertTrue(output.isFormatChanged());
         assertFalse(output.isEndOfStream());
-        DecodedOutput endOfStream = new DecodedOutput(66L, false, true);
+        DecodedOutput endOfStream = new DecodedOutput(6, 66L, false, true);
+        assertEquals(6, endOfStream.getBufferIndex());
+        assertTrue(endOfStream.hasBuffer());
         assertFalse(endOfStream.isFormatChanged());
         assertTrue(endOfStream.isEndOfStream());
-        assertSingleConstructor(DecodedOutput.class, long.class, boolean.class, boolean.class);
-        assertClosedGetters(DecodedOutput.class, "getPtsUs", "isFormatChanged", "isEndOfStream");
+        assertSingleConstructor(DecodedOutput.class, int.class, long.class, boolean.class,
+                boolean.class);
+        assertClosedGetters(DecodedOutput.class, "getBufferIndex", "getPtsUs", "isFormatChanged",
+                "isEndOfStream");
 
         assertClosedImmutable(EncoderFormat.class);
         assertClosedImmutable(DecoderFormat.class);

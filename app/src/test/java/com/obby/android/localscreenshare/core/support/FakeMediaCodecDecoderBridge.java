@@ -15,11 +15,19 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * JVM-only decoder bridge that records the configured format and queued input buffers.
+ * JVM-only decoder bridge that records the configured format, queued input buffers and the
+ * lifecycle of every output buffer.
  *
  * <p>Input buffer indices increment on every successful {@code dequeueInputBuffer} call;
  * {@link #failNextInputTimeout()} makes the next call report a timeout ({@code -1}) without
- * consuming an index. Queued input bytes are copied both when recorded and when read back.</p>
+ * consuming an index, and {@link #failNextInputTimeouts(int)} does so for a run of calls so a
+ * decoder's input budget can actually expire. Queued input bytes are copied both when recorded and
+ * when read back.</p>
+ *
+ * <p>Output buffers are tracked as a contract: every index returned by {@link #dequeueOutput(long)}
+ * must be released exactly once through {@link #present(int, long)} or {@link #discard(int)}.
+ * {@link #getUnreleasedOutputIndices()} and {@link #getDoubleReleasedOutputIndices()} expose
+ * violations so tests fail on a leak instead of silently passing.</p>
  */
 public final class FakeMediaCodecDecoderBridge implements MediaCodecDecoderBridge {
 
@@ -28,6 +36,11 @@ public final class FakeMediaCodecDecoderBridge implements MediaCodecDecoderBridg
     private final List<Integer> queuedInputIndices = new CopyOnWriteArrayList<>();
     private final List<byte[]> queuedInputData = new CopyOnWriteArrayList<>();
     private final List<Long> queuedInputPtsUs = new CopyOnWriteArrayList<>();
+
+    private final List<Integer> dequeuedOutputIndices = new CopyOnWriteArrayList<>();
+    private final List<Integer> presentedIndices = new CopyOnWriteArrayList<>();
+    private final List<Long> presentedTimestampsNs = new CopyOnWriteArrayList<>();
+    private final List<Integer> discardedIndices = new CopyOnWriteArrayList<>();
 
     private final AtomicInteger configureCount = new AtomicInteger();
     private final AtomicInteger startCount = new AtomicInteger();
@@ -41,6 +54,7 @@ public final class FakeMediaCodecDecoderBridge implements MediaCodecDecoderBridg
     private final AtomicReference<RuntimeException> nextQueueFailure = new AtomicReference<>();
     private final AtomicReference<RuntimeException> nextDequeueFailure = new AtomicReference<>();
     private final AtomicReference<Boolean> nextInputTimeout = new AtomicReference<>();
+    private final AtomicInteger inputTimeoutsLeft = new AtomicInteger();
 
     private volatile DecoderFormat lastConfigureFormat;
 
@@ -76,6 +90,9 @@ public final class FakeMediaCodecDecoderBridge implements MediaCodecDecoderBridg
     @Override
     public int dequeueInputBuffer(long timeoutUs) {
         dequeueInputCount.incrementAndGet();
+        if (inputTimeoutsLeft.getAndUpdate(left -> left > 0 ? left - 1 : 0) > 0) {
+            return -1;
+        }
         if (Boolean.TRUE.equals(nextInputTimeout.getAndSet(null))) {
             return -1;
         }
@@ -99,15 +116,32 @@ public final class FakeMediaCodecDecoderBridge implements MediaCodecDecoderBridg
         if (failure != null) {
             throw failure;
         }
+        DecodedOutput output;
         try {
             if (timeoutUs <= 0L) {
-                return outputs.poll();
+                output = outputs.poll();
+            } else {
+                output = outputs.poll(timeoutUs, TimeUnit.MICROSECONDS);
             }
-            return outputs.poll(timeoutUs, TimeUnit.MICROSECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return null;
         }
+        if (output != null && output.hasBuffer()) {
+            dequeuedOutputIndices.add(output.getBufferIndex());
+        }
+        return output;
+    }
+
+    @Override
+    public void present(int index, long renderTimestampNs) {
+        presentedIndices.add(index);
+        presentedTimestampsNs.add(renderTimestampNs);
+    }
+
+    @Override
+    public void discard(int index) {
+        discardedIndices.add(index);
     }
 
     public DecoderFormat getLastConfigureFormat() {
@@ -176,5 +210,58 @@ public final class FakeMediaCodecDecoderBridge implements MediaCodecDecoderBridg
 
     public void failNextInputTimeout() {
         nextInputTimeout.set(Boolean.TRUE);
+    }
+
+    /**
+     * Makes the next {@code count} input dequeues report a timeout.
+     */
+    public void failNextInputTimeouts(int count) {
+        inputTimeoutsLeft.set(Math.max(0, count));
+    }
+
+    public List<Integer> getDequeuedOutputIndices() {
+        return Collections.unmodifiableList(new ArrayList<>(dequeuedOutputIndices));
+    }
+
+    public List<Integer> getPresentedIndices() {
+        return Collections.unmodifiableList(new ArrayList<>(presentedIndices));
+    }
+
+    public List<Long> getPresentedTimestampsNs() {
+        return Collections.unmodifiableList(new ArrayList<>(presentedTimestampsNs));
+    }
+
+    public List<Integer> getDiscardedIndices() {
+        return Collections.unmodifiableList(new ArrayList<>(discardedIndices));
+    }
+
+    /**
+     * Returns the dequeued output indices that were neither presented nor discarded.
+     */
+    public List<Integer> getUnreleasedOutputIndices() {
+        List<Integer> released = new ArrayList<>(presentedIndices);
+        released.addAll(discardedIndices);
+        List<Integer> leaked = new ArrayList<>();
+        for (Integer index : dequeuedOutputIndices) {
+            if (!released.remove(index)) {
+                leaked.add(index);
+            }
+        }
+        return Collections.unmodifiableList(leaked);
+    }
+
+    /**
+     * Returns the output indices released more than once; each must be released exactly once.
+     */
+    public List<Integer> getDoubleReleasedOutputIndices() {
+        List<Integer> released = new ArrayList<>(presentedIndices);
+        released.addAll(discardedIndices);
+        List<Integer> duplicated = new ArrayList<>();
+        for (Integer index : released) {
+            if (Collections.frequency(released, index) > 1 && !duplicated.contains(index)) {
+                duplicated.add(index);
+            }
+        }
+        return Collections.unmodifiableList(duplicated);
     }
 }

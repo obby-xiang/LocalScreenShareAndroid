@@ -71,6 +71,11 @@ public final class ScreenShareClient {
     // a rejected message is dropped and the session recovers on the next join point.
     private static final int DECODE_QUEUE_CAPACITY = 256;
 
+    // Limits how often a decode-queue overflow asks for a key frame; requests are raised on the
+    // transport thread that detected the overflow.
+    @NonNull
+    private final KeyFrameRequestThrottle mKeyFrameRequestThrottle = new KeyFrameRequestThrottle();
+
     // Lifecycle flag, written and read on the main thread; once set, callbacks become no-ops.
     private boolean mIsStopped;
 
@@ -233,7 +238,11 @@ public final class ScreenShareClient {
                             }
                         });
                     } catch (RejectedExecutionException e) {
+                        // The dropped message was an encoded access unit: the reference chain now
+                        // has a gap, so ask for a fresh join point instead of waiting for the next
+                        // periodic key frame.
                         Log.w(mTag, "onNext: decode queue full, dropping a message");
+                        requestKeyFrameThrottled();
                     }
                     if (!mIsConnected) {
                         mIsConnected = true;
@@ -298,6 +307,17 @@ public final class ScreenShareClient {
         observer.onNext(ClientMessage.newBuilder()
             .setRequestKeyframe(RequestKeyframe.getDefaultInstance())
             .build());
+    }
+
+    /**
+     * Raises a key-frame request at most once per throttle interval.
+     *
+     * <p>Used by the congestion path, which can fire for every message while the queue stays full.</p>
+     */
+    private void requestKeyFrameThrottled() {
+        if (mKeyFrameRequestThrottle.tryAcquire(SystemClock.elapsedRealtime())) {
+            requestKeyframe();
+        }
     }
 
     /**

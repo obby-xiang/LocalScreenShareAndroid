@@ -23,9 +23,10 @@ import java.nio.ByteBuffer;
  * <p><b>Dequeue semantics.</b> {@link #dequeueOutput(long)} maps {@code INFO_TRY_AGAIN_LATER} and any
  * other non-buffer result to {@code null} (the timeout elapsed with no output), a
  * {@code INFO_OUTPUT_FORMAT_CHANGED} result to a {@link DecodedOutput} with
- * {@code formatChanged=true}, and an ordinary output buffer to a {@link DecodedOutput} carrying the
- * presentation timestamp and the end-of-stream flag. Each buffer is released with {@code render=true}
- * so the frame is rendered to the configured surface.</p>
+ * {@code formatChanged=true} and no buffer index, and an ordinary output buffer to a
+ * {@link DecodedOutput} carrying its index, presentation timestamp and end-of-stream flag. The
+ * buffer is left unreleased, so the frame reaches the surface only through
+ * {@link #present(int, long)} and is dropped through {@link #discard(int)}.</p>
  */
 public final class AndroidMediaCodecDecoderBridge implements MediaCodecDecoderBridge {
 
@@ -128,7 +129,7 @@ public final class AndroidMediaCodecDecoderBridge implements MediaCodecDecoderBr
         MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
         int index = codec.dequeueOutputBuffer(info, timeoutUs);
         if (index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-            return new DecodedOutput(0L, true, false);
+            return new DecodedOutput(DecodedOutput.NO_BUFFER, 0L, true, false);
         }
         if (index == MediaCodec.INFO_TRY_AGAIN_LATER) {
             return null;
@@ -137,8 +138,18 @@ public final class AndroidMediaCodecDecoderBridge implements MediaCodecDecoderBr
             return null;
         }
         boolean endOfStream = (info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0;
-        codec.releaseOutputBuffer(index, true);
-        return new DecodedOutput(info.presentationTimeUs, false, endOfStream);
+        return new DecodedOutput(index, info.presentationTimeUs, false, endOfStream);
+    }
+
+    @Override
+    public void present(int index, long renderTimestampNs) {
+        // A timestamp in the past asks the platform to show the frame as soon as possible.
+        codec.releaseOutputBuffer(index, renderTimestampNs);
+    }
+
+    @Override
+    public void discard(int index) {
+        codec.releaseOutputBuffer(index, false);
     }
 
     private static void setCsd(MediaFormat format, String key, byte[] csd) {

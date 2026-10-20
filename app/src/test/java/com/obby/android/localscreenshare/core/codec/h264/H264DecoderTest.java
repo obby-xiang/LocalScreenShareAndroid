@@ -4,6 +4,7 @@ import android.view.Surface;
 
 import com.obby.android.localscreenshare.core.codec.CodecIds;
 import com.obby.android.localscreenshare.core.codec.DecoderException;
+import com.obby.android.localscreenshare.core.codec.KeyFrameRequester;
 import com.obby.android.localscreenshare.core.codec.mediacodec.DecodedOutput;
 import com.obby.android.localscreenshare.core.codec.mediacodec.DecoderFormat;
 import com.obby.android.localscreenshare.core.codec.mediacodec.MediaCodecBridgeFactory;
@@ -276,6 +277,20 @@ public class H264DecoderTest {
     }
 
     @Test
+    public void inputTimeoutNonJoin_requestsKeyFrame() {
+        List<Integer> requests = new ArrayList<>();
+        H264Decoder budgetDecoder = newDecoder(new BudgetBridgeFactory(
+                new BudgetDecoderBridge(1)), renderTarget, () -> requests.add(0));
+        budgetDecoder.configure(descriptor(CONFIG_EPOCH, CodecIds.H264, validConfigParts()));
+        budgetDecoder.decode(accessUnit(CONFIG_EPOCH, 0, idrPayload()));
+
+        budgetDecoder.decode(accessUnit(CONFIG_EPOCH, 1,
+                H264Fixtures.annexB(H264Fixtures.pSlice())));
+
+        assertEquals(Collections.singletonList(0), requests);
+    }
+
+    @Test
     public void queuedThenOutputFailure_throwsDecoderException() {
         decoder.configure(descriptor(CONFIG_EPOCH, CodecIds.H264, validConfigParts()));
         bridge.failNextDequeue(new RuntimeException("output failed"));
@@ -286,6 +301,62 @@ public class H264DecoderTest {
         assertNotNull(failure.getCause());
         assertEquals(1, bridge.getQueuedInputData().size());
         assertEquals(0, bridge.getReleaseCount());
+    }
+
+    @Test
+    public void multipleOutputs_onlyNewestIsPresented() {
+        decoder.configure(descriptor(CONFIG_EPOCH, CodecIds.H264, validConfigParts()));
+        bridge.enqueueOutput(new DecodedOutput(10, 0L, false, false));
+        bridge.enqueueOutput(new DecodedOutput(11, 33_000L, false, false));
+
+        decoder.decode(accessUnit(CONFIG_EPOCH, 0, idrPayload()));
+
+        assertEquals(Collections.singletonList(11), bridge.getPresentedIndices());
+        assertEquals(Collections.singletonList(10), bridge.getDiscardedIndices());
+        assertTrue(bridge.getUnreleasedOutputIndices().isEmpty());
+    }
+
+    @Test
+    public void formatChangeEntry_isIgnoredWithoutReleasingAnything() {
+        decoder.configure(descriptor(CONFIG_EPOCH, CodecIds.H264, validConfigParts()));
+        bridge.enqueueOutput(new DecodedOutput(DecodedOutput.NO_BUFFER, 0L, true, false));
+        bridge.enqueueOutput(new DecodedOutput(12, 5_000L, false, false));
+
+        decoder.decode(accessUnit(CONFIG_EPOCH, 0, idrPayload()));
+
+        assertEquals(Collections.singletonList(12), bridge.getPresentedIndices());
+        assertTrue(bridge.getDiscardedIndices().isEmpty());
+        assertTrue(bridge.getUnreleasedOutputIndices().isEmpty());
+    }
+
+    @Test
+    public void endOfStream_releasesBufferAndFails() {
+        decoder.configure(descriptor(CONFIG_EPOCH, CodecIds.H264, validConfigParts()));
+        bridge.enqueueOutput(new DecodedOutput(13, 0L, false, true));
+
+        DecoderException failure = assertThrows(DecoderException.class,
+                () -> decoder.decode(accessUnit(CONFIG_EPOCH, 0, idrPayload())));
+
+        assertTrue(failure.getMessage().contains("end of stream"));
+        assertEquals(Collections.singletonList(13), bridge.getDiscardedIndices());
+        assertTrue(bridge.getUnreleasedOutputIndices().isEmpty());
+    }
+
+    @Test
+    public void backwardPts_isDroppedAsStale() {
+        decoder.configure(descriptor(CONFIG_EPOCH, CodecIds.H264, validConfigParts()));
+        bridge.enqueueOutput(new DecodedOutput(20, 100_000L, false, false));
+        decoder.decode(accessUnit(CONFIG_EPOCH, 0, idrPayload()));
+        assertEquals(Collections.singletonList(20), bridge.getPresentedIndices());
+
+        // An older timestamp than the frame already on screen: presenting it would make the
+        // picture jump backwards, so it is released unrendered.
+        bridge.enqueueOutput(new DecodedOutput(21, 50_000L, false, false));
+        decoder.decode(accessUnit(CONFIG_EPOCH, 1, idrPayload()));
+
+        assertEquals(Collections.singletonList(20), bridge.getPresentedIndices());
+        assertEquals(Collections.singletonList(21), bridge.getDiscardedIndices());
+        assertTrue(bridge.getUnreleasedOutputIndices().isEmpty());
     }
 
     @Test
@@ -303,6 +374,12 @@ public class H264DecoderTest {
     private H264Decoder newDecoder(MediaCodecBridgeFactory factory, RenderTarget target) {
         return new H264Decoder(STREAM_KEY, descriptor(CONFIG_EPOCH, CodecIds.H264,
                 validConfigParts()), target, factory);
+    }
+
+    private H264Decoder newDecoder(MediaCodecBridgeFactory factory, RenderTarget target,
+                                   KeyFrameRequester keyFrameRequester) {
+        return new H264Decoder(STREAM_KEY, descriptor(CONFIG_EPOCH, CodecIds.H264,
+                validConfigParts()), target, factory, keyFrameRequester);
     }
 
     private void assertConfigureRejected(List<CodecConfigPart> parts) {
@@ -498,6 +575,16 @@ public class H264DecoderTest {
         @Override
         public DecodedOutput dequeueOutput(long timeoutUs) {
             return null;
+        }
+
+        @Override
+        public void present(int index, long renderTimestampNs) {
+            throw new AssertionError("no output buffer is produced by this bridge");
+        }
+
+        @Override
+        public void discard(int index) {
+            throw new AssertionError("no output buffer is produced by this bridge");
         }
 
         int getDequeueInputCalls() {

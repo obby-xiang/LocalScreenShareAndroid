@@ -65,6 +65,7 @@ import com.obby.android.localscreenshare.MainActivity;
 import com.obby.android.localscreenshare.R;
 import com.obby.android.localscreenshare.client.ClientMediaReceiver;
 import com.obby.android.localscreenshare.client.ClientSecureListener;
+import com.obby.android.localscreenshare.client.KeyFrameRequestThrottle;
 import com.obby.android.localscreenshare.client.ScreenShareClient;
 import com.obby.android.localscreenshare.client.ClientObserver;
 import com.obby.android.localscreenshare.client.ClientStats;
@@ -190,6 +191,10 @@ public class ScreenViewerService extends Service {
     @NonNull
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
 
+    // Limits key-frame requests raised by decode failures and queue overflows.
+    @NonNull
+    private final KeyFrameRequestThrottle mKeyFrameRequestThrottle = new KeyFrameRequestThrottle();
+
     @NonNull
     private final ClientStatsListener mClientStatsListener = this::onClientStatsChanged;
 
@@ -268,6 +273,12 @@ public class ScreenViewerService extends Service {
     private final ClientStateListener mClientStateListener = new ClientStateListener() {
         @Override
         public void onStateChanged(@NonNull ClientState previous, @NonNull ClientState current) {
+            if (current == ClientState.RESYNCING) {
+                // A decode failure or a missing surface broke the reference chain; ask for a fresh
+                // join point instead of waiting for the next periodic key frame.
+                mMainHandler.post(ScreenViewerService.this::requestKeyFrame);
+                return;
+            }
             if (current != ClientState.STREAMING) {
                 return;
             }
@@ -530,13 +541,15 @@ public class ScreenViewerService extends Service {
      * probing and JPEG fallback land. The surface render target wraps the viewer's texture view,
      * the receiver drives the session from wire messages on the client's decode thread, and the
      * surface viewer is mounted immediately so its texture view exposes the surface the decoder
-     * needs.</p>
+     * needs. The registration carries a key-frame requester, so a decoder that had to shed a frame
+     * asks the server for a fresh join point.</p>
      */
     @NonNull
     private ClientMediaReceiver startMediaSession() {
         if (mCodecRegistry == null) {
             mCodecRegistry = CodecRegistry.withDefaults();
-            mCodecRegistry.register(H264Codec.androidRegistration());
+            mCodecRegistry.register(H264Codec.androidRegistration(
+                () -> mMainHandler.post(this::requestKeyFrame)));
         }
         if (mStreamKey == null) {
             mStreamKey = new StreamKey("remote", "screen");
@@ -572,6 +585,22 @@ public class ScreenViewerService extends Service {
         mSurfaceShareViewer.show();
 
         return mClientMediaReceiver;
+    }
+
+    /**
+     * Asks the server for a fresh random-access point, at most once per throttle interval.
+     *
+     * <p>Runs on the main thread. Called when the session enters {@code RESYNCING} and when the
+     * decoder reports a dropped frame, so a damaged reference chain recovers in one round trip
+     * instead of waiting for the next periodic key frame.</p>
+     */
+    private void requestKeyFrame() {
+        if (mClient == null || !mKeyFrameRequestThrottle.tryAcquire(
+            TimeSource.MONOTONIC.nowMs())) {
+            return;
+        }
+        Log.i(mTag, "requestKeyFrame: asking for a random access point");
+        mClient.requestKeyframe();
     }
 
     /**
