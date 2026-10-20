@@ -147,6 +147,10 @@ import lombok.experimental.Accessors;
 public final class ScreenShareServer {
     private static final long UPDATE_SERVER_STATS_INTERVAL_MS = 3000L;
 
+    // Upper bound of the wait for the gRPC server to terminate during stop, before the callback
+    // executor is shut down.
+    private static final long GRPC_STOP_TIMEOUT_MS = 2_000L;
+
     // Schema version of the discovery metadata written into the NSD TXT record.
     private static final int NSD_METADATA_VERSION = 1;
 
@@ -258,7 +262,7 @@ public final class ScreenShareServer {
                 super.run();
             }
         })
-        .build(), new ThreadPoolExecutor.AbortPolicy());
+        .build(), GrpcServerShutdown.rejectionHandler());
 
     @NonNull
     private final StreamService mStreamService = new StreamService();
@@ -767,8 +771,20 @@ public final class ScreenShareServer {
             mLegacyRegistration = null;
         }
 
-        mGrpcServer.shutdownNow();
-        mGrpcServerExecutor.shutdownNow();
+        // Shut the server down first and let its transports finish before terminating the callback
+        // executor; a transport's close posts a context-closer task to that executor, and a
+        // rejecting executor would crash the process here while a client is streaming.
+        GrpcServerShutdown.shutdown(new GrpcServerShutdown.ServerHandle() {
+            @Override
+            public void shutdownNow() {
+                mGrpcServer.shutdownNow();
+            }
+
+            @Override
+            public boolean awaitTermination(long timeoutMs) throws InterruptedException {
+                return mGrpcServer.awaitTermination(timeoutMs, TimeUnit.MILLISECONDS);
+            }
+        }, mGrpcServerExecutor, GRPC_STOP_TIMEOUT_MS);
     }
 
     private void updateServerInfo(@NonNull final ServerInfo serverInfo) {
