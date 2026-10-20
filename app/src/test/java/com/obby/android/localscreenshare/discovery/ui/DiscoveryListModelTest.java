@@ -19,8 +19,8 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
-/** Unit tests for {@link DeviceListModel}. */
-public class DeviceListModelTest {
+/** Unit tests for {@link DiscoveryListModel}. */
+public class DiscoveryListModelTest {
 
     private static final String SERVER_ID = "AAAAAAAAAAAAAAAAAAAAAAAAAA";
 
@@ -28,54 +28,54 @@ public class DeviceListModelTest {
 
     @Test
     public void emptySnapshotYieldsOneEmptyHintRow() {
-        List<DeviceListModel.Row> rows = DeviceListModel.rows(Collections.emptyList());
+        List<DiscoveryListModel.Row> rows = DiscoveryListModel.rows(Collections.emptyList());
 
         assertEquals(1, rows.size());
-        assertEquals(DeviceListModel.RowType.EMPTY_HINT, rows.get(0).getType());
+        assertEquals(DiscoveryListModel.RowType.EMPTY_HINT, rows.get(0).getType());
         assertNull(rows.get(0).getDevice());
     }
 
     @Test
     public void emptyStateDistinguishesDisabledSearchingAndNotFound() {
-        assertEquals(DeviceListModel.EmptyState.DISABLED,
-            DeviceListModel.emptyState(false, false));
-        assertEquals(DeviceListModel.EmptyState.DISABLED,
-            DeviceListModel.emptyState(false, true));
-        assertEquals(DeviceListModel.EmptyState.SEARCHING,
-            DeviceListModel.emptyState(true, false));
-        assertEquals(DeviceListModel.EmptyState.NOT_FOUND,
-            DeviceListModel.emptyState(true, true));
+        assertEquals(DiscoveryListModel.EmptyState.DISABLED,
+            DiscoveryListModel.emptyState(false, false));
+        assertEquals(DiscoveryListModel.EmptyState.DISABLED,
+            DiscoveryListModel.emptyState(false, true));
+        assertEquals(DiscoveryListModel.EmptyState.SEARCHING,
+            DiscoveryListModel.emptyState(true, false));
+        assertEquals(DiscoveryListModel.EmptyState.NOT_FOUND,
+            DiscoveryListModel.emptyState(true, true));
     }
 
     @Test
     public void serversAndClientsGetTheirOwnSections() {
-        List<DeviceListModel.Row> rows = DeviceListModel.rows(Arrays.asList(
+        List<DiscoveryListModel.Row> rows = DiscoveryListModel.rows(Arrays.asList(
             device(SERVER_ID, DeviceRole.SERVER, DevicePresence.HEARD, false, ShareState.IDLE,
                 JoinPolicy.OPEN, "10.0.0.5"),
             device(CLIENT_ID, DeviceRole.CLIENT, DevicePresence.HEARD, false, ShareState.IDLE,
                 JoinPolicy.OPEN, "10.0.0.6")));
 
         assertEquals(4, rows.size());
-        assertEquals(DeviceListModel.RowType.HEADER_SERVERS, rows.get(0).getType());
-        assertEquals(DeviceListModel.RowType.DEVICE, rows.get(1).getType());
+        assertEquals(DiscoveryListModel.RowType.HEADER_SERVERS, rows.get(0).getType());
+        assertEquals(DiscoveryListModel.RowType.DEVICE, rows.get(1).getType());
         assertEquals(SERVER_ID, rows.get(1).getDevice().getId());
-        assertEquals(DeviceListModel.RowType.HEADER_CLIENTS, rows.get(2).getType());
-        assertEquals(DeviceListModel.RowType.DEVICE, rows.get(3).getType());
+        assertEquals(DiscoveryListModel.RowType.HEADER_CLIENTS, rows.get(2).getType());
+        assertEquals(DiscoveryListModel.RowType.DEVICE, rows.get(3).getType());
         assertEquals(CLIENT_ID, rows.get(3).getDevice().getId());
     }
 
     @Test
     public void unknownRoleIsListedAsAServer() {
-        List<DeviceListModel.Row> rows = DeviceListModel.rows(Collections.singletonList(
+        List<DiscoveryListModel.Row> rows = DiscoveryListModel.rows(Collections.singletonList(
             device(SERVER_ID, DeviceRole.UNKNOWN, DevicePresence.HEARD, false, ShareState.UNKNOWN,
                 JoinPolicy.UNKNOWN, "10.0.0.5")));
 
-        assertEquals(DeviceListModel.RowType.HEADER_SERVERS, rows.get(0).getType());
+        assertEquals(DiscoveryListModel.RowType.HEADER_SERVERS, rows.get(0).getType());
     }
 
     @Test
     public void confirmedDeviceComesBeforeAHeardOne() {
-        List<DeviceListModel.Row> rows = DeviceListModel.rows(Arrays.asList(
+        List<DiscoveryListModel.Row> rows = DiscoveryListModel.rows(Arrays.asList(
             device(SERVER_ID, DeviceRole.SERVER, DevicePresence.HEARD, true, ShareState.IDLE,
                 JoinPolicy.OPEN, "10.0.0.5"),
             device(CLIENT_ID, DeviceRole.SERVER, DevicePresence.CONFIRMED, false, ShareState.IDLE,
@@ -87,7 +87,7 @@ public class DeviceListModelTest {
 
     @Test
     public void favoriteComesBeforeANonFavoriteAtTheSamePresence() {
-        List<DeviceListModel.Row> rows = DeviceListModel.rows(Arrays.asList(
+        List<DiscoveryListModel.Row> rows = DiscoveryListModel.rows(Arrays.asList(
             device(SERVER_ID, DeviceRole.SERVER, DevicePresence.HEARD, false, ShareState.IDLE,
                 JoinPolicy.OPEN, "10.0.0.5"),
             device(CLIENT_ID, DeviceRole.SERVER, DevicePresence.HEARD, true, ShareState.IDLE,
@@ -98,7 +98,7 @@ public class DeviceListModelTest {
 
     @Test
     public void ipv4PrimaryAddressComesBeforeIpv6() {
-        List<DeviceListModel.Row> rows = DeviceListModel.rows(Arrays.asList(
+        List<DiscoveryListModel.Row> rows = DiscoveryListModel.rows(Arrays.asList(
             device(SERVER_ID, DeviceRole.SERVER, DevicePresence.HEARD, false, ShareState.IDLE,
                 JoinPolicy.OPEN, "[fe80::1]"),
             device(CLIENT_ID, DeviceRole.SERVER, DevicePresence.HEARD, false, ShareState.IDLE,
@@ -109,49 +109,49 @@ public class DeviceListModelTest {
 
     @Test
     public void statusReflectsPresenceJoinAndState() {
-        assertEquals(DeviceListModel.DeviceStatus.LIVE, DeviceListModel.status(
+        assertEquals(DiscoveryListModel.DeviceStatus.LIVE, DiscoveryListModel.status(
             device(SERVER_ID, DeviceRole.SERVER, DevicePresence.CONFIRMED, false, ShareState.LIVE,
                 JoinPolicy.OPEN, "10.0.0.5")));
-        assertEquals(DeviceListModel.DeviceStatus.IDLE, DeviceListModel.status(
+        assertEquals(DiscoveryListModel.DeviceStatus.IDLE, DiscoveryListModel.status(
             device(SERVER_ID, DeviceRole.SERVER, DevicePresence.HEARD, false, ShareState.IDLE,
                 JoinPolicy.OPEN, "10.0.0.5")));
-        assertEquals(DeviceListModel.DeviceStatus.NEEDS_APPROVAL, DeviceListModel.status(
+        assertEquals(DiscoveryListModel.DeviceStatus.NEEDS_APPROVAL, DiscoveryListModel.status(
             device(SERVER_ID, DeviceRole.SERVER, DevicePresence.HEARD, false, ShareState.LIVE,
                 JoinPolicy.APPROVAL, "10.0.0.5")));
-        assertEquals(DeviceListModel.DeviceStatus.CLOSED, DeviceListModel.status(
+        assertEquals(DiscoveryListModel.DeviceStatus.CLOSED, DiscoveryListModel.status(
             device(SERVER_ID, DeviceRole.SERVER, DevicePresence.HEARD, false, ShareState.LIVE,
                 JoinPolicy.CLOSED, "10.0.0.5")));
     }
 
     @Test
     public void unreachablePresenceWinsOverJoinAndState() {
-        assertEquals(DeviceListModel.DeviceStatus.UNREACHABLE, DeviceListModel.status(
+        assertEquals(DiscoveryListModel.DeviceStatus.UNREACHABLE, DiscoveryListModel.status(
             device(SERVER_ID, DeviceRole.SERVER, DevicePresence.UNREACHABLE, true, ShareState.LIVE,
                 JoinPolicy.CLOSED, "10.0.0.5")));
     }
 
     @Test
     public void onlyStaleAndUnreachableRowsAreDimmed() {
-        assertTrue(DeviceListModel.isDimmed(
+        assertTrue(DiscoveryListModel.isDimmed(
             device(SERVER_ID, DeviceRole.SERVER, DevicePresence.STALE, false, ShareState.IDLE,
                 JoinPolicy.OPEN, "10.0.0.5")));
-        assertTrue(DeviceListModel.isDimmed(
+        assertTrue(DiscoveryListModel.isDimmed(
             device(SERVER_ID, DeviceRole.SERVER, DevicePresence.UNREACHABLE, false, ShareState.IDLE,
                 JoinPolicy.OPEN, "10.0.0.5")));
-        assertFalse(DeviceListModel.isDimmed(
+        assertFalse(DiscoveryListModel.isDimmed(
             device(SERVER_ID, DeviceRole.SERVER, DevicePresence.CONFIRMED, false, ShareState.IDLE,
                 JoinPolicy.OPEN, "10.0.0.5")));
-        assertFalse(DeviceListModel.isDimmed(
+        assertFalse(DiscoveryListModel.isDimmed(
             device(SERVER_ID, DeviceRole.SERVER, DevicePresence.HEARD, false, ShareState.IDLE,
                 JoinPolicy.OPEN, "10.0.0.5")));
     }
 
     @Test
     public void addressTextUsesThePrimaryAddressAndIsEmptyWithoutOne() {
-        assertEquals("10.0.0.5:8080", DeviceListModel.addressText(
+        assertEquals("10.0.0.5:8080", DiscoveryListModel.addressText(
             device(SERVER_ID, DeviceRole.SERVER, DevicePresence.HEARD, false, ShareState.IDLE,
                 JoinPolicy.OPEN, "10.0.0.5")));
-        assertEquals("", DeviceListModel.addressText(LssDeviceInfo.builder().id(SERVER_ID).build()));
+        assertEquals("", DiscoveryListModel.addressText(LssDeviceInfo.builder().id(SERVER_ID).build()));
     }
 
     private static LssDeviceInfo device(String id, DeviceRole role, DevicePresence presence,

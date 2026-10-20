@@ -1,6 +1,5 @@
 package com.obby.android.localscreenshare.settings;
 
-import com.obby.android.localscreenshare.discovery.VisibilityPolicy;
 import com.obby.android.localscreenshare.discovery.model.JoinPolicy;
 import com.obby.android.localscreenshare.support.Constants;
 

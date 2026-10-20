@@ -9,7 +9,7 @@ import java.security.KeyPair;
 /**
  * Storage abstraction for the device identity key pair.
  *
- * <p>The real implementation is {@link AndroidKeystoreIdentityProvider}; JVM tests substitute a
+ * <p>The real implementation is {@link AndroidKeystoreKeyStore}; JVM tests substitute a
  * keystore that holds software EC keys. Only the public key is ever read back, because the
  * identity is derived from its SPKI encoding.</p>
  *

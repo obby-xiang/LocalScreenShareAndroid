@@ -64,23 +64,23 @@ import com.google.android.material.slider.LabelFormatter;
 import com.google.android.material.slider.Slider;
 import com.google.android.material.textview.MaterialTextView;
 import com.obby.android.localscreenshare.discovery.LssServiceDiscoveryManager;
-import com.obby.android.localscreenshare.discovery.VisibilityPolicy;
 import com.obby.android.localscreenshare.discovery.favorite.FavoriteDevice;
 import com.obby.android.localscreenshare.discovery.favorite.FavoriteStore;
 import com.obby.android.localscreenshare.discovery.manual.ManualAddressProvider;
 import com.obby.android.localscreenshare.discovery.model.DeviceAddress;
 import com.obby.android.localscreenshare.discovery.model.LssDeviceInfo;
 import com.obby.android.localscreenshare.discovery.store.DeviceStoreListener;
-import com.obby.android.localscreenshare.discovery.ui.DeviceListModel;
+import com.obby.android.localscreenshare.discovery.ui.DiscoveryListModel;
 import com.obby.android.localscreenshare.grpc.screenstream.DeviceSummary;
 import com.obby.android.localscreenshare.identity.IdentityManager;
 import com.obby.android.localscreenshare.identity.IdentityUnavailableException;
 import com.obby.android.localscreenshare.server.LssServerInfo;
 import com.obby.android.localscreenshare.server.LssServerStats;
-import com.obby.android.localscreenshare.service.LssClientService;
-import com.obby.android.localscreenshare.service.LssService;
+import com.obby.android.localscreenshare.service.ScreenShareService;
+import com.obby.android.localscreenshare.service.ScreenViewerService;
 import com.obby.android.localscreenshare.settings.DiscoverySettings;
 import com.obby.android.localscreenshare.settings.Preferences;
+import com.obby.android.localscreenshare.settings.VisibilityPolicy;
 import com.obby.android.localscreenshare.support.Constants;
 import com.obby.android.localscreenshare.support.IntentUtils;
 
@@ -96,7 +96,7 @@ import java.util.stream.IntStream;
  *
  * <p><b>Lifecycle.</b> {@link #onCreate(Bundle)} installs the splash screen, inflates the layout,
  * wires the toolbars and the discovery list and renders the initial state. {@link #onStart()}
- * binds to {@link LssService} with {@code BIND_AUTO_CREATE} and starts discovery when it is
+ * binds to {@link ScreenShareService} with {@code BIND_AUTO_CREATE} and starts discovery when it is
  * enabled; the service connection registers this activity's {@link Messenger} as a client, so the
  * current server state is replayed on registration. {@link #onStop()} unregisters the client,
  * clears the bound flag, unbinds and stops discovery; {@link #onDestroy()} only dismisses dialogs
@@ -108,8 +108,8 @@ import java.util.stream.IntStream;
  * permission. When a check fails, it starts the system prompt or shows a dialog and returns
  * {@code false}, so the capture consent is requested only after the user retries the action. The
  * consent activity returns through {@link #mScreenCaptureLauncher}; a positive result starts
- * {@link LssService} in the foreground with the consent result as an extra. Viewing a discovered
- * server follows the same gate and starts {@link LssClientService} with the service info.</p>
+ * {@link ScreenShareService} in the foreground with the consent result as an extra. Viewing a discovered
+ * server follows the same gate and starts {@link ScreenViewerService} with the service info.</p>
  *
  * <p><b>Threading.</b> Everything here runs on the main thread: service messages arrive through a
  * {@link Handler} bound to the main looper and discovery callbacks are already main-thread
@@ -203,7 +203,7 @@ public class MainActivity extends AppCompatActivity {
 
     private final String mTag = "MainActivity@" + hashCode();
 
-    // Latest store snapshot; the adapter renders it through DeviceListModel.
+    // Latest store snapshot; the adapter renders it through DiscoveryListModel.
     @NonNull
     private List<LssDeviceInfo> mDevices = Collections.emptyList();
 
@@ -213,9 +213,9 @@ public class MainActivity extends AppCompatActivity {
         @Override
         public void onBindViewHolder(@NonNull RecyclerView.ViewHolder holder, int position) {
             super.onBindViewHolder(holder, position);
-            final DeviceListModel.Row row = getItem(position);
+            final DiscoveryListModel.Row row = getItem(position);
             final LssDeviceInfo item = row.getDevice();
-            if (row.getType() != DeviceListModel.RowType.DEVICE || item == null) {
+            if (row.getType() != DiscoveryListModel.RowType.DEVICE || item == null) {
                 holder.itemView.setOnClickListener(null);
                 holder.itemView.setOnLongClickListener(null);
                 return;
@@ -228,12 +228,12 @@ public class MainActivity extends AppCompatActivity {
         }
 
         @Override
-        public void submitList(@Nullable List<DeviceListModel.Row> list) {
+        public void submitList(@Nullable List<DiscoveryListModel.Row> list) {
             submitList(list, null);
         }
 
         @Override
-        public void submitList(@Nullable List<DeviceListModel.Row> list, @Nullable Runnable commitCallback) {
+        public void submitList(@Nullable List<DiscoveryListModel.Row> list, @Nullable Runnable commitCallback) {
             // The commit callback runs after the diff is applied; the placeholder and the manual
             // hint mirror the committed list rather than the pending one.
             super.submitList(list, () -> {
@@ -252,7 +252,7 @@ public class MainActivity extends AppCompatActivity {
     private final DeviceStoreListener mDeviceListener = devices -> {
         mDevices = devices;
         mDiscoveryListAdapter.submitList(devices.isEmpty()
-            ? Collections.emptyList() : DeviceListModel.rows(devices));
+            ? Collections.emptyList() : DiscoveryListModel.rows(devices));
     };
 
     // Arms once per discovery start; a result before it fires cancels it.
@@ -323,7 +323,7 @@ public class MainActivity extends AppCompatActivity {
                     mDialog.dismiss();
                 }
                 mDialog = new MaterialAlertDialogBuilder(this)
-                    .setMessage(HtmlCompat.fromHtml(getString(R.string.request_post_notification, App.getLabel()),
+                    .setMessage(HtmlCompat.fromHtml(getString(R.string.permission_request_post_notification, App.getLabel()),
                         HtmlCompat.FROM_HTML_MODE_LEGACY))
                     .setPositiveButton(android.R.string.ok,
                         (dialog, which) -> startActivity(IntentUtils.createAppNotificationSettingsIntent(this)))
@@ -340,7 +340,7 @@ public class MainActivity extends AppCompatActivity {
         new ActivityResultContracts.StartActivityForResult(),
         result -> {
             if (result.getResultCode() == Activity.RESULT_OK) {
-                ContextCompat.startForegroundService(this, new Intent(this, LssService.class)
+                ContextCompat.startForegroundService(this, new Intent(this, ScreenShareService.class)
                     .putExtra(Constants.EXTRA_MEDIA_PROJECTION_RESULT, result));
             }
         }
@@ -455,7 +455,7 @@ public class MainActivity extends AppCompatActivity {
         Log.i(mTag, "onStart: activity started");
 
         mIsServiceBound = true;
-        bindService(new Intent(this, LssService.class), mServiceConnection, Context.BIND_AUTO_CREATE);
+        bindService(new Intent(this, ScreenShareService.class), mServiceConnection, Context.BIND_AUTO_CREATE);
 
         if (Preferences.get().isDiscoveryEnabled()) {
             LssServiceDiscoveryManager.get().addDeviceListener(mDeviceListener);
@@ -505,7 +505,7 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    // Server events forwarded by LssService through mMessenger.
+    // Server events forwarded by ScreenShareService through mMessenger.
     private void onServerStarted() {
         mServiceStatus = SERVICE_STATUS_ONLINE;
         updateServiceView();
@@ -585,9 +585,9 @@ public class MainActivity extends AppCompatActivity {
      * the placeholder carries the click listener instead of a separate empty-state view.</p>
      */
     private void updateDiscoveryPlaceholder() {
-        final DeviceListModel.EmptyState state = DeviceListModel.emptyState(
+        final DiscoveryListModel.EmptyState state = DiscoveryListModel.emptyState(
             Preferences.get().isDiscoveryEnabled(), mShowManualDiscoveryHint);
-        if (state == DeviceListModel.EmptyState.DISABLED) {
+        if (state == DiscoveryListModel.EmptyState.DISABLED) {
             mDiscoveryListPlaceholderView.setText(R.string.search_services_off);
             mDiscoveryListPlaceholderView.setClickable(false);
             mDiscoveryListPlaceholderView.setVisibility(View.VISIBLE);
@@ -601,7 +601,7 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
 
-        final boolean offerManualEntry = state == DeviceListModel.EmptyState.NOT_FOUND;
+        final boolean offerManualEntry = state == DiscoveryListModel.EmptyState.NOT_FOUND;
         mDiscoveryListPlaceholderView.setText(offerManualEntry
             ? R.string.discovery_empty_manual_hint : R.string.searching_services);
         mDiscoveryListPlaceholderView.setClickable(offerManualEntry);
@@ -753,20 +753,20 @@ public class MainActivity extends AppCompatActivity {
         }
 
         mDialog = new MaterialAlertDialogBuilder(this)
-            .setMessage(R.string.reset_device_identity_confirm)
+            .setMessage(R.string.identity_reset_confirm)
             .setPositiveButton(android.R.string.ok, (dialog, which) -> {
                 try {
                     IdentityManager.get().reset();
                 } catch (IdentityUnavailableException e) {
                     Log.e(mTag, "resetDeviceIdentity: device identity reset failed", e);
-                    Toast.makeText(this, R.string.reset_device_identity_failed, Toast.LENGTH_LONG).show();
+                    Toast.makeText(this, R.string.identity_reset_failed, Toast.LENGTH_LONG).show();
                     return;
                 }
 
                 LssServiceDiscoveryManager.get().onIdentityReset();
                 sendBroadcast(new Intent(Constants.ACTION_IDENTITY_RESET).setPackage(getPackageName()));
                 updateDeviceIdentityView();
-                Toast.makeText(this, R.string.reset_device_identity_done, Toast.LENGTH_LONG).show();
+                Toast.makeText(this, R.string.identity_reset_done, Toast.LENGTH_LONG).show();
             })
             .setNegativeButton(android.R.string.cancel, null)
             .setCancelable(false)
@@ -806,7 +806,7 @@ public class MainActivity extends AppCompatActivity {
         }
 
         mDialog = new MaterialAlertDialogBuilder(this)
-            .setMessage(R.string.stop_screen_share_confirm)
+            .setMessage(R.string.screen_share_stop_confirm)
             .setPositiveButton(android.R.string.ok, (dialog, which) -> sendBroadcast(
                 new Intent(Constants.ACTION_STOP_SERVICE).setPackage(getPackageName())))
             .setNegativeButton(android.R.string.cancel, null)
@@ -844,7 +844,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void startScreenShareViewerConfirmed(@NonNull final LssDeviceInfo serviceInfo) {
         if (requestScreenShare()) {
-            ContextCompat.startForegroundService(this, new Intent(this, LssClientService.class)
+            ContextCompat.startForegroundService(this, new Intent(this, ScreenViewerService.class)
                 .putExtra(Constants.EXTRA_SERVICE_INFO, serviceInfo));
         }
     }
@@ -870,7 +870,7 @@ public class MainActivity extends AppCompatActivity {
                 mDialog.dismiss();
             }
             mDialog = new MaterialAlertDialogBuilder(this)
-                .setMessage(HtmlCompat.fromHtml(getString(R.string.request_post_notification, App.getLabel()),
+                .setMessage(HtmlCompat.fromHtml(getString(R.string.permission_request_post_notification, App.getLabel()),
                     HtmlCompat.FROM_HTML_MODE_LEGACY))
                 .setPositiveButton(android.R.string.ok,
                     (dialog, which) -> startActivity(IntentUtils.createAppNotificationSettingsIntent(this)))
@@ -885,7 +885,7 @@ public class MainActivity extends AppCompatActivity {
                 mDialog.dismiss();
             }
             mDialog = new MaterialAlertDialogBuilder(this)
-                .setMessage(HtmlCompat.fromHtml(getString(R.string.request_system_alert_window, App.getLabel()),
+                .setMessage(HtmlCompat.fromHtml(getString(R.string.permission_request_system_alert_window, App.getLabel()),
                     HtmlCompat.FROM_HTML_MODE_LEGACY))
                 .setPositiveButton(android.R.string.ok,
                     (dialog, which) -> startActivity(IntentUtils.createManageOverlayPermissionIntent(this)))
@@ -983,7 +983,7 @@ public class MainActivity extends AppCompatActivity {
             @NonNull
             @Override
             public String getFormattedValue(float value) {
-                return getString(R.string.frame_rate_label, (int) value);
+                return getString(R.string.projection_frame_rate_value_label, (int) value);
             }
         });
         frameRateSettingView.addOnChangeListener((slider, value, fromUser) -> {
@@ -1019,7 +1019,7 @@ public class MainActivity extends AppCompatActivity {
 
         mDeviceIdSettingView = settingsDialog.findViewById(R.id.device_id_setting);
         final MaterialButton resetDeviceIdentityView =
-            settingsDialog.findViewById(R.id.reset_device_identity_setting);
+            settingsDialog.findViewById(R.id.identity_reset_setting);
         resetDeviceIdentityView.setOnClickListener(view -> resetDeviceIdentity());
 
         final MaterialSwitch multicastEnabledView =
@@ -1155,19 +1155,19 @@ public class MainActivity extends AppCompatActivity {
     /**
      * List adapter for discovered devices.
      *
-     * <p>View types come from {@link DeviceListModel.RowType}: a section header, a device or the
+     * <p>View types come from {@link DiscoveryListModel.RowType}: a section header, a device or the
      * empty hint. A device's item identity is its store id, so an entry that gains an address or a
      * new presence is rebound instead of being recreated; content equality is the value equality of
      * the immutable device description.</p>
      */
     private static class DiscoveryListAdapter
-        extends ListAdapter<DeviceListModel.Row, RecyclerView.ViewHolder> {
+        extends ListAdapter<DiscoveryListModel.Row, RecyclerView.ViewHolder> {
 
         private DiscoveryListAdapter() {
             super(new DiffUtil.ItemCallback<>() {
                 @Override
-                public boolean areItemsTheSame(@NonNull DeviceListModel.Row oldItem,
-                    @NonNull DeviceListModel.Row newItem) {
+                public boolean areItemsTheSame(@NonNull DiscoveryListModel.Row oldItem,
+                    @NonNull DiscoveryListModel.Row newItem) {
                     if (oldItem.getType() != newItem.getType()) {
                         return false;
                     }
@@ -1180,8 +1180,8 @@ public class MainActivity extends AppCompatActivity {
                 }
 
                 @Override
-                public boolean areContentsTheSame(@NonNull DeviceListModel.Row oldItem,
-                    @NonNull DeviceListModel.Row newItem) {
+                public boolean areContentsTheSame(@NonNull DiscoveryListModel.Row oldItem,
+                    @NonNull DiscoveryListModel.Row newItem) {
                     return oldItem.equals(newItem);
                 }
             });
@@ -1214,7 +1214,7 @@ public class MainActivity extends AppCompatActivity {
 
         @Override
         public void onBindViewHolder(@NonNull RecyclerView.ViewHolder holder, int position) {
-            final DeviceListModel.Row row = getItem(position);
+            final DiscoveryListModel.Row row = getItem(position);
             if (holder instanceof DiscoveryHeaderViewHolder) {
                 ((DiscoveryHeaderViewHolder) holder).update(row.getType());
                 return;
@@ -1241,8 +1241,8 @@ public class MainActivity extends AppCompatActivity {
             mHeaderView = itemView.findViewById(R.id.header);
         }
 
-        public void update(@NonNull final DeviceListModel.RowType type) {
-            mHeaderView.setText(type == DeviceListModel.RowType.HEADER_CLIENTS
+        public void update(@NonNull final DiscoveryListModel.RowType type) {
+            mHeaderView.setText(type == DiscoveryListModel.RowType.HEADER_CLIENTS
                 ? R.string.discovery_section_clients : R.string.discovery_section_servers);
         }
     }
@@ -1275,10 +1275,10 @@ public class MainActivity extends AppCompatActivity {
                 : mAddressView.getResources().getString(R.string.service_address,
                     address.getHost(), address.getPort()));
 
-            mStatusView.setText(statusTextResource(DeviceListModel.status(item)));
+            mStatusView.setText(statusTextResource(DiscoveryListModel.status(item)));
             // A stale or unreachable device stays visible but is drawn dimmed, which distinguishes
             // "was here, not answering" from "answering now".
-            itemView.setAlpha(DeviceListModel.isDimmed(item) ? 0.5f : 1f);
+            itemView.setAlpha(DiscoveryListModel.isDimmed(item) ? 0.5f : 1f);
 
             if (!item.isFavorite()) {
                 mFavoriteView.setVisibility(View.GONE);
@@ -1289,7 +1289,7 @@ public class MainActivity extends AppCompatActivity {
             }
         }
 
-        private static int statusTextResource(@NonNull final DeviceListModel.DeviceStatus status) {
+        private static int statusTextResource(@NonNull final DiscoveryListModel.DeviceStatus status) {
             switch (status) {
                 case LIVE:
                     return R.string.discovery_status_live;

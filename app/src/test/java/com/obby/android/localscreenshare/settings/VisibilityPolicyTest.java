@@ -1,4 +1,4 @@
-package com.obby.android.localscreenshare.discovery;
+package com.obby.android.localscreenshare.settings;
 
 import com.obby.android.localscreenshare.discovery.model.JoinPolicy;
 

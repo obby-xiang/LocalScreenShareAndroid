@@ -579,7 +579,7 @@ public final class Preferences {
      * Visibility preset wire value; empty means the default preset (visible).
      *
      * <p>Validation and the expiry rule live in
-     * {@link com.obby.android.localscreenshare.discovery.VisibilityPolicy}.</p>
+     * {@link com.obby.android.localscreenshare.settings.VisibilityPolicy}.</p>
      */
     @NonNull
     public String getDiscoveryVisibility() {

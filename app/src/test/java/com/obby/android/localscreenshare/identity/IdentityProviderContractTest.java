@@ -154,7 +154,7 @@ public class IdentityProviderContractTest {
     }
 
     private IdentityProvider newProvider() {
-        return new KeystoreIdentityProvider(mKeyStore, () -> mRecordedFingerprint, identity -> {
+        return new DefaultIdentityProvider(mKeyStore, () -> mRecordedFingerprint, identity -> {
             mRecorded.add(identity);
             mRecordedFingerprint = identity.getFingerprint();
         });

@@ -17,12 +17,12 @@ import lombok.experimental.Accessors;
  */
 @Accessors(prefix = "m")
 @Getter
-public class Reference<T> {
+public class MutableReference<T> {
     @Nullable
     private T mValue;
 
     /** Creates a holder around {@code value}; the argument is not null-checked. */
-    public Reference(@NonNull final T value) {
+    public MutableReference(@NonNull final T value) {
         mValue = value;
     }
 

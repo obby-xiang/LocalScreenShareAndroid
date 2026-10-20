@@ -49,12 +49,12 @@ ui / service
 
 | 目标包 | 迁入内容 | 说明 |
 | --- | --- | --- |
-| `settings` | `Preferences`、`DiscoverySettings` | 设置的持久化入口与设置模型同属一个领域包，不再散落在 `support` 与 `discovery` |
+| `settings` | `Preferences`、`DiscoverySettings`、`VisibilityPolicy` | 设置的持久化入口、设置模型与可见性决策同属一个领域包，不再散落在 `support` 与 `discovery`，也消除了 `settings↔discovery` 环 |
 | `discovery/legacy` | 废弃 DTO | 仅保留兼容期引用；新增代码不得引用，批次结束后可删除 |
-| `discovery/ui` | 列表投影（如 `DeviceListModel`） | 纯显示投影，不持有 store，也不引用 Android 视图类型 |
+| `discovery/ui` | 列表投影（`DiscoveryListModel`） | 纯显示投影，不持有 store，也不引用 Android 视图类型 |
 | `core/codec/mediacodec` | MIME 通用的 MediaCodec 桥 | 从 `core/codec/h264` 拆出与 H.264 无关的桥接；`h264` 只保留 H.264 特有逻辑 |
 | `core/util` | `TimeSource` 等通用工具 | framework 内部纯工具；`support` 不得依赖它（见 1.4） |
-| 取消 `utils` | `IntentUtils`、`NetUtils`、`NsdUtils`、`ResourceUtils`、`ThreadUtils`、`WindowUtils` | 并入 `support`，不保留 `utils` 包 |
+| 取消 `utils` | `IntentUtils`、`NetUtils`、`NsdResolver`、`ResourceUtils`、`ThreadUtils`、`WindowUtils` | 并入 `support`，不保留 `utils` 包 |
 
 ## 2. 类名
 
@@ -66,10 +66,10 @@ ui / service
 
 ### 2.2 两个产品端点（固定）
 
-| 名称 | 角色 | 当前名 |
+| 名称 | 角色 | R2 前名称 |
 | --- | --- | --- |
-| `ScreenShareService` | 服务端（被看方）前台 Service | `LssService` |
-| `ScreenViewerService` | 客户端（看方）前台 Service | `LssClientService` |
+| `ScreenShareService` | 服务端（被看方）前台 Service | `LssService`（R2 已改名） |
+| `ScreenViewerService` | 客户端（看方）前台 Service | `LssClientService`（R2 已改名） |
 | `ScreenShareServer` | 服务端网络端点 | `LssServer` |
 | `ScreenShareClient` | 客户端网络端点 | `LssClient` |
 
@@ -132,7 +132,8 @@ ui / service
 
 ### 3.3 字段、静态状态与常量
 
-- 实例字段统一使用 `m` 前缀，新代码必须遵守。存量 `core/**` 目前是无前缀风格（如 `app/src/main/java/.../core/stream/StreamHub.java:48-57`），本规范记录的目标态是 `m` 前缀；是否在本轮 R 批次统一，由 TB-ENG-011 的批次排期决定。
+- 实例字段的 `m` 前缀按**层**约定：app 层（根包下除 `core` 外的所有包）与 `discovery/legacy` 统一使用 `m` 前缀，与存量代码保持一致；`core/**` 保持无前缀的现状，内部自洽，不做全量改写。
+- 新代码跟随所在层的风格：app 层新类写 `mField`，`core` 新类写 `field`；同一文件内不得混用两种风格。
 - 需要静态可变状态时，用 `InstanceHolder` 私有静态内部类持有实例，通过 `get()` 暴露；不得直接暴露可变的 `public static` 字段。
 - 单例 getter 统一为 `get()`，不使用 `getInstance()`、`instance()` 等别名。
 - 常量使用 `UPPER_SNAKE`，按域加前缀，例如 `NSD_SERVICE_TYPE`、`GRPC_FLOW_CONTROL_WINDOW`、`MULTICAST_PORT`。
@@ -179,11 +180,13 @@ ui / service
 
 | 反例 | 问题 | 出处 |
 | --- | --- | --- |
-| `AndroidKeystoreIdentityProvider` 实现 `IdentityKeyStore` | 类名是 Provider（能力供给），实际扮演 Store（持久化读写）；类名与接口角色互换 | `app/src/main/java/.../identity/AndroidKeystoreIdentityProvider.java:34` |
-| `LssService` / `LssClientService` | 服务端与客户端语义无法从名字区分：前者是服务端（被看方），后者是客户端（看方），`Lss` 前缀不携带角色信息 | `app/src/main/java/.../service/LssService.java:152`、`app/src/main/java/.../service/LssClientService.java:123` |
-| `DeviceListModel` | 是发现列表的行投影（分节、排序、空态），不是 MVVM 的 Model；放在 `discovery` 根包也看不出显示职责 | `app/src/main/java/.../discovery/DeviceListModel.java:39` |
-| `discoverServices()` / `stopServiceDiscovery()` | 同一生命周期两端的动词不对称，调用方无法靠命名推断配对 | `app/src/main/java/.../discovery/LssServiceDiscoveryManager.java:292`、同文件 `:352` |
+| `AndroidKeystoreIdentityProvider` 实现 `IdentityKeyStore`（已于 R2 修复：改名为 `AndroidKeystoreKeyStore`） | 类名是 Provider（能力供给），实际扮演 Store（持久化读写）；类名与接口角色互换 | `app/src/main/java/.../identity/AndroidKeystoreKeyStore.java:34` |
+| `LssService` / `LssClientService`（已于 R2 修复：改名为 `ScreenShareService` / `ScreenViewerService`） | 服务端与客户端语义无法从名字区分：前者是服务端（被看方），后者是客户端（看方），`Lss` 前缀不携带角色信息 | `app/src/main/java/.../service/ScreenShareService.java:152`、`app/src/main/java/.../service/ScreenViewerService.java:123` |
+| `DeviceListModel`（已于 R2 修复：改名为 `DiscoveryListModel`） | 是发现列表的行投影（分节、排序、空态），不是 MVVM 的 Model；放在 `discovery` 根包也看不出显示职责 | `app/src/main/java/.../discovery/ui/DiscoveryListModel.java:39` |
+| `discoverServices()` / `stopServiceDiscovery()`（已于 R2 修复：对称化为 `startDiscovery()` / `stopDiscovery()`） | 同一生命周期两端的动词不对称，调用方无法靠命名推断配对 | `app/src/main/java/.../discovery/LssServiceDiscoveryManager.java:295`、同文件 `:355` |
 | `Constants` | 56 个常量、6 个域（资源尺寸、NSD、Action/Extra、窗口类型、MessageId、gRPC 限额）、全仓库 236 处引用；任一处新增都扩大公共面 | `app/src/main/java/.../support/Constants.java:19` |
+
+R2 批次同时处理了盘点中的其余命名问题：`KeystoreIdentityProvider` → `DefaultIdentityProvider`（真正的 `IdentityProvider` 实现）、`NsdUtils` → `NsdResolver`、`support/Reference` → `MutableReference`、`discovery/VisibilityPolicy` 迁入 `settings`、`deviceStore()` / `favoriteStore()` 改为 `getDeviceStore()` / `getFavoriteStore()`，以及资源键、布局 id 与主题名的领域前置统一。
 
 ## 7. 落地与例外
 

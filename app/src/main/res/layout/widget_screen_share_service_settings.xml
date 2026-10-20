@@ -109,12 +109,12 @@
                 android:textColor="?attr/colorOnSurfaceVariant" />
 
             <com.google.android.material.button.MaterialButton
-                android:id="@+id/reset_device_identity_setting"
+                android:id="@+id/identity_reset_setting"
                 style="@style/Widget.Material3.Button.TextButton"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"
-                android:text="@string/reset_device_identity" />
+                android:text="@string/identity_reset" />
 
             <com.google.android.material.textview.MaterialTextView
                 android:layout_width="wrap_content"

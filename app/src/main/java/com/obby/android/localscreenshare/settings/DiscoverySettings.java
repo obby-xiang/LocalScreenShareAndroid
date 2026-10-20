@@ -2,7 +2,6 @@ package com.obby.android.localscreenshare.settings;
 
 import androidx.annotation.NonNull;
 
-import com.obby.android.localscreenshare.discovery.VisibilityPolicy;
 import com.obby.android.localscreenshare.support.Constants;
 
 import java.util.Arrays;

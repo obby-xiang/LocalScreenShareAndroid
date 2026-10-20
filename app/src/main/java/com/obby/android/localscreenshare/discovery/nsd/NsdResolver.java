@@ -33,7 +33,7 @@ import lombok.NoArgsConstructor;
  * listeners may touch UI state.</p>
  */
 @NoArgsConstructor(access = AccessLevel.PRIVATE)
-public final class NsdUtils {
+public final class NsdResolver {
     /** Default resolve timeout; matches the discovery research budget. */
     public static final long DEFAULT_RESOLVE_TIMEOUT_MS = 2_000L;
 

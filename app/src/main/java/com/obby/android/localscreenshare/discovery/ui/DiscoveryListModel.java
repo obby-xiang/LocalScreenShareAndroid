@@ -36,7 +36,7 @@ import java.util.Objects;
  * <p>The class is pure JVM: no Android types, no store access, so the sectioning and sorting rules
  * are covered by deterministic unit tests.</p>
  */
-public final class DeviceListModel {
+public final class DiscoveryListModel {
 
     /** Type of one list row. */
     public enum RowType {
@@ -124,7 +124,7 @@ public final class DeviceListModel {
             .thenComparing(LssDeviceInfo::displayName)
             .thenComparing(LssDeviceInfo::getId);
 
-    private DeviceListModel() {
+    private DiscoveryListModel() {
     }
 
     /**

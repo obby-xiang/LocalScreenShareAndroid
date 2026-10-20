@@ -14,7 +14,7 @@ import java.util.function.Supplier;
  *
  * <p>The derivation and change detection live here, above the {@link IdentityKeyStore} abstraction,
  * so they run unchanged on the JVM with a software keystore in tests. On the device the keystore is
- * {@link AndroidKeystoreIdentityProvider}.</p>
+ * {@link AndroidKeystoreKeyStore}.</p>
  *
  * <p>{@code lastKnownFingerprint} is a record only: it is read to decide whether the key changed
  * since the previous run and written after every load, never used as the identity itself. When it
@@ -23,7 +23,7 @@ import java.util.function.Supplier;
  * <p>Instances are stateless apart from their collaborators and may be shared; key loading and
  * generation block, so callers cache the returned identity.</p>
  */
-public final class KeystoreIdentityProvider implements IdentityProvider {
+public final class DefaultIdentityProvider implements IdentityProvider {
 
     @NonNull
     private final IdentityKeyStore mKeyStore;
@@ -39,7 +39,7 @@ public final class KeystoreIdentityProvider implements IdentityProvider {
      * @param lastKnownFingerprint supplier of the fingerprint recorded by an earlier run, or null
      * @param recorder sink that persists the derived identity for the next change comparison
      */
-    public KeystoreIdentityProvider(@NonNull final IdentityKeyStore keyStore,
+    public DefaultIdentityProvider(@NonNull final IdentityKeyStore keyStore,
         @NonNull final Supplier<String> lastKnownFingerprint,
         @NonNull final Consumer<DeviceIdentity> recorder) {
         mKeyStore = Objects.requireNonNull(keyStore, "keyStore");

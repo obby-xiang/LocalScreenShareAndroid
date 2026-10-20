@@ -33,7 +33,7 @@ public final class IdentityManager {
     private DeviceIdentity mIdentity;
 
     private IdentityManager() {
-        mProvider = new KeystoreIdentityProvider(new AndroidKeystoreIdentityProvider(),
+        mProvider = new DefaultIdentityProvider(new AndroidKeystoreKeyStore(),
             () -> Preferences.get().getIdentityFingerprint(), this::recordIdentity);
     }
 

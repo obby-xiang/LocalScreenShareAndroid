@@ -31,7 +31,7 @@ import java.security.spec.ECGenParameterSpec;
  * identity through {@link DeviceIdentity#isChanged()}; only a keystore that cannot create a key at
  * all raises an exception.</p>
  */
-public final class AndroidKeystoreIdentityProvider implements IdentityKeyStore {
+public final class AndroidKeystoreKeyStore implements IdentityKeyStore {
 
     /** Keystore alias of the device identity key. */
     public static final String KEY_ALIAS = "lss-device-identity";

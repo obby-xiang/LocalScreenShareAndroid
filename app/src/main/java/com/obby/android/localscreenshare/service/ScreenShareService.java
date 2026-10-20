@@ -71,7 +71,6 @@ import com.obby.android.localscreenshare.core.model.StreamParameters;
 import com.obby.android.localscreenshare.core.stream.StreamHub;
 import com.obby.android.localscreenshare.core.stream.StreamRuntime;
 import com.obby.android.localscreenshare.discovery.LssServiceDiscoveryManager;
-import com.obby.android.localscreenshare.discovery.VisibilityPolicy;
 import com.obby.android.localscreenshare.discovery.model.AuthMode;
 import com.obby.android.localscreenshare.discovery.model.DeviceRole;
 import com.obby.android.localscreenshare.discovery.model.ShareState;
@@ -92,6 +91,7 @@ import com.obby.android.localscreenshare.server.LssServerStats;
 import com.obby.android.localscreenshare.server.LssServerStatsListener;
 import com.obby.android.localscreenshare.settings.DiscoverySettings;
 import com.obby.android.localscreenshare.settings.Preferences;
+import com.obby.android.localscreenshare.settings.VisibilityPolicy;
 import com.obby.android.localscreenshare.support.Constants;
 import com.obby.android.localscreenshare.support.DelayedScheduler;
 import com.obby.android.localscreenshare.support.WindowUtils;
@@ -149,7 +149,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * stop and open-app actions. It is added during start and removed during teardown and needs the
  * overlay permission that {@link MainActivity} checks before starting the service.</p>
  */
-public class LssService extends Service {
+public class ScreenShareService extends Service {
     private static final String NOTIFICATION_CHANNEL_ID = "lss-service";
 
     private static final String VIRTUAL_DISPLAY_NAME = "LocalScreenShare";
@@ -251,7 +251,7 @@ public class LssService extends Service {
     // True for the H.264 surface path, false for the JPEG fallback path; read at start.
     private boolean mIsH264;
 
-    private final String mTag = "LssService@" + hashCode();
+    private final String mTag = "ScreenShareService@" + hashCode();
 
     // Serializes image acquisition with reader replacement and teardown. It also guards
     // mScreenFrameBitmap and mFrameTimestamp.
@@ -585,7 +585,7 @@ public class LssService extends Service {
         mServer.setServerStatsListener(mServerStatsListener);
         mServer.setStream(mStreamHub, mStreamRuntime);
         mServer.setSecure(mIsProjectionSecure);
-        mServer.setDeviceStore(LssServiceDiscoveryManager.get().deviceStore());
+        mServer.setDeviceStore(LssServiceDiscoveryManager.get().getDeviceStore());
 
         try {
             mServer.start();
@@ -1173,7 +1173,7 @@ public class LssService extends Service {
                 public boolean onSingleTapConfirmed(@NonNull MotionEvent e) {
                     if (mDialog == null) {
                         mDialog = new MaterialAlertDialogBuilder(mContext)
-                            .setMessage(R.string.stop_screen_share_confirm)
+                            .setMessage(R.string.screen_share_stop_confirm)
                             .setPositiveButton(android.R.string.ok, (dialog, which) -> mContext.sendBroadcast(
                                 new Intent(Constants.ACTION_STOP_SERVICE).setPackage(mContext.getPackageName())))
                             .setNegativeButton(android.R.string.cancel, null)
@@ -1194,7 +1194,7 @@ public class LssService extends Service {
             };
 
         private ScreenShareChip(@NonNull final Context context) {
-            mContext = new ContextThemeWrapper(context, R.style.ScreenShareChipTheme);
+            mContext = new ContextThemeWrapper(context, R.style.ThemeOverlay_LocalScreenShareAndroid_ScreenShareChip);
             mWindowManager = mContext.getSystemService(WindowManager.class);
             mChipView = createChipView();
             mLayoutParams = new WindowManager.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,

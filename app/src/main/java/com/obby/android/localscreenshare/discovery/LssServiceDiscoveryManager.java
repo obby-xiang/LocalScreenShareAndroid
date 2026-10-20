@@ -78,7 +78,7 @@ import lombok.NoArgsConstructor;
  * reachable. An address confirmed within
  * {@link Constants#REGISTER_RECONFIRM_INTERVAL_MS} is not confirmed again, which keeps heartbeat
  * traffic below the server's per-address quota. The store is exposed through
- * {@link #deviceStore()} so the capture server can write the peers it learns through its own
+ * {@link #getDeviceStore()} so the capture server can write the peers it learns through its own
  * Register handler into the same table.</p>
  *
  * <p><b>Fallbacks.</b> {@link ScanCoordinator} waits one grace window for announcements and
@@ -292,18 +292,18 @@ public final class LssServiceDiscoveryManager {
      * Otherwise the listener receives the current snapshot synchronously before this method
      * returns, whether or not discovery was just started.</p>
      */
-    public void discoverServices(@NonNull final LssServiceDiscoveryListener listener) {
-        Log.i(TAG, "discoverServices: discover services");
+    public void startDiscovery(@NonNull final LssServiceDiscoveryListener listener) {
+        Log.i(TAG, "startDiscovery: discover services");
 
         if (mServiceDiscoveryListeners.contains(listener)) {
-            Log.w(TAG, "discoverServices: listener already exists");
+            Log.w(TAG, "startDiscovery: listener already exists");
             return;
         }
 
         mServiceDiscoveryListeners.add(listener);
         if (!mIsDiscovering) {
             mIsDiscovering = true;
-            startDiscovery();
+            startDiscoveryProviders();
         }
 
         listener.onServicesChanged(mServiceInfoList);
@@ -325,7 +325,7 @@ public final class LssServiceDiscoveryManager {
         mDeviceListeners.add(listener);
         if (!mIsDiscovering) {
             mIsDiscovering = true;
-            startDiscovery();
+            startDiscoveryProviders();
         }
         listener.onDevicesChanged(mDeviceStore.snapshot());
     }
@@ -341,7 +341,7 @@ public final class LssServiceDiscoveryManager {
         }
         if (mServiceDiscoveryListeners.isEmpty() && mDeviceListeners.isEmpty() && mIsDiscovering) {
             mIsDiscovering = false;
-            stopDiscovery();
+            stopDiscoveryProviders();
         }
     }
 
@@ -352,17 +352,17 @@ public final class LssServiceDiscoveryManager {
      * resulting empty snapshot is not broadcast because the listener list is empty at that
      * point.</p>
      */
-    public void stopServiceDiscovery(@NonNull final LssServiceDiscoveryListener listener) {
-        Log.i(TAG, "stopServiceDiscovery: stop service discovery");
+    public void stopDiscovery(@NonNull final LssServiceDiscoveryListener listener) {
+        Log.i(TAG, "stopDiscovery: stop service discovery");
 
         if (!mServiceDiscoveryListeners.remove(listener)) {
-            Log.w(TAG, "stopServiceDiscovery: listener does not exist");
+            Log.w(TAG, "stopDiscovery: listener does not exist");
             return;
         }
 
         if (mServiceDiscoveryListeners.isEmpty() && mDeviceListeners.isEmpty() && mIsDiscovering) {
             mIsDiscovering = false;
-            stopDiscovery();
+            stopDiscoveryProviders();
         }
     }
 
@@ -386,7 +386,7 @@ public final class LssServiceDiscoveryManager {
      * Must be called on the main thread; the store itself is main-thread confined.</p>
      */
     @NonNull
-    public DeviceStore deviceStore() {
+    public DeviceStore getDeviceStore() {
         return mDeviceStore;
     }
 
@@ -397,7 +397,7 @@ public final class LssServiceDiscoveryManager {
      * is updated in the same step; the getter exists for rendering the favorite marker.</p>
      */
     @NonNull
-    public FavoriteStore favoriteStore() {
+    public FavoriteStore getFavoriteStore() {
         return mFavoriteStore;
     }
 
@@ -488,8 +488,8 @@ public final class LssServiceDiscoveryManager {
      * <p>Favorites are seeded into the store first, so a favorite that is not reachable still
      * appears with its alias and the favorite marker. Must be called on the main thread.</p>
      */
-    private void startDiscovery() {
-        Log.i(TAG, "startDiscovery: start discovery");
+    private void startDiscoveryProviders() {
+        Log.i(TAG, "startDiscoveryProviders: start discovery");
         final DiscoverySettings settings = Preferences.get().getDiscoverySettings();
         migrateFavorites();
         seedFavorites();
@@ -559,8 +559,8 @@ public final class LssServiceDiscoveryManager {
      *
      * <p>Must be called on the main thread, after the last listener has been removed.</p>
      */
-    private void stopDiscovery() {
-        Log.i(TAG, "stopDiscovery: stop service discovery");
+    private void stopDiscoveryProviders() {
+        Log.i(TAG, "stopDiscoveryProviders: stop service discovery");
         mScanCoordinator.cancel();
         mManualAddressProvider.stop();
         unregisterNetworkCallback();

@@ -82,7 +82,7 @@ import com.obby.android.localscreenshare.discovery.model.LssDeviceInfo;
 import com.obby.android.localscreenshare.render.SurfaceRenderTarget;
 import com.obby.android.localscreenshare.settings.Preferences;
 import com.obby.android.localscreenshare.support.Constants;
-import com.obby.android.localscreenshare.support.Reference;
+import com.obby.android.localscreenshare.support.MutableReference;
 import com.obby.android.localscreenshare.support.ResourceUtils;
 
 import org.apache.commons.lang3.math.NumberUtils;
@@ -115,12 +115,12 @@ import java.util.Objects;
  *
  * <p><b>Threading and ownership.</b> All service callbacks and {@link LssClientObserver}
  * callbacks run on the main thread; {@link LssClient} decodes frames on its own executor and
- * delivers them on the main thread. A received frame arrives as a {@link Reference} owned by the
+ * delivers them on the main thread. A received frame arrives as a {@link MutableReference} owned by the
  * viewer, which clears the previous frame when it stores a new one. All overlay windows are added
  * and removed on the main thread and require the overlay permission checked by
  * {@link MainActivity}.</p>
  */
-public class LssClientService extends Service {
+public class ScreenViewerService extends Service {
     private static final String NOTIFICATION_CHANNEL_ID = "lss-client-service";
 
     private static final int NOTIFICATION_ID = 2;
@@ -176,7 +176,7 @@ public class LssClientService extends Service {
     // Last rate rendered into the notification; the notification is rebuilt only on change.
     private long mInboundDataRate;
 
-    private final String mTag = "LssClientService@" + hashCode();
+    private final String mTag = "ScreenViewerService@" + hashCode();
 
     // Main-thread delivery for decode-thread callbacks that touch the UI.
     @NonNull
@@ -204,8 +204,8 @@ public class LssClientService extends Service {
         public void onDisconnected() {
             // A session that was connected reports a reconnect prompt; a failed first connection
             // reports a retry prompt.
-            final int messageResId = mIsConnected ? R.string.reconnect_screen_share_confirm
-                : R.string.retry_connect_screen_share_confirm;
+            final int messageResId = mIsConnected ? R.string.screen_share_reconnect_confirm
+                : R.string.screen_share_retry_connect_confirm;
             mIsConnected = false;
             mClientStats = null;
 
@@ -233,7 +233,7 @@ public class LssClientService extends Service {
             // An LssClient cannot be restarted, so a retry builds a new instance and shows the
             // loading overlay again. The confirmation is a floating window because the activity
             // may not be visible.
-            final Context themedContext = new ContextThemeWrapper(LssClientService.this, R.style.AppTheme);
+            final Context themedContext = new ContextThemeWrapper(ScreenViewerService.this, R.style.Theme_LocalScreenShareAndroid);
             mDialog = new MaterialAlertDialogBuilder(themedContext)
                 .setMessage(HtmlCompat.fromHtml(getString(messageResId, nameOf(mServiceInfo)),
                     HtmlCompat.FROM_HTML_MODE_LEGACY))
@@ -501,7 +501,7 @@ public class LssClientService extends Service {
         }
 
         mInboundDataRate = inboundDataRate;
-        NotificationManagerCompat.from(LssClientService.this).notify(NOTIFICATION_ID, buildNotification());
+        NotificationManagerCompat.from(ScreenViewerService.this).notify(NOTIFICATION_ID, buildNotification());
     }
 
     /**
@@ -604,7 +604,7 @@ public class LssClientService extends Service {
         @SuppressWarnings("DataFlowIssue")
         @SuppressLint("InflateParams")
         private ScreenShareLoading(@NonNull final Context context, @NonNull final LssDeviceInfo serviceInfo) {
-            final Context themedContext = new ContextThemeWrapper(context, R.style.AppTheme);
+            final Context themedContext = new ContextThemeWrapper(context, R.style.Theme_LocalScreenShareAndroid);
             mWindowManager = themedContext.getSystemService(WindowManager.class);
             mLoadingView = LayoutInflater.from(themedContext).inflate(R.layout.widget_screen_share_loading, null);
             mLayoutParams = new WindowManager.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -617,7 +617,7 @@ public class LssClientService extends Service {
                 if (mDialog == null) {
                     mDialog = new MaterialAlertDialogBuilder(themedContext)
                         .setMessage(HtmlCompat.fromHtml(themedContext.getString(
-                                R.string.disconnect_screen_share_confirm, serviceInfo.getName()),
+                                R.string.screen_share_disconnect_confirm, serviceInfo.getName()),
                             HtmlCompat.FROM_HTML_MODE_LEGACY))
                         .setPositiveButton(android.R.string.ok, (dialog, which) -> themedContext.sendBroadcast(
                             new Intent(Constants.ACTION_STOP_CLIENT_SERVICE)
@@ -706,7 +706,7 @@ public class LssClientService extends Service {
 
         private SurfaceShareViewer(@NonNull final Context context,
                                    @NonNull final LssDeviceInfo serviceInfo) {
-            mContext = new ContextThemeWrapper(context, R.style.AppTheme);
+            mContext = new ContextThemeWrapper(context, R.style.Theme_LocalScreenShareAndroid);
             mServiceInfo = serviceInfo;
             mWindowManager = mContext.getSystemService(WindowManager.class);
             mTextureView = new TextureView(mContext);
@@ -802,7 +802,7 @@ public class LssClientService extends Service {
             if (mDialog == null) {
                 mDialog = new MaterialAlertDialogBuilder(mContext)
                     .setMessage(HtmlCompat.fromHtml(mContext.getString(
-                            R.string.disconnect_screen_share_confirm, nameOf(mServiceInfo)),
+                            R.string.screen_share_disconnect_confirm, nameOf(mServiceInfo)),
                         HtmlCompat.FROM_HTML_MODE_LEGACY))
                     .setPositiveButton(android.R.string.ok, (dialog, which) -> mContext.sendBroadcast(
                         new Intent(Constants.ACTION_STOP_CLIENT_SERVICE).setPackage(mContext.getPackageName())))
@@ -886,7 +886,7 @@ public class LssClientService extends Service {
 
         // Current frame; owned by this viewer until it is replaced or cleared.
         @Nullable
-        private Reference<Bitmap> mFrame;
+        private MutableReference<Bitmap> mFrame;
 
         // Pixel size of the current frame; null before the first frame and after dismiss().
         @Nullable
@@ -957,7 +957,7 @@ public class LssClientService extends Service {
                 public boolean onSingleTapConfirmed(@NonNull MotionEvent e) {
                     if (mDialog == null) {
                         mDialog = new MaterialAlertDialogBuilder(mContext)
-                            .setMessage(HtmlCompat.fromHtml(mContext.getString(R.string.disconnect_screen_share_confirm,
+                            .setMessage(HtmlCompat.fromHtml(mContext.getString(R.string.screen_share_disconnect_confirm,
                                 nameOf(mServiceInfo)), HtmlCompat.FROM_HTML_MODE_LEGACY))
                             .setPositiveButton(android.R.string.ok, (dialog, which) -> mContext.sendBroadcast(
                                 new Intent(Constants.ACTION_STOP_CLIENT_SERVICE).setPackage(mContext.getPackageName())))
@@ -988,7 +988,7 @@ public class LssClientService extends Service {
 
         @SuppressLint("InflateParams")
         private ScreenShareViewer(@NonNull final Context context, @NonNull final LssDeviceInfo serviceInfo) {
-            mContext = new ContextThemeWrapper(context, R.style.AppTheme);
+            mContext = new ContextThemeWrapper(context, R.style.Theme_LocalScreenShareAndroid);
             mServiceInfo = serviceInfo;
             mWindowManager = mContext.getSystemService(WindowManager.class);
             mFrameView = createFrameView();
@@ -1007,8 +1007,8 @@ public class LssClientService extends Service {
          * differs from the previous frame.</p>
          */
         @SuppressWarnings("DataFlowIssue")
-        public void setFrame(@NonNull final Reference<Bitmap> frame, boolean isSecure) {
-            final Reference<Bitmap> oldFrame = mFrame;
+        public void setFrame(@NonNull final MutableReference<Bitmap> frame, boolean isSecure) {
+            final MutableReference<Bitmap> oldFrame = mFrame;
             mFrame = frame;
 
             final Bitmap bitmap = mFrame.getValue();

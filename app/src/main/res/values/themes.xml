@@ -1,13 +1,6 @@
 <resources>
     <!-- Base application theme. -->
-    <style name="Base.Theme.LocalScreenShareAndroid" parent="Theme.Material3.DayNight.NoActionBar">
-        <!-- Customize your light theme here. -->
-        <!-- <item name="colorPrimary">@color/my_light_primary</item> -->
-    </style>
-
-    <style name="Theme.LocalScreenShareAndroid" parent="Base.Theme.LocalScreenShareAndroid" />
-
-    <style name="AppTheme" parent="Theme.Material3.Light.NoActionBar">
+    <style name="Theme.LocalScreenShareAndroid" parent="Theme.Material3.Light.NoActionBar">
         <item name="colorPrimary">@color/md_theme_primary</item>
         <item name="colorOnPrimary">@color/md_theme_onPrimary</item>
         <item name="colorPrimaryContainer">@color/md_theme_primaryContainer</item>
@@ -56,12 +49,12 @@
         <item name="colorSurfaceContainerHighest">@color/md_theme_surfaceContainerHighest</item>
     </style>
 
-    <style name="SplashScreenTheme" parent="Theme.SplashScreen">
-        <item name="postSplashScreenTheme">@style/AppTheme</item>
+    <style name="Theme.LocalScreenShareAndroid.SplashScreen" parent="Theme.SplashScreen">
+        <item name="postSplashScreenTheme">@style/Theme.LocalScreenShareAndroid</item>
         <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
     </style>
 
-    <style name="ScreenShareChipTheme" parent="AppTheme">
+    <style name="ThemeOverlay.LocalScreenShareAndroid.ScreenShareChip" parent="Theme.LocalScreenShareAndroid">
         <item name="chipStyle">@style/Widget.Material3.Chip.Assist.Elevated</item>
     </style>
 </resources>

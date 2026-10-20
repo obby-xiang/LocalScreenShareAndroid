@@ -1,4 +1,4 @@
-package com.obby.android.localscreenshare.discovery;
+package com.obby.android.localscreenshare.settings;
 
 import androidx.annotation.NonNull;
 

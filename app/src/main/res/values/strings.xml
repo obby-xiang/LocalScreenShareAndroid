@@ -8,13 +8,13 @@
     <string name="client_service_notification_title">"Viewing shared screen \"<xliff:g id="name">%1$s</xliff:g>\"…"</string>
     <string name="client_service_notification_text">"<xliff:g id="host">%1$s</xliff:g>:<xliff:g id="port">%2$d</xliff:g> | <xliff:g id="speed">%3$s/s</xliff:g>"</string>
     <string name="client_service_stop_notification_action">"Stop viewing"</string>
-    <string name="request_post_notification">"Allow \"&lt;b&gt;<xliff:g id="name">%1$s</xliff:g>&lt;/b&gt;\" to send notifications."</string>
-    <string name="request_system_alert_window">"Allow \"&lt;b&gt;<xliff:g id="name">%1$s</xliff:g>&lt;/b&gt;\" to display over other apps."</string>
-    <string name="stop_screen_share_confirm">"Stop sharing the screen?"</string>
-    <string name="connecting_screen_share">"Connecting to the shared screen…"</string>
-    <string name="disconnect_screen_share_confirm">"Disconnect from the shared screen \"&lt;b&gt;<xliff:g id="name">%1$s</xliff:g>&lt;/b&gt;\"?"</string>
-    <string name="retry_connect_screen_share_confirm">"Unable to connect to the shared screen \"&lt;b&gt;<xliff:g id="name">%1$s</xliff:g>&lt;/b&gt;\". Retry?"</string>
-    <string name="reconnect_screen_share_confirm">"Disconnected from the shared screen \"&lt;b&gt;<xliff:g id="name">%1$s</xliff:g>&lt;/b&gt;\". Reconnect?"</string>
+    <string name="permission_request_post_notification">"Allow \"&lt;b&gt;<xliff:g id="name">%1$s</xliff:g>&lt;/b&gt;\" to send notifications."</string>
+    <string name="permission_request_system_alert_window">"Allow \"&lt;b&gt;<xliff:g id="name">%1$s</xliff:g>&lt;/b&gt;\" to display over other apps."</string>
+    <string name="screen_share_stop_confirm">"Stop sharing the screen?"</string>
+    <string name="screen_share_connecting">"Connecting to the shared screen…"</string>
+    <string name="screen_share_disconnect_confirm">"Disconnect from the shared screen \"&lt;b&gt;<xliff:g id="name">%1$s</xliff:g>&lt;/b&gt;\"?"</string>
+    <string name="screen_share_retry_connect_confirm">"Unable to connect to the shared screen \"&lt;b&gt;<xliff:g id="name">%1$s</xliff:g>&lt;/b&gt;\". Retry?"</string>
+    <string name="screen_share_reconnect_confirm">"Disconnected from the shared screen \"&lt;b&gt;<xliff:g id="name">%1$s</xliff:g>&lt;/b&gt;\". Reconnect?"</string>
     <string name="keep_screen_on_setting_label">"Keep screen on"</string>
     <string name="viewer_opacity_setting_label">"Opacity"</string>
     <string name="viewer_scale_setting_label">"Display size"</string>
@@ -45,15 +45,15 @@
     <string name="projection_scale_setting_label">"Screen size"</string>
     <string name="projection_frame_rate_setting_label">"Max frame rate"</string>
     <string name="projection_quality_setting_label">"Screen quality"</string>
-    <string name="frame_rate_label">"<xliff:g id="fps">%1$d</xliff:g>fps"</string>
+    <string name="projection_frame_rate_value_label">"<xliff:g id="fps">%1$d</xliff:g>fps"</string>
     <string name="start_service_failed">"Failed to start the screen sharing service."</string>
     <string name="device_identity_label">"Device ID"</string>
     <string name="device_identity_unavailable">"Unavailable"</string>
     <string name="device_identity_changed">"This device has a new identity, for example after restoring a backup or clearing the app data. Other devices that saved this one, including their favorites, must confirm it again."</string>
-    <string name="reset_device_identity">"Reset device identity"</string>
-    <string name="reset_device_identity_confirm">"Reset the device identity? This device will appear as a new device on the local network, and favorites that other devices saved for it will no longer match."</string>
-    <string name="reset_device_identity_done">"Device identity reset. Restart sharing to advertise the new identity."</string>
-    <string name="reset_device_identity_failed">"Failed to reset the device identity."</string>
+    <string name="identity_reset">"Reset device identity"</string>
+    <string name="identity_reset_confirm">"Reset the device identity? This device will appear as a new device on the local network, and favorites that other devices saved for it will no longer match."</string>
+    <string name="identity_reset_done">"Device identity reset. Restart sharing to advertise the new identity."</string>
+    <string name="identity_reset_failed">"Failed to reset the device identity."</string>
     <string name="discovery_settings_section">"Discovery"</string>
     <string name="multicast_enabled_setting_label">"Use multicast discovery"</string>
     <string name="multicast_group_setting_label">"Multicast group"</string>

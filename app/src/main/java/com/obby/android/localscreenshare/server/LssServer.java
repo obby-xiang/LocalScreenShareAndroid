@@ -24,7 +24,6 @@ import com.obby.android.localscreenshare.core.codec.CodecRegistry;
 import com.obby.android.localscreenshare.core.stream.StreamHub;
 import com.obby.android.localscreenshare.core.stream.StreamRuntime;
 import com.obby.android.localscreenshare.core.stream.TimeSource;
-import com.obby.android.localscreenshare.discovery.VisibilityPolicy;
 import com.obby.android.localscreenshare.discovery.favorite.FavoriteStore;
 import com.obby.android.localscreenshare.discovery.model.AuthMode;
 import com.obby.android.localscreenshare.discovery.model.DeviceAddress;
@@ -34,8 +33,8 @@ import com.obby.android.localscreenshare.discovery.model.DiscoveryChannel;
 import com.obby.android.localscreenshare.discovery.model.JoinPolicy;
 import com.obby.android.localscreenshare.discovery.model.LssDeviceInfo;
 import com.obby.android.localscreenshare.discovery.model.ShareState;
+import com.obby.android.localscreenshare.discovery.nsd.NsdResolver;
 import com.obby.android.localscreenshare.discovery.nsd.NsdTxtRecord;
-import com.obby.android.localscreenshare.discovery.nsd.NsdUtils;
 import com.obby.android.localscreenshare.discovery.register.GrpcRegisterStub;
 import com.obby.android.localscreenshare.discovery.register.RegisterClient;
 import com.obby.android.localscreenshare.discovery.register.RegisterProtoMapper;
@@ -51,6 +50,7 @@ import com.obby.android.localscreenshare.identity.IdentityManager;
 import com.obby.android.localscreenshare.identity.IdentityUnavailableException;
 import com.obby.android.localscreenshare.settings.DiscoverySettings;
 import com.obby.android.localscreenshare.settings.Preferences;
+import com.obby.android.localscreenshare.settings.VisibilityPolicy;
 import com.obby.android.localscreenshare.support.BackoffPolicy;
 import com.obby.android.localscreenshare.support.Constants;
 import com.obby.android.localscreenshare.support.DelayedScheduler;
@@ -199,7 +199,7 @@ public final class LssServer {
     private LssServerStatsListener mServerStatsListener;
 
     // Media stream wiring: the hub owns per-client send sessions and the runtime owns the encoder.
-    // Both are assembled and started by LssService before the server accepts streams.
+    // Both are assembled and started by ScreenShareService before the server accepts streams.
     @Nullable
     private StreamHub mStreamHub;
 
@@ -222,7 +222,7 @@ public final class LssServer {
     @Nullable
     private DelayedScheduler mRegisterScheduler;
 
-    // Session-level secure flag applied to every descriptor; set by LssService.
+    // Session-level secure flag applied to every descriptor; set by ScreenShareService.
     private volatile boolean mSecure;
 
     // Set by stop(); late stream calls become no-ops.
@@ -345,7 +345,7 @@ public final class LssServer {
         @Override
         public void run() {
             if (mNsdServiceInfo != null) {
-                NsdUtils.resolveService(mNsdManager, mNsdServiceInfo, NsdUtils.DEFAULT_RESOLVE_TIMEOUT_MS,
+                NsdResolver.resolveService(mNsdManager, mNsdServiceInfo, NsdResolver.DEFAULT_RESOLVE_TIMEOUT_MS,
                     mNsdResolveListener);
             }
         }
@@ -486,7 +486,7 @@ public final class LssServer {
     }
 
     // Applies a resolved host address to the published info, or schedules another attempt while the
-    // address is still unknown. NsdUtils already delivers these callbacks on the main thread.
+    // address is still unknown. NsdResolver already delivers these callbacks on the main thread.
     @NonNull
     private final NsdManager.ResolveListener mNsdResolveListener = new NsdManager.ResolveListener() {
         @Override
@@ -562,7 +562,7 @@ public final class LssServer {
      * Attaches the media stream wiring owned by the capture side.
      *
      * <p>Must be called on the main thread before {@link #start()}. The hub and runtime are shared
-     * with {@link com.obby.android.localscreenshare.service.LssService}; this server only reads
+     * with {@link com.obby.android.localscreenshare.service.ScreenShareService}; this server only reads
      * them to serve stream calls and never owns their lifecycle.</p>
      */
     public void setStream(@NonNull final StreamHub hub, @NonNull final StreamRuntime runtime) {

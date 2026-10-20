@@ -39,7 +39,7 @@ import java.util.function.Predicate;
  * keeps its own listener, running state and retry schedule: a failed start only retries that type
  * and never stops the other one.</p>
  *
- * <p>Resolving runs through {@link NsdUtils} with a two-second timeout, so a service that never
+ * <p>Resolving runs through {@link NsdResolver} with a two-second timeout, so a service that never
  * answers cannot block the single resolver thread. Connectivity changes restart discovery after a
  * debounce, which is how the provider recovers when the Wi-Fi network is replaced underneath it.
  * Observations never carry a confirmation: the provider only reports what it heard.</p>
@@ -211,7 +211,7 @@ public final class NsdDiscoveryProvider implements DiscoveryProvider {
             mTrackedServices.put(key, new TrackedService(serviceInfo));
         }
 
-        NsdUtils.resolveService(mNsdManager, serviceInfo, RESOLVE_TIMEOUT_MS, new NsdManager.ResolveListener() {
+        NsdResolver.resolveService(mNsdManager, serviceInfo, RESOLVE_TIMEOUT_MS, new NsdManager.ResolveListener() {
             @Override
             public void onResolveFailed(NsdServiceInfo info, int errorCode) {
                 Log.w(TAG, String.format("handleFound: resolve failed, serviceType = %s, errorCode = %d",
