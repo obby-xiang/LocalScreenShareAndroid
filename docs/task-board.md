@@ -29,7 +29,7 @@
 - 编码框架隔离核心（契约、StreamHub、有界队列、六状态机、JPEG 参考适配）已完成并通过 JVM 验证，见 [TB-FW-001](#tb-fw-001)、[TB-FW-004](#tb-fw-004)、[TB-FW-005](#tb-fw-005)、[TB-FW-002](#tb-fw-002)。
 - 问题 3 尚未由用户明确关闭，不能标记完成；代码完成 ≠ 问题关闭，API 25 只是兼容下限，能力按运行时探测分档。
 - 编码框架待收尾：TB-FW-003、TB-FW-006、TB-MEDIA-001、TB-MEDIA-003 等待设备验证；TB-FW-002 仍部分完成；TB-FW-007、TB-FW-008 未完成。
-- 设备发现功能已立项（[TB-DISC-001](#tb-disc-001)..[TB-DISC-010](#tb-disc-010)）：B1（[TB-DISC-002](#tb-disc-002)、[TB-DISC-003](#tb-disc-003)）代码层面已完成并通过 JVM 与 CI 验证，TB-DISC-004 至 TB-DISC-010 待办；设备验证仍未解禁。
+- 设备发现功能已立项（[TB-DISC-001](#tb-disc-001)..[TB-DISC-010](#tb-disc-010)）：B1（[TB-DISC-002](#tb-disc-002)、[TB-DISC-003](#tb-disc-003)）与 B2（[TB-DISC-004](#tb-disc-004)）代码层面已完成并通过 JVM 与 CI 验证，TB-DISC-005 至 TB-DISC-010 待办；设备验证仍未解禁。
 - 阶段 0/1 的代码优化尚未开始，当前没有进行中的代码任务。
 - 下一步：按 [渐进优化路线图](optimization-roadmap.md) 的阶段 0 启动可观测性与基线，落地顺序以 [编码框架](codec-framework.md) 为准。
 - 前置约束：拿到基线前，不预设任何性能、发热或延迟收益。
@@ -47,7 +47,6 @@
 
 | ID | 状态 | 优先级 | 标题 | 创建 | 完成 | 关联 |
 | --- | --- | --- | --- | --- | --- | --- |
-| TB-DISC-004 | 📋 待办 | 🟠 P1 | 设备身份（密钥派生 ID） | 2026-10-20 | — | [发现调研](discovery-research.md) |
 | TB-DISC-005 | 📋 待办 | 🟠 P1 | UDP 组播发现通道 | 2026-10-20 | — | [发现调研](discovery-research.md) |
 | TB-DISC-006 | 📋 待办 | 🟠 P1 | Register 双向发现 RPC | 2026-10-20 | — | [发现调研](discovery-research.md) |
 | TB-DISC-007 | 📋 待办 | 🟡 P2 | 分级扫描 | 2026-10-20 | — | [发现调研](discovery-research.md) |
@@ -81,6 +80,7 @@
 | TB-DISC-001 | ✅ 已完成 | 🟡 P2 | 设备发现调研沉淀 | 2026-10-20 | 2026-10-20 | [发现调研](discovery-research.md) |
 | TB-DISC-002 | ✅ 已完成 | 🟠 P1 | 设备模型与 DeviceStore 抽象 | 2026-10-20 | 2026-10-20 | [实施计划](superpowers/plans/2026-10-20-device-discovery.md) |
 | TB-DISC-003 | ✅ 已完成 | 🟠 P1 | NSD 修正与加固 | 2026-10-20 | 2026-10-20 | [实施计划](superpowers/plans/2026-10-20-device-discovery.md) |
+| TB-DISC-004 | ✅ 已完成 | 🟠 P1 | 设备身份（密钥派生 ID） | 2026-10-20 | 2026-10-20 | [实施计划](superpowers/plans/2026-10-20-device-discovery.md) |
 | TB-ENG-003 | ✅ 已完成 | 🟡 P2 | 代码文档与英文注释 | 2026-10-18 | 2026-10-19 | [实施计划](superpowers/plans/2026-10-19-code-docs-i18n.md) |
 | TB-ENG-004 | ✅ 已完成 | 🟡 P2 | 中英双语资源 | 2026-10-18 | 2026-10-19 | [决策看板](decision-board.md) |
 | TB-DOC-008 | ✅ 已完成 | 🔴 P0 | 框架实施计划 | 2026-10-17 | 2026-10-18 | [实施计划](superpowers/plans/2026-10-17-codec-framework.md) |
@@ -132,16 +132,6 @@
 当前无进行中任务。
 
 ### 📋 待办条目
-
-<a id="tb-disc-004"></a>
-<details><summary>TB-DISC-004 设备身份（密钥派生 ID）（📋 待办）</summary>
-
-- **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟠 P1 / 2026-10-20 / —
-- **任务**：设备身份：AndroidKeyStore 生成 EC P-256 长期密钥；`fp=SHA-256(SPKI)`，短 ID 取 26 字符；重装即新身份；设置内提供“重置设备身份”；当前无 TLS，指纹先作声明值，为后续 pinning 铺路。
-- **交付物 / 验证证据**：交付：密钥生成与读取、指纹与短 ID 派生、重置入口与单测。验证：同一安装身份稳定、重置后 ID 变化、指纹可在注册时比对；当前未实施，设备验证未解禁。
-- **关联文档**：[发现调研](discovery-research.md)、[TB-DISC-010](#tb-disc-010)
-
-</details>
 
 <a id="tb-disc-005"></a>
 <details><summary>TB-DISC-005 UDP 组播发现通道（📋 待办）</summary>
@@ -375,6 +365,16 @@
 </details>
 
 ### ✅ 已完成条目
+
+<a id="tb-disc-004"></a>
+<details><summary>TB-DISC-004 设备身份（密钥派生 ID）（✅ 2026-10-20）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：✅ 已完成 / 🟠 P1 / 2026-10-20 / 2026-10-20
+- **任务**：设备身份：AndroidKeyStore 生成 EC P-256 长期密钥；`fp=SHA-256(SPKI)`，短 ID 取 26 字符；重装即新身份；设置内提供“重置设备身份”；当前无 TLS，指纹先作声明值，为后续 pinning 铺路。
+- **交付物 / 验证证据**：交付（提交 `f899906`）：`identity` 包的 `DeviceIdentity`/`SpkiId`/`IdentityProvider`/`IdentityKeyStore`/`KeystoreIdentityProvider`/`AndroidKeystoreIdentityProvider`/`IdentityManager`/`IdentityUnavailableException` 与 `support/Base32Crockford`；别名 `lss-device-identity` 的 EC P-256 密钥（`SIGN|VERIFY`、`DIGEST_SHA256`、不要求用户认证），`fp` 为 SPKI 的 SHA-256 base64url（43 字符），短 ID 为摘要前 16 字节的 Crockford base32（26 字符）；启动时始终从密钥重算，`Preferences` 只保存比对记录，密钥缺失或比对不一致时报“身份已变更”；`LssServer` 的 NSD 实例名与 TXT `id` 改用短 ID，`LssServerInfo` 新增 `deviceId`/`fingerprint`（`id` 同值并标注 `@Deprecated`），`LssServiceInfo` 新增可空 `fingerprint`，发现自身过滤改用设备短 ID；设置面板显示设备 ID 并提供“重置设备身份”（确认后删除别名并重建、清空发现列表、提示重新开始共享以公告新身份）。验证：`Base32CrockfordTest`（8）、`SpkiIdTest`（7）、`DeviceIdentityTest`（9）、`IdentityProviderContractTest`（9）覆盖已知向量与字母表、长度与字符集、同密钥派生稳定、重置与备份恢复后的身份变更检测、Keystore 不可用上抛；全量 `./gradlew :app:testDebugUnitTest --offline` **505 tests / 0 failures / 0 errors / 0 skipped**（41 个测试类，较 472 基线增加 33）；`./gradlew :app:assembleDebug --offline` 成功；Build CI run [39369212044](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39369212044)、Checks run [39369211992](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39369211992) success。边界：未执行 adb、模拟器、实机或 `connectedAndroidTest`；AndroidKeyStore 的真实生成/读取/重置与备份恢复后的身份变化未实测，设备验证未解禁。
+- **关联文档**：[发现调研](discovery-research.md)、[实施计划](superpowers/plans/2026-10-20-device-discovery.md)、[TB-DISC-010](#tb-disc-010)
+
+</details>
 
 <a id="tb-disc-002"></a>
 <details><summary>TB-DISC-002 设备模型与 DeviceStore 抽象（✅ 2026-10-20）</summary>
