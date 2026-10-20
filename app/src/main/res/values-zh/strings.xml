@@ -64,6 +64,7 @@
     <string name="video_settings_rebuild_hint">"修改画面大小、帧率或关键帧间隔会重建编码器，画面可能短暂停顿并重新同步。"</string>
     <string name="video_settings_frame_rate_note">"高于 60 fps 需要本机编码器支持。"</string>
     <string name="video_settings_codec_locked_note">"当前版本固定使用 H.264。"</string>
+    <string name="projection_size_rejected">"该画面大小无法应用，共享画面保持 <xliff:g id="width">%1$d</xliff:g>×<xliff:g id="height">%2$d</xliff:g>。"</string>
     <string name="start_service_failed">"启动共享屏幕服务失败。"</string>
     <string name="device_identity_label">"设备 ID"</string>
     <string name="device_identity_unavailable">"不可用"</string>

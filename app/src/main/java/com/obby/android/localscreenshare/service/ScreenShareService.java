@@ -63,7 +63,9 @@ import com.obby.android.localscreenshare.MainActivity;
 import com.obby.android.localscreenshare.R;
 import com.obby.android.localscreenshare.core.codec.CodecIds;
 import com.obby.android.localscreenshare.core.codec.CodecRegistry;
+import com.obby.android.localscreenshare.core.codec.EncoderSizeAlignment;
 import com.obby.android.localscreenshare.core.codec.h264.H264Codec;
+import com.obby.android.localscreenshare.core.codec.mediacodec.EncoderAlignmentProbe;
 import com.obby.android.localscreenshare.core.model.BitstreamFormat;
 import com.obby.android.localscreenshare.core.model.StreamDescriptor;
 import com.obby.android.localscreenshare.core.model.StreamKey;
@@ -209,6 +211,15 @@ public class ScreenShareService extends Service {
     // Current capture size in pixels; null while stopped.
     @Nullable
     private Size mProjectionSize;
+
+    // Size step the encoder accepts; probed once per service instance so the capture size, the
+    // virtual display and the coded size share one geometry.
+    @NonNull
+    private EncoderSizeAlignment mProjectionSizeAlignment = EncoderSizeAlignment.EVEN;
+
+    // Capture percentage the current mProjectionSize was derived from; restored when the encoder
+    // rejects a new size, so a rejected value never stays persisted as if it were applied.
+    private int mAppliedProjectionScale;
 
     // Dedicated thread for image-available callbacks; started before the reader and quit during
     // teardown.
@@ -540,12 +551,26 @@ public class ScreenShareService extends Service {
      * @return {@code true} when the runtime adopted the new descriptor
      */
     private boolean switchEncoderToCurrentSettings() {
+        return switchEncoderToSettings(mProjectionSize);
+    }
+
+    /**
+     * Switches the running encoder to the given capture size with the current parameters.
+     *
+     * <p>Used by a size change, which has to create the encoder for the new geometry before the
+     * display is resized: the size is passed explicitly instead of being read from
+     * {@link #mProjectionSize}, which still holds the applied size until the switch succeeds.</p>
+     *
+     * @param size capture size the new descriptor must carry; must not be null
+     * @return {@code true} when the runtime adopted the new descriptor
+     */
+    private boolean switchEncoderToSettings(@NonNull final Size size) {
         boolean switched = false;
         for (int attempt = 1; attempt <= ENCODER_SWITCH_MAX_ATTEMPTS && !switched; attempt++) {
             try {
                 mStreamRuntime.updateParameters(buildProjectionSettings().toStreamParameters());
                 mStreamRuntime.switchDescriptor(
-                    buildRequestedDescriptor(mStreamRuntime.getConfigEpoch() + 1));
+                    buildRequestedDescriptor(mStreamRuntime.getConfigEpoch() + 1, size));
                 switched = true;
             } catch (RuntimeException e) {
                 Log.w(mTag, "switchEncoderToCurrentSettings: encoder switch failed (attempt "
@@ -592,6 +617,10 @@ public class ScreenShareService extends Service {
         mProjectionScale = Preferences.get().getProjectionScale();
         mProjectionQuality = Preferences.get().getProjectionQuality();
         mProjectionFrameRate = Preferences.get().getProjectionFrameRate();
+        mProjectionSizeAlignment = EncoderAlignmentProbe.probe(H264Codec.MIME);
+        Log.i(mTag, "onCreate: encoder size alignment "
+            + mProjectionSizeAlignment.getWidthAlignment() + "x"
+            + mProjectionSizeAlignment.getHeightAlignment());
         Preferences.get().addObserver(mPreferencesObserver);
     }
 
@@ -674,6 +703,7 @@ public class ScreenShareService extends Service {
         mMediaProjection = getMediaProjection(intent);
         mMediaProjection.registerCallback(mMediaProjectionCallback, new Handler(Looper.getMainLooper()));
         mProjectionSize = getProjectionSize();
+        mAppliedProjectionScale = mProjectionScale;
 
         // Assemble the media stream: an H.264 runtime feeding a shared hub that the server fans out
         // to per-client sessions. The encoder starts before the display renders into its surface.
@@ -988,10 +1018,20 @@ public class ScreenShareService extends Service {
         NotificationManagerCompat.from(this).notify(NOTIFICATION_ID, buildNotification());
     }
 
-    // Recomputes the capture size from the window bounds and the scale preference. The virtual
-    // display keeps the resolution it was created with, so a rotation or a scale change has to
-    // resize it first; an ImageReader size is fixed at creation, so the reader is recreated under
-    // the lock. Does nothing while stopped.
+    /**
+     * Recomputes the capture size from the window bounds and the scale preference and applies it.
+     *
+     * <p><b>Order.</b> The virtual display and the encoder must use the same geometry, so the
+     * encoder is switched to the new size first and the display is resized only after the encoder
+     * accepted it (see {@link ProjectionSizeCoordinator}). A rotation or a scale change whose size
+     * the encoder rejects therefore leaves the display untouched and the stream keeps its previous
+     * geometry, instead of shrinking the display under an encoder that still encodes the old size,
+     * which squashed the viewer picture and left a black band in the 2026-10-21 device test.</p>
+     *
+     * <p>On the JPEG path there is no encoder that could reject the size: the reader is recreated
+     * under the lock because an {@code ImageReader} size is fixed at creation. Does nothing while
+     * stopped.</p>
+     */
     private void updateProjectionSize() {
         if (mProjectionSize == null || mVirtualDisplay == null) {
             return;
@@ -999,23 +1039,29 @@ public class ScreenShareService extends Service {
 
         final Size size = getProjectionSize();
         if (Objects.equals(mProjectionSize, size)) {
+            // Another percentage can round onto the size already in use; it is applied as is.
+            mAppliedProjectionScale = mProjectionScale;
             return;
         }
-
-        mProjectionSize = size;
-
-        // A rotation changes the usable bounds, and the display would otherwise keep composing the
-        // new screen content at the old resolution and let the encoder surface stretch it.
-        mVirtualDisplay.resize(mProjectionSize.getWidth(), mProjectionSize.getHeight(),
-            getResources().getConfiguration().densityDpi);
 
         if (mIsH264 && mStreamRuntime != null) {
-            // Rebuild the encoder for the new size and re-point the display at its input surface.
-            if (!switchEncoderToCurrentSettings()) {
-                Log.w(mTag, "updateProjectionSize: encoder switch failed");
+            final ProjectionSizeCoordinator.Outcome outcome = ProjectionSizeCoordinator.apply(
+                size.getWidth(), size.getHeight(),
+                (width, height) -> switchEncoderToSettings(new Size(width, height)),
+                this::resizeCaptureDisplay);
+            if (outcome == ProjectionSizeCoordinator.Outcome.REJECTED) {
+                onProjectionSizeRejected(size);
+                return;
             }
+            mProjectionSize = size;
+            mAppliedProjectionScale = mProjectionScale;
             return;
         }
+
+        ProjectionSizeCoordinator.apply(size.getWidth(), size.getHeight(), null,
+            this::resizeCaptureDisplay);
+        mProjectionSize = size;
+        mAppliedProjectionScale = mProjectionScale;
 
         synchronized (mImageReaderLock) {
             if (mImageReader == null) {
@@ -1029,6 +1075,42 @@ public class ScreenShareService extends Service {
             mFrameTimestamp = -1L;
             mImageReader.setOnImageAvailableListener(mOnImageAvailableListener, mImageReaderHandler);
             mVirtualDisplay.setSurface(mImageReader.getSurface());
+        }
+    }
+
+    /**
+     * Resizes the capture display to the applied capture size.
+     *
+     * <p>A rotation changes the usable bounds, and the display would otherwise keep composing the
+     * new screen content at the old resolution and let the encoder surface stretch it.</p>
+     */
+    private void resizeCaptureDisplay(final int width, final int height) {
+        if (mVirtualDisplay == null) {
+            return;
+        }
+        mVirtualDisplay.resize(width, height, getResources().getConfiguration().densityDpi);
+    }
+
+    /**
+     * Reports a capture size the encoder refused and keeps the preferences honest.
+     *
+     * <p>The size itself needs no rollback: the switch runs before the display is resized, so the
+     * display and the encoder still use the previous geometry. What must not stay behind is the
+     * stored percentage, which would otherwise read as applied while the stream keeps the old size.
+     * The applied percentage is written back so the settings sheet and the stored value match what
+     * the viewer actually receives, and the user is told on screen that the value was not applied.
+     * Writing the same value back is a no-op, which also keeps the preference observer from looping.
+     *
+     * @param requested size the encoder rejected
+     */
+    private void onProjectionSizeRejected(@NonNull final Size requested) {
+        Log.e(mTag, "updateProjectionSize: encoder rejected " + requested.getWidth() + 'x'
+            + requested.getHeight() + ", capture stays " + mProjectionSize.getWidth() + 'x'
+            + mProjectionSize.getHeight() + " (scale " + mAppliedProjectionScale + "%)");
+        Toast.makeText(this, getString(R.string.projection_size_rejected,
+            mProjectionSize.getWidth(), mProjectionSize.getHeight()), Toast.LENGTH_LONG).show();
+        if (mProjectionScale != mAppliedProjectionScale) {
+            Preferences.get().setProjectionScale(mAppliedProjectionScale);
         }
     }
 
@@ -1159,8 +1241,24 @@ public class ScreenShareService extends Service {
      */
     @NonNull
     private StreamDescriptor buildRequestedDescriptor(final int configEpoch) {
-        final int width = mProjectionSize.getWidth();
-        final int height = mProjectionSize.getHeight();
+        return buildRequestedDescriptor(configEpoch, mProjectionSize);
+    }
+
+    /**
+     * Builds the requested descriptor for the given capture size.
+     *
+     * <p>The coded and visible size are both the capture size: the split exists only for codecs
+     * that pad coded dimensions, and this build renders the aligned capture size one to one, so
+     * the viewer never has to crop or stretch it.</p>
+     *
+     * @param configEpoch configuration epoch the descriptor advances to
+     * @param size        capture size in pixels, already aligned to the encoder
+     */
+    @NonNull
+    private StreamDescriptor buildRequestedDescriptor(final int configEpoch,
+                                                     @NonNull final Size size) {
+        final int width = size.getWidth();
+        final int height = size.getHeight();
         if (mIsH264) {
             return StreamDescriptor.builder(mStreamKey, configEpoch, CodecIds.H264,
                             H264Codec.MIME, BitstreamFormat.ANNEX_B)
@@ -1175,12 +1273,22 @@ public class ScreenShareService extends Service {
                 .build();
     }
 
-    // Maximum window bounds of the current display, scaled by the projection scale preference.
+    /**
+     * Maximum window bounds of the current display, scaled by the projection scale preference and
+     * aligned to the encoder's size step.
+     *
+     * <p>The alignment is applied here, before anything uses the size, so the virtual display, the
+     * descriptor and the encoder all get the same geometry. A percentage can therefore land on an
+     * odd size such as 885x1918 without reaching the encoder, which is what made the hardware
+     * encoder refuse the configuration in the 2026-10-21 device test.</p>
+     */
     @NonNull
     private Size getProjectionSize() {
         final Rect windowBounds = WindowUtils.getMaximumWindowBounds(this);
         final float scale = mProjectionScale / 100f;
-        return new Size((int) (windowBounds.width() * scale), (int) (windowBounds.height() * scale));
+        return new Size(
+            mProjectionSizeAlignment.alignWidth((int) (windowBounds.width() * scale)),
+            mProjectionSizeAlignment.alignHeight((int) (windowBounds.height() * scale)));
     }
 
     private void createNotificationChannel() {
