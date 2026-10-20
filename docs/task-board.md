@@ -34,6 +34,7 @@
 - B3 已落地 UDP 组播公告（启动 3 连发、5/15 s 心跳、停服告别、`MulticastLock` 引用计数）与 Register 双向握手（成功才确认、`announces` 单跳防回环、限速与限包长）；仅经 JVM/fake 与编译验证，同网段互见、真实组播与 Reverse Register 未做设备实测。
 - B4 已落地分级扫描（按接口前缀生成候选、1 s grace 零确认才升级、50 并发/500 ms 探测/8 s 预算、可取消）、收藏持久化与上次成功地址优先探测、手动 IP 常驻入口与 8 s 空列表提示、连接前指纹校验；仅经 JVM/fake 与编译验证，真实网段扫描、组播被过滤场景与手动探测未做设备实测。
 - B5 已落地发现设置（组播开关/组地址/端口、三档刷新、四档可见性、仅 mDNS 兼容模式、广播设备名）、`DeviceStore` 统一列表与共享屏/观看者分区、状态徽标与 STALE/UNREACHABLE 灰显、`LssDeviceInfo` 的 `Intent` 契约迁移；仅经 JVM/fake、编译与 lint 验证，真实设置生效、可见性对公告/Register 的影响与列表状态未做设备实测。
+- 查看器画质治理与视频设置（Q1–Q5）已落地代码层面：[TB-CLIENT-003](#tb-client-003)（宽高比与缩放档位）、[TB-CLIENT-004](#tb-client-004)（呈现调度与关键帧恢复）、[TB-ENG-012](#tb-eng-012)（帧率/IDR 生效编排）与改写范围后的 [TB-ENG-005](#tb-eng-005)（视频设置界面，编码格式只读）；全量 **758 tests / 0 failures / 0 errors / 0 skipped**（65 个测试类），各批 Build 与 Checks CI success。设备实测未解禁，变形、锯齿、重建停顿时长与关键帧恢复时延均无实测数据；GL 降采样管线的触发条件见决策看板 DV-020。
 - 阶段 0/1 的代码优化尚未开始，当前没有进行中的代码任务。
 - 下一步：按 [渐进优化路线图](optimization-roadmap.md) 的阶段 0 启动可观测性与基线，落地顺序以 [编码框架](codec-framework.md) 为准。
 - 前置约束：拿到基线前，不预设任何性能、发热或延迟收益。
@@ -57,7 +58,6 @@
 | TB-DISC-011 | 📋 待办 | 🟡 P3 | 手动添加条目跨重启持久化 | 2026-10-20 | — | [发现调研](discovery-research.md) |
 | TB-MEDIA-004 | 📋 待办 | 🟡 P3 | 首帧绿色花屏自愈 | 2026-10-20 | — | [媒体架构](media-architecture.md) |
 | TB-MEDIA-005 | 📋 待办 | 🟢 P3 | 停止共享时编码器输入面 abandoned 噪声（良性） | 2026-10-20 | — | [媒体架构](media-architecture.md) |
-| TB-ENG-005 | 📋 待办 | 🟡 P2 | 新偏好设置界面控件 | 2026-10-19 | — | [问题3接线计划](superpowers/plans/2026-10-19-media-path-wiring.md) |
 | TB-ENG-006 | 📋 待办 | 🟡 P2 | JPEG 降级客户端查看器接回 | 2026-10-19 | — | [问题3接线计划](superpowers/plans/2026-10-19-media-path-wiring.md) |
 | TB-ENG-007 | 📋 待办 | 🟡 P2 | 客户端发送统计并入服务端统计 | 2026-10-19 | — | [问题3接线计划](superpowers/plans/2026-10-19-media-path-wiring.md) |
 | TB-CORE-001 | 📋 待办 | 🔴 P0 | 正确性与资源清理 | 2026-10-17 | — | [路线图阶段 1](optimization-roadmap.md) |
@@ -81,6 +81,10 @@
 
 | ID | 状态 | 优先级 | 标题 | 创建 | 完成 | 关联 |
 | --- | --- | --- | --- | --- | --- | --- |
+| TB-CLIENT-003 | ✅ 已完成 | 🟠 P1 | 查看器宽高比与缩放质量 | 2026-10-20 | 2026-10-20 | [实施计划](superpowers/plans/2026-10-21-viewer-quality-and-settings.md) |
+| TB-CLIENT-004 | ✅ 已完成 | 🟡 P2 | 客户端呈现调度与关键帧恢复 | 2026-10-20 | 2026-10-20 | [实施计划](superpowers/plans/2026-10-21-viewer-quality-and-settings.md) |
+| TB-ENG-005 | ✅ 已完成 | 🟡 P2 | 新视频设置界面（码率/IDR 可写，编码格式只读） | 2026-10-19 | 2026-10-20 | [实施计划](superpowers/plans/2026-10-21-viewer-quality-and-settings.md) |
+| TB-ENG-012 | ✅ 已完成 | 🟡 P2 | 编码参数生效编排（帧率/IDR 重建） | 2026-10-20 | 2026-10-20 | [实施计划](superpowers/plans/2026-10-21-viewer-quality-and-settings.md) |
 | TB-DISC-001 | ✅ 已完成 | 🟡 P2 | 设备发现调研沉淀 | 2026-10-20 | 2026-10-20 | [发现调研](discovery-research.md) |
 | TB-DISC-002 | ✅ 已完成 | 🟠 P1 | 设备模型与 DeviceStore 抽象 | 2026-10-20 | 2026-10-20 | [实施计划](superpowers/plans/2026-10-20-device-discovery.md) |
 | TB-DISC-003 | ✅ 已完成 | 🟠 P1 | NSD 修正与加固 | 2026-10-20 | 2026-10-20 | [实施计划](superpowers/plans/2026-10-20-device-discovery.md) |
@@ -193,12 +197,6 @@
 
 </details>
 
-<a id="tb-eng-005"></a>
-<details><summary>TB-ENG-005 新偏好设置界面控件（📋 待办）</summary>
-
-- **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟡 P2 / 2026-10-19 / —
-- **任务**：批次 D 已把码率、IDR 间隔与编码模式（H.264/JPEG）三个偏好落入 `Preferences`（`KEY_PROJECTION_BITRATE`、`KEY_PROJECTION_IDR_INTERVAL`、`KEY_PROJECTION_CODEC`），但 `MainActivity` 设置面板与布局无对应控件，当前只能用默认值；需补设置 UI 并贯通到 `StreamParameters` 与 codec 选择。
-- **交付物 / 验证证据**：交付：设置控件、偏好读写与参数贯通代码、相关单测。验证：改档后 `StreamParameters` 与 codec 选择按新值生效；当前未实施，设备验证未解禁。
 - **关联文档**：[问题3接线计划](superpowers/plans/2026-10-19-media-path-wiring.md)
 
 </details>
@@ -365,6 +363,62 @@
 </details>
 
 ### ✅ 已完成条目
+
+<a id="tb-client-003"></a>
+<details><summary>TB-CLIENT-003 查看器宽高比与缩放质量（✅ 2026-10-20）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：✅ 已完成 / 🟠 P1 / 2026-10-20 / 2026-10-20
+- **任务**：修 R1/R5/R2：客户端窗口尺寸改为由 `StreamDescriptor` 的可见尺寸与旋转推导，保持内容宽高比；服务端一旦下发非 0 旋转也要正确显示；并在悬浮窗上提供“适应窗口 / 原始大小(1:1) / 整数缩放”三档，让“缩小就发毛、想看清文字”有可操作入口。范围是本地渲染几何与档位，不做 GL 管线、不做编码协商。
+- **交付物 / 验证证据**：交付（Q1 `6ef878c`、Q2 `f554de4`、Q3 `2e1dbe8`）：
+  - `render/ViewerFitPolicy`（纯 JVM 决策）+ `render/ZoomMode`：输入可见尺寸、旋转、可用显示区、观看比例、最小尺寸与档位，输出窗口像素、生效比例、`snapped`/`clamped`/`fallback`；旋转 90/270 交换内容宽高，比例钳到 1–100%，最小尺寸按同一比例放大两边，非法输入回退“bounds × 比例”的旧行为。
+  - `client/StreamGeometryListener` + `ClientMediaReceiver` 4 参构造：DESCRIPTOR 分支先回调可见尺寸/旋转，再交给会话应用；`ScreenViewerService` 把回调切到主线程后交给 `SurfaceShareViewer`。
+  - `SurfaceShareViewer`：窗口尺寸改用 fit policy；90/270 时对纹理施加“先按交换比例缩放、再旋转”的变换，180 只旋转；配置变化（旋转、多窗口）后重新拟合；位置钳制与圆角半径随新尺寸重算；双击打开三档缩放菜单，1:1 在内容超出显示区时按 bounds 等比钳制并在菜单文案标注。
+  - `Preferences.KEY_VIEWER_ZOOM_MODE`：档位与观看比例分开存，空值即适应窗口；`ZoomMode.wire()/fromWire()` 稳定解析，未知值回退适应窗口。
+  - 验证：`ViewerFitPolicyTest` 22 条（同尺寸恒等 1080×2340→864×1872、横屏码流进竖屏 bounds → 864×399、旋转互换、bounds 小于内容、1:1 钳制、整数档 80%→1、60%→1/2、33%→1/3、等距向上、最小尺寸、非法输入回退、比例误差 ≤1 px 的遍历断言）、`ZoomModeTest` 5 条、`ClientMediaReceiverTest` 追加 5 条几何回调（顺序、旋转、epoch 重复回调、AU 不回调、关闭后不回调）；全量 **726 tests / 0 failures / 0 errors / 0 skipped**（62 个测试类，较 694 基线 +32）；`:app:testDebugUnitTest --offline`、`:app:assembleDebug --offline` 与三件套检查通过；Q1 Build [39447109279](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39447109279)/Checks [39447109129](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39447109129)、Q2 Build [39447532109](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39447532109)/Checks [39447531974](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39447531974) success；Q3 的 Checks [39448619331](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39448619331) success，其 Build run 被下一次推送按并发策略取消，Q3 代码由 Q4 的 Build [39448720986](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39448720986) 覆盖通过。
+  - 边界：未做设备实测；纹理旋转矩阵、跨朝向/跨机型组合的比例与锯齿观感、1:1 与整数档的实际清晰度均需真机复核（同型号同朝向组合原本只有约 2.5% 比例差，不能据此判定 R1 不存在）。
+- **关联文档**：[实施计划](superpowers/plans/2026-10-21-viewer-quality-and-settings.md)、[决策 DB-RENDER-001](decision-board.md)、[决策 DB-RENDER-002](decision-board.md)
+
+</details>
+
+<a id="tb-client-004"></a>
+<details><summary>TB-CLIENT-004 客户端呈现调度与关键帧恢复（✅ 2026-10-20）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：✅ 已完成 / 🟡 P2 / 2026-10-20 / 2026-10-20
+- **任务**：修 R4：解码输出不再“到达即显示”，改为按时间戳呈现、只保留最新帧、过期帧不追赶；已经发生的丢弃（解码器输入预算、解码队列溢出、会话重同步）必须转成“请求关键帧”，把损坏窗口从“等最多一个 IDR 周期”缩短到“一次往返”。不丢编码帧。
+- **交付物 / 验证证据**：交付（`b501df5`）：
+  - `core/render/PresentationPacer`（纯 JVM）：`PRESENT_NOW / SCHEDULE_AT / DROP`，规则为 PTS 回退判过期、最小间隔限帧（0 = 不限）、未来时间戳交给平台调度、时钟回退视为新基准。
+  - `MediaCodecDecoderBridge` 契约拆分：`dequeueOutput` 不再隐式渲染，返回输出索引；新增 `present(index, renderTimestampNs)` 与 `discard(index)`；`DecodedOutput` 增加 `bufferIndex`/`hasBuffer()`；Android 实现对应 `releaseOutputBuffer(index, timestampNs|false)`。
+  - `H264Decoder`：每次 `decode` 末尾取尽可用输出，只呈现最新、其余丢弃；EOS 先释放缓冲再失败；呈现/丢弃失败统一收敛到 `DecoderException`；首帧锚定流时间戳到单调时钟；输入预算丢帧时调用 `KeyFrameRequester`。
+  - `KeyFrameRequester` + `H264Codec/H264DecoderFactory` 重载把回调随注册带入解码器，会话无需依赖客户端端点。
+  - `client/KeyFrameRequestThrottle`（1 s 冷却，线程安全）：`ScreenShareClient` 队列溢出与 `ScreenViewerService` 的解码丢帧/`RESYNCING` 三条路径都经它调用 `requestKeyframe()`。
+  - 验证：`PresentationPacerTest` 10 条、`KeyFrameRequestThrottleTest` 5 条、`H264DecoderTest` 追加 6 条（多输出只呈现最新、格式变更忽略、EOS 释放后失败、PTS 回退丢弃、输入预算丢帧请求关键帧、释放无泄漏）、`MediaCodecBridgeContractTest` 追加 present/discard 释放与重复释放契约；全量 **747 tests / 0 failures / 0 errors / 0 skipped**（64 个测试类，较 726 +21）；`:app:testDebugUnitTest --offline`、`:app:assembleDebug --offline` 与三件套检查通过；Build [39448720986](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39448720986)/Checks [39448721211](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39448721211) success。
+  - 边界：本地限帧默认关闭（最小间隔 0），收益未实测；`releaseOutputBuffer(index, timestampNs)` 的真实调度行为、丢帧后到新 IDR 的恢复时延、弱网下的花屏时长均需真机验证。
+- **关联文档**：[实施计划](superpowers/plans/2026-10-21-viewer-quality-and-settings.md)、[决策 DB-RENDER-003](decision-board.md)
+
+</details>
+
+<a id="tb-eng-005"></a>
+<details><summary>TB-ENG-005 新视频设置界面（✅ 2026-10-20）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：✅ 已完成 / 🟡 P2 / 2026-10-19 / 2026-10-20
+- **任务**（本轮改写范围）：把码率与关键帧间隔补上设置 UI 并贯通到 `StreamParameters`；编码格式在本轮只读展示，可切换能力依赖 [TB-ENG-006](#tb-eng-006)。原条目“码率、IDR 间隔与编码模式三个偏好…需补设置 UI 并贯通到 `StreamParameters` 与 codec 选择”里的编码模式切换被有意收窄。
+- **交付物 / 验证证据**：交付（`6f8d744`）：新增 `res/layout/widget_screen_share_video_settings.xml`（画质、画面大小、帧率、码率、关键帧间隔与只读编码格式，顶部重建提示，帧率 >60 需设备支持的说明）；`MainActivity.createVideoSettingsDialog()`，服务端设置面板移除已迁移的三个控件并改为带当前值摘要（`video_settings_summary`）的“视频编码设置”入口行，滑块松手才落盘；`settings/ProjectionSettings`（纯 JVM）收敛取值：码率钳到 100 kbps–50 Mbps、帧率 1–120、IDR 1000–30000 ms 且向上取整到秒、比例 5–100%、质量 0–100、编码格式非法回退 H.264，并提供 `toStreamParameters()`；`ScreenShareService` 启动与热应用均改用该快照。验证：`ProjectionSettingsTest` 10 条、`StreamRuntimeTest` 追加“同尺寸换 epoch 后新参数进入新编码器”；全量 **758 tests / 0 failures / 0 errors / 0 skipped**（65 个测试类，较 747 +11）；`:app:testDebugUnitTest --offline`、`:app:assembleDebug --offline` 与 `check_strings.py`（97 键）/`check_cjk.py`/`check_docs.py` 通过；Build [39449413331](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39449413331)/Checks [39449413522](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39449413522) success。
+  - 断点证据（原条目缺少的三条生效通路）：帧率观察者原本只写 `mProjectionFrameRate` 且该字段只被 JPEG 采样循环使用；IDR 间隔原本只在码率键变化时被顺带打包，单独改不触发任何动作；编码格式观察者原本没有分支，且客户端能力固定为 H.264。
+  - 边界：编码格式切换仍未交付（缺 JPEG 客户端查看器）；滑块范围、菜单可点区域与只读行的可读性未做真机复核；`KEY_PROJECTION_QUALITY` 在 H.264 下不再显示控件，但键与默认值保留。
+- **关联文档**：[实施计划](superpowers/plans/2026-10-21-viewer-quality-and-settings.md)、[TB-ENG-006](#tb-eng-006)、[TB-ENG-012](#tb-eng-012)
+
+</details>
+
+<a id="tb-eng-012"></a>
+<details><summary>TB-ENG-012 编码参数生效编排（帧率/IDR 重建）（✅ 2026-10-20）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：✅ 已完成 / 🟡 P2 / 2026-10-20 / 2026-10-20
+- **任务**：帧率与关键帧间隔只在编码器创建时生效，因此改这两个参数必须走“写偏好 → 更新运行参数 → 推进 configEpoch → 重建编码器 → 重指采集输出面”，并与尺寸变化共用同一条串行路径，避免两次重建撞 epoch。
+- **交付物 / 验证证据**：交付（`6f8d744`）：`ScreenShareService.scheduleEncoderRebuild()` 主线程 300 ms 防抖合并同批变化，`rebuildEncoder()` 固定顺序 `updateParameters → switchDescriptor(epoch+1) → setDisplaySurface(getInputSurface())`，失败只记日志并保持旧编码器（码率可能已热应用，帧率/IDR 仍是旧值）；`KEY_PROJECTION_FRAME_RATE`、`KEY_PROJECTION_IDR_INTERVAL` 与 null-key 全量刷新接入该路径；`KEY_PROJECTION_BITRATE` 保持热应用，`KEY_PROJECTION_CODEC` 明确不处理（另记日志）。`StreamRuntime` 无需改核心 API：`switchDescriptor` 已用当前参数预热新编码器。验证：`StreamRuntimeTest.switchDescriptor_afterUpdateParameters_rebuildsWithNewParameters` 断言新参数进入新编码器且 epoch +1；全量 758 tests 通过（见 [TB-ENG-005](#tb-eng-005) 的 CI 证据）。
+  - 边界：未做设备实测；重建导致的画面停顿、客户端重配解码器的耗时与失败回退路径均需真机验证。
+- **关联文档**：[实施计划](superpowers/plans/2026-10-21-viewer-quality-and-settings.md)、[TB-ENG-005](#tb-eng-005)、[决策 DB-CODEC-003](decision-board.md)
+
+</details>
 
 <a id="tb-eng-011"></a>
 <details><summary>TB-ENG-011 代码结构梳理与命名统一（✅ 2026-10-20）</summary>

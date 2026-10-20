@@ -2,8 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> **状态：调研完成，代码未实施。** 本文件基于 `master`（`270c37c`）的静态代码审查、Android 官方文档与 scrcpy 源码；本地 `:app:testDebugUnitTest` 结果目录为 60 个测试类 / **694 tests / 0 failures / 0 errors**（与任务看板记录的 670/58 相比已增长，以本文件为准）。全部画质结论都标注证据级别，**未做设备实测**：任何收益、比例或阈值都必须先测量再实施，不在本文件预设数字。
-> 本阶段只交付本计划文档，不写实现代码。
+> **状态：Q1–Q5 已实施，Q6 后置未实施。** 本文件基于 `master`（`270c37c`）的静态代码审查、Android 官方文档与 scrcpy 源码；本地 `:app:testDebugUnitTest` 结果目录为 60 个测试类 / **694 tests / 0 failures / 0 errors**（与任务看板记录的 670/58 相比已增长，以本文件为准）。全部画质结论都标注证据级别，**未做设备实测**：任何收益、比例或阈值都必须先测量再实施，不在本文件预设数字。
+> 实施记录（2026-10-20）：Q1 `6ef878c`、Q2 `f554de4`、Q3 `2e1dbe8`、Q4 `b501df5`、Q5 `6f8d744`；全量 **758 tests / 0 failures / 0 errors / 0 skipped**（65 个测试类），`:app:assembleDebug` 与三件套检查通过，各批 Build 与 Checks CI success。条目状态见 [TB-CLIENT-003](../../task-board.md#tb-client-003)、[TB-CLIENT-004](../../task-board.md#tb-client-004)、[TB-ENG-012](../../task-board.md#tb-eng-012) 与改写范围后的 [TB-ENG-005](../../task-board.md#tb-eng-005)。第 8.7 节的 Q6（GL 降采样管线）按计划后置，触发条件登记为决策看板 DV-020。
 
 **Goal:** 让客户端在小窗下"看起来清楚"这件事有可判定的根因和可回滚的修法；同时把已经存在于 `Preferences` 但没有任何界面入口、也没有接通编码器的服务端参数（帧率、码率、IDR 间隔、编码格式）暴露到一个新的视频设置界面，并补上"改了要生效"的编排。
 
