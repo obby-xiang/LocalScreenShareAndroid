@@ -209,6 +209,40 @@ public class MainActivity extends AppCompatActivity {
     @NonNull
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
 
+    /**
+     * Rebuilds the video settings summary as soon as a projection value is stored.
+     *
+     * <p>The summary used to be refreshed only when the video sheet was dismissed, so a value the
+     * user had just committed stayed invisible for as long as the sheet was open. The sheet writes
+     * the preference and the running service applies it immediately, so the summary is rebuilt at
+     * that moment instead. Only keys the summary can show are considered; a null key means a bulk
+     * refresh.</p>
+     */
+    @NonNull
+    private final Preferences.Observer mProjectionSummaryObserver = key -> {
+        if (key != null && !isProjectionSummaryKey(key)) {
+            return;
+        }
+        mMainHandler.post(this::updateVideoSettingsSummary);
+    };
+
+    /**
+     * Returns whether {@code key} carries a value that the video settings summary displays.
+     */
+    private static boolean isProjectionSummaryKey(@NonNull final String key) {
+        switch (key) {
+            case Preferences.KEY_PROJECTION_CODEC:
+            case Preferences.KEY_PROJECTION_FRAME_RATE:
+            case Preferences.KEY_PROJECTION_BITRATE:
+            case Preferences.KEY_PROJECTION_SCALE:
+            case Preferences.KEY_PROJECTION_IDR_INTERVAL:
+            case Preferences.KEY_PROJECTION_QUALITY:
+                return true;
+            default:
+                return false;
+        }
+    }
+
     // Device id row inside the settings sheet; null until the sheet is created.
     @Nullable
     private MaterialTextView mDeviceIdSettingView;
@@ -469,6 +503,8 @@ public class MainActivity extends AppCompatActivity {
         mIsServiceBound = true;
         bindService(new Intent(this, ScreenShareService.class), mServiceConnection, Context.BIND_AUTO_CREATE);
 
+        Preferences.get().addObserver(mProjectionSummaryObserver);
+
         if (Preferences.get().isDiscoveryEnabled()) {
             DiscoveryManager.get().addDeviceListener(mDeviceListener);
             mMainHandler.removeCallbacks(mDiscoveryHintRunnable);
@@ -492,6 +528,8 @@ public class MainActivity extends AppCompatActivity {
         mIsServiceBound = false;
         mServiceMessenger = null;
         unbindService(mServiceConnection);
+
+        Preferences.get().removeObserver(mProjectionSummaryObserver);
 
         DiscoveryManager.get().removeDeviceListener(mDeviceListener);
         mMainHandler.removeCallbacks(mDiscoveryHintRunnable);

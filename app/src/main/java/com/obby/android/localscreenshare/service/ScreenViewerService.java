@@ -34,6 +34,7 @@ import android.view.LayoutInflater;
 import android.view.MotionEvent;
 import android.view.TextureView;
 import android.view.View;
+import android.view.ViewConfiguration;
 import android.view.ViewGroup;
 import android.view.ViewOutlineProvider;
 import android.view.WindowManager;
@@ -86,6 +87,7 @@ import com.obby.android.localscreenshare.discovery.model.DeviceAddress;
 import com.obby.android.localscreenshare.discovery.model.DeviceInfo;
 import com.obby.android.localscreenshare.render.SurfaceRenderTarget;
 import com.obby.android.localscreenshare.render.ViewerFitPolicy;
+import com.obby.android.localscreenshare.render.ViewerZoomMenuModel;
 import com.obby.android.localscreenshare.render.ZoomMode;
 import com.obby.android.localscreenshare.settings.Preferences;
 import com.obby.android.localscreenshare.support.MutableReference;
@@ -97,6 +99,7 @@ import org.apache.commons.lang3.mutable.MutableBoolean;
 
 import java.text.NumberFormat;
 import java.util.Collections;
+import java.util.List;
 import java.util.Objects;
 
 /**
@@ -762,6 +765,14 @@ public class ScreenViewerService extends Service {
         @NonNull
         private final PointF mDragOffset = new PointF();
 
+        // Raw position of the latest ACTION_DOWN and the platform touch slop, used to start a drag
+        // as soon as the finger really moves.
+        private float mTouchDownX;
+
+        private float mTouchDownY;
+
+        private float mTouchSlop;
+
         @Nullable
         private AlertDialog mDialog;
 
@@ -789,6 +800,7 @@ public class ScreenViewerService extends Service {
             mContext = new ContextThemeWrapper(context, R.style.Theme_ScreenShare);
             mServiceInfo = serviceInfo;
             mWindowManager = mContext.getSystemService(WindowManager.class);
+            mTouchSlop = ViewConfiguration.get(mContext).getScaledTouchSlop();
             mTextureView = new TextureView(mContext) {
                 @Override
                 protected void onConfigurationChanged(@NonNull final Configuration newConfig) {
@@ -835,13 +847,24 @@ public class ScreenViewerService extends Service {
 
                 @Override
                 public void onLongPress(@NonNull MotionEvent e) {
-                    mTextureView.setActivated(true);
-                    mDragOffset.set(mLayoutParams.x - e.getRawX(), mLayoutParams.y - e.getRawY());
+                    beginDrag(e.getRawX(), e.getRawY());
                 }
             });
             mTextureView.setOnTouchListener((v, event) -> {
                 switch (event.getActionMasked()) {
+                    case MotionEvent.ACTION_DOWN:
+                        mTouchDownX = event.getRawX();
+                        mTouchDownY = event.getRawY();
+                        break;
                     case MotionEvent.ACTION_MOVE:
+                        // Dragging used to need a stationary long press first, so an ordinary swipe
+                        // moved nothing. The window follows the finger as soon as the touch travels
+                        // past the platform's touch slop; a tap or a double tap stays below it, so
+                        // the disconnect confirmation and the zoom menu are unaffected.
+                        if (!mTextureView.isActivated()
+                            && hasMovedPastTouchSlop(event.getRawX(), event.getRawY())) {
+                            beginDrag(mTouchDownX, mTouchDownY);
+                        }
                         if (mTextureView.isActivated()) {
                             updateLocation((int) (event.getRawX() + mDragOffset.x),
                                 (int) (event.getRawY() + mDragOffset.y));
@@ -860,6 +883,25 @@ public class ScreenViewerService extends Service {
                 mGestureDetector.onTouchEvent(event);
                 return true;
             });
+        }
+
+        /**
+         * Switches the window into the dragged state, keeping the offset from the touch origin so
+         * the window does not jump when the drag starts.
+         */
+        private void beginDrag(final float rawX, final float rawY) {
+            if (mTextureView.isActivated()) {
+                return;
+            }
+            mTextureView.setActivated(true);
+            mDragOffset.set(mLayoutParams.x - rawX, mLayoutParams.y - rawY);
+        }
+
+        /**
+         * Returns whether the touch travelled further than the platform's touch slop.
+         */
+        private boolean hasMovedPastTouchSlop(final float rawX, final float rawY) {
+            return Math.hypot(rawX - mTouchDownX, rawY - mTouchDownY) > mTouchSlop;
         }
 
         @NonNull
@@ -1041,23 +1083,28 @@ public class ScreenViewerService extends Service {
         }
 
         /**
-         * Opens the three-entry zoom menu; the current preset is preselected.
+         * Opens the zoom menu for the current stream geometry.
          *
-         * <p>The menu is a floating window like the disconnect confirmation. The actual-size entry
-         * explains itself when the stream is larger than the usable display area, because the fit
-         * policy then reduces it to the bounds instead of letting the window grow off-screen.</p>
+         * <p>Rows come from {@link ViewerZoomMenuModel}: every row states the scale it would apply,
+         * because the same window size can be reached by more than one preset, and the integer
+         * preset is left out when it only repeats the actual-size window. The current preset is
+         * preselected, and when it was the omitted integer preset the size-equivalent actual-size
+         * row is preselected instead.</p>
          */
         private void showZoomModeDialog() {
-            final ZoomMode[] modes = {ZoomMode.FIT, ZoomMode.ONE_TO_ONE, ZoomMode.INTEGER};
-            final CharSequence[] labels = {
-                mContext.getString(R.string.viewer_zoom_mode_fit),
-                mContext.getString(isOneToOneClamped()
-                    ? R.string.viewer_zoom_mode_one_to_one_clamped
-                    : R.string.viewer_zoom_mode_one_to_one),
-                mContext.getString(R.string.viewer_zoom_mode_integer)};
+            getMaxLayoutBounds(mBounds);
+            final int minSize = mContext.getResources()
+                .getDimensionPixelSize(R.dimen.screen_share_viewer_min_size);
+            final List<ViewerZoomMenuModel.Entry> entries = ViewerZoomMenuModel.build(
+                mContentWidth, mContentHeight, mRotationDegrees, mBounds.width(), mBounds.height(),
+                mScale, minSize, mZoomMode);
+
+            final CharSequence[] labels = new CharSequence[entries.size()];
             int checked = 0;
-            for (int i = 0; i < modes.length; i++) {
-                if (modes[i] == mZoomMode) {
+            for (int i = 0; i < entries.size(); i++) {
+                final ViewerZoomMenuModel.Entry entry = entries.get(i);
+                labels[i] = labelOf(entry);
+                if (entry.isSelected()) {
                     checked = i;
                 }
             }
@@ -1065,13 +1112,32 @@ public class ScreenViewerService extends Service {
             final AlertDialog dialog = new MaterialAlertDialogBuilder(mContext)
                 .setTitle(R.string.viewer_zoom_mode_title)
                 .setSingleChoiceItems(labels, checked, (target, which) -> {
-                    setZoomMode(modes[which]);
+                    setZoomMode(entries.get(which).getMode());
                     target.dismiss();
                 })
                 .setNegativeButton(android.R.string.cancel, null)
                 .create();
             dialog.getWindow().setType(ServiceProtocol.FLOATING_WINDOW_TYPE);
             dialog.show();
+        }
+
+        /**
+         * Returns the label of one zoom menu row, including the scale it would apply.
+         */
+        @NonNull
+        private String labelOf(@NonNull final ViewerZoomMenuModel.Entry entry) {
+            final int percent = entry.getEffectivePercent();
+            switch (entry.getMode()) {
+                case ONE_TO_ONE:
+                    return mContext.getString(entry.isClamped()
+                        ? R.string.viewer_zoom_mode_one_to_one_clamped_percent
+                        : R.string.viewer_zoom_mode_one_to_one_percent, percent);
+                case INTEGER:
+                    return mContext.getString(R.string.viewer_zoom_mode_integer_percent, percent);
+                case FIT:
+                default:
+                    return mContext.getString(R.string.viewer_zoom_mode_fit_percent, percent);
+            }
         }
 
         /**
@@ -1086,21 +1152,6 @@ public class ScreenViewerService extends Service {
             if (mTextureView.getParent() != null) {
                 updateView();
             }
-        }
-
-        /**
-         * Returns whether actual size would have to be reduced to fit the display.
-         *
-         * <p>Undefined before the first descriptor: the window then has no content geometry, so
-         * there is nothing to compare against and the plain label is used.</p>
-         */
-        private boolean isOneToOneClamped() {
-            getMaxLayoutBounds(mBounds);
-            final int minSize = mContext.getResources()
-                .getDimensionPixelSize(R.dimen.screen_share_viewer_min_size);
-            return ViewerFitPolicy.fit(mContentWidth, mContentHeight, mRotationDegrees,
-                mBounds.width(), mBounds.height(), mScale, minSize, ZoomMode.ONE_TO_ONE)
-                .isClamped();
         }
 
         private void updateLocation(final int x, final int y) {

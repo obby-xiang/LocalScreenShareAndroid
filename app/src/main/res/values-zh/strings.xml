@@ -16,10 +16,10 @@
     <string name="screen_share_retry_connect_confirm">"无法连接到共享屏幕“&lt;b&gt;<xliff:g id="name">%1$s</xliff:g>&lt;/b&gt;”，是否重试？"</string>
     <string name="screen_share_reconnect_confirm">"已断开与共享屏幕“&lt;b&gt;<xliff:g id="name">%1$s</xliff:g>&lt;/b&gt;”的连接，是否重新连接？"</string>
     <string name="viewer_zoom_mode_title">"显示模式"</string>
-    <string name="viewer_zoom_mode_fit">"适应窗口"</string>
-    <string name="viewer_zoom_mode_one_to_one">"原始大小（1:1）"</string>
-    <string name="viewer_zoom_mode_one_to_one_clamped">"原始大小（超出屏幕，已按屏幕缩放）"</string>
-    <string name="viewer_zoom_mode_integer">"整数缩放（1/2、1/3、1/4）"</string>
+    <string name="viewer_zoom_mode_fit_percent">"适应窗口（%1$d%%）"</string>
+    <string name="viewer_zoom_mode_one_to_one_percent">"原始大小（1:1，%1$d%%）"</string>
+    <string name="viewer_zoom_mode_one_to_one_clamped_percent">"原始大小（1:1，%1$d%%，超出屏幕，已按屏幕缩放）"</string>
+    <string name="viewer_zoom_mode_integer_percent">"整数缩放（%1$d%%）"</string>
     <string name="keep_screen_on_setting_label">"屏幕常亮"</string>
     <string name="viewer_opacity_setting_label">"不透明度"</string>
     <string name="viewer_scale_setting_label">"显示大小"</string>
