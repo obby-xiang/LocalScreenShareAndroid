@@ -24,7 +24,7 @@
 - 基线参考：`65a34dc`（TB-ENG-004 完成标记）。
 - 编码框架隔离核心批次（Task 1–9，代码范围 `9f650dc..2a95ab2`）见 [TB-DOC-008](#tb-doc-008) 与 [TB-FW-001](#tb-fw-001)；最近完成的条目见 [TB-ENG-004](#tb-eng-004) 与 [TB-ENG-003](#tb-eng-003)。
 - 媒体路径生产接线（批次 A–H）已完成代码层面：双向流协议、StreamRuntime/StreamHub 服务端接线、H.264 采集直通、客户端 ClientMediaSession/Surface 渲染、JPEG 回退、能力选档与切换编排均已落地；仅经 JVM/fake 与编译验证，详见 [TB-FW-003](#tb-fw-003)。
-- 问题 3 代码层面已收官（批次 A–H），三个边角项 [TB-ENG-005](#tb-eng-005)、[TB-ENG-006](#tb-eng-006)、[TB-ENG-007](#tb-eng-007) 已登记遗留；下一步等用户准备好设备后进入设备实测（设备验证未解禁）；问题 3 仍未关闭。
+- 问题 3 代码层面已收官（批次 A–H），边角项 [TB-ENG-005](#tb-eng-005) 已完成（视频设置界面），[TB-ENG-006](#tb-eng-006)、[TB-ENG-007](#tb-eng-007) 仍为遗留；下一步等用户准备好设备后进入设备实测（设备验证未解禁）；问题 3 仍未关闭。
 - 未做设备/真机/模拟器验证：全程未运行 adb、`connectedAndroidTest`、安装或启动 App；编码切换、Surface 恢复与多客户端行为均无实测数据。
 - 编码框架隔离核心（契约、StreamHub、有界队列、六状态机、JPEG 参考适配）已完成并通过 JVM 验证，见 [TB-FW-001](#tb-fw-001)、[TB-FW-004](#tb-fw-004)、[TB-FW-005](#tb-fw-005)、[TB-FW-002](#tb-fw-002)。
 - 问题 3 尚未由用户明确关闭，不能标记完成；代码完成 ≠ 问题关闭，API 25 只是兼容下限，能力按运行时探测分档。
@@ -376,7 +376,7 @@
   - `Preferences.KEY_VIEWER_ZOOM_MODE`：档位与观看比例分开存，空值即适应窗口；`ZoomMode.wire()/fromWire()` 稳定解析，未知值回退适应窗口。
   - 验证：`ViewerFitPolicyTest` 22 条（同尺寸恒等 1080×2340→864×1872、横屏码流进竖屏 bounds → 864×399、旋转互换、bounds 小于内容、1:1 钳制、整数档 80%→1、60%→1/2、33%→1/3、等距向上、最小尺寸、非法输入回退、比例误差 ≤1 px 的遍历断言）、`ZoomModeTest` 5 条、`ClientMediaReceiverTest` 追加 5 条几何回调（顺序、旋转、epoch 重复回调、AU 不回调、关闭后不回调）；全量 **726 tests / 0 failures / 0 errors / 0 skipped**（62 个测试类，较 694 基线 +32）；`:app:testDebugUnitTest --offline`、`:app:assembleDebug --offline` 与三件套检查通过；Q1 Build [39447109279](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39447109279)/Checks [39447109129](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39447109129)、Q2 Build [39447532109](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39447532109)/Checks [39447531974](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39447531974) success；Q3 的 Checks [39448619331](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39448619331) success，其 Build run 被下一次推送按并发策略取消，Q3 代码由 Q4 的 Build [39448720986](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39448720986) 覆盖通过。
   - 边界：未做设备实测；纹理旋转矩阵、跨朝向/跨机型组合的比例与锯齿观感、1:1 与整数档的实际清晰度均需真机复核（同型号同朝向组合原本只有约 2.5% 比例差，不能据此判定 R1 不存在）。
-- **关联文档**：[实施计划](superpowers/plans/2026-10-21-viewer-quality-and-settings.md)、[决策 DB-RENDER-001](decision-board.md)、[决策 DB-RENDER-002](decision-board.md)
+- **关联文档**：[实施计划](superpowers/plans/2026-10-21-viewer-quality-and-settings.md)、[决策 DB-RENDER-001](decision-board.md#db-render-001)、[决策 DB-RENDER-002](decision-board.md#db-render-002)
 
 </details>
 
@@ -393,7 +393,7 @@
   - `client/KeyFrameRequestThrottle`（1 s 冷却，线程安全）：`ScreenShareClient` 队列溢出与 `ScreenViewerService` 的解码丢帧/`RESYNCING` 三条路径都经它调用 `requestKeyframe()`。
   - 验证：`PresentationPacerTest` 10 条、`KeyFrameRequestThrottleTest` 5 条、`H264DecoderTest` 追加 6 条（多输出只呈现最新、格式变更忽略、EOS 释放后失败、PTS 回退丢弃、输入预算丢帧请求关键帧、释放无泄漏）、`MediaCodecBridgeContractTest` 追加 present/discard 释放与重复释放契约；全量 **747 tests / 0 failures / 0 errors / 0 skipped**（64 个测试类，较 726 +21）；`:app:testDebugUnitTest --offline`、`:app:assembleDebug --offline` 与三件套检查通过；Build [39448720986](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39448720986)/Checks [39448721211](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39448721211) success。
   - 边界：本地限帧默认关闭（最小间隔 0），收益未实测；`releaseOutputBuffer(index, timestampNs)` 的真实调度行为、丢帧后到新 IDR 的恢复时延、弱网下的花屏时长均需真机验证。
-- **关联文档**：[实施计划](superpowers/plans/2026-10-21-viewer-quality-and-settings.md)、[决策 DB-RENDER-003](decision-board.md)
+- **关联文档**：[实施计划](superpowers/plans/2026-10-21-viewer-quality-and-settings.md)、[决策 DB-RENDER-003](decision-board.md#db-render-003)
 
 </details>
 
@@ -416,7 +416,7 @@
 - **任务**：帧率与关键帧间隔只在编码器创建时生效，因此改这两个参数必须走“写偏好 → 更新运行参数 → 推进 configEpoch → 重建编码器 → 重指采集输出面”，并与尺寸变化共用同一条串行路径，避免两次重建撞 epoch。
 - **交付物 / 验证证据**：交付（`6f8d744`）：`ScreenShareService.scheduleEncoderRebuild()` 主线程 300 ms 防抖合并同批变化，`rebuildEncoder()` 固定顺序 `updateParameters → switchDescriptor(epoch+1) → setDisplaySurface(getInputSurface())`，失败只记日志并保持旧编码器（码率可能已热应用，帧率/IDR 仍是旧值）；`KEY_PROJECTION_FRAME_RATE`、`KEY_PROJECTION_IDR_INTERVAL` 与 null-key 全量刷新接入该路径；`KEY_PROJECTION_BITRATE` 保持热应用，`KEY_PROJECTION_CODEC` 明确不处理（另记日志）。`StreamRuntime` 无需改核心 API：`switchDescriptor` 已用当前参数预热新编码器。验证：`StreamRuntimeTest.switchDescriptor_afterUpdateParameters_rebuildsWithNewParameters` 断言新参数进入新编码器且 epoch +1；全量 758 tests 通过（见 [TB-ENG-005](#tb-eng-005) 的 CI 证据）。
   - 边界：未做设备实测；重建导致的画面停顿、客户端重配解码器的耗时与失败回退路径均需真机验证。
-- **关联文档**：[实施计划](superpowers/plans/2026-10-21-viewer-quality-and-settings.md)、[TB-ENG-005](#tb-eng-005)、[决策 DB-CODEC-003](decision-board.md)
+- **关联文档**：[实施计划](superpowers/plans/2026-10-21-viewer-quality-and-settings.md)、[TB-ENG-005](#tb-eng-005)、[决策 DB-CODEC-003](decision-board.md#db-codec-003)
 
 </details>
 
