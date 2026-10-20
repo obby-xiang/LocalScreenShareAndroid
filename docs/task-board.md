@@ -29,6 +29,7 @@
 - 编码框架隔离核心（契约、StreamHub、有界队列、六状态机、JPEG 参考适配）已完成并通过 JVM 验证，见 [TB-FW-001](#tb-fw-001)、[TB-FW-004](#tb-fw-004)、[TB-FW-005](#tb-fw-005)、[TB-FW-002](#tb-fw-002)。
 - 问题 3 尚未由用户明确关闭，不能标记完成；代码完成 ≠ 问题关闭，API 25 只是兼容下限，能力按运行时探测分档。
 - 编码框架待收尾：TB-FW-003、TB-FW-006、TB-MEDIA-001、TB-MEDIA-003 等待设备验证；TB-FW-002 仍部分完成；TB-FW-007、TB-FW-008 未完成。
+- 设备发现功能已立项（[TB-DISC-001](#tb-disc-001)..[TB-DISC-010](#tb-disc-010)）：调研沉淀完成，实施进行中（TB-DISC-002 至 TB-DISC-010 待办）；设备验证仍未解禁。
 - 阶段 0/1 的代码优化尚未开始，当前没有进行中的代码任务。
 - 下一步：按 [渐进优化路线图](optimization-roadmap.md) 的阶段 0 启动可观测性与基线，落地顺序以 [编码框架](codec-framework.md) 为准。
 - 前置约束：拿到基线前，不预设任何性能、发热或延迟收益。
@@ -46,6 +47,15 @@
 
 | ID | 状态 | 优先级 | 标题 | 创建 | 完成 | 关联 |
 | --- | --- | --- | --- | --- | --- | --- |
+| TB-DISC-002 | 📋 待办 | 🟠 P1 | 设备模型与 DeviceStore 抽象 | 2026-10-20 | — | [发现调研](discovery-research.md) |
+| TB-DISC-003 | 📋 待办 | 🟠 P1 | NSD 修正与加固 | 2026-10-20 | — | [发现调研](discovery-research.md) |
+| TB-DISC-004 | 📋 待办 | 🟠 P1 | 设备身份（密钥派生 ID） | 2026-10-20 | — | [发现调研](discovery-research.md) |
+| TB-DISC-005 | 📋 待办 | 🟠 P1 | UDP 组播发现通道 | 2026-10-20 | — | [发现调研](discovery-research.md) |
+| TB-DISC-006 | 📋 待办 | 🟠 P1 | Register 双向发现 RPC | 2026-10-20 | — | [发现调研](discovery-research.md) |
+| TB-DISC-007 | 📋 待办 | 🟡 P2 | 分级扫描 | 2026-10-20 | — | [发现调研](discovery-research.md) |
+| TB-DISC-008 | 📋 待办 | 🟡 P2 | 手动 IP 与收藏 | 2026-10-20 | — | [发现调研](discovery-research.md) |
+| TB-DISC-009 | 📋 待办 | 🟡 P2 | 发现设置与 UI 集成 | 2026-10-20 | — | [发现调研](discovery-research.md) |
+| TB-DISC-010 | 📋 待办 | 🟡 P2 | 传输加密与身份 pinning | 2026-10-20 | — | [发现调研](discovery-research.md) |
 | TB-ENG-005 | 📋 待办 | 🟡 P2 | 新偏好设置界面控件 | 2026-10-19 | — | [问题3接线计划](superpowers/plans/2026-10-19-media-path-wiring.md) |
 | TB-ENG-006 | 📋 待办 | 🟡 P2 | JPEG 降级客户端查看器接回 | 2026-10-19 | — | [问题3接线计划](superpowers/plans/2026-10-19-media-path-wiring.md) |
 | TB-ENG-007 | 📋 待办 | 🟡 P2 | 客户端发送统计并入服务端统计 | 2026-10-19 | — | [问题3接线计划](superpowers/plans/2026-10-19-media-path-wiring.md) |
@@ -70,6 +80,7 @@
 
 | ID | 状态 | 优先级 | 标题 | 创建 | 完成 | 关联 |
 | --- | --- | --- | --- | --- | --- | --- |
+| TB-DISC-001 | ✅ 已完成 | 🟡 P2 | 设备发现调研沉淀 | 2026-10-20 | 2026-10-20 | [发现调研](discovery-research.md) |
 | TB-ENG-003 | ✅ 已完成 | 🟡 P2 | 代码文档与英文注释 | 2026-10-18 | 2026-10-19 | [实施计划](superpowers/plans/2026-10-19-code-docs-i18n.md) |
 | TB-ENG-004 | ✅ 已完成 | 🟡 P2 | 中英双语资源 | 2026-10-18 | 2026-10-19 | [决策看板](decision-board.md) |
 | TB-DOC-008 | ✅ 已完成 | 🔴 P0 | 框架实施计划 | 2026-10-17 | 2026-10-18 | [实施计划](superpowers/plans/2026-10-17-codec-framework.md) |
@@ -121,6 +132,96 @@
 当前无进行中任务。
 
 ### 📋 待办条目
+
+<a id="tb-disc-002"></a>
+<details><summary>TB-DISC-002 设备模型与 DeviceStore 抽象（📋 待办）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟠 P1 / 2026-10-20 / —
+- **任务**：`LssDeviceInfo` 设备模型（`id`、`fp`、`name?`、`role`、`state`、`join`、`secure`、`auth`、`pv`、`mv`、`caps`、`addresses[]`、`lastSeen`）；`DeviceStore` 作为设备状态单一真相源（TTL 过期、多通道合并、`Available` 仅以应用层确认为准）；`DiscoveryProvider` 接口，NSD、组播、手动为并列 provider。
+- **交付物 / 验证证据**：交付：模型、`DeviceStore`、provider 接口与 JVM 单测。验证：多通道上报同一设备合并为一条、TTL 到期移除、发现层上报不足以把设备置为 `Available`；当前未实施，设备验证未解禁。
+- **关联文档**：[发现调研](discovery-research.md)
+
+</details>
+
+<a id="tb-disc-003"></a>
+<details><summary>TB-DISC-003 NSD 修正与加固（📋 待办）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟠 P1 / 2026-10-20 / —
+- **任务**：服务类型 `_localscreenshare._udp` 改为 `_lss._tcp`（现服务名 `localscreenshare` 16 字符超 RFC 6763 的 15 字符上限，且 `_udp` 与实际 TCP gRPC 承载不符）；实例名改为 `LSS-<id 前 8 位>`；TXT 最小化（`name` 默认不广播，当前默认取系统设备名是隐私泄露点）；`resolve` 增加超时；发现启动失败复位；重试退避；`NetworkCallback` 在网络切换后重新发现。关联 [TB-CORE-001](#tb-core-001) 的 NSD 服务类型修正、服务名隐私等部分项。
+- **交付物 / 验证证据**：交付：服务类型与实例名修正、TXT 策略、超时/退避/网络回调接线与单测。验证：服务类型符合 RFC 6763、实例名稳定可读但不含隐私、默认不广播设备名、网络切换后可重新发现；当前未实施，设备验证未解禁。
+- **关联文档**：[发现调研](discovery-research.md)、[TB-CORE-001](#tb-core-001)
+
+</details>
+
+<a id="tb-disc-004"></a>
+<details><summary>TB-DISC-004 设备身份（密钥派生 ID）（📋 待办）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟠 P1 / 2026-10-20 / —
+- **任务**：设备身份：AndroidKeyStore 生成 EC P-256 长期密钥；`fp=SHA-256(SPKI)`，短 ID 取 26 字符；重装即新身份；设置内提供“重置设备身份”；当前无 TLS，指纹先作声明值，为后续 pinning 铺路。
+- **交付物 / 验证证据**：交付：密钥生成与读取、指纹与短 ID 派生、重置入口与单测。验证：同一安装身份稳定、重置后 ID 变化、指纹可在注册时比对；当前未实施，设备验证未解禁。
+- **关联文档**：[发现调研](discovery-research.md)、[TB-DISC-010](#tb-disc-010)
+
+</details>
+
+<a id="tb-disc-005"></a>
+<details><summary>TB-DISC-005 UDP 组播发现通道（📋 待办）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟠 P1 / 2026-10-20 / —
+- **任务**：UDP 组播公告：组 `224.0.0.167`、端口可配、TTL=1、启动 3 连发（100/500/2000 ms）+ 周期心跳 + 停服告别 `announces:false`；`MulticastLock` 生命周期管理。
+- **交付物 / 验证证据**：交付：公告发送与接收、心跳与告别、`MulticastLock` 接线与单测。验证：同网段可互见、停服后条目按时过期、`MulticastLock` 随服务生命周期正确获取与释放；当前未实施，设备验证未解禁。
+- **关联文档**：[发现调研](discovery-research.md)
+
+</details>
+
+<a id="tb-disc-006"></a>
+<details><summary>TB-DISC-006 Register 双向发现 RPC（📋 待办）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟠 P1 / 2026-10-20 / —
+- **任务**：proto 增加 unary `Register`（复用现有 gRPC 端口）；请求与响应双向携带设备信息；`announces` 标志防止无限回打；Register 成功才写入 `DeviceStore`。
+- **交付物 / 验证证据**：交付：proto 定义、服务端实现、客户端调用与单测。验证：单向发现转双向、双方设备信息落地、`announces:false` 不再回打；当前未实施，设备验证未解禁。
+- **关联文档**：[发现调研](discovery-research.md)、[媒体架构](media-architecture.md)
+
+</details>
+
+<a id="tb-disc-007"></a>
+<details><summary>TB-DISC-007 分级扫描（📋 待办）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟡 P2 / 2026-10-20 / —
+- **任务**：分级扫描：公告与收藏并行，经 1 s grace 仍零确认再扫描；按接口 prefix 扫描（不写死 `/24`，并发 ≤50，单请求 500 ms）；不扫 VPN/蜂窝接口。
+- **交付物 / 验证证据**：交付：候选生成、并发控制与超时、接口过滤与单测。验证：非 `/24` 网段也能发现、扫描不阻塞主流程、VPN/蜂窝接口被跳过；当前未实施，设备验证未解禁。
+- **关联文档**：[发现调研](discovery-research.md)
+
+</details>
+
+<a id="tb-disc-008"></a>
+<details><summary>TB-DISC-008 手动 IP 与收藏（📋 待办）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟡 P2 / 2026-10-20 / —
+- **任务**：手动 IP 常驻入口（自动发现 8–12 s 无结果时亮出）；收藏持久化 `{id, fp, ip, port, alias, customAlias}`；上次成功地址优先探测。
+- **交付物 / 验证证据**：交付：手动添加与编辑、收藏存储、优先探测与单测。验证：自动发现失败时仍可手动连接、重启后收藏保留、地址变更后回退可用；当前未实施，设备验证未解禁。
+- **关联文档**：[发现调研](discovery-research.md)
+
+</details>
+
+<a id="tb-disc-009"></a>
+<details><summary>TB-DISC-009 发现设置与 UI 集成（📋 待办）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟡 P2 / 2026-10-20 / —
+- **任务**：发现设置（组播组/端口/超时、可见性、仅用兼容模式开关）；设备列表统一从 `DeviceStore` 渲染；服务端/客户端分区与状态展示。
+- **交付物 / 验证证据**：交付：设置项与偏好、列表渲染、状态展示与单测。验证：设置项生效、列表状态与 `DeviceStore` 一致、可见性开关按预期隐藏设备；当前未实施，设备验证未解禁。
+- **关联文档**：[发现调研](discovery-research.md)
+
+</details>
+
+<a id="tb-disc-010"></a>
+<details><summary>TB-DISC-010 传输加密与身份 pinning（📋 待办）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟡 P2 / 2026-10-20 / —
+- **任务**：自签 TLS + TOFU 指纹确认；Register 与媒体流加密；与 [TB-SEC-001](#tb-sec-001) 协同；本项可后置。
+- **交付物 / 验证证据**：交付：TLS 配置、指纹确认流程、pinning 校验与测试。验证：首次连接需确认指纹、指纹变化被拒绝、Register 与媒体流均加密；当前未实施，设备验证未解禁。
+- **关联文档**：[发现调研](discovery-research.md)、[TB-SEC-001](#tb-sec-001)
+
+</details>
 
 <a id="tb-eng-005"></a>
 <details><summary>TB-ENG-005 新偏好设置界面控件（📋 待办）</summary>
@@ -294,6 +395,16 @@
 </details>
 
 ### ✅ 已完成条目
+
+<a id="tb-disc-001"></a>
+<details><summary>TB-DISC-001 设备发现调研沉淀（✅ 2026-10-20）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：✅ 已完成 / 🟡 P2 / 2026-10-20 / 2026-10-20
+- **任务**：沉淀局域网设备发现调研：业界发现机制（mDNS/DNS-SD、SSDP/UPnP、Cast/AirPlay、KDE Connect、Open Screen、LocalSend 等）与平台矩阵、LocalSend 源码深挖、设备身份与字段的三层分配、可靠性参数、方案对比与分阶段落地建议，并标注“已验证证据/建议/推测”的证据边界。
+- **交付物 / 验证证据**：交付：`docs/discovery-research.md`，并在 [文档索引](README.md) 的阅读顺序与文档索引中登记。验证：提交 `99c3a50`；`python scripts/checks/check_docs.py` 全绿（16 个 Markdown 文件、384 条相对链接、95 个表格，围栏/路径/凭据检查通过）。内容为源码与协议文档调研，未做设备或网络实测；设备验证仍未解禁。
+- **关联文档**：[发现调研](discovery-research.md)、[文档索引](README.md)
+
+</details>
 
 <a id="tb-eng-003"></a>
 <details><summary>TB-ENG-003 代码文档与英文注释（✅ 2026-10-19）</summary>
