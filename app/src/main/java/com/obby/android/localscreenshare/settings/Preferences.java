@@ -112,6 +112,11 @@ public final class Preferences {
     public static final String KEY_VIEWER_ROUNDED = "viewer_rounded";
 
     /**
+     * Overlay zoom preset; see {@link #getViewerZoomMode()}.
+     */
+    public static final String KEY_VIEWER_ZOOM_MODE = "viewer_zoom_mode";
+
+    /**
      * Discovery toggle; see {@link #isDiscoveryEnabled()}.
      */
     public static final String KEY_DISCOVERY_ENABLED = "discovery_enabled";
@@ -607,6 +612,25 @@ public final class Preferences {
      */
     public void setViewerRounded(final boolean isRounded) {
         mPreferences.edit().putBoolean(KEY_VIEWER_ROUNDED, isRounded).commit();
+    }
+
+    /**
+     * Viewer zoom preset wire value; empty means the default preset (fit the window).
+     *
+     * <p>The value is validated by {@link com.obby.android.localscreenshare.render.ZoomMode},
+     * which turns an empty or unknown value into the fit mode. It is stored separately from the
+     * viewing percentage, so switching presets never overwrites the size the user chose.</p>
+     */
+    @NonNull
+    public String getViewerZoomMode() {
+        return Optional.ofNullable(mPreferences.getString(KEY_VIEWER_ZOOM_MODE, null)).orElse("");
+    }
+
+    /**
+     * Persists the zoom preset; the viewer applies it the next time it recomputes its window.
+     */
+    public void setViewerZoomMode(@NonNull final String zoomMode) {
+        mPreferences.edit().putString(KEY_VIEWER_ZOOM_MODE, zoomMode).commit();
     }
 
     /**

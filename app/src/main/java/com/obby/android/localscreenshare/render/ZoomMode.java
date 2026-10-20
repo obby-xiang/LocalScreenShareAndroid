@@ -1,5 +1,8 @@
 package com.obby.android.localscreenshare.render;
 
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+
 /**
  * Scaling strategy applied to the floating viewer window.
  *
@@ -31,5 +34,48 @@ public enum ZoomMode {
      * {@code 1/4}, so the sampled ratio stays a whole-number fraction and downscaling stays
      * legible. Ties snap towards the larger window.
      */
-    INTEGER
+    INTEGER;
+
+    private static final String WIRE_FIT = "fit";
+
+    private static final String WIRE_ONE_TO_ONE = "one_to_one";
+
+    private static final String WIRE_INTEGER = "integer";
+
+    /**
+     * Returns the stable wire value persisted in the preferences and carried by the UI.
+     *
+     * <p>The values are spelled out instead of derived from {@link #name()} so renaming a constant
+     * cannot silently change what an existing preference means.</p>
+     */
+    @NonNull
+    public String wire() {
+        switch (this) {
+            case ONE_TO_ONE:
+                return WIRE_ONE_TO_ONE;
+            case INTEGER:
+                return WIRE_INTEGER;
+            case FIT:
+            default:
+                return WIRE_FIT;
+        }
+    }
+
+    /**
+     * Parses a persisted wire value; an empty, null or unknown value means {@link #FIT}.
+     *
+     * <p>An unknown value falls back to the default instead of throwing: the preference may have
+     * been written by a newer or older version, and a viewer that cannot size its own window is
+     * worse than one that ignores an unknown preset.</p>
+     */
+    @NonNull
+    public static ZoomMode fromWire(@Nullable final String wire) {
+        if (WIRE_ONE_TO_ONE.equals(wire)) {
+            return ONE_TO_ONE;
+        }
+        if (WIRE_INTEGER.equals(wire)) {
+            return INTEGER;
+        }
+        return FIT;
+    }
 }

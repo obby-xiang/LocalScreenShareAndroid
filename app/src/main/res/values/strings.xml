@@ -15,6 +15,11 @@
     <string name="screen_share_disconnect_confirm">"Disconnect from the shared screen \"&lt;b&gt;<xliff:g id="name">%1$s</xliff:g>&lt;/b&gt;\"?"</string>
     <string name="screen_share_retry_connect_confirm">"Unable to connect to the shared screen \"&lt;b&gt;<xliff:g id="name">%1$s</xliff:g>&lt;/b&gt;\". Retry?"</string>
     <string name="screen_share_reconnect_confirm">"Disconnected from the shared screen \"&lt;b&gt;<xliff:g id="name">%1$s</xliff:g>&lt;/b&gt;\". Reconnect?"</string>
+    <string name="viewer_zoom_mode_title">"Display mode"</string>
+    <string name="viewer_zoom_mode_fit">"Fit window"</string>
+    <string name="viewer_zoom_mode_one_to_one">"Actual size (1:1)"</string>
+    <string name="viewer_zoom_mode_one_to_one_clamped">"Actual size (larger than screen, scaled to fit)"</string>
+    <string name="viewer_zoom_mode_integer">"Integer scaling (1/2, 1/3, 1/4)"</string>
     <string name="keep_screen_on_setting_label">"Keep screen on"</string>
     <string name="viewer_opacity_setting_label">"Opacity"</string>
     <string name="viewer_scale_setting_label">"Display size"</string>

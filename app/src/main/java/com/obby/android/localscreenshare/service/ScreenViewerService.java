@@ -689,16 +689,16 @@ public class ScreenViewerService extends Service {
      * Floating, draggable surface viewer for H.264 frames.
      *
      * <p>Hosts a {@link TextureView} that the decoder renders into directly, so no per-frame
-     * callback is needed. Created and used on the main thread. A long press starts dragging and a
-     * single tap opens the disconnect confirmation. Opacity, scale, corner rounding and the
-     * normalized location come from the persisted viewer settings; the secure flag maps to
-     * {@code FLAG_SECURE}. The round-rect outline mirrors the shape of the bitmap viewer this
-     * window replaced.</p>
+     * callback is needed. Created and used on the main thread. A long press starts dragging, a
+     * single tap opens the disconnect confirmation and a double tap opens the zoom menu. Opacity,
+     * scale, zoom preset, corner rounding and the normalized location come from the persisted
+     * viewer settings; the secure flag maps to {@code FLAG_SECURE}. The round-rect outline mirrors
+     * the shape of the bitmap viewer this window replaced.</p>
      *
      * <p><b>Geometry.</b> The window size comes from {@link ViewerFitPolicy}: the visible size and
-     * rotation reported by the stream descriptor, the usable display bounds and the viewing
-     * percentage. Until the first descriptor arrives the window keeps the legacy "bounds times
-     * percentage" size, so the texture view can acquire a surface before any frame exists. A
+     * rotation reported by the stream descriptor, the usable display bounds, the viewing percentage
+     * and the zoom preset. Until the first descriptor arrives the window keeps the legacy "bounds
+     * times percentage" size, so the texture view can acquire a surface before any frame exists. A
      * rotated stream is fitted to the swapped content size and the texture is transformed to match,
      * which keeps the pixels upright without stretching them.</p>
      */
@@ -739,6 +739,10 @@ public class ScreenViewerService extends Service {
         private int mOpacity;
 
         private int mScale;
+
+        // Snapshot of the persisted zoom preset; the fit policy turns it into a window size.
+        @NonNull
+        private ZoomMode mZoomMode = ZoomMode.FIT;
 
         // Visible stream size and display rotation; zero rotation and zero size until the first
         // descriptor arrives, which makes the fit policy fall back to the legacy window size.
@@ -795,6 +799,12 @@ public class ScreenViewerService extends Service {
                 }
 
                 @Override
+                public boolean onDoubleTap(@NonNull MotionEvent e) {
+                    showZoomModeDialog();
+                    return true;
+                }
+
+                @Override
                 public void onLongPress(@NonNull MotionEvent e) {
                     mTextureView.setActivated(true);
                     mDragOffset.set(mLayoutParams.x - e.getRawX(), mLayoutParams.y - e.getRawY());
@@ -832,6 +842,7 @@ public class ScreenViewerService extends Service {
             if (mTextureView.getParent() == null) {
                 mOpacity = Preferences.get().getViewerOpacity();
                 mScale = Preferences.get().getViewerScale();
+                mZoomMode = ZoomMode.fromWire(Preferences.get().getViewerZoomMode());
                 mLocation.set(Preferences.get().getViewerLocation());
                 updateLayoutParams();
                 updateShape();
@@ -991,14 +1002,76 @@ public class ScreenViewerService extends Service {
             final int minSize = mContext.getResources()
                 .getDimensionPixelSize(R.dimen.screen_share_viewer_min_size);
             final ViewerFitPolicy.Fit fit = ViewerFitPolicy.fit(mContentWidth, mContentHeight,
-                mRotationDegrees, mBounds.width(), mBounds.height(), mScale, minSize,
-                ZoomMode.FIT);
+                mRotationDegrees, mBounds.width(), mBounds.height(), mScale, minSize, mZoomMode);
             mLayoutParams.width = fit.getWidth();
             mLayoutParams.height = fit.getHeight();
 
             getLocationBounds(mBounds);
             mLayoutParams.x = (int) (mBounds.left + mBounds.width() * mLocation.x);
             mLayoutParams.y = (int) (mBounds.top + mBounds.height() * mLocation.y);
+        }
+
+        /**
+         * Opens the three-entry zoom menu; the current preset is preselected.
+         *
+         * <p>The menu is a floating window like the disconnect confirmation. The actual-size entry
+         * explains itself when the stream is larger than the usable display area, because the fit
+         * policy then reduces it to the bounds instead of letting the window grow off-screen.</p>
+         */
+        private void showZoomModeDialog() {
+            final ZoomMode[] modes = {ZoomMode.FIT, ZoomMode.ONE_TO_ONE, ZoomMode.INTEGER};
+            final CharSequence[] labels = {
+                mContext.getString(R.string.viewer_zoom_mode_fit),
+                mContext.getString(isOneToOneClamped()
+                    ? R.string.viewer_zoom_mode_one_to_one_clamped
+                    : R.string.viewer_zoom_mode_one_to_one),
+                mContext.getString(R.string.viewer_zoom_mode_integer)};
+            int checked = 0;
+            for (int i = 0; i < modes.length; i++) {
+                if (modes[i] == mZoomMode) {
+                    checked = i;
+                }
+            }
+
+            final AlertDialog dialog = new MaterialAlertDialogBuilder(mContext)
+                .setTitle(R.string.viewer_zoom_mode_title)
+                .setSingleChoiceItems(labels, checked, (target, which) -> {
+                    setZoomMode(modes[which]);
+                    target.dismiss();
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .create();
+            dialog.getWindow().setType(ServiceProtocol.FLOATING_WINDOW_TYPE);
+            dialog.show();
+        }
+
+        /**
+         * Persists and applies a zoom preset; the viewing percentage is left untouched.
+         */
+        private void setZoomMode(@NonNull final ZoomMode mode) {
+            if (mZoomMode == mode) {
+                return;
+            }
+            mZoomMode = mode;
+            Preferences.get().setViewerZoomMode(mode.wire());
+            if (mTextureView.getParent() != null) {
+                updateView();
+            }
+        }
+
+        /**
+         * Returns whether actual size would have to be reduced to fit the display.
+         *
+         * <p>Undefined before the first descriptor: the window then has no content geometry, so
+         * there is nothing to compare against and the plain label is used.</p>
+         */
+        private boolean isOneToOneClamped() {
+            getMaxLayoutBounds(mBounds);
+            final int minSize = mContext.getResources()
+                .getDimensionPixelSize(R.dimen.screen_share_viewer_min_size);
+            return ViewerFitPolicy.fit(mContentWidth, mContentHeight, mRotationDegrees,
+                mBounds.width(), mBounds.height(), mScale, minSize, ZoomMode.ONE_TO_ONE)
+                .isClamped();
         }
 
         private void updateLocation(final int x, final int y) {
