@@ -4,6 +4,7 @@ import android.os.Parcel;
 import android.os.Parcelable;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import java.util.Comparator;
 
@@ -67,12 +68,24 @@ public class LssServiceInfo implements Comparable<LssServiceInfo>, Parcelable {
      */
     private final int mPort;
 
+    /**
+     * Fingerprint of the server identity public key, or null when the channel that reported the
+     * server did not carry one.
+     *
+     * <p>NSD never advertises it; the application-level handshake does. It is the trust anchor
+     * used to detect that a server id now belongs to a different key.</p>
+     */
+    @Nullable
+    private final String mFingerprint;
+
     @SuppressWarnings("DataFlowIssue")
     private LssServiceInfo(@NonNull final Parcel in) {
         mId = in.readString();
         mName = in.readString();
         mHostAddress = in.readString();
         mPort = in.readInt();
+        // Appended field keeps the original read order intact.
+        mFingerprint = in.readString();
     }
 
     /**
@@ -94,5 +107,6 @@ public class LssServiceInfo implements Comparable<LssServiceInfo>, Parcelable {
         dest.writeString(mName);
         dest.writeString(mHostAddress);
         dest.writeInt(mPort);
+        dest.writeString(mFingerprint);
     }
 }

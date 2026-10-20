@@ -16,8 +16,9 @@ import lombok.experimental.Accessors;
  * advertisement.
  *
  * <p>{@link Parcelable} because the service sends it to activities through a {@code Messenger}.
- * The host address is a placeholder until the server resolves its own NSD registration; the id is
- * the service identity and is also used as the NSD service name.</p>
+ * The host address is a placeholder until the server resolves its own NSD registration. The
+ * discovery identity is {@link #getDeviceId()}, whose first eight characters form the NSD instance
+ * name; the legacy {@link #getId()} carries the same value until the settings batch removes it.</p>
  */
 @Accessors(prefix = "m")
 @Data
@@ -37,8 +38,13 @@ public class LssServerInfo implements Parcelable {
     };
 
     /**
-     * Stable service identity, generated per installation and also used as the NSD service name.
+     * Stable service identity; the same value as {@link #getDeviceId()}.
+     *
+     * @deprecated the discovery identity is {@link #getDeviceId()}; this accessor only exists so
+     *     the media path and the legacy UI contract keep compiling until the settings batch
+     *     migrates them.
      */
+    @Deprecated
     @NonNull
     private final String mId;
 
@@ -59,12 +65,32 @@ public class LssServerInfo implements Parcelable {
      */
     private final int mPort;
 
+    /**
+     * Discovery identity of this device, the 26-character Crockford base32 id derived from the
+     * AndroidKeyStore key. Peers use it as the device primary key and as the NSD instance name.
+     */
+    @NonNull
+    private final String mDeviceId;
+
+    /**
+     * Fingerprint of the identity public key, {@code base64url(SHA-256(SPKI))}.
+     *
+     * <p>It is a claim until transport authentication exists (the media stream is not encrypted
+     * yet), so it is never broadcast over NSD and only travels over the application-level
+     * handshake.</p>
+     */
+    @NonNull
+    private final String mFingerprint;
+
     @SuppressWarnings("DataFlowIssue")
     private LssServerInfo(@NonNull final Parcel in) {
         mId = in.readString();
         mName = in.readString();
         mHostAddress = in.readString();
         mPort = in.readInt();
+        // Appended fields keep the original read order intact.
+        mDeviceId = in.readString();
+        mFingerprint = in.readString();
     }
 
     @Override
@@ -78,5 +104,7 @@ public class LssServerInfo implements Parcelable {
         dest.writeString(mName);
         dest.writeString(mHostAddress);
         dest.writeInt(mPort);
+        dest.writeString(mDeviceId);
+        dest.writeString(mFingerprint);
     }
 }

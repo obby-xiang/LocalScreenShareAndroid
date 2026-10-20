@@ -34,4 +34,11 @@
     <string name="projection_quality_setting_label">"Screen quality"</string>
     <string name="frame_rate_label">"<xliff:g id="fps">%1$d</xliff:g>fps"</string>
     <string name="start_service_failed">"Failed to start the screen sharing service."</string>
+    <string name="device_identity_label">"Device ID"</string>
+    <string name="device_identity_unavailable">"Unavailable"</string>
+    <string name="device_identity_changed">"This device has a new identity, for example after restoring a backup or clearing the app data. Other devices that saved this one, including their favorites, must confirm it again."</string>
+    <string name="reset_device_identity">"Reset device identity"</string>
+    <string name="reset_device_identity_confirm">"Reset the device identity? This device will appear as a new device on the local network, and favorites that other devices saved for it will no longer match."</string>
+    <string name="reset_device_identity_done">"Device identity reset. Restart sharing to advertise the new identity."</string>
+    <string name="reset_device_identity_failed">"Failed to reset the device identity."</string>
 </resources>

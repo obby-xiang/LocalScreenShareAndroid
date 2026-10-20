@@ -93,6 +93,12 @@ public final class Preferences {
 
     private static final String KEY_SHARE_NAME_ENABLED = "share_name_enabled";
 
+    private static final String KEY_IDENTITY_ID = "identity_id";
+
+    private static final String KEY_IDENTITY_FINGERPRINT = "identity_fingerprint";
+
+    private static final String KEY_LEGACY_SERVICE_ID = "identity_legacy_service_id";
+
     private static final int DEFAULT_SERVER_PORT = 8080;
 
     private static final int DEFAULT_PROJECTION_SCALE = 100;
@@ -169,8 +175,14 @@ public final class Preferences {
     }
 
     /**
-     * Returns the stable server id, generating and persisting a random UUID without dashes on
+     * Returns the legacy server id, generating and persisting a random UUID without dashes on
      * first use. Clearing the app data produces a new id.
+     *
+     * <p>The device identity no longer comes from this value: discovery keys on the
+     * keystore-derived short id ({@link com.obby.android.localscreenshare.identity.DeviceIdentity}).
+     * It is still read by the media path as a stable per-installation session key, and it is
+     * captured once as {@link #getLegacyIdentityServiceId()} so favorites stored before the
+     * identity migration can be recognized.</p>
      */
     @NonNull
     public String getServiceId() {
@@ -236,6 +248,60 @@ public final class Preferences {
     /** Persists the name-sharing flag; the next advertisement picks it up. */
     public void setShareNameEnabled(final boolean isEnabled) {
         mPreferences.edit().putBoolean(KEY_SHARE_NAME_ENABLED, isEnabled).commit();
+    }
+
+    /**
+     * Returns the fingerprint recorded by the last identity load, or null before the first one.
+     *
+     * <p>It is a record, not the identity: the identity is recomputed from the keystore key on
+     * every start, and this value is only compared against it to detect that the key changed —
+     * a restore from backup or an app-data clear brings the record back without the key.</p>
+     */
+    @Nullable
+    public String getIdentityFingerprint() {
+        return mPreferences.getString(KEY_IDENTITY_FINGERPRINT, null);
+    }
+
+    /** Returns the device id recorded by the last identity load, or null before the first one. */
+    @Nullable
+    public String getIdentityId() {
+        return mPreferences.getString(KEY_IDENTITY_ID, null);
+    }
+
+    /**
+     * Records the identity derived from the keystore key; both values are written in one commit.
+     *
+     * <p>Called after an identity load whose values differ from the record. The next load compares
+     * its fingerprint against this record and reports
+     * {@link com.obby.android.localscreenshare.identity.DeviceIdentity#isChanged()} when they
+     * differ, so a changed identity is surfaced instead of silently replacing the old one.</p>
+     */
+    public void recordIdentity(@NonNull final String id, @NonNull final String fingerprint) {
+        mPreferences.edit()
+            .putString(KEY_IDENTITY_ID, id)
+            .putString(KEY_IDENTITY_FINGERPRINT, fingerprint)
+            .commit();
+    }
+
+    /**
+     * Returns the pre-identity server id captured on the first identity load, or null when the
+     * identity was created before any {@link #getServiceId()} call.
+     *
+     * <p>Favorites stored by an older version use that id as their key; the discovery batches use
+     * this value to recognize them once and to offer a rebind instead of dropping them.</p>
+     */
+    @Nullable
+    public String getLegacyIdentityServiceId() {
+        return mPreferences.getString(KEY_LEGACY_SERVICE_ID, null);
+    }
+
+    /** Captures the pre-identity server id once; later calls are ignored by the caller. */
+    public void setLegacyIdentityServiceId(@Nullable final String serviceId) {
+        if (serviceId == null || serviceId.trim().isEmpty()) {
+            mPreferences.edit().remove(KEY_LEGACY_SERVICE_ID).commit();
+        } else {
+            mPreferences.edit().putString(KEY_LEGACY_SERVICE_ID, serviceId).commit();
+        }
     }
 
     /** Server bind port; defaults to 8080. Read when the server is constructed. */

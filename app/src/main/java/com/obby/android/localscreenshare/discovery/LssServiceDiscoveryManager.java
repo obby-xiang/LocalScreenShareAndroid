@@ -13,7 +13,8 @@ import com.obby.android.localscreenshare.discovery.provider.DeviceObservation;
 import com.obby.android.localscreenshare.discovery.provider.DiscoveryProviderListener;
 import com.obby.android.localscreenshare.discovery.store.DeviceStore;
 import com.obby.android.localscreenshare.discovery.store.DeviceStoreListener;
-import com.obby.android.localscreenshare.support.Preferences;
+import com.obby.android.localscreenshare.identity.IdentityManager;
+import com.obby.android.localscreenshare.identity.IdentityUnavailableException;
 
 import java.util.Collections;
 import java.util.List;
@@ -61,7 +62,7 @@ public final class LssServiceDiscoveryManager {
 
     @NonNull
     private final NsdDiscoveryProvider mDiscoveryProvider = new NsdDiscoveryProvider(App.get(),
-        TimeSource.MONOTONIC, id -> Objects.equals(id, Preferences.get().getServiceId()));
+        TimeSource.MONOTONIC, this::isSelfDeviceId);
 
     @NonNull
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
@@ -152,6 +153,18 @@ public final class LssServiceDiscoveryManager {
     }
 
     /**
+     * Drops every discovered device after this installation's identity was replaced.
+     *
+     * <p>Must be called on the main thread, from the flow that called
+     * {@link IdentityManager#reset()}. Discovery keeps running; entries reappear as peers are heard
+     * again, so nothing observed under the old identity is silently reused under the new one.</p>
+     */
+    public void onIdentityReset() {
+        Log.i(TAG, "onIdentityReset: clear discovered devices");
+        mDeviceStore.clear();
+    }
+
+    /**
      * Starts the NSD provider, attaches the store listener and arms the TTL tick.
      *
      * <p>Must be called on the main thread.</p>
@@ -177,6 +190,22 @@ public final class LssServiceDiscoveryManager {
         mDeviceStore.removeListener(mDeviceStoreListener);
         mDeviceStore.clear();
         updateServiceInfoList();
+    }
+
+    /**
+     * Returns whether {@code id} is this installation's own device id.
+     *
+     * <p>Peers are filtered by identity, never by address: one device can appear on several
+     * interfaces and the two stacks may use different addresses. When the identity cannot be
+     * loaded, nothing is filtered — a duplicated self entry is preferable to hiding every peer.</p>
+     */
+    private boolean isSelfDeviceId(@NonNull final String id) {
+        try {
+            return Objects.equals(id, IdentityManager.get().getIdentity().getId());
+        } catch (IdentityUnavailableException e) {
+            Log.w(TAG, "isSelfDeviceId: device identity unavailable");
+            return false;
+        }
     }
 
     /**

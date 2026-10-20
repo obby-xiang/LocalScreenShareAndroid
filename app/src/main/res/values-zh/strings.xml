@@ -34,4 +34,11 @@
     <string name="projection_quality_setting_label">"画面质量"</string>
     <string name="frame_rate_label">"<xliff:g id="fps">%1$d</xliff:g>fps"</string>
     <string name="start_service_failed">"启动共享屏幕服务失败。"</string>
+    <string name="device_identity_label">"设备 ID"</string>
+    <string name="device_identity_unavailable">"不可用"</string>
+    <string name="device_identity_changed">"本机身份已变更，例如从备份恢复或清除应用数据之后。保存过本机的其他设备（包括收藏）需要重新确认。"</string>
+    <string name="reset_device_identity">"重置设备身份"</string>
+    <string name="reset_device_identity_confirm">"是否重置设备身份？重置后本机将以新身份出现在局域网中，其他设备为此保存的收藏将不再匹配。"</string>
+    <string name="reset_device_identity_done">"设备身份已重置。重新开始共享后才会公告新身份。"</string>
+    <string name="reset_device_identity_failed">"重置设备身份失败。"</string>
 </resources>

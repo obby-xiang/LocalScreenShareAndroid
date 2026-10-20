@@ -27,6 +27,7 @@ import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.NumberPicker;
+import android.widget.Toast;
 
 import androidx.activity.EdgeToEdge;
 import androidx.activity.result.ActivityResultLauncher;
@@ -62,6 +63,8 @@ import com.google.android.material.textview.MaterialTextView;
 import com.obby.android.localscreenshare.discovery.LssServiceDiscoveryListener;
 import com.obby.android.localscreenshare.discovery.LssServiceDiscoveryManager;
 import com.obby.android.localscreenshare.discovery.LssServiceInfo;
+import com.obby.android.localscreenshare.identity.IdentityManager;
+import com.obby.android.localscreenshare.identity.IdentityUnavailableException;
 import com.obby.android.localscreenshare.server.LssServerInfo;
 import com.obby.android.localscreenshare.server.LssServerStats;
 import com.obby.android.localscreenshare.service.LssClientService;
@@ -174,6 +177,10 @@ public class MainActivity extends AppCompatActivity {
     private MaterialTextView mDiscoveryListPlaceholderView;
 
     private RecyclerView mDiscoveryListView;
+
+    // Device id row inside the settings sheet; null until the sheet is created.
+    @Nullable
+    private MaterialTextView mDeviceIdSettingView;
 
     private final String mTag = "MainActivity@" + hashCode();
 
@@ -375,6 +382,10 @@ public class MainActivity extends AppCompatActivity {
         // Render before the first service callback arrives so no stale state is shown.
         updateServiceView();
         updateDiscoveryView();
+
+        // The identity is derived from the keystore key; a restore from backup or a lost key
+        // changes it, and that must not pass silently.
+        checkDeviceIdentity();
     }
 
     /**
@@ -513,6 +524,80 @@ public class MainActivity extends AppCompatActivity {
             mDiscoveryListPlaceholderView.setVisibility(View.VISIBLE);
             mDiscoveryListView.setVisibility(View.GONE);
         }
+    }
+
+    /**
+     * Loads the device identity and reports a change since the previous run.
+     *
+     * <p>The identity is always recomputed from the AndroidKeyStore key. A restore from backup
+     * brings the stored fingerprint back without the key, and a reset removes the key on purpose;
+     * in both cases the derived fingerprint differs from the record, so peers and favorites still
+     * bound to the old identity are surfaced to the user instead of the change staying invisible.</p>
+     */
+    private void checkDeviceIdentity() {
+        try {
+            if (!IdentityManager.get().getIdentity().isChanged()) {
+                return;
+            }
+        } catch (IdentityUnavailableException e) {
+            Log.e(mTag, "checkDeviceIdentity: device identity unavailable", e);
+            return;
+        }
+
+        if (mDialog != null) {
+            mDialog.dismiss();
+        }
+        mDialog = new MaterialAlertDialogBuilder(this)
+            .setMessage(R.string.device_identity_changed)
+            .setPositiveButton(android.R.string.ok, null)
+            .setCancelable(false)
+            .show();
+    }
+
+    // Renders the current device id; the sheet is reused, so the text is refreshed on every show.
+    private void updateDeviceIdentityView() {
+        if (mDeviceIdSettingView == null) {
+            return;
+        }
+
+        try {
+            mDeviceIdSettingView.setText(IdentityManager.get().getIdentity().getId());
+        } catch (IdentityUnavailableException e) {
+            Log.e(mTag, "updateDeviceIdentityView: device identity unavailable", e);
+            mDeviceIdSettingView.setText(R.string.device_identity_unavailable);
+        }
+    }
+
+    /**
+     * Asks for confirmation and then replaces the identity key.
+     *
+     * <p>Every peer that stored this device keeps the old fingerprint, so the discovered list is
+     * cleared and the user is told that favorites must be confirmed again. A running share keeps
+     * advertising the identity it started with until it is restarted.</p>
+     */
+    private void resetDeviceIdentity() {
+        if (mDialog != null) {
+            mDialog.dismiss();
+        }
+
+        mDialog = new MaterialAlertDialogBuilder(this)
+            .setMessage(R.string.reset_device_identity_confirm)
+            .setPositiveButton(android.R.string.ok, (dialog, which) -> {
+                try {
+                    IdentityManager.get().reset();
+                } catch (IdentityUnavailableException e) {
+                    Log.e(mTag, "resetDeviceIdentity: device identity reset failed", e);
+                    Toast.makeText(this, R.string.reset_device_identity_failed, Toast.LENGTH_LONG).show();
+                    return;
+                }
+
+                LssServiceDiscoveryManager.get().onIdentityReset();
+                updateDeviceIdentityView();
+                Toast.makeText(this, R.string.reset_device_identity_done, Toast.LENGTH_LONG).show();
+            })
+            .setNegativeButton(android.R.string.cancel, null)
+            .setCancelable(false)
+            .show();
     }
 
     /**
@@ -735,6 +820,11 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
+        mDeviceIdSettingView = settingsDialog.findViewById(R.id.device_id_setting);
+        final MaterialButton resetDeviceIdentityView =
+            settingsDialog.findViewById(R.id.reset_device_identity_setting);
+        resetDeviceIdentityView.setOnClickListener(view -> resetDeviceIdentity());
+
         settingsDialog.setOnShowListener(dialog -> {
             settingsDialog.getBehavior().setState(BottomSheetBehavior.STATE_EXPANDED);
             qualitySettingView.setValue(Preferences.get().getProjectionQuality());
@@ -745,6 +835,7 @@ public class MainActivity extends AppCompatActivity {
             secureSettingView.setChecked(Preferences.get().isProjectionSecure());
             secureSettingView.jumpDrawablesToCurrentState();
             portSettingView.setValue(Preferences.get().getServerPort());
+            updateDeviceIdentityView();
         });
 
         return settingsDialog;

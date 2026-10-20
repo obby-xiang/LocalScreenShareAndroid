@@ -33,6 +33,9 @@ import com.obby.android.localscreenshare.discovery.nsd.NsdTxtRecord;
 import com.obby.android.localscreenshare.grpc.screenstream.ClientMessage;
 import com.obby.android.localscreenshare.grpc.screenstream.ScreenStreamServiceGrpc;
 import com.obby.android.localscreenshare.grpc.screenstream.ServerMessage;
+import com.obby.android.localscreenshare.identity.DeviceIdentity;
+import com.obby.android.localscreenshare.identity.IdentityManager;
+import com.obby.android.localscreenshare.identity.IdentityUnavailableException;
 import com.obby.android.localscreenshare.support.BackoffPolicy;
 import com.obby.android.localscreenshare.support.Constants;
 import com.obby.android.localscreenshare.transport.GrpcMediaTransport;
@@ -531,8 +534,19 @@ public final class LssServer {
     public void start() throws IOException {
         mGrpcServer.start();
 
+        // The identity comes from the AndroidKeyStore, never from a stored value; a changed key
+        // shows up as a changed fingerprint on the peers that stored it.
+        final DeviceIdentity identity;
+        try {
+            identity = IdentityManager.get().getIdentity();
+        } catch (IdentityUnavailableException e) {
+            throw new IOException("device identity unavailable", e);
+        }
+
         mServerInfo = LssServerInfo.builder()
-            .id(Preferences.get().getServiceId())
+            .id(identity.getId())
+            .deviceId(identity.getId())
+            .fingerprint(identity.getFingerprint())
             .name(Preferences.get().getServiceName())
             .hostAddress(Constants.UNKNOWN_HOST_ADDRESS)
             .port(mGrpcServer.getPort())
@@ -639,8 +653,10 @@ public final class LssServer {
 
     @NonNull
     private LssDeviceInfo buildAdvertisement(@NonNull final LssServerInfo serverInfo) {
+        // The fingerprint is deliberately absent: it never goes into the mDNS record and travels
+        // with the application-level handshake (Register and HELLO) instead.
         return LssDeviceInfo.builder()
-            .id(serverInfo.getId())
+            .id(serverInfo.getDeviceId())
             .name(Preferences.get().getDeviceAlias())
             .role(DeviceRole.SERVER)
             .state(ShareState.LIVE)
@@ -656,9 +672,10 @@ public final class LssServer {
     }
 
     /**
-     * Builds one advertisement. The instance name is stable and readable but carries no identity:
-     * it is {@code LSS-<id first 8>}. The TXT record is minimal and never contains the system
-     * device name unless the user enabled name sharing.
+     * Builds one advertisement. The instance name is stable and readable but reveals nothing beyond
+     * a prefix of the device id: it is {@code LSS-<id first 8>}. The TXT record is minimal, never
+     * contains the fingerprint, and never contains the system device name unless the user enabled
+     * name sharing.
      */
     @NonNull
     private NsdServiceInfo buildNsdServiceInfo(@NonNull final LssDeviceInfo advertisement,

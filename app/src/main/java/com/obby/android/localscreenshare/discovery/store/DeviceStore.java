@@ -221,6 +221,7 @@ public final class DeviceStore {
                 .name(device.displayName())
                 .hostAddress(address.getHost())
                 .port(address.getPort())
+                .fingerprint(device.getFingerprint())
                 .build());
         }
         Collections.sort(services);
