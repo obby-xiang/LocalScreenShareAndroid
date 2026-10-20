@@ -1,6 +1,7 @@
 package com.obby.android.localscreenshare.discovery.manual;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import com.obby.android.localscreenshare.discovery.favorite.FavoriteDevice;
 import com.obby.android.localscreenshare.discovery.favorite.FavoriteStore;
@@ -73,6 +74,17 @@ public final class ManualAddressProvider implements DiscoveryProvider {
         void onFailed(@NonNull String reason);
     }
 
+    /**
+     * Receives a manual address that a periodic re-probe could not reach.
+     */
+    @FunctionalInterface
+    public interface UnreachableSink {
+        /**
+         * Reports that {@code host:port} did not answer; used to degrade the stored entry.
+         */
+        void onUnreachable(@NonNull String host, int port);
+    }
+
     private static final int FAVORITE_PROBE_THREADS = 4;
 
     private static final int FAVORITE_PROBE_QUEUE = 64;
@@ -100,6 +112,10 @@ public final class ManualAddressProvider implements DiscoveryProvider {
     // degrade to unreachable) instead of expiring out of the list after the one-shot probe.
     @NonNull
     private final Map<String, ManualAddress> mManualTargets = new LinkedHashMap<>();
+
+    // Optional listener notified when a periodic re-probe fails; null disables the callback.
+    @Nullable
+    private UnreachableSink mUnreachableSink;
 
     /**
      * Creates the provider.
@@ -207,12 +223,23 @@ public final class ManualAddressProvider implements DiscoveryProvider {
         return mManualTargets.size();
     }
 
+    /**
+     * Sets the sink that is notified when a periodic re-probe fails; null disables the callback.
+     */
+    public void setUnreachableSink(@Nullable final UnreachableSink sink) {
+        mUnreachableSink = sink;
+    }
+
     private void probeManualTarget(@NonNull final ManualAddress target) {
         if (!mStarted) {
             return;
         }
         final ProbeResult result = mProbe.probe(target.getHost(), target.getPort(), mProbeTimeoutMs);
         if (!result.isConfirmed() || result.getSummary() == null || !mStarted) {
+            final UnreachableSink sink = mUnreachableSink;
+            if (sink != null && mStarted) {
+                mMainExecutor.execute(() -> sink.onUnreachable(target.getHost(), target.getPort()));
+            }
             return;
         }
         final DeviceSummary summary = result.getSummary();

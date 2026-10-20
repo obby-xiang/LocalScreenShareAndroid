@@ -182,6 +182,26 @@ public final class DeviceStore {
     }
 
     /**
+     * Marks every address matching {@code channel/host/port} as unreachable.
+     *
+     * <p>The entry is kept (a pinned manual entry stays in the list) but its presence becomes
+     * {@link DevicePresence#UNREACHABLE} immediately, so the badge follows the latest probe result
+     * instead of the last successful one. A later successful probe clears the flag.</p>
+     */
+    public void markAddressUnreachable(@NonNull final DiscoveryChannel channel,
+        @NonNull final String host, final int port) {
+        boolean changed = false;
+        for (final DeviceEntry entry : mEntries.values()) {
+            if (entry.markUnreachable(channel, host, port)) {
+                changed = true;
+            }
+        }
+        if (changed) {
+            refresh(mTimeSource.nowMs());
+        }
+    }
+
+    /**
      * Marks or clears the favorite flag of a device.
      *
      * <p>Favorites are never removed by TTL or goodbye; they degrade to

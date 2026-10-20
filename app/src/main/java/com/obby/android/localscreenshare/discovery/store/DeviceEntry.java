@@ -70,6 +70,10 @@ final class DeviceEntry {
 
     boolean leaving;
 
+    // True when the last periodic re-probe of a manually added address failed; cleared on any
+    // successful observation or confirmation.
+    boolean unreachable;
+
     // True once any address was confirmed; lastConfirmedMs is only meaningful after that.
     boolean confirmed;
 
@@ -149,6 +153,7 @@ final class DeviceEntry {
 
         lastSeenMs = Math.max(lastSeenMs, observedAtMs);
         leaving = false;
+        unreachable = false;
         return true;
     }
 
@@ -163,6 +168,7 @@ final class DeviceEntry {
         lastConfirmedMs = Math.max(lastConfirmedMs, confirmedAtMs);
         lastSeenMs = Math.max(lastSeenMs, confirmedAtMs);
         leaving = false;
+        unreachable = false;
     }
 
     /**
@@ -170,6 +176,17 @@ final class DeviceEntry {
      */
     boolean removeAddress(@NonNull final DiscoveryChannel channel, @NonNull final String host, final int port) {
         return addresses.remove(new DeviceAddress(host, port, channel).getKey()) != null;
+    }
+
+    /**
+     * Marks the matching address as unreachable, keeping it in place; returns true when it existed.
+     */
+    boolean markUnreachable(@NonNull final DiscoveryChannel channel, @NonNull final String host, final int port) {
+        if (!addresses.containsKey(new DeviceAddress(host, port, channel).getKey())) {
+            return false;
+        }
+        unreachable = true;
+        return true;
     }
 
     /**
@@ -202,6 +219,9 @@ final class DeviceEntry {
     @NonNull
     DevicePresence presence(final long nowMs, final long confirmedTtlMs, final long heardTtlMs,
         final long removeAfterMs) {
+        if (unreachable) {
+            return DevicePresence.UNREACHABLE;
+        }
         if (leaving) {
             return favorite || pinned ? DevicePresence.UNREACHABLE : DevicePresence.STALE;
         }

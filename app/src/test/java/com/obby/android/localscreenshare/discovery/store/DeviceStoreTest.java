@@ -209,6 +209,22 @@ public class DeviceStoreTest {
     }
 
     @Test
+    public void markAddressUnreachable_degradesAndRecoversOnConfirm() {
+        mStore.onObserved(heard(DEVICE_ID, "10.0.0.5", 8080, mClock.nowMs()));
+        mStore.confirm(DEVICE_ID, DiscoveryChannel.MANUAL, "10.0.0.5", 8080);
+        assertEquals(DevicePresence.CONFIRMED, mStore.device(DEVICE_ID).getPresence());
+
+        mStore.markAddressUnreachable(DiscoveryChannel.MANUAL, "10.0.0.5", 8080);
+
+        assertEquals(1, mStore.size());
+        assertEquals(DevicePresence.UNREACHABLE, mStore.device(DEVICE_ID).getPresence());
+
+        mStore.confirm(DEVICE_ID, DiscoveryChannel.MANUAL, "10.0.0.5", 8080);
+
+        assertEquals(DevicePresence.CONFIRMED, mStore.device(DEVICE_ID).getPresence());
+    }
+
+    @Test
     public void capacityEvictsTheOldestStaleEntry() {
         mClock.set(100_000L);
         for (int i = 0; i < DeviceStore.CAPACITY; i++) {

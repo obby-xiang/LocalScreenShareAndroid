@@ -531,6 +531,7 @@ public final class DiscoveryManager {
         mRegisterClient.setTimeoutMs(settings.getRefreshTier().getRegisterTimeoutMs());
         Preferences.get().addObserver(mPreferencesObserver);
         startProviders(settings);
+        mManualAddressProvider.setUnreachableSink(this::onManualUnreachable);
         mManualAddressProvider.start(mDiscoveryProviderListener);
         mScanCoordinator.setListener(mScanListener);
         if (settings.isScanEnabled()) {
@@ -699,6 +700,16 @@ public final class DiscoveryManager {
         mFavoriteStore.sync(id, emptyToNull(peer.getFingerprint()),
             emptyToNull(peer.getName()), host, port);
         applyFavoriteToStore(id);
+    }
+
+    /**
+     * Degrades a manually added address whose periodic re-probe failed.
+     *
+     * <p>The entry stays (a pinned manual entry degrades to unreachable), but its confirmation
+     * expires immediately so the badge reflects the latest probe result.</p>
+     */
+    private void onManualUnreachable(@NonNull final String host, final int port) {
+        mDeviceStore.markAddressUnreachable(DiscoveryChannel.MANUAL, host, port);
     }
 
     /**

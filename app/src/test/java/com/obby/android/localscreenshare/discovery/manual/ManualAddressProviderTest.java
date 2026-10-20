@@ -6,12 +6,14 @@ import com.obby.android.localscreenshare.discovery.model.DiscoveryChannel;
 import com.obby.android.localscreenshare.discovery.provider.DiscoveryProviderListener;
 import com.obby.android.localscreenshare.discovery.support.FakeFavoriteStorage;
 import com.obby.android.localscreenshare.discovery.support.FakeProbe;
+import com.obby.android.localscreenshare.discovery.scan.ProbeResult;
 import com.obby.android.localscreenshare.grpc.screenstream.DeviceSummary;
 
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -144,6 +146,36 @@ public class ManualAddressProviderTest {
         Thread.sleep(100L);
 
         assertEquals(calls, mProbe.callCount());
+    }
+
+    @Test
+    public void failedReprobe_reportsToTheUnreachableSink() throws InterruptedException {
+        final int[] calls = new int[]{0};
+        FakeProbe probe = new FakeProbe((host, port) -> {
+            calls[0]++;
+            if (calls[0] == 1) {
+                return ProbeResult.confirmed(DeviceSummary.newBuilder()
+                    .setDeviceId("remote-device")
+                    .setFingerprint("fingerprint")
+                    .build(), host, port);
+            }
+            return ProbeResult.failed(host, port, "unreachable");
+        });
+
+        List<String> unreachable = new CopyOnWriteArrayList<>();
+        ManualAddressProvider provider = new ManualAddressProvider(probe, mFavorites, Runnable::run,
+            mSink, TIMEOUT_MS);
+        provider.setUnreachableSink((host, port) -> unreachable.add(host + ":" + port));
+
+        provider.start(noopListener());
+        assertTrue(provider.probeManual("192.168.1.9:9000", 8080, mCallback));
+        waitFor(() -> mCallback.confirmed.size() == 1);
+
+        provider.probeManualTargets();
+        waitFor(() -> !unreachable.isEmpty());
+
+        assertEquals(Collections.singletonList("192.168.1.9:9000"), unreachable);
+        provider.shutdown();
     }
 
     @Test
