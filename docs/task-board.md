@@ -29,7 +29,8 @@
 - 编码框架隔离核心（契约、StreamHub、有界队列、六状态机、JPEG 参考适配）已完成并通过 JVM 验证，见 [TB-FW-001](#tb-fw-001)、[TB-FW-004](#tb-fw-004)、[TB-FW-005](#tb-fw-005)、[TB-FW-002](#tb-fw-002)。
 - 问题 3 尚未由用户明确关闭，不能标记完成；代码完成 ≠ 问题关闭，API 25 只是兼容下限，能力按运行时探测分档。
 - 编码框架待收尾：TB-FW-003、TB-FW-006、TB-MEDIA-001、TB-MEDIA-003 等待设备验证；TB-FW-002 仍部分完成；TB-FW-007、TB-FW-008 未完成。
-- 设备发现功能已立项（[TB-DISC-001](#tb-disc-001)..[TB-DISC-010](#tb-disc-010)）：B1（[TB-DISC-002](#tb-disc-002)、[TB-DISC-003](#tb-disc-003)）与 B2（[TB-DISC-004](#tb-disc-004)）代码层面已完成并通过 JVM 与 CI 验证，TB-DISC-005 至 TB-DISC-010 待办；设备验证仍未解禁。
+- 设备发现功能已立项（[TB-DISC-001](#tb-disc-001)..[TB-DISC-010](#tb-disc-010)）：B1（[TB-DISC-002](#tb-disc-002)、[TB-DISC-003](#tb-disc-003)）、B2（[TB-DISC-004](#tb-disc-004)）与 B3（[TB-DISC-005](#tb-disc-005)、[TB-DISC-006](#tb-disc-006)）代码层面已完成并通过 JVM 与 CI 验证，TB-DISC-007 至 TB-DISC-010 待办；设备验证仍未解禁。
+- B3 已落地 UDP 组播公告（启动 3 连发、5/15 s 心跳、停服告别、`MulticastLock` 引用计数）与 Register 双向握手（成功才确认、`announces` 单跳防回环、限速与限包长）；仅经 JVM/fake 与编译验证，同网段互见、真实组播与 Reverse Register 未做设备实测。
 - 阶段 0/1 的代码优化尚未开始，当前没有进行中的代码任务。
 - 下一步：按 [渐进优化路线图](optimization-roadmap.md) 的阶段 0 启动可观测性与基线，落地顺序以 [编码框架](codec-framework.md) 为准。
 - 前置约束：拿到基线前，不预设任何性能、发热或延迟收益。
@@ -47,8 +48,6 @@
 
 | ID | 状态 | 优先级 | 标题 | 创建 | 完成 | 关联 |
 | --- | --- | --- | --- | --- | --- | --- |
-| TB-DISC-005 | 📋 待办 | 🟠 P1 | UDP 组播发现通道 | 2026-10-20 | — | [发现调研](discovery-research.md) |
-| TB-DISC-006 | 📋 待办 | 🟠 P1 | Register 双向发现 RPC | 2026-10-20 | — | [发现调研](discovery-research.md) |
 | TB-DISC-007 | 📋 待办 | 🟡 P2 | 分级扫描 | 2026-10-20 | — | [发现调研](discovery-research.md) |
 | TB-DISC-008 | 📋 待办 | 🟡 P2 | 手动 IP 与收藏 | 2026-10-20 | — | [发现调研](discovery-research.md) |
 | TB-DISC-009 | 📋 待办 | 🟡 P2 | 发现设置与 UI 集成 | 2026-10-20 | — | [发现调研](discovery-research.md) |
@@ -81,6 +80,8 @@
 | TB-DISC-002 | ✅ 已完成 | 🟠 P1 | 设备模型与 DeviceStore 抽象 | 2026-10-20 | 2026-10-20 | [实施计划](superpowers/plans/2026-10-20-device-discovery.md) |
 | TB-DISC-003 | ✅ 已完成 | 🟠 P1 | NSD 修正与加固 | 2026-10-20 | 2026-10-20 | [实施计划](superpowers/plans/2026-10-20-device-discovery.md) |
 | TB-DISC-004 | ✅ 已完成 | 🟠 P1 | 设备身份（密钥派生 ID） | 2026-10-20 | 2026-10-20 | [实施计划](superpowers/plans/2026-10-20-device-discovery.md) |
+| TB-DISC-005 | ✅ 已完成 | 🟠 P1 | UDP 组播发现通道 | 2026-10-20 | 2026-10-20 | [实施计划](superpowers/plans/2026-10-20-device-discovery.md) |
+| TB-DISC-006 | ✅ 已完成 | 🟠 P1 | Register 双向发现 RPC | 2026-10-20 | 2026-10-20 | [实施计划](superpowers/plans/2026-10-20-device-discovery.md) |
 | TB-ENG-003 | ✅ 已完成 | 🟡 P2 | 代码文档与英文注释 | 2026-10-18 | 2026-10-19 | [实施计划](superpowers/plans/2026-10-19-code-docs-i18n.md) |
 | TB-ENG-004 | ✅ 已完成 | 🟡 P2 | 中英双语资源 | 2026-10-18 | 2026-10-19 | [决策看板](decision-board.md) |
 | TB-DOC-008 | ✅ 已完成 | 🔴 P0 | 框架实施计划 | 2026-10-17 | 2026-10-18 | [实施计划](superpowers/plans/2026-10-17-codec-framework.md) |
@@ -132,26 +133,6 @@
 当前无进行中任务。
 
 ### 📋 待办条目
-
-<a id="tb-disc-005"></a>
-<details><summary>TB-DISC-005 UDP 组播发现通道（📋 待办）</summary>
-
-- **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟠 P1 / 2026-10-20 / —
-- **任务**：UDP 组播公告：组 `224.0.0.167`、端口可配、TTL=1、启动 3 连发（100/500/2000 ms）+ 周期心跳 + 停服告别 `announces:false`；`MulticastLock` 生命周期管理。
-- **交付物 / 验证证据**：交付：公告发送与接收、心跳与告别、`MulticastLock` 接线与单测。验证：同网段可互见、停服后条目按时过期、`MulticastLock` 随服务生命周期正确获取与释放；当前未实施，设备验证未解禁。
-- **关联文档**：[发现调研](discovery-research.md)
-
-</details>
-
-<a id="tb-disc-006"></a>
-<details><summary>TB-DISC-006 Register 双向发现 RPC（📋 待办）</summary>
-
-- **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟠 P1 / 2026-10-20 / —
-- **任务**：proto 增加 unary `Register`（复用现有 gRPC 端口）；请求与响应双向携带设备信息；`announces` 标志防止无限回打；Register 成功才写入 `DeviceStore`。
-- **交付物 / 验证证据**：交付：proto 定义、服务端实现、客户端调用与单测。验证：单向发现转双向、双方设备信息落地、`announces:false` 不再回打；当前未实施，设备验证未解禁。
-- **关联文档**：[发现调研](discovery-research.md)、[媒体架构](media-architecture.md)
-
-</details>
 
 <a id="tb-disc-007"></a>
 <details><summary>TB-DISC-007 分级扫描（📋 待办）</summary>
@@ -365,6 +346,26 @@
 </details>
 
 ### ✅ 已完成条目
+
+<a id="tb-disc-006"></a>
+<details><summary>TB-DISC-006 Register 双向发现 RPC（✅ 2026-10-20）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：✅ 已完成 / 🟠 P1 / 2026-10-20 / 2026-10-20
+- **任务**：proto 增加 unary `Register`（复用现有 gRPC 端口）；请求与响应双向携带设备信息；`announces` 标志防止无限回打；Register 成功才写入 `DeviceStore`。
+- **交付物 / 验证证据**：交付（提交 `e0b3a5f`）：`screen_stream.proto` 新增 `Register` 与 `DeviceSummary`/`DeviceAddress`，`Hello` 追加 `device_id`/`fingerprint`（`client_id` 仍为 StreamHub 会话键，协议版本保持 1）；`RegisterProtoMapper` 纯 JVM 映射与成功判据（`accepted`、版本兼容、`self.device_id` 非空）；`RegisterStub`/`GrpcRegisterStub` 与 `RegisterClient`（500 ms deadline、200/500 ms 两次重试 + 20% jitter、单地址在途去重、回调主线程、拒绝不重试）；`RegisterCallHandler` 完成校验（身份、26 字符 ID、名称/指纹/地址上限、可打印字符）、每地址 10 次/分钟与全局 100 次/分钟限速、成功写入共享 `DeviceStore` 并确认、`announces=true` 时最多一次 `announces=false` 反向 Register（0–200 ms jitter、30 次/分钟配额），`announces=false` 终止链路；`LssServer` 在同一端口提供 `register` 并通过拦截器取得远端地址，`LssService` 把发现管理器的 store 交给服务端，`LssClient` 的 HELLO 携带新身份字段。验证：`RegisterProtoMapperTest`（9）、`RegisterClientTest`（9）、`RegisterCallHandlerTest`（12）覆盖摘要/观测往返、接受与拒绝判据、版本 0 归一与更高版本拒绝、超时重试次数与终端拒绝、在途去重、取消、限速、反向回打次数与地址、无 store 时仍应答；全量 `./gradlew :app:testDebugUnitTest --offline` **563 tests / 0 failures / 0 errors / 0 skipped**（48 个测试类，较 505 基线增加 58）；`./gradlew :app:assembleDebug --offline`、`./gradlew :app:assembleDebugAndroidTest --offline`（含 `--rerun-tasks`）成功；`:app:lintDebug` 通过；Build CI run [39370781081](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39370781081)、Checks run [39370781130](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39370781130) success。边界：未执行 adb、模拟器、实机或 `connectedAndroidTest`；真实 gRPC 调用、Reverse Register 与限速在设备上的表现未实测，设备验证未解禁。
+- **关联文档**：[发现调研](discovery-research.md)、[实施计划](superpowers/plans/2026-10-20-device-discovery.md)、[媒体架构](media-architecture.md)
+
+</details>
+
+<a id="tb-disc-005"></a>
+<details><summary>TB-DISC-005 UDP 组播发现通道（✅ 2026-10-20）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：✅ 已完成 / 🟠 P1 / 2026-10-20 / 2026-10-20
+- **任务**：UDP 组播公告：组 `224.0.0.167`、端口可配、TTL=1、启动 3 连发（100/500/2000 ms）+ 周期心跳 + 停服告别 `announces:false`；`MulticastLock` 生命周期管理。
+- **交付物 / 验证证据**：交付（提交 `e0b3a5f`）：`discovery/udp` 的 `Announcement`（发现层最小字段与 `boot`/`seq`/`ttl` 信封）、`AnnouncementCodec`（JSON UTF-8、≤512 字节、≤24 字段、字符串上限 64、未知字段忽略、缺省 `announces=true`）、`MulticastConfig`/`MulticastEndpoint`/`MulticastSocketFactory`/`AndroidMulticastSocketFactory`（每个可用接口一个 socket、`joinGroup`、TTL=1、最多 4 个、失败接口跳过）、`MulticastTransport`/`SocketMulticastTransport`（每 socket 接收线程、65536 缓冲、连续 10 次错误后按退避重建）、`MulticastAnnouncer`（100/500/2000 ms 三连发、活跃 5 s/空闲 15 s 心跳、0/100/300 ms 三次 `announces=false` 告别）、`MulticastAnnouncementFilter`（按 `id` 自过滤、`(id,boot,seq)` 去重与重启基线、同一地址 300 ms 合并 Register）、`MulticastLockManager`（进程级引用计数）、`UdpMulticastDiscoveryProvider`（观测投递主线程，公告从不升级为 `CONFIRMED`）；`Constants` 与 `Preferences` 增加组/端口/开关；Manifest 增加 `CHANGE_WIFI_MULTICAST_STATE`；`LssService` 随服务启停公告并在身份重置后以新身份重启公告；`LssServiceDiscoveryManager` 与 NSD 并行接入同一 `DeviceStore`。验证：`AnnouncementCodecTest`（10）、`MulticastAnnouncerTest`（6）、`MulticastProviderDedupTest`（10）、`MulticastLockManagerTest`（2）覆盖编解码与超限/截断/未知字段、三连发与心跳切换及告别关闭、去重与重启、自过滤、300 ms 合并、Register 成功/拒绝路径、锁引用计数与解除；全量 **563 tests / 0 failures / 0 errors / 0 skipped**；两条 Gradle 命令成功，`:app:lintDebug` 通过；CI 同上。边界：未执行 adb、模拟器、实机或 `connectedAndroidTest`；真实组播收发、多网卡接口选择、`MulticastLock` 与同网段互见未实测，设备验证未解禁。
+- **关联文档**：[发现调研](discovery-research.md)、[实施计划](superpowers/plans/2026-10-20-device-discovery.md)
+
+</details>
 
 <a id="tb-disc-004"></a>
 <details><summary>TB-DISC-004 设备身份（密钥派生 ID）（✅ 2026-10-20）</summary>
