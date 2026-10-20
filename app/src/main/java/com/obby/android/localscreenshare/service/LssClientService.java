@@ -75,7 +75,9 @@ import com.obby.android.localscreenshare.core.model.ClientSessionKey;
 import com.obby.android.localscreenshare.core.model.ClientState;
 import com.obby.android.localscreenshare.core.model.StreamKey;
 import com.obby.android.localscreenshare.core.stream.ClientCapabilities;
+import com.obby.android.localscreenshare.core.stream.TimeSource;
 import com.obby.android.localscreenshare.discovery.LssServiceInfo;
+import com.obby.android.localscreenshare.discovery.favorite.FavoriteStore;
 import com.obby.android.localscreenshare.render.SurfaceRenderTarget;
 import com.obby.android.localscreenshare.support.Constants;
 import com.obby.android.localscreenshare.support.Preferences;
@@ -188,6 +190,12 @@ public class LssClientService extends Service {
         @Override
         public void onConnected() {
             mIsConnected = true;
+            // The address that just worked becomes the first favorite probe next time.
+            if (mServiceInfo != null) {
+                FavoriteStore.get().recordSuccess(mServiceInfo.getId(),
+                    mServiceInfo.getHostAddress(), mServiceInfo.getPort(),
+                    TimeSource.MONOTONIC.nowMs());
+            }
         }
 
         @SuppressWarnings("DataFlowIssue")

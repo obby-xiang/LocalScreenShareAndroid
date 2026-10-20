@@ -140,6 +140,18 @@ public final class Constants {
     /** Upper bound of a reverse Register delay, in milliseconds; the delay is random. */
     public static final long REGISTER_REVERSE_MAX_DELAY_MS = 200L;
 
+    /** Maximum probes in flight during one scan. */
+    public static final int SCAN_MAX_CONCURRENCY = 50;
+
+    /** Budget of one interface scan, in milliseconds. */
+    public static final long SCAN_BUDGET_MS = 8_000L;
+
+    /** Delay after which an empty list offers the manual address entry. */
+    public static final long DISCOVERY_EMPTY_MANUAL_HINT_MS = 8_000L;
+
+    /** Deadline of one manual address or favorite probe, in milliseconds. */
+    public static final long MANUAL_PROBE_TIMEOUT_MS = 2_000L;
+
     /**
      * Hidden system broadcast reporting Wi-Fi access point state changes. The server listens for
      * it because a hotspot change can change the local address that clients can reach.

@@ -184,6 +184,48 @@ public final class DeviceStore {
         return true;
     }
 
+    /**
+     * Marks or clears the identity-changed flag of a device.
+     *
+     * <p>The store sets the flag itself when a known device answers with a different fingerprint.
+     * This setter lets the favorite layer push the flag it persisted for a device that has not been
+     * heard yet, so the list shows the warning as soon as the favorite is seeded.</p>
+     *
+     * @return false when the device is unknown to the store
+     */
+    public boolean setIdentityChanged(@NonNull final String id, final boolean identityChanged) {
+        final DeviceEntry entry = mEntries.get(id);
+        if (entry == null) {
+            return false;
+        }
+        if (entry.identityChanged == identityChanged) {
+            return true;
+        }
+        entry.identityChanged = identityChanged;
+        refresh(mTimeSource.nowMs());
+        return true;
+    }
+
+    /**
+     * Rebinds the trust anchor of a device after the user explicitly confirmed the change.
+     *
+     * <p>Unlike {@link #setIdentityChanged(String, boolean)} this replaces the fingerprint, so the
+     * next comparison uses the accepted key. It is only called from a user confirmation; the
+     * automatic merge path keeps the established fingerprint and flags the conflict instead.</p>
+     *
+     * @return false when the device is unknown to the store
+     */
+    public boolean confirmIdentity(@NonNull final String id, @Nullable final String fingerprint) {
+        final DeviceEntry entry = mEntries.get(id);
+        if (entry == null) {
+            return false;
+        }
+        entry.fingerprint = fingerprint;
+        entry.identityChanged = false;
+        refresh(mTimeSource.nowMs());
+        return true;
+    }
+
     /** Recomputes presence and expires entries; the periodic main-thread maintenance step. */
     public void tick() {
         refresh(mTimeSource.nowMs());

@@ -20,12 +20,15 @@ import android.os.Message;
 import android.os.Messenger;
 import android.os.RemoteException;
 import android.provider.Settings;
+import android.text.InputType;
 import android.text.format.Formatter;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.NumberPicker;
 import android.widget.Toast;
 
@@ -63,6 +66,10 @@ import com.google.android.material.textview.MaterialTextView;
 import com.obby.android.localscreenshare.discovery.LssServiceDiscoveryListener;
 import com.obby.android.localscreenshare.discovery.LssServiceDiscoveryManager;
 import com.obby.android.localscreenshare.discovery.LssServiceInfo;
+import com.obby.android.localscreenshare.discovery.favorite.FavoriteDevice;
+import com.obby.android.localscreenshare.discovery.favorite.FavoriteStore;
+import com.obby.android.localscreenshare.discovery.manual.ManualAddressProvider;
+import com.obby.android.localscreenshare.grpc.screenstream.DeviceSummary;
 import com.obby.android.localscreenshare.identity.IdentityManager;
 import com.obby.android.localscreenshare.identity.IdentityUnavailableException;
 import com.obby.android.localscreenshare.server.LssServerInfo;
@@ -178,6 +185,14 @@ public class MainActivity extends AppCompatActivity {
 
     private RecyclerView mDiscoveryListView;
 
+    private MaterialButton mDiscoveryManualAddView;
+
+    // True once the empty list has been empty long enough to offer the manual entry.
+    private boolean mShowManualDiscoveryHint;
+
+    @NonNull
+    private final Handler mMainHandler = new Handler(Looper.getMainLooper());
+
     // Device id row inside the settings sheet; null until the sheet is created.
     @Nullable
     private MaterialTextView mDeviceIdSettingView;
@@ -190,7 +205,12 @@ public class MainActivity extends AppCompatActivity {
         @Override
         public void onBindViewHolder(@NonNull DiscoveryListViewHolder holder, int position) {
             super.onBindViewHolder(holder, position);
-            holder.itemView.setOnClickListener(v -> startScreenShareViewer(getItem(position)));
+            final LssServiceInfo item = getItem(position);
+            holder.itemView.setOnClickListener(v -> startScreenShareViewer(item));
+            holder.itemView.setOnLongClickListener(v -> {
+                showDiscoveryItemMenu(item);
+                return true;
+            });
         }
 
         @Override
@@ -200,22 +220,24 @@ public class MainActivity extends AppCompatActivity {
 
         @Override
         public void submitList(@Nullable List<LssServiceInfo> list, @Nullable Runnable commitCallback) {
-            // The commit callback runs after the diff is applied; the placeholder mirrors the
-            // committed list rather than the pending one, and only while discovery is enabled.
+            // The commit callback runs after the diff is applied; the placeholder and the manual
+            // hint mirror the committed list rather than the pending one.
             super.submitList(list, () -> {
-                if (Preferences.get().isDiscoveryEnabled()) {
-                    if (getCurrentList().isEmpty()) {
-                        mDiscoveryListPlaceholderView.setText(R.string.searching_services);
-                        mDiscoveryListPlaceholderView.setVisibility(View.VISIBLE);
-                        mDiscoveryListView.setVisibility(View.GONE);
-                    } else {
-                        mDiscoveryListPlaceholderView.setVisibility(View.GONE);
-                        mDiscoveryListView.setVisibility(View.VISIBLE);
-                    }
+                if (!getCurrentList().isEmpty()) {
+                    mMainHandler.removeCallbacks(mDiscoveryHintRunnable);
+                    mShowManualDiscoveryHint = false;
                 }
+                updateDiscoveryPlaceholder();
                 Optional.ofNullable(commitCallback).ifPresent(Runnable::run);
             });
         }
+    };
+
+    // Arms once per discovery start; a result before it fires cancels it.
+    @NonNull
+    private final Runnable mDiscoveryHintRunnable = () -> {
+        mShowManualDiscoveryHint = true;
+        updateDiscoveryPlaceholder();
     };
 
     // Receives server state from the bound service; the handler is bound to the main looper.
@@ -333,9 +355,17 @@ public class MainActivity extends AppCompatActivity {
         mDiscoveryToolbarView = findViewById(R.id.discovery_toolbar);
         mDiscoveryListPlaceholderView = findViewById(R.id.discovery_list_placeholder);
         mDiscoveryListView = findViewById(R.id.discovery_list);
+        mDiscoveryManualAddView = findViewById(R.id.discovery_manual_add);
 
         mDiscoveryListView.setAdapter(mDiscoveryListAdapter);
         mDiscoveryListView.setItemAnimator(null);
+
+        mDiscoveryManualAddView.setOnClickListener(v -> showManualAddressDialog());
+        mDiscoveryListPlaceholderView.setOnClickListener(v -> {
+            if (mShowManualDiscoveryHint) {
+                showManualAddressDialog();
+            }
+        });
 
         final MaterialDividerItemDecoration discoveryListItemDecoration =
             new MaterialDividerItemDecoration(this, MaterialDividerItemDecoration.VERTICAL);
@@ -372,8 +402,14 @@ public class MainActivity extends AppCompatActivity {
             Preferences.get().setDiscoveryEnabled(isEnabled);
             if (isEnabled) {
                 LssServiceDiscoveryManager.get().discoverServices(mServiceDiscoveryListener);
+                mMainHandler.removeCallbacks(mDiscoveryHintRunnable);
+                mMainHandler.postDelayed(mDiscoveryHintRunnable,
+                    Constants.DISCOVERY_EMPTY_MANUAL_HINT_MS);
             } else {
                 LssServiceDiscoveryManager.get().stopServiceDiscovery(mServiceDiscoveryListener);
+                mMainHandler.removeCallbacks(mDiscoveryHintRunnable);
+                mShowManualDiscoveryHint = false;
+                mDiscoveryListAdapter.submitList(null);
             }
             updateDiscoveryView();
             return true;
@@ -405,6 +441,9 @@ public class MainActivity extends AppCompatActivity {
 
         if (Preferences.get().isDiscoveryEnabled()) {
             LssServiceDiscoveryManager.get().discoverServices(mServiceDiscoveryListener);
+            mMainHandler.removeCallbacks(mDiscoveryHintRunnable);
+            mMainHandler.postDelayed(mDiscoveryHintRunnable,
+                Constants.DISCOVERY_EMPTY_MANUAL_HINT_MS);
         }
     }
 
@@ -425,6 +464,8 @@ public class MainActivity extends AppCompatActivity {
         unbindService(mServiceConnection);
 
         LssServiceDiscoveryManager.get().stopServiceDiscovery(mServiceDiscoveryListener);
+        mMainHandler.removeCallbacks(mDiscoveryHintRunnable);
+        mShowManualDiscoveryHint = false;
         mDiscoveryListAdapter.submitList(null);
     }
 
@@ -507,23 +548,134 @@ public class MainActivity extends AppCompatActivity {
     // Mirrors the persisted discovery preference; disabling also clears the list.
     private void updateDiscoveryView() {
         final MenuItem searchMenuItem = mDiscoveryToolbarView.getMenu().findItem(R.id.search);
-        if (Preferences.get().isDiscoveryEnabled()) {
-            searchMenuItem.setIcon(R.drawable.ic_stop_search);
-            if (mDiscoveryListAdapter.getCurrentList().isEmpty()) {
-                mDiscoveryListPlaceholderView.setText(R.string.searching_services);
-                mDiscoveryListPlaceholderView.setVisibility(View.VISIBLE);
-                mDiscoveryListView.setVisibility(View.GONE);
-            } else {
-                mDiscoveryListPlaceholderView.setVisibility(View.GONE);
-                mDiscoveryListView.setVisibility(View.VISIBLE);
-            }
-        } else {
-            searchMenuItem.setIcon(R.drawable.ic_start_search);
+        final boolean isEnabled = Preferences.get().isDiscoveryEnabled();
+        searchMenuItem.setIcon(isEnabled ? R.drawable.ic_stop_search : R.drawable.ic_start_search);
+        mDiscoveryManualAddView.setVisibility(isEnabled ? View.VISIBLE : View.GONE);
+        if (!isEnabled) {
+            mMainHandler.removeCallbacks(mDiscoveryHintRunnable);
+            mShowManualDiscoveryHint = false;
             mDiscoveryListAdapter.submitList(null);
+        }
+        updateDiscoveryPlaceholder();
+    }
+
+    /**
+     * Renders the single placeholder under the discovery list.
+     *
+     * <p>Three states share it: discovery is off, discovery is searching, and the search stayed
+     * empty long enough that the manual entry is offered. The last one is clickable, which is why
+     * the placeholder carries the click listener instead of a separate empty-state view.</p>
+     */
+    private void updateDiscoveryPlaceholder() {
+        if (!Preferences.get().isDiscoveryEnabled()) {
             mDiscoveryListPlaceholderView.setText(R.string.search_services_off);
+            mDiscoveryListPlaceholderView.setClickable(false);
             mDiscoveryListPlaceholderView.setVisibility(View.VISIBLE);
             mDiscoveryListView.setVisibility(View.GONE);
+            return;
         }
+
+        if (!mDiscoveryListAdapter.getCurrentList().isEmpty()) {
+            mDiscoveryListPlaceholderView.setVisibility(View.GONE);
+            mDiscoveryListView.setVisibility(View.VISIBLE);
+            return;
+        }
+
+        mDiscoveryListPlaceholderView.setText(mShowManualDiscoveryHint
+            ? R.string.discovery_empty_manual_hint : R.string.searching_services);
+        mDiscoveryListPlaceholderView.setClickable(mShowManualDiscoveryHint);
+        mDiscoveryListPlaceholderView.setVisibility(View.VISIBLE);
+        mDiscoveryListView.setVisibility(View.GONE);
+    }
+
+    /**
+     * Offers the favorite action of one discovered device.
+     *
+     * <p>A long press opens this menu; the action label reflects the current state. The favorite
+     * marker is not part of {@link LssServiceInfo}, so the adapter is rebound explicitly after the
+     * change.</p>
+     */
+    private void showDiscoveryItemMenu(@NonNull final LssServiceInfo item) {
+        final boolean isFavorite = LssServiceDiscoveryManager.get().isFavorite(item.getId());
+        new MaterialAlertDialogBuilder(this)
+            .setTitle(item.getName())
+            .setPositiveButton(isFavorite
+                    ? R.string.discovery_remove_favorite : R.string.discovery_add_favorite,
+                (dialog, which) -> toggleFavorite(item))
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
+    private void toggleFavorite(@NonNull final LssServiceInfo item) {
+        final boolean isFavorite = LssServiceDiscoveryManager.get().isFavorite(item.getId());
+        LssServiceDiscoveryManager.get().setFavorite(item.getId(), !isFavorite);
+        mDiscoveryListAdapter.notifyDataSetChanged();
+    }
+
+    /**
+     * Asks for one address and probes it.
+     *
+     * <p>The dialog stays open only until the address is accepted for probing; the outcome is a
+     * toast, because the probe runs in the background and a successful one adds the device to the
+     * list. An unparseable address keeps the dialog open with an inline error.</p>
+     */
+    private void showManualAddressDialog() {
+        final EditText inputView = new EditText(this);
+        inputView.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        inputView.setHint(R.string.discovery_manual_hint);
+        inputView.setSingleLine(true);
+
+        final FrameLayout container = new FrameLayout(this);
+        final int padding = Math.round(24 * getResources().getDisplayMetrics().density);
+        container.setPadding(padding, padding / 2, padding, 0);
+        container.addView(inputView, new FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT));
+
+        final AlertDialog dialog = new MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.discovery_manual_title)
+            .setView(container)
+            .setPositiveButton(android.R.string.ok, null)
+            .setNegativeButton(android.R.string.cancel, null)
+            .create();
+        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+            .setOnClickListener(v -> {
+                if (probeManualAddress(inputView.getText().toString())) {
+                    dialog.dismiss();
+                } else {
+                    inputView.setError(getString(R.string.discovery_invalid_address));
+                }
+            }));
+        if (mDialog != null) {
+            mDialog.dismiss();
+        }
+        mDialog = dialog;
+        dialog.show();
+    }
+
+    private boolean probeManualAddress(@NonNull final String input) {
+        final boolean accepted = LssServiceDiscoveryManager.get().probeManualAddress(input,
+            new ManualAddressProvider.ProbeCallback() {
+                @Override
+                public void onConfirmed(@NonNull final String host, final int port,
+                    @NonNull final DeviceSummary peer) {
+                    Toast.makeText(MainActivity.this, R.string.discovery_manual_added,
+                        Toast.LENGTH_SHORT).show();
+                }
+
+                @Override
+                public void onFailed(@NonNull final String reason) {
+                    // A parse failure is shown inline next to the input, not as a toast.
+                    if ("invalid_address".equals(reason)) {
+                        return;
+                    }
+                    Toast.makeText(MainActivity.this, R.string.discovery_manual_failed,
+                        Toast.LENGTH_SHORT).show();
+                }
+            });
+        if (accepted) {
+            Toast.makeText(this, R.string.discovery_manual_adding, Toast.LENGTH_SHORT).show();
+        }
+        return accepted;
     }
 
     /**
@@ -647,6 +799,28 @@ public class MainActivity extends AppCompatActivity {
      * Passes the permission gate and starts the client service for the selected server.
      */
     private void startScreenShareViewer(@NonNull final LssServiceInfo serviceInfo) {
+        final FavoriteDevice favorite = FavoriteStore.get().find(serviceInfo.getId());
+        if (favorite != null && FavoriteStore.checkIdentity(favorite.getFingerprint(),
+            serviceInfo.getFingerprint()) == FavoriteStore.IdentityStatus.CHANGED) {
+            // Never dial a saved identity that now presents a different fingerprint without an
+            // explicit acknowledgement; accepting rebinds the favorite to the new key.
+            new MaterialAlertDialogBuilder(this)
+                .setTitle(serviceInfo.getName())
+                .setMessage(R.string.discovery_identity_changed_connect)
+                .setPositiveButton(android.R.string.ok, (dialog, which) -> {
+                    LssServiceDiscoveryManager.get().confirmFavoriteIdentity(
+                        serviceInfo.getId(), serviceInfo.getFingerprint());
+                    mDiscoveryListAdapter.notifyDataSetChanged();
+                    startScreenShareViewerConfirmed(serviceInfo);
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+            return;
+        }
+        startScreenShareViewerConfirmed(serviceInfo);
+    }
+
+    private void startScreenShareViewerConfirmed(@NonNull final LssServiceInfo serviceInfo) {
         if (requestScreenShare()) {
             ContextCompat.startForegroundService(this, new Intent(this, LssClientService.class)
                 .putExtra(Constants.EXTRA_SERVICE_INFO, serviceInfo));
@@ -883,16 +1057,31 @@ public class MainActivity extends AppCompatActivity {
         @NonNull
         private final MaterialTextView mAddressView;
 
+        @NonNull
+        private final MaterialTextView mFavoriteView;
+
         private DiscoveryListViewHolder(@NonNull View itemView) {
             super(itemView);
             mNameView = itemView.findViewById(R.id.name);
             mAddressView = itemView.findViewById(R.id.address);
+            mFavoriteView = itemView.findViewById(R.id.favorite);
         }
 
         public void update(@NonNull final LssServiceInfo item) {
             mNameView.setText(item.getName());
             mAddressView.setText(mAddressView.getResources().getString(R.string.service_address, item.getHostAddress(),
                 item.getPort()));
+
+            // The favorite marker is favorite state, not discovery state, so it is read from the
+            // favorite store instead of the service info the list adapter diffs.
+            final FavoriteDevice favorite = FavoriteStore.get().find(item.getId());
+            if (favorite == null) {
+                mFavoriteView.setVisibility(View.GONE);
+            } else {
+                mFavoriteView.setText(favorite.isIdentityChanged()
+                    ? R.string.discovery_identity_changed_badge : R.string.discovery_favorite_badge);
+                mFavoriteView.setVisibility(View.VISIBLE);
+            }
         }
     }
 }

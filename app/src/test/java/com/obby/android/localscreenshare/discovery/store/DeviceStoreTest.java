@@ -34,6 +34,49 @@ public class DeviceStoreTest {
     }
 
     @Test
+    public void identityChangedFlagCanBeSetAndCleared() {
+        mStore.onObserved(heard(DEVICE_ID, "10.0.0.5", 8080, mClock.nowMs()));
+
+        assertTrue(mStore.setIdentityChanged(DEVICE_ID, true));
+        assertTrue(mStore.device(DEVICE_ID).isIdentityChanged());
+
+        assertTrue(mStore.setIdentityChanged(DEVICE_ID, false));
+        assertFalse(mStore.device(DEVICE_ID).isIdentityChanged());
+
+        assertFalse(mStore.setIdentityChanged("unknown-device", true));
+    }
+
+    @Test
+    public void identityChangedFlagFollowsAFingerprintConflict() {
+        mStore.onObserved(DeviceObservation.builder()
+            .source(DiscoveryChannel.NSD).id(DEVICE_ID).fingerprint("fingerprint-one")
+            .host("10.0.0.5").port(8080).build());
+
+        mStore.onObserved(DeviceObservation.builder()
+            .source(DiscoveryChannel.MULTICAST).id(DEVICE_ID).fingerprint("fingerprint-two")
+            .host("10.0.0.6").port(8080).build());
+
+        assertTrue(mStore.device(DEVICE_ID).isIdentityChanged());
+        assertEquals("fingerprint-one", mStore.device(DEVICE_ID).getFingerprint());
+    }
+
+    @Test
+    public void aConfirmedIdentityRebindsTheFingerprint() {
+        mStore.onObserved(DeviceObservation.builder()
+            .source(DiscoveryChannel.NSD).id(DEVICE_ID).fingerprint("fingerprint-one")
+            .host("10.0.0.5").port(8080).build());
+        mStore.onObserved(DeviceObservation.builder()
+            .source(DiscoveryChannel.MULTICAST).id(DEVICE_ID).fingerprint("fingerprint-two")
+            .host("10.0.0.5").port(8080).build());
+
+        assertTrue(mStore.confirmIdentity(DEVICE_ID, "fingerprint-two"));
+
+        assertEquals("fingerprint-two", mStore.device(DEVICE_ID).getFingerprint());
+        assertFalse(mStore.device(DEVICE_ID).isIdentityChanged());
+        assertFalse(mStore.confirmIdentity("unknown-device", "fingerprint-two"));
+    }
+
+    @Test
     public void heardObservationIsNotConfirmed() {
         mStore.onObserved(heard(DEVICE_ID, "10.0.0.5", 8080, mClock.nowMs()));
 
