@@ -153,6 +153,14 @@ public final class StreamCallHandler {
         if (current != session) {
             if (current != null) {
                 listener.onSessionTakenOver(sessionKey, transportId());
+                close();
+                return false;
+            }
+            if (!session.isDetached()) {
+                // The hub removes a mapping before it detaches the session, so the mapping can be
+                // briefly absent. Retry instead of closing ahead of the session's owner, which
+                // would release the transport before the takeover can report its reason.
+                return false;
             }
             close();
             return false;
