@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> **状态：计划已收敛，尚未执行。** 技术路线、身份方案与字段分层已在 [局域网设备发现调研](../../discovery-research.md) 中收敛为“方案 B”，本文件只做文件级拆解，不重新裁决。B1–B5 串行执行，每批独立提交、独立验证、独立 CI 门禁；TB-DISC-010（自签 TLS + TOFU pinning）只列边界，不细化。设备验证仍未解禁：本计划全部验收均为离线口径（JVM 测试、编译、文档检查、CI），发现真实行为待设备实测。
+> **状态：B1 已落地，B2–B5 待执行。** B1（TB-DISC-002/003）代码与 JVM 测试已提交（`a90358a`），进度与证据见 [任务看板](../../task-board.md)；其余批次尚未执行。技术路线、身份方案与字段分层已在 [局域网设备发现调研](../../discovery-research.md) 中收敛为“方案 B”，本文件只做文件级拆解，不重新裁决。B1–B5 串行执行，每批独立提交、独立验证、独立 CI 门禁；TB-DISC-010（自签 TLS + TOFU pinning）只列边界，不细化。设备验证仍未解禁：本计划全部验收均为离线口径（JVM 测试、编译、文档检查、CI），发现真实行为待设备实测。
 
 **Goal:** 把单一 NSD 发现改造为“UDP 组播为主 + gRPC unary Register 双向确认 + mDNS 为辅 + 分级扫描 + 收藏/手动 IP 兜底”的发现层，以 `DeviceStore` 为设备状态单一真相源，以 AndroidKeyStore EC P-256 派生身份替代随机 `serviceId`；B1–B3 保持 UI 零改动，B4 只增加手动 IP 与收藏入口。
 
@@ -17,7 +17,7 @@
 | 依据 | 内容 | 当前状态 |
 | --- | --- | --- |
 | 任务板 TB-DISC-001 | 设备发现调研沉淀：机制矩阵、LocalSend 源码结论、身份与字段三层分配、可靠性参数、方案 B。 | 已完成，调研文档已提交 |
-| 任务板 TB-DISC-002/003 | `LssDeviceInfo` + `DeviceStore` + `DiscoveryProvider`；NSD 服务类型、实例名、TXT、超时、退避、网络回调加固。 | 待办，B1 落地 |
+| 任务板 TB-DISC-002/003 | `LssDeviceInfo` + `DeviceStore` + `DiscoveryProvider`；NSD 服务类型、实例名、TXT、超时、退避、网络回调加固。 | 已完成，B1 落地（`a90358a`） |
 | 任务板 TB-DISC-004 | AndroidKeyStore EC P-256；`fp` 与 26 字符短 ID；重装即新身份；设置内重置。 | 待办，B2 落地 |
 | 任务板 TB-DISC-005/006 | UDP 组播公告、心跳、告别、`MulticastLock`；proto 增加 unary `Register`，成功才进 store。 | 待办，B3 落地 |
 | 任务板 TB-DISC-007/008 | 分级扫描；手动 IP 常驻入口；收藏持久化与上次成功地址。 | 待办，B4 落地 |

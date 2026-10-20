@@ -29,7 +29,7 @@
 - 编码框架隔离核心（契约、StreamHub、有界队列、六状态机、JPEG 参考适配）已完成并通过 JVM 验证，见 [TB-FW-001](#tb-fw-001)、[TB-FW-004](#tb-fw-004)、[TB-FW-005](#tb-fw-005)、[TB-FW-002](#tb-fw-002)。
 - 问题 3 尚未由用户明确关闭，不能标记完成；代码完成 ≠ 问题关闭，API 25 只是兼容下限，能力按运行时探测分档。
 - 编码框架待收尾：TB-FW-003、TB-FW-006、TB-MEDIA-001、TB-MEDIA-003 等待设备验证；TB-FW-002 仍部分完成；TB-FW-007、TB-FW-008 未完成。
-- 设备发现功能已立项（[TB-DISC-001](#tb-disc-001)..[TB-DISC-010](#tb-disc-010)）：调研沉淀完成，实施进行中（TB-DISC-002 至 TB-DISC-010 待办）；设备验证仍未解禁。
+- 设备发现功能已立项（[TB-DISC-001](#tb-disc-001)..[TB-DISC-010](#tb-disc-010)）：B1（[TB-DISC-002](#tb-disc-002)、[TB-DISC-003](#tb-disc-003)）代码层面已完成并通过 JVM 与 CI 验证，TB-DISC-004 至 TB-DISC-010 待办；设备验证仍未解禁。
 - 阶段 0/1 的代码优化尚未开始，当前没有进行中的代码任务。
 - 下一步：按 [渐进优化路线图](optimization-roadmap.md) 的阶段 0 启动可观测性与基线，落地顺序以 [编码框架](codec-framework.md) 为准。
 - 前置约束：拿到基线前，不预设任何性能、发热或延迟收益。
@@ -47,8 +47,6 @@
 
 | ID | 状态 | 优先级 | 标题 | 创建 | 完成 | 关联 |
 | --- | --- | --- | --- | --- | --- | --- |
-| TB-DISC-002 | 📋 待办 | 🟠 P1 | 设备模型与 DeviceStore 抽象 | 2026-10-20 | — | [发现调研](discovery-research.md) |
-| TB-DISC-003 | 📋 待办 | 🟠 P1 | NSD 修正与加固 | 2026-10-20 | — | [发现调研](discovery-research.md) |
 | TB-DISC-004 | 📋 待办 | 🟠 P1 | 设备身份（密钥派生 ID） | 2026-10-20 | — | [发现调研](discovery-research.md) |
 | TB-DISC-005 | 📋 待办 | 🟠 P1 | UDP 组播发现通道 | 2026-10-20 | — | [发现调研](discovery-research.md) |
 | TB-DISC-006 | 📋 待办 | 🟠 P1 | Register 双向发现 RPC | 2026-10-20 | — | [发现调研](discovery-research.md) |
@@ -81,6 +79,8 @@
 | ID | 状态 | 优先级 | 标题 | 创建 | 完成 | 关联 |
 | --- | --- | --- | --- | --- | --- | --- |
 | TB-DISC-001 | ✅ 已完成 | 🟡 P2 | 设备发现调研沉淀 | 2026-10-20 | 2026-10-20 | [发现调研](discovery-research.md) |
+| TB-DISC-002 | ✅ 已完成 | 🟠 P1 | 设备模型与 DeviceStore 抽象 | 2026-10-20 | 2026-10-20 | [实施计划](superpowers/plans/2026-10-20-device-discovery.md) |
+| TB-DISC-003 | ✅ 已完成 | 🟠 P1 | NSD 修正与加固 | 2026-10-20 | 2026-10-20 | [实施计划](superpowers/plans/2026-10-20-device-discovery.md) |
 | TB-ENG-003 | ✅ 已完成 | 🟡 P2 | 代码文档与英文注释 | 2026-10-18 | 2026-10-19 | [实施计划](superpowers/plans/2026-10-19-code-docs-i18n.md) |
 | TB-ENG-004 | ✅ 已完成 | 🟡 P2 | 中英双语资源 | 2026-10-18 | 2026-10-19 | [决策看板](decision-board.md) |
 | TB-DOC-008 | ✅ 已完成 | 🔴 P0 | 框架实施计划 | 2026-10-17 | 2026-10-18 | [实施计划](superpowers/plans/2026-10-17-codec-framework.md) |
@@ -132,26 +132,6 @@
 当前无进行中任务。
 
 ### 📋 待办条目
-
-<a id="tb-disc-002"></a>
-<details><summary>TB-DISC-002 设备模型与 DeviceStore 抽象（📋 待办）</summary>
-
-- **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟠 P1 / 2026-10-20 / —
-- **任务**：`LssDeviceInfo` 设备模型（`id`、`fp`、`name?`、`role`、`state`、`join`、`secure`、`auth`、`pv`、`mv`、`caps`、`addresses[]`、`lastSeen`）；`DeviceStore` 作为设备状态单一真相源（TTL 过期、多通道合并、`Available` 仅以应用层确认为准）；`DiscoveryProvider` 接口，NSD、组播、手动为并列 provider。
-- **交付物 / 验证证据**：交付：模型、`DeviceStore`、provider 接口与 JVM 单测。验证：多通道上报同一设备合并为一条、TTL 到期移除、发现层上报不足以把设备置为 `Available`；当前未实施，设备验证未解禁。
-- **关联文档**：[发现调研](discovery-research.md)
-
-</details>
-
-<a id="tb-disc-003"></a>
-<details><summary>TB-DISC-003 NSD 修正与加固（📋 待办）</summary>
-
-- **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟠 P1 / 2026-10-20 / —
-- **任务**：服务类型 `_localscreenshare._udp` 改为 `_lss._tcp`（现服务名 `localscreenshare` 16 字符超 RFC 6763 的 15 字符上限，且 `_udp` 与实际 TCP gRPC 承载不符）；实例名改为 `LSS-<id 前 8 位>`；TXT 最小化（`name` 默认不广播，当前默认取系统设备名是隐私泄露点）；`resolve` 增加超时；发现启动失败复位；重试退避；`NetworkCallback` 在网络切换后重新发现。关联 [TB-CORE-001](#tb-core-001) 的 NSD 服务类型修正、服务名隐私等部分项。
-- **交付物 / 验证证据**：交付：服务类型与实例名修正、TXT 策略、超时/退避/网络回调接线与单测。验证：服务类型符合 RFC 6763、实例名稳定可读但不含隐私、默认不广播设备名、网络切换后可重新发现；当前未实施，设备验证未解禁。
-- **关联文档**：[发现调研](discovery-research.md)、[TB-CORE-001](#tb-core-001)
-
-</details>
 
 <a id="tb-disc-004"></a>
 <details><summary>TB-DISC-004 设备身份（密钥派生 ID）（📋 待办）</summary>
@@ -395,6 +375,26 @@
 </details>
 
 ### ✅ 已完成条目
+
+<a id="tb-disc-002"></a>
+<details><summary>TB-DISC-002 设备模型与 DeviceStore 抽象（✅ 2026-10-20）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：✅ 已完成 / 🟠 P1 / 2026-10-20 / 2026-10-20
+- **任务**：`LssDeviceInfo` 设备模型（`id`、`fp`、`name?`、`role`、`state`、`join`、`secure`、`auth`、`pv`、`mv`、`caps`、`addresses[]`、`lastSeen`）；`DeviceStore` 作为设备状态单一真相源（TTL 过期、多通道合并、`Available` 仅以应用层确认为准）；`DiscoveryProvider` 接口，NSD、组播、手动为并列 provider。
+- **交付物 / 验证证据**：交付（提交 `a90358a`）：`discovery/model` 的 `LssDeviceInfo`/`DeviceAddress` 与 6 个枚举；`discovery/store` 的 `DeviceStore`/`DeviceEntry`/`DeviceStoreListener`（短 ID 主键、`HEARD`/`CONFIRMED`/`STALE`/`UNREACHABLE`、TTL 15/45/90 s、容量 256、告别立即移除、`TimeSource` 注入、不可变快照）；`discovery/provider` 的 `DiscoveryProvider`/`DiscoveryProviderListener`/`DeviceObservation`；`LssServiceDiscoveryManager` 改为 store 门面，用 `legacySnapshot()` 维持 `List<LssServiceInfo>` 契约，UI 零改动。验证：`DeviceStoreTest`（13）、`DeviceStoreMergeTest`（12）、`LssDeviceInfoTest`（11）覆盖多通道合并为一条、TTL 降级与移除、收藏保留、容量淘汰、发现层上报不足以升级为 `CONFIRMED`；全量 `./gradlew :app:testDebugUnitTest --offline` **470 tests / 0 failures / 0 errors / 0 skipped**（37 个测试类，较 396 基线增加 74）；`./gradlew :app:assembleDebug --offline` 成功；Build CI run [39367453590](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39367453590)、Checks run [39367453781](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39367453781) 均 success。边界：未执行 adb、模拟器、实机或 `connectedAndroidTest`，发现真实行为待设备实测，设备验证未解禁。
+- **关联文档**：[发现调研](discovery-research.md)、[实施计划](superpowers/plans/2026-10-20-device-discovery.md)
+
+</details>
+
+<a id="tb-disc-003"></a>
+<details><summary>TB-DISC-003 NSD 修正与加固（✅ 2026-10-20）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：✅ 已完成 / 🟠 P1 / 2026-10-20 / 2026-10-20
+- **任务**：服务类型 `_localscreenshare._udp` 改为 `_lss._tcp`（原标签 16 字符超 RFC 6763 的 15 字符上限，且 `_udp` 与实际 TCP gRPC 承载不符）；实例名改为 `LSS-<id 前 8 位>`；TXT 最小化（`name` 默认不广播，原默认取系统设备名是隐私泄露点）；`resolve` 增加超时；发现启动失败复位；重试退避；`NetworkCallback` 在网络切换后重新发现。关联 [TB-CORE-001](#tb-core-001) 的 NSD 服务类型修正、服务名隐私等部分项。
+- **交付物 / 验证证据**：交付（提交 `a90358a`）：`Constants` 新增 `_lss._tcp` 与 legacy 类型、TXT 键与能力位；`NsdTxtRecord` 新命名空间编解码（`v/id/r/s/j/sec/auth/pv/mv/caps`，`n` 仅用户开启时写入），缺 `name` 仍可摄入；`NSD` 服务端双注册（新类型 + legacy）各自持有 listener 与 `BackoffPolicy`，失败只重试本类型；`NsdUtils.resolveService` 增加 2 s 超时与单次投递保护；`NsdDiscoveryCoordinator` 负责每类型独立退避与网络切换去抖重发现；`NsdDiscoveryProvider` 双类型发现、自身按 id 过滤、`NetworkCallback` 重发现；`Preferences` 新增 `getDeviceAlias`/`isShareNameEnabled`（默认关闭）。验证：`NsdTxtRecordTest`（17）、`NsdDiscoveryCoordinatorTest`（12）、`BackoffPolicyTest`（9）覆盖 TXT 往返与缺省 name、未知键与未知版本丢弃、退避序列与重置、网络切换去抖只重启一次且取消挂起重试、双类型互不影响；全量 **470 tests / 0 failures**；两条 Gradle 命令成功；CI 同上。边界：mDNS 双注册、超时与网络切换的真实行为未实测，设备验证未解禁。
+- **关联文档**：[发现调研](discovery-research.md)、[实施计划](superpowers/plans/2026-10-20-device-discovery.md)、[TB-CORE-001](#tb-core-001)
+
+</details>
 
 <a id="tb-disc-001"></a>
 <details><summary>TB-DISC-001 设备发现调研沉淀（✅ 2026-10-20）</summary>
