@@ -153,6 +153,7 @@ ui / service
 
 - 示例：`activity_main`、`item_device`、`dialog_confirm`、`main_stop_button`、`device_list_empty_label`、`screen_share_stop_confirm`、`ic_share`。
 - 主题必须使用 `Theme.<App>.*` 或 `ThemeOverlay.<App>.*` 形式；单独的 `AppTheme`、`AppThemeDark` 不作为主题名。
+- `<App>` 使用产品名（当前为 `ScreenShare`），不得包含平台词（如 `Android`）：主题示例为 `Theme.ScreenShare`、`Theme.ScreenShare.SplashScreen`、`ThemeOverlay.ScreenShare.Chip`。
 
 ### 4.2 领域在前、用途在后
 
@@ -188,6 +189,7 @@ ui / service
 | `LssServer`、`LssClient`、`LssServerInfo`、`LssDeviceInfo` 等 13 个 `Lss*` 类型（已于 R4 修复：去掉品牌前缀） | `Lss` 是品牌前缀，不携带角色信息；包名已提供领域上下文（`server`、`client`、`discovery/model`）时仍重复领域前缀 | `app/src/main/java/.../server/ScreenShareServer.java:147`、`app/src/main/java/.../client/ScreenShareClient.java:67`、`app/src/main/java/.../discovery/model/DeviceInfo.java:35` |
 | `core/codec/h264` 中的 `MediaCodec*Bridge`、`AndroidMediaCodec*Bridge`、`*Format`、`EncodedSample`、`DecodedOutput`（已于 R4 修复：迁至 `core/codec/mediacodec`） | MIME 通用的 MediaCodec 桥与 H.264 专属逻辑同包，包的职责无法从名字判断；H.264 之外的编解码器无法复用这些桥 | `app/src/main/java/.../core/codec/mediacodec/MediaCodecBridgeFactory.java:18` |
 | `core/stream/TimeSource`（已于 R4 修复：迁至 `core/util`） | 通用时间源混在流管线包内，`core/stream` 之外的 9 处引用被迫依赖流管线包 | `app/src/main/java/.../core/util/TimeSource.java:11` |
+| `Theme.LocalScreenShareAndroid`、`ThemeOverlay.LocalScreenShareAndroid.*` 与 `AndroidMulticastSocketFactory`（皆已于 R5 修复：主题改为 `Theme.ScreenShare` / `ThemeOverlay.ScreenShare.*`，工厂改为 `PerInterfaceMulticastSocketFactory`） | 主题名把仓库名 `LocalScreenShareAndroid` 当作产品名，平台词 `Android` 占据了产品位；`AndroidMulticastSocketFactory` 是纯 `java.net.MulticastSocket` 的每接口工厂，不含任何 Android API，名字暗示了不存在的平台绑定 | `app/src/main/res/values/themes.xml:3`、`app/src/main/java/.../discovery/udp/PerInterfaceMulticastSocketFactory.java:39` |
 
 R2 批次同时处理了盘点中的其余命名问题：`KeystoreIdentityProvider` → `DefaultIdentityProvider`（真正的 `IdentityProvider` 实现）、`NsdUtils` → `NsdResolver`、`support/Reference` → `MutableReference`、`discovery/VisibilityPolicy` 迁入 `settings`、`deviceStore()` / `favoriteStore()` 改为 `getDeviceStore()` / `getFavoriteStore()`，以及资源键、布局 id 与主题名的领域前置统一。
 
@@ -195,8 +197,9 @@ R2 批次同时处理了盘点中的其余命名问题：`KeystoreIdentityProvid
 
 ### 7.1 生效与批次
 
-- 本规范经用户批准，2026-10-20 生效。R0 批次即本文档；R1–R4 重构批次按本规范执行。
+- 本规范经用户批准，2026-10-20 生效。R0 批次即本文档；R1–R5 重构批次按本规范执行。
 - 每个批次只做移动与改名，不夹带行为变化；每批必须通过编译、全量 JVM 测试与 CI。
+- R5 批次：主题名去平台词（`Theme.ScreenShare`、`Theme.ScreenShare.SplashScreen`、`ThemeOverlay.ScreenShare.Chip`、`ThemeOverlay.ScreenShare.MediumContrast`、`ThemeOverlay.ScreenShare.HighContrast`）与组播工厂改名（`AndroidMulticastSocketFactory` → `PerInterfaceMulticastSocketFactory`）落地；`AndroidMediaCodec*`、`AndroidKeystoreKeyStore`、`AndroidInterfaceEnumerator` 属平台绑定，按例外保留。
 - 新代码自生效日起必须符合本规范；存量代码按批次逐步对齐，批次之外不顺带做大规模改名，避免评审噪声。
 - 文档中的目标名在对应批次落地前仍属目标态；不得以“规范已批准”为理由，在未完成批次里把目标名写成当前实现。
 

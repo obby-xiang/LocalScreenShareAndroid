@@ -233,7 +233,7 @@ public class ScreenViewerService extends Service {
             // An ScreenShareClient cannot be restarted, so a retry builds a new instance and shows the
             // loading overlay again. The confirmation is a floating window because the activity
             // may not be visible.
-            final Context themedContext = new ContextThemeWrapper(ScreenViewerService.this, R.style.Theme_LocalScreenShareAndroid);
+            final Context themedContext = new ContextThemeWrapper(ScreenViewerService.this, R.style.Theme_ScreenShare);
             mDialog = new MaterialAlertDialogBuilder(themedContext)
                 .setMessage(HtmlCompat.fromHtml(getString(messageResId, nameOf(mServiceInfo)),
                     HtmlCompat.FROM_HTML_MODE_LEGACY))
@@ -604,7 +604,7 @@ public class ScreenViewerService extends Service {
         @SuppressWarnings("DataFlowIssue")
         @SuppressLint("InflateParams")
         private ScreenShareLoading(@NonNull final Context context, @NonNull final DeviceInfo serviceInfo) {
-            final Context themedContext = new ContextThemeWrapper(context, R.style.Theme_LocalScreenShareAndroid);
+            final Context themedContext = new ContextThemeWrapper(context, R.style.Theme_ScreenShare);
             mWindowManager = themedContext.getSystemService(WindowManager.class);
             mLoadingView = LayoutInflater.from(themedContext).inflate(R.layout.widget_screen_share_loading, null);
             mLayoutParams = new WindowManager.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -706,7 +706,7 @@ public class ScreenViewerService extends Service {
 
         private SurfaceShareViewer(@NonNull final Context context,
                                    @NonNull final DeviceInfo serviceInfo) {
-            mContext = new ContextThemeWrapper(context, R.style.Theme_LocalScreenShareAndroid);
+            mContext = new ContextThemeWrapper(context, R.style.Theme_ScreenShare);
             mServiceInfo = serviceInfo;
             mWindowManager = mContext.getSystemService(WindowManager.class);
             mTextureView = new TextureView(mContext);
@@ -988,7 +988,7 @@ public class ScreenViewerService extends Service {
 
         @SuppressLint("InflateParams")
         private ScreenShareViewer(@NonNull final Context context, @NonNull final DeviceInfo serviceInfo) {
-            mContext = new ContextThemeWrapper(context, R.style.Theme_LocalScreenShareAndroid);
+            mContext = new ContextThemeWrapper(context, R.style.Theme_ScreenShare);
             mServiceInfo = serviceInfo;
             mWindowManager = mContext.getSystemService(WindowManager.class);
             mFrameView = createFrameView();

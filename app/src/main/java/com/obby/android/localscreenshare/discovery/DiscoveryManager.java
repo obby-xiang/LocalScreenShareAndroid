@@ -37,10 +37,10 @@ import com.obby.android.localscreenshare.discovery.scan.ScanConstants;
 import com.obby.android.localscreenshare.discovery.scan.ScanCoordinator;
 import com.obby.android.localscreenshare.discovery.store.DeviceStore;
 import com.obby.android.localscreenshare.discovery.store.DeviceStoreListener;
-import com.obby.android.localscreenshare.discovery.udp.AndroidMulticastSocketFactory;
 import com.obby.android.localscreenshare.discovery.udp.MulticastConfig;
 import com.obby.android.localscreenshare.discovery.udp.MulticastConstants;
 import com.obby.android.localscreenshare.discovery.udp.MulticastLockManager;
+import com.obby.android.localscreenshare.discovery.udp.PerInterfaceMulticastSocketFactory;
 import com.obby.android.localscreenshare.discovery.udp.SocketMulticastTransport;
 import com.obby.android.localscreenshare.discovery.udp.UdpMulticastDiscoveryProvider;
 import com.obby.android.localscreenshare.grpc.screenstream.DeviceSummary;
@@ -136,7 +136,7 @@ public final class DiscoveryManager {
 
     @NonNull
     private final UdpMulticastDiscoveryProvider mMulticastProvider = new UdpMulticastDiscoveryProvider(
-        () -> new SocketMulticastTransport(new AndroidMulticastSocketFactory(), multicastConfig(),
+        () -> new SocketMulticastTransport(new PerInterfaceMulticastSocketFactory(), multicastConfig(),
             DelayedScheduler.newSingleThread("lss-multicast-socket")),
         MulticastLockManager.get(), this::isSelfDeviceId, TimeSource.MONOTONIC,
         ThreadUtils.getMainThreadExecutor(), mRegisterClient, this::selfSummary,

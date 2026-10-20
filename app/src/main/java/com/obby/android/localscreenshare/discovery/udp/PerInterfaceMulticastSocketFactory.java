@@ -18,6 +18,12 @@ import java.util.List;
 /**
  * Production {@link MulticastSocketFactory}: one {@link MulticastSocket} per usable interface.
  *
+ * <p>Plain {@code java.net} only: interfaces come from
+ * {@link NetworkInterface#getNetworkInterfaces()} and every socket is a plain
+ * {@link MulticastSocket}, so no Android API is involved. The class was named
+ * {@code AndroidMulticastSocketFactory} before TB-ENG-011 R5; that name implied a platform
+ * binding the code never had.</p>
+ *
  * <p>Each socket joins the same group on exactly one interface. This avoids the outbound-interface
  * race of a single socket on a multi-homed device: the kernel picks the interface for a shared
  * socket per send, while a per-interface socket always leaves through the interface it joined.
@@ -30,7 +36,7 @@ import java.util.List;
  * expose the loopback switch; the receiver filters this device's own announcements by device id
  * and never relies on loopback being off.</p>
  */
-public final class AndroidMulticastSocketFactory implements MulticastSocketFactory {
+public final class PerInterfaceMulticastSocketFactory implements MulticastSocketFactory {
 
     @NonNull
     @Override

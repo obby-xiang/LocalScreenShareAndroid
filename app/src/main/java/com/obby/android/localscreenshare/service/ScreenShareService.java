@@ -75,12 +75,12 @@ import com.obby.android.localscreenshare.discovery.model.AuthMode;
 import com.obby.android.localscreenshare.discovery.model.DeviceRole;
 import com.obby.android.localscreenshare.discovery.model.ShareState;
 import com.obby.android.localscreenshare.discovery.nsd.NsdConstants;
-import com.obby.android.localscreenshare.discovery.udp.AndroidMulticastSocketFactory;
 import com.obby.android.localscreenshare.discovery.udp.Announcement;
 import com.obby.android.localscreenshare.discovery.udp.MulticastAnnouncer;
 import com.obby.android.localscreenshare.discovery.udp.MulticastConfig;
 import com.obby.android.localscreenshare.discovery.udp.MulticastLockManager;
 import com.obby.android.localscreenshare.discovery.udp.MulticastTransport;
+import com.obby.android.localscreenshare.discovery.udp.PerInterfaceMulticastSocketFactory;
 import com.obby.android.localscreenshare.discovery.udp.SocketMulticastTransport;
 import com.obby.android.localscreenshare.identity.DeviceIdentity;
 import com.obby.android.localscreenshare.identity.IdentityManager;
@@ -752,7 +752,7 @@ public class ScreenShareService extends Service {
 
         final MulticastLockManager lockManager = MulticastLockManager.get();
         final MulticastTransport transport = new SocketMulticastTransport(
-            new AndroidMulticastSocketFactory(), config,
+            new PerInterfaceMulticastSocketFactory(), config,
             DelayedScheduler.newSingleThread("lss-announce-socket"));
         lockManager.acquire();
         transport.start(null);
@@ -1195,7 +1195,7 @@ public class ScreenShareService extends Service {
             };
 
         private ScreenShareChip(@NonNull final Context context) {
-            mContext = new ContextThemeWrapper(context, R.style.ThemeOverlay_LocalScreenShareAndroid_ScreenShareChip);
+            mContext = new ContextThemeWrapper(context, R.style.ThemeOverlay_ScreenShare_Chip);
             mWindowManager = mContext.getSystemService(WindowManager.class);
             mChipView = createChipView();
             mLayoutParams = new WindowManager.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,

@@ -1,6 +1,6 @@
 <resources>
     <!-- Base application theme. -->
-    <style name="Theme.LocalScreenShareAndroid" parent="Theme.Material3.Light.NoActionBar">
+    <style name="Theme.ScreenShare" parent="Theme.Material3.Light.NoActionBar">
         <item name="colorPrimary">@color/md_theme_primary</item>
         <item name="colorOnPrimary">@color/md_theme_onPrimary</item>
         <item name="colorPrimaryContainer">@color/md_theme_primaryContainer</item>
@@ -49,12 +49,12 @@
         <item name="colorSurfaceContainerHighest">@color/md_theme_surfaceContainerHighest</item>
     </style>
 
-    <style name="Theme.LocalScreenShareAndroid.SplashScreen" parent="Theme.SplashScreen">
-        <item name="postSplashScreenTheme">@style/Theme.LocalScreenShareAndroid</item>
+    <style name="Theme.ScreenShare.SplashScreen" parent="Theme.SplashScreen">
+        <item name="postSplashScreenTheme">@style/Theme.ScreenShare</item>
         <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
     </style>
 
-    <style name="ThemeOverlay.LocalScreenShareAndroid.ScreenShareChip" parent="Theme.LocalScreenShareAndroid">
+    <style name="ThemeOverlay.ScreenShare.Chip" parent="Theme.ScreenShare">
         <item name="chipStyle">@style/Widget.Material3.Chip.Assist.Elevated</item>
     </style>
 </resources>
