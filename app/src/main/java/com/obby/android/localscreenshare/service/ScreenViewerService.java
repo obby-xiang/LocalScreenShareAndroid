@@ -24,6 +24,7 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.text.format.Formatter;
+import android.util.DisplayMetrics;
 import android.util.Log;
 import android.util.Size;
 import android.view.GestureDetector;
@@ -106,11 +107,12 @@ import java.util.Objects;
  * foreground notification and calls {@link #stopSelf()}; {@link #onDestroy()} only unregisters the
  * stop receiver.</p>
  *
- * <p><b>Connection state.</b> Until the first frame arrives the loading overlay is shown. The
- * first frame is reported as {@code onConnected}, which swaps the loading overlay for the viewer;
- * a later disconnect, or a failed first connection, closes the client, shows a floating
- * confirmation and offers a retry. The retry creates a new client because an {@link ScreenShareClient} is
- * single-use. Cancelling the confirmation broadcasts
+ * <p><b>Connection state.</b> The surface viewer is mounted when the session starts so its texture
+ * view acquires a surface and the decoder can be created; the loading overlay is shown on top until
+ * the first frame arrives. The first frame drives the session into {@code STREAMING}, which dismisses
+ * the loading overlay; a later disconnect, or a failed first connection, closes the client, shows a
+ * floating confirmation and offers a retry. The retry creates a new client because an
+ * {@link ScreenShareClient} is single-use. Cancelling the confirmation broadcasts
  * {@link ServiceProtocol#ACTION_STOP_CLIENT_SERVICE}.</p>
  *
  * <p><b>Threading and ownership.</b> All service callbacks and {@link ClientObserver}
@@ -515,7 +517,9 @@ public class ScreenViewerService extends Service {
      *
      * <p>The registry resolves the H.264 decoder; capabilities are pinned to H.264 until runtime
      * probing and JPEG fallback land. The surface render target wraps the viewer's texture view,
-     * and the receiver drives the session from wire messages on the client's decode thread.</p>
+     * the receiver drives the session from wire messages on the client's decode thread, and the
+     * surface viewer is mounted immediately so its texture view exposes the surface the decoder
+     * needs.</p>
      */
     @NonNull
     private ClientMediaReceiver startMediaSession() {
@@ -543,6 +547,12 @@ public class ScreenViewerService extends Service {
                 mSurfaceRenderTarget, mClientStateListener);
         mClientMediaSession = session;
         mClientMediaReceiver = new ClientMediaReceiver(mStreamKey, session, mClientSecureListener);
+
+        // Mount the surface viewer now so its texture view acquires a surface; the H.264 decoder
+        // cannot be created until a surface exists, and STREAMING (which used to trigger the mount)
+        // is only reached once the decoder starts producing frames.
+        mSurfaceShareViewer.show();
+
         return mClientMediaReceiver;
     }
 
@@ -625,7 +635,7 @@ public class ScreenViewerService extends Service {
                 if (mDialog == null) {
                     mDialog = new MaterialAlertDialogBuilder(themedContext)
                         .setMessage(HtmlCompat.fromHtml(themedContext.getString(
-                                R.string.screen_share_disconnect_confirm, serviceInfo.getName()),
+                                R.string.screen_share_disconnect_confirm, nameOf(serviceInfo)),
                             HtmlCompat.FROM_HTML_MODE_LEGACY))
                         .setPositiveButton(android.R.string.ok, (dialog, which) -> themedContext.sendBroadcast(
                             new Intent(ServiceProtocol.ACTION_STOP_CLIENT_SERVICE)
@@ -866,7 +876,14 @@ public class ScreenViewerService extends Service {
         }
 
         private void getMaxLayoutBounds(@NonNull final Rect rect) {
+            rect.setEmpty();
             mTextureView.getWindowVisibleDisplayFrame(rect);
+            if (rect.isEmpty()) {
+                // The texture view is not attached yet (mounted before its first layout pass), so
+                // the window frame is unavailable; size the initial window from the display metrics.
+                final DisplayMetrics metrics = mContext.getResources().getDisplayMetrics();
+                rect.set(0, 0, metrics.widthPixels, metrics.heightPixels);
+            }
             rect.offsetTo(0, 0);
             rect.offset(-rect.width() / 2, -rect.height() / 2);
         }

@@ -14,7 +14,9 @@ import com.obby.android.localscreenshare.core.render.RenderTarget;
  * recreated only when the underlying texture changes and released by {@link #release()}, which the
  * display side calls when the window is torn down. Before the texture is available
  * {@link #getSurface()} returns {@code null}, which keeps a surface-output codec's session in the
- * resynchronizing state until the window is ready.</p>
+ * resynchronizing state until the window is ready. When the texture is destroyed the cached surface
+ * is released and the framework is asked to release the old texture, so a later re-attach starts
+ * from a fresh texture and re-runs the availability callback.</p>
  */
 public final class SurfaceRenderTarget implements RenderTarget {
 
@@ -53,7 +55,11 @@ public final class SurfaceRenderTarget implements RenderTarget {
 
             @Override
             public boolean onSurfaceTextureDestroyed(SurfaceTexture surface) {
-                return false;
+                // The view is leaving the window: drop the cached Surface so a later getSurface()
+                // returns null until the view is re-attached with a fresh texture. Returning true
+                // lets the framework release the old texture instead of leaking it.
+                releaseSurface();
+                return true;
             }
 
             @Override
