@@ -82,7 +82,9 @@ public final class NsdDiscoveryProvider implements DiscoveryProvider {
     @NonNull
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
 
-    // Service type -> listener; created once so restart reuses the framework registration object.
+    // Service type -> the listener most recently handed to NsdManager. A listener is created on
+    // every start because NsdManager rejects reusing a DiscoveryListener whose previous discovery
+    // has not been fully stopped, which is exactly what a stop-then-start restart does.
     @NonNull
     private final Map<String, NsdManager.DiscoveryListener> mDiscoveryListeners = new LinkedHashMap<>();
 
@@ -127,9 +129,6 @@ public final class NsdDiscoveryProvider implements DiscoveryProvider {
         mTimeSource = timeSource;
         mSelfIdFilter = selfIdFilter;
         mServiceTypes = serviceTypes;
-        for (final String serviceType : serviceTypes) {
-            mDiscoveryListeners.put(serviceType, new TypeDiscoveryListener(serviceType));
-        }
     }
 
     @Override
@@ -340,10 +339,10 @@ public final class NsdDiscoveryProvider implements DiscoveryProvider {
     private final class NsdDiscovery implements NsdDiscoveryCoordinator.Discovery {
         @Override
         public void startDiscovery(@NonNull String serviceType) {
-            final NsdManager.DiscoveryListener listener = mDiscoveryListeners.get(serviceType);
-            if (listener == null) {
-                return;
-            }
+            // A fresh listener per start: the framework rejects a DiscoveryListener that is still
+            // registered from a previous discoverServices call whose stop has not completed yet.
+            final NsdManager.DiscoveryListener listener = new TypeDiscoveryListener(serviceType);
+            mDiscoveryListeners.put(serviceType, listener);
             try {
                 mNsdManager.discoverServices(serviceType, NsdManager.PROTOCOL_DNS_SD, listener);
             } catch (RuntimeException e) {
