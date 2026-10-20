@@ -76,8 +76,9 @@ import com.obby.android.localscreenshare.core.model.ClientState;
 import com.obby.android.localscreenshare.core.model.StreamKey;
 import com.obby.android.localscreenshare.core.stream.ClientCapabilities;
 import com.obby.android.localscreenshare.core.stream.TimeSource;
-import com.obby.android.localscreenshare.discovery.LssServiceInfo;
 import com.obby.android.localscreenshare.discovery.favorite.FavoriteStore;
+import com.obby.android.localscreenshare.discovery.model.DeviceAddress;
+import com.obby.android.localscreenshare.discovery.model.LssDeviceInfo;
 import com.obby.android.localscreenshare.render.SurfaceRenderTarget;
 import com.obby.android.localscreenshare.support.Constants;
 import com.obby.android.localscreenshare.support.Preferences;
@@ -126,7 +127,7 @@ public class LssClientService extends Service {
 
     // Target of the current session; null while stopped.
     @Nullable
-    private LssServiceInfo mServiceInfo;
+    private LssDeviceInfo mServiceInfo;
 
     // Single-use client; replaced by a new instance on retry and nulled on stop.
     @Nullable
@@ -193,7 +194,7 @@ public class LssClientService extends Service {
             // The address that just worked becomes the first favorite probe next time.
             if (mServiceInfo != null) {
                 FavoriteStore.get().recordSuccess(mServiceInfo.getId(),
-                    mServiceInfo.getHostAddress(), mServiceInfo.getPort(),
+                    hostOf(mServiceInfo), portOf(mServiceInfo),
                     TimeSource.MONOTONIC.nowMs());
             }
         }
@@ -234,11 +235,11 @@ public class LssClientService extends Service {
             // may not be visible.
             final Context themedContext = new ContextThemeWrapper(LssClientService.this, R.style.AppTheme);
             mDialog = new MaterialAlertDialogBuilder(themedContext)
-                .setMessage(HtmlCompat.fromHtml(getString(messageResId, mServiceInfo.getName()),
+                .setMessage(HtmlCompat.fromHtml(getString(messageResId, nameOf(mServiceInfo)),
                     HtmlCompat.FROM_HTML_MODE_LEGACY))
                 .setPositiveButton(android.R.string.ok, (dialog, which) -> {
                     final ClientMediaReceiver receiver = startMediaSession();
-                    mClient = new LssClient(mServiceInfo.getHostAddress(), mServiceInfo.getPort());
+                    mClient = new LssClient(hostOf(mServiceInfo), portOf(mServiceInfo));
                     mClient.setClientStatsListener(mClientStatsListener);
                     mScreenShareLoading.show();
                     mClient.start(mClientObserver, receiver);
@@ -348,8 +349,13 @@ public class LssClientService extends Service {
             return START_NOT_STICKY;
         }
 
-        final LssServiceInfo serviceInfo = intent.getParcelableExtra(Constants.EXTRA_SERVICE_INFO);
-        if (Objects.equals(mServiceInfo, serviceInfo) && mClient != null) {
+        final LssDeviceInfo serviceInfo = intent.getParcelableExtra(Constants.EXTRA_SERVICE_INFO);
+        if (serviceInfo == null || serviceInfo.primaryAddress() == null) {
+            Log.w(mTag, "onStartCommand: no usable device in the intent");
+            stopService();
+            return START_NOT_STICKY;
+        }
+        if (isSameTarget(serviceInfo) && mClient != null) {
             Log.w(mTag, "onStartCommand: client already running");
             return START_NOT_STICKY;
         }
@@ -396,13 +402,49 @@ public class LssClientService extends Service {
         teardownMediaSession();
 
         final ClientMediaReceiver receiver = startMediaSession();
-        mClient = new LssClient(mServiceInfo.getHostAddress(), mServiceInfo.getPort());
+        mClient = new LssClient(hostOf(mServiceInfo), portOf(mServiceInfo));
         mClient.setClientStatsListener(mClientStatsListener);
         mScreenShareLoading = new ScreenShareLoading(this, mServiceInfo);
         mScreenShareLoading.show();
         mClient.start(mClientObserver, receiver);
 
         return START_STICKY;
+    }
+
+    /**
+     * Returns whether {@code candidate} targets the session already running.
+     *
+     * <p>Only the identity and the primary address are compared: the store snapshot carries
+     * timestamps that change on every observation, and a changed timestamp must not restart a
+     * healthy session.</p>
+     */
+    private boolean isSameTarget(@NonNull final LssDeviceInfo candidate) {
+        if (mServiceInfo == null) {
+            return false;
+        }
+        final DeviceAddress previous = mServiceInfo.primaryAddress();
+        final DeviceAddress next = candidate.primaryAddress();
+        return mServiceInfo.getId().equals(candidate.getId())
+            && Objects.equals(previous, next);
+    }
+
+    /** Returns the host of the device to dial, or an empty string when it has no address. */
+    @NonNull
+    private static String hostOf(@Nullable final LssDeviceInfo device) {
+        final DeviceAddress address = device == null ? null : device.primaryAddress();
+        return address == null ? "" : address.getHost();
+    }
+
+    /** Returns the port of the device to dial, or {@code 0} when it has no address. */
+    private static int portOf(@Nullable final LssDeviceInfo device) {
+        final DeviceAddress address = device == null ? null : device.primaryAddress();
+        return address == null ? 0 : address.getPort();
+    }
+
+    /** Returns the display name of the device, never null. */
+    @NonNull
+    private static String nameOf(@Nullable final LssDeviceInfo device) {
+        return device == null ? "" : device.displayName();
     }
 
     /**
@@ -524,9 +566,9 @@ public class LssClientService extends Service {
     private Notification buildNotification() {
         return new NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle(getString(R.string.client_service_notification_title, mServiceInfo.getName()))
-            .setContentText(getString(R.string.client_service_notification_text, mServiceInfo.getHostAddress(),
-                mServiceInfo.getPort(), Formatter.formatFileSize(this, mInboundDataRate)))
+            .setContentTitle(getString(R.string.client_service_notification_title, nameOf(mServiceInfo)))
+            .setContentText(getString(R.string.client_service_notification_text, hostOf(mServiceInfo),
+                portOf(mServiceInfo), Formatter.formatFileSize(this, mInboundDataRate)))
             .setContentIntent(PendingIntent.getActivity(this, 0, new Intent(this, MainActivity.class),
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT))
             .addAction(0, getString(R.string.client_service_stop_notification_action),
@@ -561,7 +603,7 @@ public class LssClientService extends Service {
 
         @SuppressWarnings("DataFlowIssue")
         @SuppressLint("InflateParams")
-        private ScreenShareLoading(@NonNull final Context context, @NonNull final LssServiceInfo serviceInfo) {
+        private ScreenShareLoading(@NonNull final Context context, @NonNull final LssDeviceInfo serviceInfo) {
             final Context themedContext = new ContextThemeWrapper(context, R.style.AppTheme);
             mWindowManager = themedContext.getSystemService(WindowManager.class);
             mLoadingView = LayoutInflater.from(themedContext).inflate(R.layout.widget_screen_share_loading, null);
@@ -632,7 +674,7 @@ public class LssClientService extends Service {
         private final Context mContext;
 
         @NonNull
-        private final LssServiceInfo mServiceInfo;
+        private final LssDeviceInfo mServiceInfo;
 
         @NonNull
         private final WindowManager mWindowManager;
@@ -663,7 +705,7 @@ public class LssClientService extends Service {
         private int mScale;
 
         private SurfaceShareViewer(@NonNull final Context context,
-                                   @NonNull final LssServiceInfo serviceInfo) {
+                                   @NonNull final LssDeviceInfo serviceInfo) {
             mContext = new ContextThemeWrapper(context, R.style.AppTheme);
             mServiceInfo = serviceInfo;
             mWindowManager = mContext.getSystemService(WindowManager.class);
@@ -760,7 +802,7 @@ public class LssClientService extends Service {
             if (mDialog == null) {
                 mDialog = new MaterialAlertDialogBuilder(mContext)
                     .setMessage(HtmlCompat.fromHtml(mContext.getString(
-                            R.string.disconnect_screen_share_confirm, mServiceInfo.getName()),
+                            R.string.disconnect_screen_share_confirm, nameOf(mServiceInfo)),
                         HtmlCompat.FROM_HTML_MODE_LEGACY))
                     .setPositiveButton(android.R.string.ok, (dialog, which) -> mContext.sendBroadcast(
                         new Intent(Constants.ACTION_STOP_CLIENT_SERVICE).setPackage(mContext.getPackageName())))
@@ -866,7 +908,7 @@ public class LssClientService extends Service {
         private final Context mContext;
 
         @NonNull
-        private final LssServiceInfo mServiceInfo;
+        private final LssDeviceInfo mServiceInfo;
 
         @NonNull
         private final WindowManager mWindowManager;
@@ -916,7 +958,7 @@ public class LssClientService extends Service {
                     if (mDialog == null) {
                         mDialog = new MaterialAlertDialogBuilder(mContext)
                             .setMessage(HtmlCompat.fromHtml(mContext.getString(R.string.disconnect_screen_share_confirm,
-                                mServiceInfo.getName()), HtmlCompat.FROM_HTML_MODE_LEGACY))
+                                nameOf(mServiceInfo)), HtmlCompat.FROM_HTML_MODE_LEGACY))
                             .setPositiveButton(android.R.string.ok, (dialog, which) -> mContext.sendBroadcast(
                                 new Intent(Constants.ACTION_STOP_CLIENT_SERVICE).setPackage(mContext.getPackageName())))
                             .setNegativeButton(android.R.string.cancel, null)
@@ -945,7 +987,7 @@ public class LssClientService extends Service {
             };
 
         @SuppressLint("InflateParams")
-        private ScreenShareViewer(@NonNull final Context context, @NonNull final LssServiceInfo serviceInfo) {
+        private ScreenShareViewer(@NonNull final Context context, @NonNull final LssDeviceInfo serviceInfo) {
             mContext = new ContextThemeWrapper(context, R.style.AppTheme);
             mServiceInfo = serviceInfo;
             mWindowManager = mContext.getSystemService(WindowManager.class);

@@ -231,6 +231,27 @@ public final class DeviceStore {
         refresh(mTimeSource.nowMs());
     }
 
+    /**
+     * Returns whether {@code host:port} was confirmed within the last {@code windowMs}.
+     *
+     * <p>Used by the announcement channel to avoid re-confirming a healthy peer on every
+     * heartbeat: the server counts Register calls per address and a heartbeat would otherwise
+     * exhaust the quota. The check reads the same confirmation timestamps the TTL uses, so it
+     * never reports an expired address as recent.</p>
+     */
+    public boolean isConfirmedWithin(@NonNull final String host, final int port, final long windowMs) {
+        final long nowMs = mTimeSource.nowMs();
+        for (final DeviceEntry entry : mEntries.values()) {
+            for (final DeviceAddress address : entry.addresses()) {
+                if (address.isConfirmed() && address.getPort() == port && address.getHost().equals(host)
+                    && nowMs - address.getLastConfirmedMs() <= windowMs) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     /** Drops every entry and publishes an empty snapshot. */
     public void clear() {
         mEntries.clear();

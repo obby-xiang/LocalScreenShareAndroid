@@ -191,6 +191,21 @@ public class DeviceStoreMergeTest {
         assertFalse(mStore.setFavorite(DEVICE_ID, true));
     }
 
+    @Test
+    public void recentConfirmationIsReportedWithinItsWindowOnly() {
+        mStore.onObserved(observed(DiscoveryChannel.MULTICAST, DEVICE_ID, "10.0.0.5", 8080,
+            mClock.nowMs()));
+        mStore.confirm(DEVICE_ID, DiscoveryChannel.MULTICAST, "10.0.0.5", 8080);
+
+        assertTrue(mStore.isConfirmedWithin("10.0.0.5", 8080, 30_000L));
+        assertFalse(mStore.isConfirmedWithin("10.0.0.6", 8080, 30_000L));
+        assertFalse(mStore.isConfirmedWithin("10.0.0.5", 9090, 30_000L));
+
+        mClock.advance(30_001L);
+
+        assertFalse(mStore.isConfirmedWithin("10.0.0.5", 8080, 30_000L));
+    }
+
     private DeviceObservation observed(DiscoveryChannel channel, String id, String host, int port, long nowMs) {
         return DeviceObservation.builder()
             .source(channel)

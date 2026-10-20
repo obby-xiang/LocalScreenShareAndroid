@@ -122,6 +122,16 @@ public final class Constants {
     /** Windows in which one address triggers at most one Register call. */
     public static final long REGISTER_MERGE_WINDOW_MS = 300L;
 
+    /**
+     * Window in which an already confirmed address is not confirmed again.
+     *
+     * <p>Heartbeats repeat every 5 or 15 seconds, which would exceed the server's
+     * {@link #REGISTER_REQUESTS_PER_ADDRESS_PER_MINUTE per-address quota} and turn a healthy peer
+     * into a rate-limited one. A confirmation this recent is still inside the store's confirmed
+     * TTL, so skipping the call costs no accuracy.</p>
+     */
+    public static final long REGISTER_RECONFIRM_INTERVAL_MS = 30_000L;
+
     /** Deadline of one Register call, in milliseconds. */
     public static final long REGISTER_TIMEOUT_MS = 500L;
 
@@ -185,7 +195,13 @@ public final class Constants {
     /** Intent extra carrying the MediaProjection consent result passed to the capture service. */
     public static final String EXTRA_MEDIA_PROJECTION_RESULT = "mediaProjectionResult";
 
-    /** Intent extra carrying the service info the client service connects to. */
+    /**
+     * Intent extra carrying the device the client service connects to.
+     *
+     * <p>The value is a {@link com.obby.android.localscreenshare.discovery.model.LssDeviceInfo};
+     * its primary address is the endpoint and its id and fingerprint bind the session to the
+     * discovered device.</p>
+     */
     public static final String EXTRA_SERVICE_INFO = "serviceInfo";
 
     /**

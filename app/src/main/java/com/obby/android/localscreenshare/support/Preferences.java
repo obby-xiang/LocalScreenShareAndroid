@@ -11,6 +11,7 @@ import androidx.annotation.Nullable;
 
 import com.google.gson.Gson;
 import com.obby.android.localscreenshare.App;
+import com.obby.android.localscreenshare.discovery.DiscoverySettings;
 
 import java.util.List;
 import java.util.Optional;
@@ -92,6 +93,18 @@ public final class Preferences {
     /** Multicast announcement toggle; see {@link #isMulticastAnnounceEnabled()}. */
     public static final String KEY_MULTICAST_ANNOUNCE_ENABLED = "multicast_announce_enabled";
 
+    /** Discovery refresh preset; see {@link #getDiscoveryRefreshTier()}. */
+    public static final String KEY_DISCOVERY_REFRESH_TIER = "discovery_refresh_tier";
+
+    /** Visibility preset; see {@link #getDiscoveryVisibility()}. */
+    public static final String KEY_DISCOVERY_VISIBILITY = "discovery_visibility";
+
+    /** Absolute expiry of the temporary visibility preset; see {@link #getDiscoveryVisibilityUntil()}. */
+    public static final String KEY_DISCOVERY_VISIBILITY_UNTIL = "discovery_visibility_until";
+
+    /** mDNS-only compatibility mode; see {@link #isDiscoveryCompatOnly()}. */
+    public static final String KEY_DISCOVERY_COMPAT_ONLY = "discovery_compat_only";
+
     private static final String PREF_FILE_NAME = "lss-preferences";
 
     private static final String KEY_SERVICE_ID = "service_id";
@@ -100,7 +113,8 @@ public final class Preferences {
 
     private static final String KEY_DEVICE_ALIAS = "device_alias";
 
-    private static final String KEY_SHARE_NAME_ENABLED = "share_name_enabled";
+    /** Name-sharing flag; see {@link #isShareNameEnabled()}. */
+    public static final String KEY_SHARE_NAME_ENABLED = "share_name_enabled";
 
     private static final String KEY_IDENTITY_ID = "identity_id";
 
@@ -530,17 +544,87 @@ public final class Preferences {
     }
 
     /**
-     * Whether the server announces itself over multicast; defaults to true. Reception is
-     * independent of this flag, so disabling announcements only makes this device invisible and
-     * keeps discovery of peers working.
+     * Whether the multicast discovery channel is enabled; defaults to true.
+     *
+     * <p>The switch covers both directions: disabling it stops this device from announcing itself
+     * and stops the discovery managers from joining the group, so only mDNS and the manual entry
+     * remain. The legacy key name is kept so an existing preference keeps its meaning.</p>
      */
     public boolean isMulticastAnnounceEnabled() {
         return mPreferences.getBoolean(KEY_MULTICAST_ANNOUNCE_ENABLED, true);
     }
 
-    /** Persists the announcement toggle; the running server applies it on the next start. */
+    /** Persists the multicast channel toggle; discovery and announcements apply it immediately. */
     public void setMulticastAnnounceEnabled(final boolean isEnabled) {
         mPreferences.edit().putBoolean(KEY_MULTICAST_ANNOUNCE_ENABLED, isEnabled).commit();
+    }
+
+    /**
+     * Discovery refresh preset wire value; empty means the default preset.
+     *
+     * <p>The value is validated by {@link com.obby.android.localscreenshare.discovery.DiscoverySettings},
+     * which turns an unknown or empty value into the balanced preset.</p>
+     */
+    @NonNull
+    public String getDiscoveryRefreshTier() {
+        return Optional.ofNullable(mPreferences.getString(KEY_DISCOVERY_REFRESH_TIER, null)).orElse("");
+    }
+
+    /** Persists the refresh preset; a discovery restart applies it. */
+    public void setDiscoveryRefreshTier(@NonNull final String tier) {
+        mPreferences.edit().putString(KEY_DISCOVERY_REFRESH_TIER, tier).commit();
+    }
+
+    /**
+     * Visibility preset wire value; empty means the default preset (visible).
+     *
+     * <p>Validation and the expiry rule live in
+     * {@link com.obby.android.localscreenshare.discovery.VisibilityPolicy}.</p>
+     */
+    @NonNull
+    public String getDiscoveryVisibility() {
+        return Optional.ofNullable(mPreferences.getString(KEY_DISCOVERY_VISIBILITY, null)).orElse("");
+    }
+
+    /** Absolute expiry of the temporary visibility preset; {@code 0} when it never expires. */
+    public long getDiscoveryVisibilityUntil() {
+        return mPreferences.getLong(KEY_DISCOVERY_VISIBILITY_UNTIL, 0L);
+    }
+
+    /**
+     * Persists the visibility preset and its expiry in one commit.
+     *
+     * <p>Both values are written together so an observer never reads a temporary preset without
+     * the window that bounds it.</p>
+     */
+    public void setDiscoveryVisibility(@NonNull final String visibility, final long expiresAtMs) {
+        mPreferences.edit()
+            .putString(KEY_DISCOVERY_VISIBILITY, visibility)
+            .putLong(KEY_DISCOVERY_VISIBILITY_UNTIL, expiresAtMs)
+            .commit();
+    }
+
+    /** Whether discovery is restricted to mDNS and the legacy service type; defaults to false. */
+    public boolean isDiscoveryCompatOnly() {
+        return mPreferences.getBoolean(KEY_DISCOVERY_COMPAT_ONLY, false);
+    }
+
+    /** Persists the compatibility-mode flag; discovery and announcements apply it immediately. */
+    public void setDiscoveryCompatOnly(final boolean compatOnly) {
+        mPreferences.edit().putBoolean(KEY_DISCOVERY_COMPAT_ONLY, compatOnly).commit();
+    }
+
+    /**
+     * Returns the validated discovery settings snapshot.
+     *
+     * <p>Built from the individual keys so the model stays free of Android types; invalid stored
+     * values fall back to the defaults inside {@link DiscoverySettings}.</p>
+     */
+    @NonNull
+    public DiscoverySettings getDiscoverySettings() {
+        return DiscoverySettings.of(isMulticastAnnounceEnabled(), getMulticastGroup(), getMulticastPort(),
+            getDiscoveryRefreshTier(), getDiscoveryVisibility(), getDiscoveryVisibilityUntil(),
+            isDiscoveryCompatOnly());
     }
 
     /**

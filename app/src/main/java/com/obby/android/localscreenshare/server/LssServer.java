@@ -24,6 +24,9 @@ import com.obby.android.localscreenshare.core.codec.CodecRegistry;
 import com.obby.android.localscreenshare.core.stream.StreamHub;
 import com.obby.android.localscreenshare.core.stream.StreamRuntime;
 import com.obby.android.localscreenshare.core.stream.TimeSource;
+import com.obby.android.localscreenshare.discovery.DiscoverySettings;
+import com.obby.android.localscreenshare.discovery.VisibilityPolicy;
+import com.obby.android.localscreenshare.discovery.favorite.FavoriteStore;
 import com.obby.android.localscreenshare.discovery.model.AuthMode;
 import com.obby.android.localscreenshare.discovery.model.DeviceAddress;
 import com.obby.android.localscreenshare.discovery.model.DevicePresence;
@@ -615,13 +618,21 @@ public final class LssServer {
             .build();
 
         final LssDeviceInfo advertisement = buildAdvertisement(mServerInfo);
-        mPrimaryRegistration = new Registration(Constants.NSD_SERVICE_TYPE,
-            buildNsdServiceInfo(advertisement, NsdTxtRecord.Namespace.CURRENT), true);
+        // Compatibility mode publishes only the legacy type, so a legacy peer sees this device
+        // and this device never advertises a record that requires the new TXT keys.
+        final DiscoverySettings settings = Preferences.get().getDiscoverySettings();
+        mPrimaryRegistration = settings.isCompatOnly() ? null
+            : new Registration(Constants.NSD_SERVICE_TYPE,
+                buildNsdServiceInfo(advertisement, NsdTxtRecord.Namespace.CURRENT), true);
         mLegacyRegistration = new Registration(Constants.NSD_SERVICE_TYPE_LEGACY,
-            buildNsdServiceInfo(advertisement, NsdTxtRecord.Namespace.LEGACY), false);
-        mNsdServiceInfo = mPrimaryRegistration.mServiceInfo;
+            buildNsdServiceInfo(advertisement, NsdTxtRecord.Namespace.LEGACY),
+            settings.isCompatOnly());
+        mNsdServiceInfo = mPrimaryRegistration != null
+            ? mPrimaryRegistration.mServiceInfo : mLegacyRegistration.mServiceInfo;
 
-        mPrimaryRegistration.register();
+        if (mPrimaryRegistration != null) {
+            mPrimaryRegistration.register();
+        }
         mLegacyRegistration.register();
         mConnectivityManager.registerDefaultNetworkCallback(mNetworkCallback);
 
@@ -643,7 +654,21 @@ public final class LssServer {
             ThreadUtils.getMainThreadExecutor());
         mRegisterHandler = new RegisterCallHandler(this::buildDeviceSummary, mDeviceStore,
             ThreadUtils.getMainThreadExecutor(), TimeSource.MONOTONIC, mReverseRegisterClient::register,
-            mRegisterScheduler, new Random(), DiscoveryChannel.MULTICAST);
+            mRegisterScheduler, new Random(), DiscoveryChannel.MULTICAST,
+            this::acceptsRegisterFrom);
+    }
+
+    /**
+     * Applies the local visibility preset to an incoming Register.
+     *
+     * <p>Runs on the gRPC thread; both preference stores are thread-safe. A hidden device accepts
+     * nobody, a favorites-only device accepts a caller it already saved, and the visible presets
+     * accept every validated caller.</p>
+     */
+    private boolean acceptsRegisterFrom(@NonNull final String deviceId) {
+        final long nowMs = System.currentTimeMillis();
+        final VisibilityPolicy policy = Preferences.get().getDiscoverySettings().visibilityPolicy(nowMs);
+        return policy.acceptsRegister(nowMs, FavoriteStore.get().isFavorite(deviceId));
     }
 
     /**
@@ -782,17 +807,19 @@ public final class LssServer {
     @NonNull
     private LssDeviceInfo buildAdvertisement(@NonNull final LssServerInfo serverInfo) {        // The fingerprint is deliberately absent: it never goes into the mDNS record and travels
         // with the application-level handshake (Register and HELLO) instead.
+        final DiscoverySettings settings = Preferences.get().getDiscoverySettings();
+        final long nowMs = System.currentTimeMillis();
         return LssDeviceInfo.builder()
             .id(serverInfo.getDeviceId())
             .name(Preferences.get().getDeviceAlias())
             .role(DeviceRole.SERVER)
             .state(ShareState.LIVE)
-            .join(JoinPolicy.OPEN)
+            .join(settings.visibilityPolicy(nowMs).joinPolicy(nowMs))
             .secure(mSecure)
             .auth(AuthMode.NONE)
             .protocolVersion(String.valueOf(ScreenStreamProtoMapper.PROTOCOL_VERSION))
             .metadataVersion(NSD_METADATA_VERSION)
-            .capabilities(Constants.DEVICE_CAPABILITY_H264 | Constants.DEVICE_CAPABILITY_JPEG)
+            .capabilities(settings.capabilities())
             .addresses(Collections.emptyList())
             .presence(DevicePresence.HEARD)
             .build();

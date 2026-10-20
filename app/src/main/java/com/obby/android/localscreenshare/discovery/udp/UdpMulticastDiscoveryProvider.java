@@ -17,6 +17,7 @@ import com.obby.android.localscreenshare.utils.NetUtils;
 import java.net.InetAddress;
 import java.util.Objects;
 import java.util.concurrent.Executor;
+import java.util.function.BiPredicate;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 
@@ -86,6 +87,9 @@ public final class UdpMulticastDiscoveryProvider implements DiscoveryProvider {
     private final ConfirmationSink mConfirmationSink;
 
     @Nullable
+    private final BiPredicate<String, Integer> mRecentlyConfirmed;
+
+    @Nullable
     private MulticastTransport mTransport;
 
     @Nullable
@@ -111,6 +115,23 @@ public final class UdpMulticastDiscoveryProvider implements DiscoveryProvider {
         @Nullable final RegisterClient registerClient,
         @Nullable final Supplier<DeviceSummary> selfSummarySupplier,
         @Nullable final ConfirmationSink confirmationSink) {
+        this(transportFactory, lockManager, selfIdFilter, timeSource, mainExecutor, registerClient,
+            selfSummarySupplier, confirmationSink, null);
+    }
+
+    /**
+     * Creates the provider with a re-confirmation gate.
+     *
+     * @param recentlyConfirmed returns true when {@code (host, port)} was confirmed recently and
+     *     does not need another handshake; null confirms on every merged announcement
+     */
+    public UdpMulticastDiscoveryProvider(@NonNull final TransportFactory transportFactory,
+        @NonNull final MulticastLockManager lockManager, @NonNull final Predicate<String> selfIdFilter,
+        @NonNull final TimeSource timeSource, @NonNull final Executor mainExecutor,
+        @Nullable final RegisterClient registerClient,
+        @Nullable final Supplier<DeviceSummary> selfSummarySupplier,
+        @Nullable final ConfirmationSink confirmationSink,
+        @Nullable final BiPredicate<String, Integer> recentlyConfirmed) {
         mTransportFactory = Objects.requireNonNull(transportFactory, "transportFactory");
         mLockManager = Objects.requireNonNull(lockManager, "lockManager");
         mTimeSource = Objects.requireNonNull(timeSource, "timeSource");
@@ -119,6 +140,7 @@ public final class UdpMulticastDiscoveryProvider implements DiscoveryProvider {
         mRegisterClient = registerClient;
         mSelfSummarySupplier = selfSummarySupplier;
         mConfirmationSink = confirmationSink;
+        mRecentlyConfirmed = recentlyConfirmed;
     }
 
     @Override
@@ -202,6 +224,10 @@ public final class UdpMulticastDiscoveryProvider implements DiscoveryProvider {
         listener.onObserved(observation);
 
         if (announcement.isGoodbye() || announcement.getPort() <= 0) {
+            return;
+        }
+        final BiPredicate<String, Integer> recentlyConfirmed = mRecentlyConfirmed;
+        if (recentlyConfirmed != null && recentlyConfirmed.test(host, announcement.getPort())) {
             return;
         }
         if (!mFilter.shouldRegister(host, announcement.getPort())) {

@@ -24,6 +24,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Random;
 import java.util.concurrent.Executor;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 
 /**
@@ -65,6 +66,9 @@ public final class RegisterCallHandler {
 
     /** This server is stopping and cannot answer discovery requests. */
     public static final String REASON_UNAVAILABLE = "unavailable";
+
+    /** The caller is not allowed to see or reach this device under its visibility preset. */
+    public static final String REASON_NOT_VISIBLE = "not_visible";
 
     /** Length of the device id derived from the identity key. */
     public static final int DEVICE_ID_LENGTH = 26;
@@ -113,6 +117,9 @@ public final class RegisterCallHandler {
     @Nullable
     private final DelayedScheduler mScheduler;
 
+    @Nullable
+    private final Predicate<String> mCallerFilter;
+
     @NonNull
     private final Random mRandom;
 
@@ -159,6 +166,33 @@ public final class RegisterCallHandler {
         @NonNull final TimeSource timeSource, @Nullable final ReverseRegistrar reverseRegistrar,
         @Nullable final DelayedScheduler scheduler, @NonNull final Random random,
         @NonNull final DiscoveryChannel channel) {
+        this(selfSupplier, deviceStore, mainExecutor, timeSource, reverseRegistrar, scheduler, random,
+            channel, null);
+    }
+
+    /**
+     * Creates a handler with a caller filter.
+     *
+     * <p>{@code callerFilter} implements the local visibility preset: it is consulted with the
+     * caller's device id after validation and before the caller is learned. A rejected caller gets
+     * {@link #REASON_NOT_VISIBLE} and is not written to the store, so a hidden device never shows
+     * up in a peer's list. A null filter accepts every caller that passes validation.</p>
+     *
+     * @param selfSupplier this device's summary, or null while the server cannot answer
+     * @param deviceStore store that learns the caller; null disables mutual learning
+     * @param mainExecutor executor of the store's thread
+     * @param timeSource clock for rate limiting and visibility expiry
+     * @param reverseRegistrar optional reverse Register
+     * @param scheduler scheduler of the reverse delay; required when {@code reverseRegistrar} is set
+     * @param random source of the reverse delay
+     * @param channel channel the caller's address is stored under
+     * @param callerFilter visibility gate, or null to accept every validated caller
+     */
+    public RegisterCallHandler(@NonNull final Supplier<DeviceSummary> selfSupplier,
+        @Nullable final DeviceStore deviceStore, @NonNull final Executor mainExecutor,
+        @NonNull final TimeSource timeSource, @Nullable final ReverseRegistrar reverseRegistrar,
+        @Nullable final DelayedScheduler scheduler, @NonNull final Random random,
+        @NonNull final DiscoveryChannel channel, @Nullable final Predicate<String> callerFilter) {
         mSelfSupplier = Objects.requireNonNull(selfSupplier, "selfSupplier");
         mDeviceStore = deviceStore;
         mMainExecutor = Objects.requireNonNull(mainExecutor, "mainExecutor");
@@ -167,6 +201,7 @@ public final class RegisterCallHandler {
         mScheduler = scheduler;
         mRandom = Objects.requireNonNull(random, "random");
         mChannel = Objects.requireNonNull(channel, "channel");
+        mCallerFilter = callerFilter;
     }
 
     /**
@@ -196,6 +231,12 @@ public final class RegisterCallHandler {
         }
 
         final DeviceSummary caller = request.getSelf();
+        final Predicate<String> callerFilter = mCallerFilter;
+        if (callerFilter != null && !callerFilter.test(caller.getDeviceId())) {
+            reply(replier, false, REASON_NOT_VISIBLE, null);
+            return;
+        }
+
         learn(caller, remoteHost);
         reply(replier, true, null, self);
         maybeReverseRegister(request, caller, self, remoteHost, nowMs);

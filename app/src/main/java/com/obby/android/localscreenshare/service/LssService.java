@@ -70,10 +70,11 @@ import com.obby.android.localscreenshare.core.model.StreamKey;
 import com.obby.android.localscreenshare.core.model.StreamParameters;
 import com.obby.android.localscreenshare.core.stream.StreamHub;
 import com.obby.android.localscreenshare.core.stream.StreamRuntime;
+import com.obby.android.localscreenshare.discovery.DiscoverySettings;
 import com.obby.android.localscreenshare.discovery.LssServiceDiscoveryManager;
+import com.obby.android.localscreenshare.discovery.VisibilityPolicy;
 import com.obby.android.localscreenshare.discovery.model.AuthMode;
 import com.obby.android.localscreenshare.discovery.model.DeviceRole;
-import com.obby.android.localscreenshare.discovery.model.JoinPolicy;
 import com.obby.android.localscreenshare.discovery.model.ShareState;
 import com.obby.android.localscreenshare.discovery.udp.AndroidMulticastSocketFactory;
 import com.obby.android.localscreenshare.discovery.udp.Announcement;
@@ -104,6 +105,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Random;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
@@ -165,6 +167,13 @@ public class LssService extends Service {
     // Multicast announcer; non-null only while the server advertises itself.
     @Nullable
     private MulticastAnnouncer mAnnouncer;
+
+    // Main-thread handler for the temporary-visibility expiry.
+    @NonNull
+    private final Handler mMainHandler = new Handler(Looper.getMainLooper());
+
+    @NonNull
+    private final Runnable mVisibilityExpiryRunnable = this::restartAnnouncements;
 
     // Media stream wiring: the runtime owns the encoder and the hub owns per-client sessions. All
     // are assembled on start and torn down before the capture resources are released.
@@ -435,6 +444,18 @@ public class LssService extends Service {
                         Preferences.get().getProjectionIdrIntervalMs()));
                 }
                 break;
+            case Preferences.KEY_MULTICAST_ANNOUNCE_ENABLED:
+            case Preferences.KEY_MULTICAST_GROUP:
+            case Preferences.KEY_MULTICAST_PORT:
+            case Preferences.KEY_DISCOVERY_REFRESH_TIER:
+            case Preferences.KEY_DISCOVERY_VISIBILITY:
+            case Preferences.KEY_DISCOVERY_VISIBILITY_UNTIL:
+            case Preferences.KEY_DISCOVERY_COMPAT_ONLY:
+            case Preferences.KEY_SHARE_NAME_ENABLED:
+                // Announcement settings reach the transport directly, so the announcer is
+                // restarted; the running capture and the media stream are untouched.
+                restartAnnouncements();
+                break;
             default:
                 break;
         }
@@ -702,7 +723,11 @@ public class LssService extends Service {
      * so peers never see one identity's goodbye carrying another identity's key.</p>
      */
     private void startAnnouncements() {
-        if (mAnnouncer != null || !Preferences.get().isMulticastAnnounceEnabled()) {
+        final DiscoverySettings settings = Preferences.get().getDiscoverySettings();
+        final long nowMs = System.currentTimeMillis();
+        mMainHandler.removeCallbacks(mVisibilityExpiryRunnable);
+        if (mAnnouncer != null || mServerInfo == null || !settings.isMulticastChannelEnabled()
+            || !settings.visibilityPolicy(nowMs).isAnnouncing(nowMs)) {
             return;
         }
         final Announcement announcement = buildAnnouncement();
@@ -713,8 +738,7 @@ public class LssService extends Service {
 
         final MulticastConfig config;
         try {
-            config = new MulticastConfig(Preferences.get().getMulticastGroup(),
-                Preferences.get().getMulticastPort());
+            config = new MulticastConfig(settings.getMulticastGroup(), settings.getMulticastPort());
         } catch (IllegalArgumentException e) {
             Log.w(mTag, "startAnnouncements: invalid multicast configuration", e);
             return;
@@ -738,14 +762,35 @@ public class LssService extends Service {
                 transport.close();
                 lockManager.release();
             }
-        }, DelayedScheduler.newSingleThread("lss-announcer"), () -> announcement);
+        }, DelayedScheduler.newSingleThread("lss-announcer"), () -> announcement,
+            new Random(), settings.getRefreshTier().getHeartbeatActiveMs(),
+            settings.getRefreshTier().getHeartbeatIdleMs());
         mAnnouncer.setLive(true);
         mAnnouncer.start();
+        scheduleVisibilityExpiry(settings);
         Log.i(mTag, "startAnnouncements: multicast announcements started");
+    }
+
+    /**
+     * Stops advertising when the temporary visibility window ends.
+     *
+     * <p>The timer is armed from the persisted expiry, so a restart of the app resumes the same
+     * remaining window instead of restarting it. When the timer fires, the announcer is restarted:
+     * the now-hidden preset stops it and sends the goodbye burst.</p>
+     */
+    private void scheduleVisibilityExpiry(@NonNull final DiscoverySettings settings) {
+        final long nowMs = System.currentTimeMillis();
+        final VisibilityPolicy policy = settings.visibilityPolicy(nowMs);
+        if (policy.getVisibility() != VisibilityPolicy.Visibility.VISIBLE_10_MIN
+            || policy.isExpired(nowMs)) {
+            return;
+        }
+        mMainHandler.postDelayed(mVisibilityExpiryRunnable, policy.getExpiresAtMs() - nowMs + 100L);
     }
 
     /** Stops the announcer; it sends its goodbye burst and releases the sockets and the lock. */
     private void stopAnnouncements() {
+        mMainHandler.removeCallbacks(mVisibilityExpiryRunnable);
         if (mAnnouncer == null) {
             return;
         }
@@ -787,17 +832,19 @@ public class LssService extends Service {
             return null;
         }
 
+        final DiscoverySettings settings = Preferences.get().getDiscoverySettings();
+        final long nowMs = System.currentTimeMillis();
         return Announcement.builder()
             .id(identity.getId())
             .name(Preferences.get().isShareNameEnabled() ? Preferences.get().getDeviceAlias() : null)
             .role(DeviceRole.SERVER)
             .state(ShareState.LIVE)
-            .join(JoinPolicy.OPEN)
+            .join(settings.visibilityPolicy(nowMs).joinPolicy(nowMs))
             .secure(mIsProjectionSecure)
             .auth(AuthMode.NONE)
             .protocolVersion(String.valueOf(ScreenStreamProtoMapper.PROTOCOL_VERSION))
             .metadataVersion(1)
-            .capabilities(Constants.DEVICE_CAPABILITY_H264 | Constants.DEVICE_CAPABILITY_JPEG)
+            .capabilities(settings.capabilities())
             .port(serverInfo.getPort())
             .platform(Constants.DEVICE_PLATFORM_ANDROID)
             .build();

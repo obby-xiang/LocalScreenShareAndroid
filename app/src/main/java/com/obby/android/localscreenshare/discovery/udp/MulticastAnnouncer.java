@@ -67,6 +67,10 @@ public final class MulticastAnnouncer {
 
     private boolean mLive = true;
 
+    private final long mHeartbeatActiveMs;
+
+    private final long mHeartbeatIdleMs;
+
     @NonNull
     private Phase mPhase = Phase.IDLE;
 
@@ -97,10 +101,31 @@ public final class MulticastAnnouncer {
     /** Creates an announcer with an explicit random source, so tests get a fixed boot. */
     public MulticastAnnouncer(@NonNull final Sender sender, @NonNull final DelayedScheduler scheduler,
         @NonNull final Supplier<Announcement> templateSupplier, @NonNull final Random random) {
+        this(sender, scheduler, templateSupplier, random, Constants.MULTICAST_HEARTBEAT_ACTIVE_MS,
+            Constants.MULTICAST_HEARTBEAT_IDLE_MS);
+    }
+
+    /**
+     * Creates an announcer with explicit heartbeat periods.
+     *
+     * <p>The periods come from the discovery refresh preset; the startup burst and the goodbye
+     * delays are fixed because they are part of the channel's behaviour, not of the cadence the
+     * user chose.</p>
+     *
+     * @param heartbeatActiveMs period while a capture session is live
+     * @param heartbeatIdleMs period while the server is idle
+     */
+    public MulticastAnnouncer(@NonNull final Sender sender, @NonNull final DelayedScheduler scheduler,
+        @NonNull final Supplier<Announcement> templateSupplier, @NonNull final Random random,
+        final long heartbeatActiveMs, final long heartbeatIdleMs) {
         mSender = Objects.requireNonNull(sender, "sender");
         mScheduler = Objects.requireNonNull(scheduler, "scheduler");
         mTemplateSupplier = Objects.requireNonNull(templateSupplier, "templateSupplier");
         mRandom = Objects.requireNonNull(random, "random");
+        mHeartbeatActiveMs = heartbeatActiveMs > 0L
+            ? heartbeatActiveMs : Constants.MULTICAST_HEARTBEAT_ACTIVE_MS;
+        mHeartbeatIdleMs = heartbeatIdleMs > 0L
+            ? heartbeatIdleMs : Constants.MULTICAST_HEARTBEAT_IDLE_MS;
     }
 
     /** Starts the startup burst; a second call while running is ignored. */
@@ -223,7 +248,7 @@ public final class MulticastAnnouncer {
     }
 
     private long currentHeartbeatIntervalMs() {
-        return mLive ? Constants.MULTICAST_HEARTBEAT_ACTIVE_MS : Constants.MULTICAST_HEARTBEAT_IDLE_MS;
+        return mLive ? mHeartbeatActiveMs : mHeartbeatIdleMs;
     }
 
     private void cancelPending() {

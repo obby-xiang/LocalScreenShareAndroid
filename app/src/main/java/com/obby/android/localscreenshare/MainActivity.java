@@ -63,12 +63,16 @@ import com.google.android.material.materialswitch.MaterialSwitch;
 import com.google.android.material.slider.LabelFormatter;
 import com.google.android.material.slider.Slider;
 import com.google.android.material.textview.MaterialTextView;
-import com.obby.android.localscreenshare.discovery.LssServiceDiscoveryListener;
+import com.obby.android.localscreenshare.discovery.DeviceListModel;
+import com.obby.android.localscreenshare.discovery.DiscoverySettings;
 import com.obby.android.localscreenshare.discovery.LssServiceDiscoveryManager;
-import com.obby.android.localscreenshare.discovery.LssServiceInfo;
+import com.obby.android.localscreenshare.discovery.VisibilityPolicy;
 import com.obby.android.localscreenshare.discovery.favorite.FavoriteDevice;
 import com.obby.android.localscreenshare.discovery.favorite.FavoriteStore;
 import com.obby.android.localscreenshare.discovery.manual.ManualAddressProvider;
+import com.obby.android.localscreenshare.discovery.model.DeviceAddress;
+import com.obby.android.localscreenshare.discovery.model.LssDeviceInfo;
+import com.obby.android.localscreenshare.discovery.store.DeviceStoreListener;
 import com.obby.android.localscreenshare.grpc.screenstream.DeviceSummary;
 import com.obby.android.localscreenshare.identity.IdentityManager;
 import com.obby.android.localscreenshare.identity.IdentityUnavailableException;
@@ -82,8 +86,8 @@ import com.obby.android.localscreenshare.utils.IntentUtils;
 
 import java.text.NumberFormat;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.IntStream;
 
@@ -199,13 +203,23 @@ public class MainActivity extends AppCompatActivity {
 
     private final String mTag = "MainActivity@" + hashCode();
 
-    // Discovery entries; a click starts the client service for that server.
+    // Latest store snapshot; the adapter renders it through DeviceListModel.
+    @NonNull
+    private List<LssDeviceInfo> mDevices = Collections.emptyList();
+
+    // Discovery rows; a click starts the client service for that device.
     @NonNull
     private final DiscoveryListAdapter mDiscoveryListAdapter = new DiscoveryListAdapter() {
         @Override
-        public void onBindViewHolder(@NonNull DiscoveryListViewHolder holder, int position) {
+        public void onBindViewHolder(@NonNull RecyclerView.ViewHolder holder, int position) {
             super.onBindViewHolder(holder, position);
-            final LssServiceInfo item = getItem(position);
+            final DeviceListModel.Row row = getItem(position);
+            final LssDeviceInfo item = row.getDevice();
+            if (row.getType() != DeviceListModel.RowType.DEVICE || item == null) {
+                holder.itemView.setOnClickListener(null);
+                holder.itemView.setOnLongClickListener(null);
+                return;
+            }
             holder.itemView.setOnClickListener(v -> startScreenShareViewer(item));
             holder.itemView.setOnLongClickListener(v -> {
                 showDiscoveryItemMenu(item);
@@ -214,12 +228,12 @@ public class MainActivity extends AppCompatActivity {
         }
 
         @Override
-        public void submitList(@Nullable List<LssServiceInfo> list) {
+        public void submitList(@Nullable List<DeviceListModel.Row> list) {
             submitList(list, null);
         }
 
         @Override
-        public void submitList(@Nullable List<LssServiceInfo> list, @Nullable Runnable commitCallback) {
+        public void submitList(@Nullable List<DeviceListModel.Row> list, @Nullable Runnable commitCallback) {
             // The commit callback runs after the diff is applied; the placeholder and the manual
             // hint mirror the committed list rather than the pending one.
             super.submitList(list, () -> {
@@ -231,6 +245,14 @@ public class MainActivity extends AppCompatActivity {
                 Optional.ofNullable(commitCallback).ifPresent(Runnable::run);
             });
         }
+    };
+
+    // Store snapshots are delivered on the main thread and replace the list wholesale.
+    @NonNull
+    private final DeviceStoreListener mDeviceListener = devices -> {
+        mDevices = devices;
+        mDiscoveryListAdapter.submitList(devices.isEmpty()
+            ? Collections.emptyList() : DeviceListModel.rows(devices));
     };
 
     // Arms once per discovery start; a result before it fires cancels it.
@@ -324,10 +346,6 @@ public class MainActivity extends AppCompatActivity {
         }
     );
 
-    // Discovery snapshots are delivered on the main thread and replace the list wholesale.
-    @NonNull
-    private final LssServiceDiscoveryListener mServiceDiscoveryListener = mDiscoveryListAdapter::submitList;
-
     /**
      * Inflates the layout, wires the toolbars and the discovery list and renders the initial
      * state.
@@ -401,12 +419,12 @@ public class MainActivity extends AppCompatActivity {
             final boolean isEnabled = !Preferences.get().isDiscoveryEnabled();
             Preferences.get().setDiscoveryEnabled(isEnabled);
             if (isEnabled) {
-                LssServiceDiscoveryManager.get().discoverServices(mServiceDiscoveryListener);
+                LssServiceDiscoveryManager.get().addDeviceListener(mDeviceListener);
                 mMainHandler.removeCallbacks(mDiscoveryHintRunnable);
                 mMainHandler.postDelayed(mDiscoveryHintRunnable,
                     Constants.DISCOVERY_EMPTY_MANUAL_HINT_MS);
             } else {
-                LssServiceDiscoveryManager.get().stopServiceDiscovery(mServiceDiscoveryListener);
+                LssServiceDiscoveryManager.get().removeDeviceListener(mDeviceListener);
                 mMainHandler.removeCallbacks(mDiscoveryHintRunnable);
                 mShowManualDiscoveryHint = false;
                 mDiscoveryListAdapter.submitList(null);
@@ -440,7 +458,7 @@ public class MainActivity extends AppCompatActivity {
         bindService(new Intent(this, LssService.class), mServiceConnection, Context.BIND_AUTO_CREATE);
 
         if (Preferences.get().isDiscoveryEnabled()) {
-            LssServiceDiscoveryManager.get().discoverServices(mServiceDiscoveryListener);
+            LssServiceDiscoveryManager.get().addDeviceListener(mDeviceListener);
             mMainHandler.removeCallbacks(mDiscoveryHintRunnable);
             mMainHandler.postDelayed(mDiscoveryHintRunnable,
                 Constants.DISCOVERY_EMPTY_MANUAL_HINT_MS);
@@ -463,7 +481,7 @@ public class MainActivity extends AppCompatActivity {
         mServiceMessenger = null;
         unbindService(mServiceConnection);
 
-        LssServiceDiscoveryManager.get().stopServiceDiscovery(mServiceDiscoveryListener);
+        LssServiceDiscoveryManager.get().removeDeviceListener(mDeviceListener);
         mMainHandler.removeCallbacks(mDiscoveryHintRunnable);
         mShowManualDiscoveryHint = false;
         mDiscoveryListAdapter.submitList(null);
@@ -567,7 +585,9 @@ public class MainActivity extends AppCompatActivity {
      * the placeholder carries the click listener instead of a separate empty-state view.</p>
      */
     private void updateDiscoveryPlaceholder() {
-        if (!Preferences.get().isDiscoveryEnabled()) {
+        final DeviceListModel.EmptyState state = DeviceListModel.emptyState(
+            Preferences.get().isDiscoveryEnabled(), mShowManualDiscoveryHint);
+        if (state == DeviceListModel.EmptyState.DISABLED) {
             mDiscoveryListPlaceholderView.setText(R.string.search_services_off);
             mDiscoveryListPlaceholderView.setClickable(false);
             mDiscoveryListPlaceholderView.setVisibility(View.VISIBLE);
@@ -575,15 +595,16 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
 
-        if (!mDiscoveryListAdapter.getCurrentList().isEmpty()) {
+        if (!mDevices.isEmpty()) {
             mDiscoveryListPlaceholderView.setVisibility(View.GONE);
             mDiscoveryListView.setVisibility(View.VISIBLE);
             return;
         }
 
-        mDiscoveryListPlaceholderView.setText(mShowManualDiscoveryHint
+        final boolean offerManualEntry = state == DeviceListModel.EmptyState.NOT_FOUND;
+        mDiscoveryListPlaceholderView.setText(offerManualEntry
             ? R.string.discovery_empty_manual_hint : R.string.searching_services);
-        mDiscoveryListPlaceholderView.setClickable(mShowManualDiscoveryHint);
+        mDiscoveryListPlaceholderView.setClickable(offerManualEntry);
         mDiscoveryListPlaceholderView.setVisibility(View.VISIBLE);
         mDiscoveryListView.setVisibility(View.GONE);
     }
@@ -592,13 +613,13 @@ public class MainActivity extends AppCompatActivity {
      * Offers the favorite action of one discovered device.
      *
      * <p>A long press opens this menu; the action label reflects the current state. The favorite
-     * marker is not part of {@link LssServiceInfo}, so the adapter is rebound explicitly after the
-     * change.</p>
+     * flag is already part of {@link LssDeviceInfo}, so the store snapshot refresh after the change
+     * updates the badge without a manual rebind.</p>
      */
-    private void showDiscoveryItemMenu(@NonNull final LssServiceInfo item) {
+    private void showDiscoveryItemMenu(@NonNull final LssDeviceInfo item) {
         final boolean isFavorite = LssServiceDiscoveryManager.get().isFavorite(item.getId());
         new MaterialAlertDialogBuilder(this)
-            .setTitle(item.getName())
+            .setTitle(item.displayName())
             .setPositiveButton(isFavorite
                     ? R.string.discovery_remove_favorite : R.string.discovery_add_favorite,
                 (dialog, which) -> toggleFavorite(item))
@@ -606,10 +627,9 @@ public class MainActivity extends AppCompatActivity {
             .show();
     }
 
-    private void toggleFavorite(@NonNull final LssServiceInfo item) {
+    private void toggleFavorite(@NonNull final LssDeviceInfo item) {
         final boolean isFavorite = LssServiceDiscoveryManager.get().isFavorite(item.getId());
         LssServiceDiscoveryManager.get().setFavorite(item.getId(), !isFavorite);
-        mDiscoveryListAdapter.notifyDataSetChanged();
     }
 
     /**
@@ -797,20 +817,22 @@ public class MainActivity extends AppCompatActivity {
 
     /**
      * Passes the permission gate and starts the client service for the selected server.
+     *
+     * <p>The device is passed whole: the client service uses its primary address, so the address
+     * choice (confirmed first, IPv4 before IPv6) is made once, in the store.</p>
      */
-    private void startScreenShareViewer(@NonNull final LssServiceInfo serviceInfo) {
+    private void startScreenShareViewer(@NonNull final LssDeviceInfo serviceInfo) {
         final FavoriteDevice favorite = FavoriteStore.get().find(serviceInfo.getId());
         if (favorite != null && FavoriteStore.checkIdentity(favorite.getFingerprint(),
             serviceInfo.getFingerprint()) == FavoriteStore.IdentityStatus.CHANGED) {
             // Never dial a saved identity that now presents a different fingerprint without an
             // explicit acknowledgement; accepting rebinds the favorite to the new key.
             new MaterialAlertDialogBuilder(this)
-                .setTitle(serviceInfo.getName())
+                .setTitle(serviceInfo.displayName())
                 .setMessage(R.string.discovery_identity_changed_connect)
                 .setPositiveButton(android.R.string.ok, (dialog, which) -> {
                     LssServiceDiscoveryManager.get().confirmFavoriteIdentity(
                         serviceInfo.getId(), serviceInfo.getFingerprint());
-                    mDiscoveryListAdapter.notifyDataSetChanged();
                     startScreenShareViewerConfirmed(serviceInfo);
                 })
                 .setNegativeButton(android.R.string.cancel, null)
@@ -820,7 +842,7 @@ public class MainActivity extends AppCompatActivity {
         startScreenShareViewerConfirmed(serviceInfo);
     }
 
-    private void startScreenShareViewerConfirmed(@NonNull final LssServiceInfo serviceInfo) {
+    private void startScreenShareViewerConfirmed(@NonNull final LssDeviceInfo serviceInfo) {
         if (requestScreenShare()) {
             ContextCompat.startForegroundService(this, new Intent(this, LssClientService.class)
                 .putExtra(Constants.EXTRA_SERVICE_INFO, serviceInfo));
@@ -1000,6 +1022,78 @@ public class MainActivity extends AppCompatActivity {
             settingsDialog.findViewById(R.id.reset_device_identity_setting);
         resetDeviceIdentityView.setOnClickListener(view -> resetDeviceIdentity());
 
+        final MaterialSwitch multicastEnabledView =
+            settingsDialog.findViewById(R.id.multicast_enabled_setting);
+        multicastEnabledView.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            if (Preferences.get().isMulticastAnnounceEnabled() != isChecked) {
+                Preferences.get().setMulticastAnnounceEnabled(isChecked);
+            }
+        });
+
+        final EditText multicastGroupView = settingsDialog.findViewById(R.id.multicast_group_setting);
+        // The group is free text, so it is committed when the field loses focus or the sheet closes
+        // rather than on every keystroke.
+        multicastGroupView.setOnFocusChangeListener((view, hasFocus) -> {
+            if (!hasFocus) {
+                commitMulticastGroup(multicastGroupView);
+            }
+        });
+        settingsDialog.setOnDismissListener(dialog -> commitMulticastGroup(multicastGroupView));
+
+        final NumberPicker multicastPortView = settingsDialog.findViewById(R.id.multicast_port_setting);
+        multicastPortView.setMinValue(DiscoverySettings.MIN_MULTICAST_PORT);
+        multicastPortView.setMaxValue(DiscoverySettings.MAX_MULTICAST_PORT);
+        multicastPortView.setOnValueChangedListener((picker, oldVal, newVal) -> {
+            if (Preferences.get().getMulticastPort() != newVal) {
+                Preferences.get().setMulticastPort(newVal);
+            }
+        });
+
+        final DiscoverySettings.RefreshTier[] refreshTiers = DiscoverySettings.RefreshTier.values();
+        final NumberPicker refreshView = settingsDialog.findViewById(R.id.discovery_refresh_setting);
+        refreshView.setMinValue(0);
+        refreshView.setMaxValue(refreshTiers.length - 1);
+        refreshView.setDisplayedValues(new String[]{
+            getString(R.string.discovery_refresh_low_latency),
+            getString(R.string.discovery_refresh_balanced),
+            getString(R.string.discovery_refresh_power_saver)});
+        refreshView.setOnValueChangedListener((picker, oldVal, newVal) -> {
+            final String wire = refreshTiers[newVal].wire();
+            if (!wire.equals(Preferences.get().getDiscoveryRefreshTier())) {
+                Preferences.get().setDiscoveryRefreshTier(wire);
+            }
+        });
+
+        final VisibilityPolicy.Visibility[] visibilities = VisibilityPolicy.Visibility.values();
+        final NumberPicker visibilityView = settingsDialog.findViewById(R.id.discovery_visibility_setting);
+        visibilityView.setMinValue(0);
+        visibilityView.setMaxValue(visibilities.length - 1);
+        visibilityView.setDisplayedValues(new String[]{
+            getString(R.string.discovery_visibility_hidden),
+            getString(R.string.discovery_visibility_favorites),
+            getString(R.string.discovery_visibility_visible),
+            getString(R.string.discovery_visibility_visible_10_min)});
+        visibilityView.setOnValueChangedListener((picker, oldVal, newVal) -> {
+            if (!visibilities[newVal].wire().equals(Preferences.get().getDiscoveryVisibility())) {
+                applyVisibility(visibilities[newVal]);
+            }
+        });
+
+        final MaterialSwitch compatOnlyView =
+            settingsDialog.findViewById(R.id.discovery_compat_only_setting);
+        compatOnlyView.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            if (Preferences.get().isDiscoveryCompatOnly() != isChecked) {
+                Preferences.get().setDiscoveryCompatOnly(isChecked);
+            }
+        });
+
+        final MaterialSwitch shareNameView = settingsDialog.findViewById(R.id.share_name_setting);
+        shareNameView.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            if (Preferences.get().isShareNameEnabled() != isChecked) {
+                Preferences.get().setShareNameEnabled(isChecked);
+            }
+        });
+
         settingsDialog.setOnShowListener(dialog -> {
             settingsDialog.getBehavior().setState(BottomSheetBehavior.STATE_EXPANDED);
             qualitySettingView.setValue(Preferences.get().getProjectionQuality());
@@ -1011,42 +1105,145 @@ public class MainActivity extends AppCompatActivity {
             secureSettingView.jumpDrawablesToCurrentState();
             portSettingView.setValue(Preferences.get().getServerPort());
             updateDeviceIdentityView();
+
+            final DiscoverySettings settings = Preferences.get().getDiscoverySettings();
+            multicastEnabledView.setChecked(settings.isMulticastEnabled());
+            multicastEnabledView.jumpDrawablesToCurrentState();
+            multicastGroupView.setText(settings.getMulticastGroup());
+            multicastPortView.setValue(settings.getMulticastPort());
+            refreshView.setValue(settings.getRefreshTier().ordinal());
+            visibilityView.setValue(settings.getVisibility().ordinal());
+            compatOnlyView.setChecked(settings.isCompatOnly());
+            compatOnlyView.jumpDrawablesToCurrentState();
+            shareNameView.setChecked(Preferences.get().isShareNameEnabled());
+            shareNameView.jumpDrawablesToCurrentState();
         });
 
         return settingsDialog;
     }
 
     /**
-     * List adapter for discovered servers.
+     * Validates and persists the multicast group typed by the user.
      *
-     * <p>Item identity is the stable service id, so a re-resolved entry with a new address is
-     * rebound instead of replaced; content equality comes from the immutable info object.</p>
+     * <p>An invalid literal shows an inline error and leaves the stored value untouched, so a
+     * half-typed address never replaces the group the channel is using.</p>
      */
-    private static class DiscoveryListAdapter extends ListAdapter<LssServiceInfo, DiscoveryListViewHolder> {
+    private void commitMulticastGroup(@NonNull final EditText view) {
+        final String group = view.getText().toString().trim();
+        if (!DiscoverySettings.isValidGroupAddress(group)) {
+            view.setError(getString(R.string.discovery_invalid_multicast_group));
+            return;
+        }
+        view.setError(null);
+        if (!group.equals(Preferences.get().getMulticastGroup())) {
+            Preferences.get().setMulticastGroup(group);
+        }
+    }
+
+    /**
+     * Persists a visibility preset, anchoring the temporary window at this moment.
+     *
+     * <p>The expiry is written together with the preset, so a restart of the app restores the same
+     * remaining window.</p>
+     */
+    private void applyVisibility(@NonNull final VisibilityPolicy.Visibility visibility) {
+        final VisibilityPolicy policy = VisibilityPolicy.forVisibility(visibility,
+            System.currentTimeMillis());
+        Preferences.get().setDiscoveryVisibility(visibility.wire(), policy.getExpiresAtMs());
+    }
+
+    /**
+     * List adapter for discovered devices.
+     *
+     * <p>View types come from {@link DeviceListModel.RowType}: a section header, a device or the
+     * empty hint. A device's item identity is its store id, so an entry that gains an address or a
+     * new presence is rebound instead of being recreated; content equality is the value equality of
+     * the immutable device description.</p>
+     */
+    private static class DiscoveryListAdapter
+        extends ListAdapter<DeviceListModel.Row, RecyclerView.ViewHolder> {
+
         private DiscoveryListAdapter() {
             super(new DiffUtil.ItemCallback<>() {
                 @Override
-                public boolean areItemsTheSame(@NonNull LssServiceInfo oldItem, @NonNull LssServiceInfo newItem) {
-                    return Objects.equals(oldItem.getId(), newItem.getId());
+                public boolean areItemsTheSame(@NonNull DeviceListModel.Row oldItem,
+                    @NonNull DeviceListModel.Row newItem) {
+                    if (oldItem.getType() != newItem.getType()) {
+                        return false;
+                    }
+                    final LssDeviceInfo oldDevice = oldItem.getDevice();
+                    final LssDeviceInfo newDevice = newItem.getDevice();
+                    if (oldDevice == null || newDevice == null) {
+                        return true;
+                    }
+                    return oldDevice.getId().equals(newDevice.getId());
                 }
 
                 @Override
-                public boolean areContentsTheSame(@NonNull LssServiceInfo oldItem, @NonNull LssServiceInfo newItem) {
-                    return Objects.equals(oldItem, newItem);
+                public boolean areContentsTheSame(@NonNull DeviceListModel.Row oldItem,
+                    @NonNull DeviceListModel.Row newItem) {
+                    return oldItem.equals(newItem);
                 }
             });
         }
 
         @NonNull
         @Override
-        public DiscoveryListViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
-            return new DiscoveryListViewHolder(LayoutInflater.from(parent.getContext())
-                .inflate(R.layout.item_screen_share_discovery, parent, false));
+        public RecyclerView.ViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
+            final LayoutInflater inflater = LayoutInflater.from(parent.getContext());
+            if (viewType == ViewType.HEADER.ordinal()) {
+                return new DiscoveryHeaderViewHolder(
+                    inflater.inflate(R.layout.item_screen_share_discovery_header, parent, false));
+            }
+            return new DiscoveryListViewHolder(
+                inflater.inflate(R.layout.item_screen_share_discovery, parent, false));
         }
 
         @Override
-        public void onBindViewHolder(@NonNull DiscoveryListViewHolder holder, int position) {
-            holder.update(getItem(position));
+        public int getItemViewType(final int position) {
+            switch (getItem(position).getType()) {
+                case HEADER_SERVERS:
+                case HEADER_CLIENTS:
+                    return ViewType.HEADER.ordinal();
+                case EMPTY_HINT:
+                case DEVICE:
+                default:
+                    return ViewType.DEVICE.ordinal();
+            }
+        }
+
+        @Override
+        public void onBindViewHolder(@NonNull RecyclerView.ViewHolder holder, int position) {
+            final DeviceListModel.Row row = getItem(position);
+            if (holder instanceof DiscoveryHeaderViewHolder) {
+                ((DiscoveryHeaderViewHolder) holder).update(row.getType());
+                return;
+            }
+            final LssDeviceInfo device = row.getDevice();
+            if (device != null) {
+                ((DiscoveryListViewHolder) holder).update(device);
+            }
+        }
+    }
+
+    // Two layouts only: a section header and a device row.
+    private enum ViewType {
+        HEADER,
+        DEVICE
+    }
+
+    private static class DiscoveryHeaderViewHolder extends RecyclerView.ViewHolder {
+        @NonNull
+        private final MaterialTextView mHeaderView;
+
+        private DiscoveryHeaderViewHolder(@NonNull final View itemView) {
+            super(itemView);
+            mHeaderView = itemView.findViewById(R.id.header);
+        }
+
+        public void update(@NonNull final DeviceListModel.RowType type) {
+            mHeaderView.setText(type == DeviceListModel.RowType.HEADER_CLIENTS
+                ? R.string.discovery_section_clients : R.string.discovery_section_servers);
         }
     }
 
@@ -1058,29 +1255,53 @@ public class MainActivity extends AppCompatActivity {
         private final MaterialTextView mAddressView;
 
         @NonNull
+        private final MaterialTextView mStatusView;
+
+        @NonNull
         private final MaterialTextView mFavoriteView;
 
         private DiscoveryListViewHolder(@NonNull View itemView) {
             super(itemView);
             mNameView = itemView.findViewById(R.id.name);
             mAddressView = itemView.findViewById(R.id.address);
+            mStatusView = itemView.findViewById(R.id.status);
             mFavoriteView = itemView.findViewById(R.id.favorite);
         }
 
-        public void update(@NonNull final LssServiceInfo item) {
-            mNameView.setText(item.getName());
-            mAddressView.setText(mAddressView.getResources().getString(R.string.service_address, item.getHostAddress(),
-                item.getPort()));
+        public void update(@NonNull final LssDeviceInfo item) {
+            mNameView.setText(item.displayName());
+            final DeviceAddress address = item.primaryAddress();
+            mAddressView.setText(address == null ? ""
+                : mAddressView.getResources().getString(R.string.service_address,
+                    address.getHost(), address.getPort()));
 
-            // The favorite marker is favorite state, not discovery state, so it is read from the
-            // favorite store instead of the service info the list adapter diffs.
-            final FavoriteDevice favorite = FavoriteStore.get().find(item.getId());
-            if (favorite == null) {
+            mStatusView.setText(statusTextResource(DeviceListModel.status(item)));
+            // A stale or unreachable device stays visible but is drawn dimmed, which distinguishes
+            // "was here, not answering" from "answering now".
+            itemView.setAlpha(DeviceListModel.isDimmed(item) ? 0.5f : 1f);
+
+            if (!item.isFavorite()) {
                 mFavoriteView.setVisibility(View.GONE);
             } else {
-                mFavoriteView.setText(favorite.isIdentityChanged()
+                mFavoriteView.setText(item.isIdentityChanged()
                     ? R.string.discovery_identity_changed_badge : R.string.discovery_favorite_badge);
                 mFavoriteView.setVisibility(View.VISIBLE);
+            }
+        }
+
+        private static int statusTextResource(@NonNull final DeviceListModel.DeviceStatus status) {
+            switch (status) {
+                case LIVE:
+                    return R.string.discovery_status_live;
+                case NEEDS_APPROVAL:
+                    return R.string.discovery_status_needs_approval;
+                case CLOSED:
+                    return R.string.discovery_status_closed;
+                case UNREACHABLE:
+                    return R.string.discovery_status_unreachable;
+                case IDLE:
+                default:
+                    return R.string.discovery_status_idle;
             }
         }
     }

@@ -2,6 +2,7 @@ package com.obby.android.localscreenshare.server;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import com.obby.android.localscreenshare.core.codec.CodecRegistry;
@@ -144,13 +145,48 @@ public class StreamCallHandlerTest {
         return new Fixture(codec, runtime, hub);
     }
 
+    @Test
+    public void helloIdentityIsCapturedForSessionBinding() {
+        Fixture fixture = fixture(FakeCodec.DEFAULT_CODEC_ID);
+        StreamCallHandler handler = new StreamCallHandler(fixture.hub, fixture.runtime,
+                new FakeTransport());
+
+        handler.onClientMessage(ClientMessage.newBuilder()
+                .setHello(Hello.newBuilder()
+                        .setClientId("client-1")
+                        .setDeviceId("DEVICE-ID")
+                        .setFingerprint("DEVICE-FP")
+                        .setCapabilities(capabilities(FakeCodec.DEFAULT_CODEC_ID))
+                        .build())
+                .build());
+
+        assertEquals("DEVICE-ID", handler.getDeviceId());
+        assertEquals("DEVICE-FP", handler.getFingerprint());
+    }
+
+    @Test
+    public void helloWithoutIdentityLeavesTheBindingEmpty() {
+        Fixture fixture = fixture(FakeCodec.DEFAULT_CODEC_ID);
+        StreamCallHandler handler = new StreamCallHandler(fixture.hub, fixture.runtime,
+                new FakeTransport());
+
+        handler.onClientMessage(hello(FakeCodec.DEFAULT_CODEC_ID));
+
+        assertNull(handler.getDeviceId());
+        assertNull(handler.getFingerprint());
+    }
+
+    private static Capabilities capabilities(String codecId) {
+        return Capabilities.newBuilder()
+                .addCodecs(CodecCapability.newBuilder().setCodecId(codecId).build())
+                .build();
+    }
+
     private static ClientMessage hello(String codecId) {
         return ClientMessage.newBuilder()
                 .setHello(Hello.newBuilder()
                         .setClientId("client-1")
-                        .setCapabilities(Capabilities.newBuilder()
-                                .addCodecs(CodecCapability.newBuilder().setCodecId(codecId).build())
-                                .build())
+                        .setCapabilities(capabilities(codecId))
                         .build())
                 .build();
     }

@@ -1,5 +1,8 @@
 package com.obby.android.localscreenshare.discovery.model;
 
+import android.os.Parcel;
+import android.os.Parcelable;
+
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
@@ -17,10 +20,10 @@ import lombok.ToString;
  * Immutable description of one discovered device.
  *
  * <p>This is the discovery model: identity ({@code id}, {@code fingerprint}), advertised
- * capabilities, every address the device was seen at, and the store-derived presence. It is not
- * {@code Parcelable} on purpose — the UI and {@code Intent} contract still uses
- * {@link com.obby.android.localscreenshare.discovery.LssServiceInfo} until the settings batch
- * migrates it.</p>
+ * capabilities, every address the device was seen at, and the store-derived presence. It is
+ * {@link Parcelable} so the viewer service can receive the complete description through
+ * {@code Constants.EXTRA_SERVICE_INFO}, while {@link com.obby.android.localscreenshare.discovery.LssServiceInfo}
+ * stays only as the legacy NSD adapter contract.</p>
  *
  * <p>The display name is optional because the device name is not broadcast by default. Callers
  * render {@link #displayName()}, which falls back to {@code LSS-<id first 8>}, rather than
@@ -28,7 +31,7 @@ import lombok.ToString;
  */
 @Getter
 @ToString
-public final class LssDeviceInfo {
+public final class LssDeviceInfo implements Parcelable {
 
     /** Length of the short id used for the display-name fallback and the NSD instance name. */
     public static final int SHORT_ID_LENGTH = 8;
@@ -38,6 +41,19 @@ public final class LssDeviceInfo {
 
     /** Default protocol version when a device does not advertise one. */
     public static final String DEFAULT_PROTOCOL_VERSION = "1.0";
+
+    /** Restores a device description from a parcel written by {@link #writeToParcel(Parcel, int)}. */
+    public static final Creator<LssDeviceInfo> CREATOR = new Creator<>() {
+        @Override
+        public LssDeviceInfo createFromParcel(final Parcel in) {
+            return new LssDeviceInfo(in);
+        }
+
+        @Override
+        public LssDeviceInfo[] newArray(final int size) {
+            return new LssDeviceInfo[size];
+        }
+    };
 
     @NonNull
     private final String id;
@@ -122,6 +138,42 @@ public final class LssDeviceInfo {
         this.lastConfirmedMs = lastConfirmedMs;
         this.favorite = favorite;
         this.identityChanged = identityChanged;
+    }
+
+    /** Restores a device description written by {@link #writeToParcel(Parcel, int)}. */
+    private LssDeviceInfo(@NonNull final Parcel in) {
+        this(in.readString(), in.readString(), in.readString(),
+            DeviceRole.valueOf(in.readString()), ShareState.valueOf(in.readString()),
+            JoinPolicy.valueOf(in.readString()), in.readInt() != 0, AuthMode.valueOf(in.readString()),
+            in.readString(), in.readInt(), in.readInt(),
+            in.createTypedArrayList(DeviceAddress.CREATOR), DevicePresence.valueOf(in.readString()),
+            in.readLong(), in.readLong(), in.readInt() != 0, in.readInt() != 0);
+    }
+
+    @Override
+    public int describeContents() {
+        return 0;
+    }
+
+    @Override
+    public void writeToParcel(@NonNull final Parcel dest, final int flags) {
+        dest.writeString(id);
+        dest.writeString(fingerprint);
+        dest.writeString(name);
+        dest.writeString(role.name());
+        dest.writeString(state.name());
+        dest.writeString(join.name());
+        dest.writeInt(secure ? 1 : 0);
+        dest.writeString(auth.name());
+        dest.writeString(protocolVersion);
+        dest.writeInt(metadataVersion);
+        dest.writeInt(capabilities);
+        dest.writeTypedList(addresses);
+        dest.writeString(presence.name());
+        dest.writeLong(lastSeenMs);
+        dest.writeLong(lastConfirmedMs);
+        dest.writeInt(favorite ? 1 : 0);
+        dest.writeInt(identityChanged ? 1 : 0);
     }
 
     /** Returns the first {@link #SHORT_ID_LENGTH} characters of {@link #getId()}, uppercased. */

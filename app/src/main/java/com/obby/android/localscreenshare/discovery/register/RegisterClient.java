@@ -63,6 +63,9 @@ public final class RegisterClient {
     @NonNull
     private final Map<String, Pending> mPending = new HashMap<>();
 
+    // Deadline of one call; the discovery refresh preset changes it between startups.
+    private volatile long mTimeoutMs = Constants.REGISTER_TIMEOUT_MS;
+
     /**
      * Creates a client with the default retry jitter.
      *
@@ -115,6 +118,16 @@ public final class RegisterClient {
         }
     }
 
+    /**
+     * Sets the deadline applied to calls started afterwards.
+     *
+     * <p>The discovery refresh preset owns this value; an in-flight call keeps the deadline it
+     * started with. A non-positive value restores the default.</p>
+     */
+    public void setTimeoutMs(final long timeoutMs) {
+        mTimeoutMs = timeoutMs > 0L ? timeoutMs : Constants.REGISTER_TIMEOUT_MS;
+    }
+
     /** Cancels every in-flight call and suppresses their callbacks. */
     public void cancelAll() {
         final List<Pending> pending;
@@ -129,13 +142,14 @@ public final class RegisterClient {
 
     private void attempt(@NonNull final Pending pending) {
         final int attemptId;
+        final long timeoutMs = mTimeoutMs;
         synchronized (pending) {
             if (pending.finished) {
                 return;
             }
             attemptId = ++pending.attemptId;
             pending.active = true;
-            pending.timeout = mScheduler.schedule(Constants.REGISTER_TIMEOUT_MS,
+            pending.timeout = mScheduler.schedule(timeoutMs,
                 () -> failAttempt(pending, attemptId, "timeout"));
         }
 
@@ -145,7 +159,7 @@ public final class RegisterClient {
             .setSelf(pending.self)
             .build();
         try {
-            mStub.register(pending.address, request, Constants.REGISTER_TIMEOUT_MS,
+            mStub.register(pending.address, request, timeoutMs,
                 new RegisterStub.Callback() {
                     @Override
                     public void onResponse(@NonNull final RegisterResponse response) {

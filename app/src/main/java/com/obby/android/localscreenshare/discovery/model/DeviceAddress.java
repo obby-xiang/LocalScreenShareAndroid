@@ -1,5 +1,8 @@
 package com.obby.android.localscreenshare.discovery.model;
 
+import android.os.Parcel;
+import android.os.Parcelable;
+
 import androidx.annotation.NonNull;
 
 import java.util.Objects;
@@ -11,8 +14,24 @@ import java.util.Objects;
  * channel plus host plus port, so a device seen over NSD and over multicast has two addresses and
  * one device entry. {@link #compareTo(DeviceAddress)} orders usable addresses first: confirmed
  * before unconfirmed, IPv4 before IPv6, and the most recently confirmed before older ones.</p>
+ *
+ * <p>It is {@link Parcelable} so a whole device description can travel to the client service
+ * through an {@code Intent}.</p>
  */
-public final class DeviceAddress implements Comparable<DeviceAddress> {
+public final class DeviceAddress implements Comparable<DeviceAddress>, Parcelable {
+
+    /** Restores an address from a parcel written by {@link #writeToParcel(Parcel, int)}. */
+    public static final Creator<DeviceAddress> CREATOR = new Creator<>() {
+        @Override
+        public DeviceAddress createFromParcel(final Parcel in) {
+            return new DeviceAddress(in);
+        }
+
+        @Override
+        public DeviceAddress[] newArray(final int size) {
+            return new DeviceAddress[size];
+        }
+    };
 
     /** Address family of IPv4 literals. */
     public static final int FAMILY_IPV4 = 4;
@@ -71,9 +90,29 @@ public final class DeviceAddress implements Comparable<DeviceAddress> {
         mLastConfirmedMs = lastConfirmedMs;
     }
 
+    /** Restores an address written by {@link #writeToParcel(Parcel, int)}. */
+    private DeviceAddress(@NonNull final Parcel in) {
+        this(in.readString(), in.readInt(), DiscoveryChannel.valueOf(in.readString()),
+            in.readInt() != 0, in.readLong());
+    }
+
     /** Derives the address family from a formatted literal. */
     public static int familyOf(@NonNull final String host) {
         return host.startsWith("[") || host.indexOf(':') >= 0 ? FAMILY_IPV6 : FAMILY_IPV4;
+    }
+
+    @Override
+    public int describeContents() {
+        return 0;
+    }
+
+    @Override
+    public void writeToParcel(@NonNull final Parcel dest, final int flags) {
+        dest.writeString(mHost);
+        dest.writeInt(mPort);
+        dest.writeString(mChannel.name());
+        dest.writeInt(mConfirmed ? 1 : 0);
+        dest.writeLong(mLastConfirmedMs);
     }
 
     @NonNull

@@ -38,6 +38,11 @@ public final class StreamCallHandler {
 
     private String pendingClientId;
 
+    // Identity the client declared in its HELLO; the session key stays client_id.
+    private String deviceId;
+
+    private String fingerprint;
+
     private boolean pendingJoin;
 
     private boolean attached;
@@ -110,6 +115,23 @@ public final class StreamCallHandler {
         return closed;
     }
 
+    /**
+     * Returns the device id the client declared in its HELLO, or null when it declared none.
+     *
+     * <p>The id binds the media session to the discovery entry the same peer announced: the
+     * session key remains {@code client_id}, because one device may reconnect with a new session,
+     * but a server can now attribute the session to a known device instead of an opaque
+     * per-connection value.</p>
+     */
+    public String getDeviceId() {
+        return deviceId;
+    }
+
+    /** Returns the fingerprint the client declared in its HELLO, or null when it declared none. */
+    public String getFingerprint() {
+        return fingerprint;
+    }
+
     /** Detaches the client's session and closes its transport; idempotent. */
     public void close() {
         if (closed) {
@@ -132,6 +154,8 @@ public final class StreamCallHandler {
             clientId = "client-" + UUID.randomUUID();
         }
         pendingClientId = clientId;
+        deviceId = emptyToNull(hello.getDeviceId());
+        fingerprint = emptyToNull(hello.getFingerprint());
         pendingCapabilities = ScreenStreamProtoMapper.toClientCapabilities(hello.getCapabilities());
         if (pendingCapabilities.getCodecIds().isEmpty()) {
             // Old clients that declare nothing are assumed to support the H.264 baseline.
@@ -165,5 +189,10 @@ public final class StreamCallHandler {
             default:
                 break;
         }
+    }
+
+    /** Returns the trimmed value, or null when it is absent or blank. */
+    private static String emptyToNull(String value) {
+        return value == null || value.trim().isEmpty() ? null : value.trim();
     }
 }

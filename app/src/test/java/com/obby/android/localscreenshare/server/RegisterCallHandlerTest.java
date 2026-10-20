@@ -215,6 +215,38 @@ public class RegisterCallHandlerTest {
         assertNull(mStore.device(PEER_ID));
     }
 
+    @Test
+    public void callerFilterRejectsHiddenDeviceAndDoesNotLearn() {
+        RegisterCallHandler handler = filteredHandler(id -> false);
+
+        AtomicReference<RegisterResponse> response = new AtomicReference<>();
+        handler.handle(request(true), REMOTE_HOST, response::set);
+
+        assertNotNull(response.get());
+        assertFalse(response.get().getAccepted());
+        assertEquals(RegisterCallHandler.REASON_NOT_VISIBLE, response.get().getRejectReason());
+        assertEquals(0, mStore.size());
+        assertTrue(mReverseCalls.isEmpty());
+    }
+
+    @Test
+    public void callerFilterAcceptsAFavoriteCaller() {
+        RegisterCallHandler handler = filteredHandler(id -> id.equals(PEER_ID));
+
+        AtomicReference<RegisterResponse> response = new AtomicReference<>();
+        handler.handle(request(true), REMOTE_HOST, response::set);
+
+        assertTrue(response.get().getAccepted());
+        assertNotNull(mStore.device(PEER_ID));
+    }
+
+    private RegisterCallHandler filteredHandler(java.util.function.Predicate<String> filter) {
+        return new RegisterCallHandler(() -> mSelf, mStore, Runnable::run, mClock,
+            (address, announces, self, callback) -> mReverseCalls.add(
+                new ReverseCall(address.getHost(), address.getPort(), announces)),
+            mScheduler, new Random(7L), DiscoveryChannel.MULTICAST, filter);
+    }
+
     private RegisterResponse handle(RegisterRequest request) {
         AtomicReference<RegisterResponse> response = new AtomicReference<>();
         mHandler.handle(request, REMOTE_HOST, response::set);

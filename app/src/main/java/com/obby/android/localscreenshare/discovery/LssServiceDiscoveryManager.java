@@ -47,6 +47,7 @@ import com.obby.android.localscreenshare.support.DelayedScheduler;
 import com.obby.android.localscreenshare.support.Preferences;
 import com.obby.android.localscreenshare.utils.ThreadUtils;
 
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
@@ -62,16 +63,20 @@ import lombok.NoArgsConstructor;
  * Process-wide discovery facade that publishes the LAN screen-stream servers it can reach.
  *
  * <p>The manager keeps the original public contract — subscribe, unsubscribe and receive an
- * {@link LssServiceInfo} snapshot — while the state itself lives in {@link DeviceStore}. Three
- * sources feed observations into the store in parallel: {@link NsdDiscoveryProvider} for mDNS,
- * {@link UdpMulticastDiscoveryProvider} for the multicast announcement channel, and
- * {@link ManualAddressProvider} for favorites and addresses the user typed. The store merges what
- * they report, and this class projects the result onto the legacy list the UI already renders.</p>
+ * {@link LssServiceInfo} snapshot — and adds the store contract the unified list renders:
+ * {@link #addDeviceListener(DeviceStoreListener)} delivers the immutable {@link LssDeviceInfo}
+ * snapshot. All state lives in {@link DeviceStore}. Three sources feed observations into the store
+ * in parallel: {@link NsdDiscoveryProvider} for mDNS, {@link UdpMulticastDiscoveryProvider} for the
+ * multicast announcement channel, and {@link ManualAddressProvider} for favorites and addresses
+ * the user typed. The store merges what they report.</p>
  *
  * <p>The multicast provider also confirms peers through Register: only an accepted handshake
  * promotes a device to confirmed, so a received announcement alone never makes a device look
- * reachable. The store is exposed through {@link #deviceStore()} so the capture server can write
- * the peers it learns through its own Register handler into the same table.</p>
+ * reachable. An address confirmed within
+ * {@link Constants#REGISTER_RECONFIRM_INTERVAL_MS} is not confirmed again, which keeps heartbeat
+ * traffic below the server's per-address quota. The store is exposed through
+ * {@link #deviceStore()} so the capture server can write the peers it learns through its own
+ * Register handler into the same table.</p>
  *
  * <p><b>Fallbacks.</b> {@link ScanCoordinator} waits one grace window for announcements and
  * favorite probes; only a window that ends with no confirmed device escalates to an interface
@@ -85,12 +90,12 @@ import lombok.NoArgsConstructor;
  * public methods must be called on the main thread. Listener notifications carry an unmodifiable
  * snapshot that is replaced, never mutated, on change.</p>
  *
- * <p><b>Lifecycle.</b> Discovery starts when the first listener subscribes with
- * {@link #discoverServices(LssServiceDiscoveryListener)} and stops when the last listener leaves
- * through {@link #stopServiceDiscovery(LssServiceDiscoveryListener)}. A one-second main-thread
- * tick drives the store TTL while discovery is running. Subscribing does not clear cached results:
- * a new listener immediately receives the current snapshot. The multicast group and port are read
- * when the provider starts, so a changed setting applies to the next discovery start.</p>
+ * <p><b>Lifecycle.</b> Discovery starts when the first listener of either kind subscribes and stops
+ * when the last one leaves. A one-second main-thread tick drives the store TTL while discovery is
+ * running. Subscribing does not clear cached results: a new listener immediately receives the
+ * current snapshot. Discovery settings are read when a provider starts, and a change restarts the
+ * running providers after a short debounce, so a new group, port, refresh preset or compatibility
+ * mode applies without restarting a share session.</p>
  */
 @NoArgsConstructor(access = AccessLevel.PRIVATE)
 public final class LssServiceDiscoveryManager {
@@ -98,6 +103,17 @@ public final class LssServiceDiscoveryManager {
 
     // Connectivity callbacks often arrive in bursts; one restart per burst is enough.
     private static final long NETWORK_CHANGE_DEBOUNCE_MS = 500L;
+
+    // Settings writes also arrive in bursts, because one picker change writes several keys.
+    private static final long SETTINGS_DEBOUNCE_MS = 200L;
+
+    // Preference keys that change how discovery runs and therefore restart the providers.
+    @NonNull
+    private static final List<String> DISCOVERY_KEYS = Arrays.asList(
+        Preferences.KEY_MULTICAST_ANNOUNCE_ENABLED, Preferences.KEY_MULTICAST_GROUP,
+        Preferences.KEY_MULTICAST_PORT, Preferences.KEY_DISCOVERY_REFRESH_TIER,
+        Preferences.KEY_DISCOVERY_VISIBILITY, Preferences.KEY_DISCOVERY_VISIBILITY_UNTIL,
+        Preferences.KEY_DISCOVERY_COMPAT_ONLY);
 
     // Main-thread state: true while discovery is running.
     private boolean mIsDiscovering;
@@ -119,11 +135,12 @@ public final class LssServiceDiscoveryManager {
             DelayedScheduler.newSingleThread("lss-multicast-socket")),
         MulticastLockManager.get(), this::isSelfDeviceId, TimeSource.MONOTONIC,
         ThreadUtils.getMainThreadExecutor(), mRegisterClient, this::selfSummary,
-        this::onConfirmed);
+        this::onConfirmed,
+        (host, port) -> mDeviceStore.isConfirmedWithin(host, port, Constants.REGISTER_RECONFIRM_INTERVAL_MS));
 
-    @NonNull
-    private final NsdDiscoveryProvider mDiscoveryProvider = new NsdDiscoveryProvider(App.get(),
-        TimeSource.MONOTONIC, this::isSelfDeviceId);
+    // Recreated on every start because the discovered service types depend on the settings.
+    @Nullable
+    private NsdDiscoveryProvider mDiscoveryProvider;
 
     @NonNull
     private final FavoriteStore mFavoriteStore = FavoriteStore.get();
@@ -176,9 +193,36 @@ public final class LssServiceDiscoveryManager {
     @NonNull
     private final List<LssServiceDiscoveryListener> mServiceDiscoveryListeners = new CopyOnWriteArrayList<>();
 
-    // Projects the store snapshot onto the legacy list and forwards changes to subscribers.
+    // Consumers of the store snapshot itself; the activity renders the list from these.
     @NonNull
-    private final DeviceStoreListener mDeviceStoreListener = devices -> updateServiceInfoList();
+    private final List<DeviceStoreListener> mDeviceListeners = new CopyOnWriteArrayList<>();
+
+    // Projects the store snapshot onto the legacy list and forwards it to device listeners.
+    @NonNull
+    private final DeviceStoreListener mDeviceStoreListener = devices -> {
+        updateServiceInfoList();
+        for (final DeviceStoreListener listener : mDeviceListeners) {
+            listener.onDevicesChanged(devices);
+        }
+    };
+
+    @NonNull
+    private final Runnable mSettingsChangedRunnable = new Runnable() {
+        @Override
+        public void run() {
+            mMainHandler.removeCallbacks(mSettingsChangedRunnable);
+            restartDiscoveryProviders();
+        }
+    };
+
+    // Settings are applied by restarting the providers; consecutive writes are collapsed.
+    @NonNull
+    private final Preferences.Observer mPreferencesObserver = key -> {
+        if (key == null || DISCOVERY_KEYS.contains(key)) {
+            mMainHandler.removeCallbacks(mSettingsChangedRunnable);
+            mMainHandler.postDelayed(mSettingsChangedRunnable, SETTINGS_DEBOUNCE_MS);
+        }
+    };
 
     @NonNull
     private final DiscoveryProviderListener mDiscoveryProviderListener = new DiscoveryProviderListener() {
@@ -200,7 +244,8 @@ public final class LssServiceDiscoveryManager {
         @Override
         public void run() {
             mMainHandler.removeCallbacks(mEmptyListScanRunnable);
-            if (mIsDiscovering && mDeviceStore.snapshot().isEmpty()) {
+            if (mIsDiscovering && mDeviceStore.snapshot().isEmpty()
+                && Preferences.get().getDiscoverySettings().isScanEnabled()) {
                 mScanCoordinator.start(ScanCoordinator.Trigger.EMPTY_LIST);
             }
         }
@@ -262,6 +307,42 @@ public final class LssServiceDiscoveryManager {
     }
 
     /**
+     * Subscribes a listener that receives the device store snapshot, and starts discovery if it
+     * was not running.
+     *
+     * <p>This is the rendering contract introduced with the unified list: the listener gets the
+     * immutable {@link LssDeviceInfo} snapshot, which carries identity, addresses, presence and
+     * status. Must be called on the main thread; the current snapshot is delivered synchronously
+     * before this method returns. A duplicate subscription is ignored.</p>
+     */
+    public void addDeviceListener(@NonNull final DeviceStoreListener listener) {
+        if (mDeviceListeners.contains(listener)) {
+            return;
+        }
+        mDeviceListeners.add(listener);
+        if (!mIsDiscovering) {
+            mIsDiscovering = true;
+            startDiscovery();
+        }
+        listener.onDevicesChanged(mDeviceStore.snapshot());
+    }
+
+    /**
+     * Unsubscribes a device listener and stops discovery once no listener of either kind remains.
+     *
+     * <p>Must be called on the main thread.</p>
+     */
+    public void removeDeviceListener(@NonNull final DeviceStoreListener listener) {
+        if (!mDeviceListeners.remove(listener)) {
+            return;
+        }
+        if (mServiceDiscoveryListeners.isEmpty() && mDeviceListeners.isEmpty() && mIsDiscovering) {
+            mIsDiscovering = false;
+            stopDiscovery();
+        }
+    }
+
+    /**
      * Unsubscribes a listener and stops discovery once no listener remains.
      *
      * <p>Must be called on the main thread. Stopping discovery drops the cached device store; the
@@ -276,7 +357,7 @@ public final class LssServiceDiscoveryManager {
             return;
         }
 
-        if (mServiceDiscoveryListeners.isEmpty() && mIsDiscovering) {
+        if (mServiceDiscoveryListeners.isEmpty() && mDeviceListeners.isEmpty() && mIsDiscovering) {
             mIsDiscovering = false;
             stopDiscovery();
         }
@@ -393,7 +474,7 @@ public final class LssServiceDiscoveryManager {
      * request.</p>
      */
     public void refreshDiscovery() {
-        if (mIsDiscovering) {
+        if (mIsDiscovering && Preferences.get().getDiscoverySettings().isScanEnabled()) {
             mScanCoordinator.start(ScanCoordinator.Trigger.MANUAL_REFRESH);
         }
     }
@@ -406,19 +487,67 @@ public final class LssServiceDiscoveryManager {
      */
     private void startDiscovery() {
         Log.i(TAG, "startDiscovery: start discovery");
+        final DiscoverySettings settings = Preferences.get().getDiscoverySettings();
         migrateFavorites();
         seedFavorites();
         mDeviceStore.addListener(mDeviceStoreListener);
-        mDiscoveryProvider.start(mDiscoveryProviderListener);
-        mMulticastProvider.start(mDiscoveryProviderListener);
+        mRegisterClient.setTimeoutMs(settings.getRefreshTier().getRegisterTimeoutMs());
+        Preferences.get().addObserver(mPreferencesObserver);
+        startProviders(settings);
         mManualAddressProvider.start(mDiscoveryProviderListener);
         mScanCoordinator.setListener(mScanListener);
-        mScanCoordinator.start(ScanCoordinator.Trigger.DISCOVERY_START);
+        if (settings.isScanEnabled()) {
+            mScanCoordinator.start(ScanCoordinator.Trigger.DISCOVERY_START);
+        }
         mMainHandler.removeCallbacks(mEmptyListScanRunnable);
         mMainHandler.postDelayed(mEmptyListScanRunnable, Constants.DISCOVERY_EMPTY_MANUAL_HINT_MS);
         registerNetworkCallback();
         mMainHandler.removeCallbacks(mTickRunnable);
         mMainHandler.postDelayed(mTickRunnable, DeviceStore.TICK_INTERVAL_MS);
+    }
+
+    /**
+     * Starts the discovery providers that the settings allow.
+     *
+     * <p>The NSD provider is recreated on every start because compatibility mode changes the set
+     * of discovered service types. The multicast provider is a field because its transport
+     * factory reads the group and port each time it starts; when the channel is disabled or
+     * compatibility mode is on, it is not started at all.</p>
+     */
+    private void startProviders(@NonNull final DiscoverySettings settings) {
+        final NsdDiscoveryProvider discoveryProvider = new NsdDiscoveryProvider(App.get(),
+            TimeSource.MONOTONIC, this::isSelfDeviceId, settings.nsdServiceTypes());
+        mDiscoveryProvider = discoveryProvider;
+        discoveryProvider.start(mDiscoveryProviderListener);
+        if (settings.isMulticastChannelEnabled()) {
+            mMulticastProvider.start(mDiscoveryProviderListener);
+        }
+    }
+
+    /**
+     * Applies changed discovery settings to the running providers.
+     *
+     * <p>Runs on the main thread after a short debounce. The store is kept: the providers restart,
+     * the devices that were already confirmed stay visible until their TTL, and new observations
+     * come in under the new configuration. A share session is not restarted; the announcement
+     * side of the settings is applied by the capture service's own observer.</p>
+     */
+    private void restartDiscoveryProviders() {
+        if (!mIsDiscovering) {
+            return;
+        }
+        Log.i(TAG, "restartDiscoveryProviders: restart discovery providers");
+        final DiscoverySettings settings = Preferences.get().getDiscoverySettings();
+        mRegisterClient.setTimeoutMs(settings.getRefreshTier().getRegisterTimeoutMs());
+
+        final NsdDiscoveryProvider discoveryProvider = mDiscoveryProvider;
+        if (discoveryProvider != null) {
+            discoveryProvider.stop();
+            mDiscoveryProvider = null;
+        }
+        mMulticastProvider.stop();
+        mScanCoordinator.cancel();
+        startProviders(settings);
     }
 
     /**
@@ -432,8 +561,14 @@ public final class LssServiceDiscoveryManager {
         mScanCoordinator.cancel();
         mManualAddressProvider.stop();
         unregisterNetworkCallback();
-        mDiscoveryProvider.stop();
+        final NsdDiscoveryProvider discoveryProvider = mDiscoveryProvider;
+        if (discoveryProvider != null) {
+            discoveryProvider.stop();
+            mDiscoveryProvider = null;
+        }
         mMulticastProvider.stop();
+        Preferences.get().removeObserver(mPreferencesObserver);
+        mMainHandler.removeCallbacks(mSettingsChangedRunnable);
         mMainHandler.removeCallbacks(mTickRunnable);
         mMainHandler.removeCallbacks(mEmptyListScanRunnable);
         mMainHandler.removeCallbacks(mNetworkChangedRunnable);
@@ -478,7 +613,7 @@ public final class LssServiceDiscoveryManager {
                 .state(ShareState.IDLE)
                 .join(JoinPolicy.UNKNOWN)
                 .secure(Preferences.get().isProjectionSecure())
-                .capabilities(Constants.DEVICE_CAPABILITY_H264 | Constants.DEVICE_CAPABILITY_JPEG)
+                .capabilities(Preferences.get().getDiscoverySettings().capabilities())
                 .metadataVersion(1)
                 .build();
             return RegisterProtoMapper.toSummary(self);

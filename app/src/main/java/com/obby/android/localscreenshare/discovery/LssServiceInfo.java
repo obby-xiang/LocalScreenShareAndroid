@@ -21,7 +21,13 @@ import lombok.experimental.Accessors;
  * resolved host address and gRPC port. Instances are {@link Parcelable} so they can cross process
  * boundaries, and are ordered by host address, then port, name and id, which gives the discovery
  * list a stable order regardless of NSD callback order.</p>
+ *
+ * @deprecated the UI and {@code Intent} contract use
+ *     {@link com.obby.android.localscreenshare.discovery.model.LssDeviceInfo}. This class remains
+ *     only for the legacy NSD projection and the pre-store listener contract, and will be removed
+ *     once nothing reads it.
  */
+@Deprecated
 @Accessors(prefix = "m")
 @Data
 @AllArgsConstructor(access = AccessLevel.PRIVATE)
