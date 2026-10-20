@@ -63,20 +63,20 @@ import com.google.android.material.materialswitch.MaterialSwitch;
 import com.google.android.material.slider.LabelFormatter;
 import com.google.android.material.slider.Slider;
 import com.google.android.material.textview.MaterialTextView;
-import com.obby.android.localscreenshare.discovery.LssServiceDiscoveryManager;
+import com.obby.android.localscreenshare.discovery.DiscoveryManager;
 import com.obby.android.localscreenshare.discovery.favorite.FavoriteDevice;
 import com.obby.android.localscreenshare.discovery.favorite.FavoriteStore;
 import com.obby.android.localscreenshare.discovery.manual.ManualAddressProvider;
 import com.obby.android.localscreenshare.discovery.model.DeviceAddress;
-import com.obby.android.localscreenshare.discovery.model.LssDeviceInfo;
+import com.obby.android.localscreenshare.discovery.model.DeviceInfo;
 import com.obby.android.localscreenshare.discovery.scan.ScanConstants;
 import com.obby.android.localscreenshare.discovery.store.DeviceStoreListener;
 import com.obby.android.localscreenshare.discovery.ui.DiscoveryListModel;
 import com.obby.android.localscreenshare.grpc.screenstream.DeviceSummary;
 import com.obby.android.localscreenshare.identity.IdentityManager;
 import com.obby.android.localscreenshare.identity.IdentityUnavailableException;
-import com.obby.android.localscreenshare.server.LssServerInfo;
-import com.obby.android.localscreenshare.server.LssServerStats;
+import com.obby.android.localscreenshare.server.ServerInfo;
+import com.obby.android.localscreenshare.server.ServerStats;
 import com.obby.android.localscreenshare.service.ScreenShareService;
 import com.obby.android.localscreenshare.service.ScreenViewerService;
 import com.obby.android.localscreenshare.settings.DiscoverySettings;
@@ -162,10 +162,10 @@ public class MainActivity extends AppCompatActivity {
 
     // Last values received from the service; null while the server is not running.
     @Nullable
-    private LssServerInfo mServerInfo;
+    private ServerInfo mServerInfo;
 
     @Nullable
-    private LssServerStats mServerStats;
+    private ServerStats mServerStats;
 
     // Last confirmation or permission dialog shown; dismissed when replaced and in onDestroy().
     @Nullable
@@ -207,7 +207,7 @@ public class MainActivity extends AppCompatActivity {
 
     // Latest store snapshot; the adapter renders it through DiscoveryListModel.
     @NonNull
-    private List<LssDeviceInfo> mDevices = Collections.emptyList();
+    private List<DeviceInfo> mDevices = Collections.emptyList();
 
     // Discovery rows; a click starts the client service for that device.
     @NonNull
@@ -216,7 +216,7 @@ public class MainActivity extends AppCompatActivity {
         public void onBindViewHolder(@NonNull RecyclerView.ViewHolder holder, int position) {
             super.onBindViewHolder(holder, position);
             final DiscoveryListModel.Row row = getItem(position);
-            final LssDeviceInfo item = row.getDevice();
+            final DeviceInfo item = row.getDevice();
             if (row.getType() != DiscoveryListModel.RowType.DEVICE || item == null) {
                 holder.itemView.setOnClickListener(null);
                 holder.itemView.setOnLongClickListener(null);
@@ -275,10 +275,10 @@ public class MainActivity extends AppCompatActivity {
                 onServerStopped();
                 return true;
             case ServiceProtocol.MSG_SERVER_INFO_CHANGED:
-                onServerInfoChanged((LssServerInfo) msg.obj);
+                onServerInfoChanged((ServerInfo) msg.obj);
                 return true;
             case ServiceProtocol.MSG_SERVER_STATS_CHANGED:
-                onServerStatsChanged((LssServerStats) msg.obj);
+                onServerStatsChanged((ServerStats) msg.obj);
                 return true;
             default:
                 return false;
@@ -421,12 +421,12 @@ public class MainActivity extends AppCompatActivity {
             final boolean isEnabled = !Preferences.get().isDiscoveryEnabled();
             Preferences.get().setDiscoveryEnabled(isEnabled);
             if (isEnabled) {
-                LssServiceDiscoveryManager.get().addDeviceListener(mDeviceListener);
+                DiscoveryManager.get().addDeviceListener(mDeviceListener);
                 mMainHandler.removeCallbacks(mDiscoveryHintRunnable);
                 mMainHandler.postDelayed(mDiscoveryHintRunnable,
                     ScanConstants.DISCOVERY_EMPTY_MANUAL_HINT_MS);
             } else {
-                LssServiceDiscoveryManager.get().removeDeviceListener(mDeviceListener);
+                DiscoveryManager.get().removeDeviceListener(mDeviceListener);
                 mMainHandler.removeCallbacks(mDiscoveryHintRunnable);
                 mShowManualDiscoveryHint = false;
                 mDiscoveryListAdapter.submitList(null);
@@ -460,7 +460,7 @@ public class MainActivity extends AppCompatActivity {
         bindService(new Intent(this, ScreenShareService.class), mServiceConnection, Context.BIND_AUTO_CREATE);
 
         if (Preferences.get().isDiscoveryEnabled()) {
-            LssServiceDiscoveryManager.get().addDeviceListener(mDeviceListener);
+            DiscoveryManager.get().addDeviceListener(mDeviceListener);
             mMainHandler.removeCallbacks(mDiscoveryHintRunnable);
             mMainHandler.postDelayed(mDiscoveryHintRunnable,
                 ScanConstants.DISCOVERY_EMPTY_MANUAL_HINT_MS);
@@ -483,7 +483,7 @@ public class MainActivity extends AppCompatActivity {
         mServiceMessenger = null;
         unbindService(mServiceConnection);
 
-        LssServiceDiscoveryManager.get().removeDeviceListener(mDeviceListener);
+        DiscoveryManager.get().removeDeviceListener(mDeviceListener);
         mMainHandler.removeCallbacks(mDiscoveryHintRunnable);
         mShowManualDiscoveryHint = false;
         mDiscoveryListAdapter.submitList(null);
@@ -520,12 +520,12 @@ public class MainActivity extends AppCompatActivity {
         updateServiceView();
     }
 
-    private void onServerInfoChanged(@NonNull final LssServerInfo serverInfo) {
+    private void onServerInfoChanged(@NonNull final ServerInfo serverInfo) {
         mServerInfo = serverInfo;
         updateServiceInfoView();
     }
 
-    private void onServerStatsChanged(@NonNull final LssServerStats serverStats) {
+    private void onServerStatsChanged(@NonNull final ServerStats serverStats) {
         mServerStats = serverStats;
         updateServiceStatsView();
     }
@@ -547,7 +547,7 @@ public class MainActivity extends AppCompatActivity {
     @SuppressLint("StringFormatMatches")
     private void updateServiceInfoView() {
         mServiceNameView.setText(Optional.ofNullable(mServerInfo)
-            .map(LssServerInfo::getName)
+            .map(ServerInfo::getName)
             .orElseGet(() -> Preferences.get().getServiceName()));
         mServiceNameView.setEnabled(mServiceStatus == SERVICE_STATUS_ONLINE);
 
@@ -615,11 +615,11 @@ public class MainActivity extends AppCompatActivity {
      * Offers the favorite action of one discovered device.
      *
      * <p>A long press opens this menu; the action label reflects the current state. The favorite
-     * flag is already part of {@link LssDeviceInfo}, so the store snapshot refresh after the change
+     * flag is already part of {@link DeviceInfo}, so the store snapshot refresh after the change
      * updates the badge without a manual rebind.</p>
      */
-    private void showDiscoveryItemMenu(@NonNull final LssDeviceInfo item) {
-        final boolean isFavorite = LssServiceDiscoveryManager.get().isFavorite(item.getId());
+    private void showDiscoveryItemMenu(@NonNull final DeviceInfo item) {
+        final boolean isFavorite = DiscoveryManager.get().isFavorite(item.getId());
         new MaterialAlertDialogBuilder(this)
             .setTitle(item.displayName())
             .setPositiveButton(isFavorite
@@ -629,9 +629,9 @@ public class MainActivity extends AppCompatActivity {
             .show();
     }
 
-    private void toggleFavorite(@NonNull final LssDeviceInfo item) {
-        final boolean isFavorite = LssServiceDiscoveryManager.get().isFavorite(item.getId());
-        LssServiceDiscoveryManager.get().setFavorite(item.getId(), !isFavorite);
+    private void toggleFavorite(@NonNull final DeviceInfo item) {
+        final boolean isFavorite = DiscoveryManager.get().isFavorite(item.getId());
+        DiscoveryManager.get().setFavorite(item.getId(), !isFavorite);
     }
 
     /**
@@ -675,7 +675,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private boolean probeManualAddress(@NonNull final String input) {
-        final boolean accepted = LssServiceDiscoveryManager.get().probeManualAddress(input,
+        final boolean accepted = DiscoveryManager.get().probeManualAddress(input,
             new ManualAddressProvider.ProbeCallback() {
                 @Override
                 public void onConfirmed(@NonNull final String host, final int port,
@@ -765,7 +765,7 @@ public class MainActivity extends AppCompatActivity {
                     return;
                 }
 
-                LssServiceDiscoveryManager.get().onIdentityReset();
+                DiscoveryManager.get().onIdentityReset();
                 sendBroadcast(new Intent(ServiceProtocol.ACTION_IDENTITY_RESET).setPackage(getPackageName()));
                 updateDeviceIdentityView();
                 Toast.makeText(this, R.string.identity_reset_done, Toast.LENGTH_LONG).show();
@@ -823,7 +823,7 @@ public class MainActivity extends AppCompatActivity {
      * <p>The device is passed whole: the client service uses its primary address, so the address
      * choice (confirmed first, IPv4 before IPv6) is made once, in the store.</p>
      */
-    private void startScreenShareViewer(@NonNull final LssDeviceInfo serviceInfo) {
+    private void startScreenShareViewer(@NonNull final DeviceInfo serviceInfo) {
         final FavoriteDevice favorite = FavoriteStore.get().find(serviceInfo.getId());
         if (favorite != null && FavoriteStore.checkIdentity(favorite.getFingerprint(),
             serviceInfo.getFingerprint()) == FavoriteStore.IdentityStatus.CHANGED) {
@@ -833,7 +833,7 @@ public class MainActivity extends AppCompatActivity {
                 .setTitle(serviceInfo.displayName())
                 .setMessage(R.string.discovery_identity_changed_connect)
                 .setPositiveButton(android.R.string.ok, (dialog, which) -> {
-                    LssServiceDiscoveryManager.get().confirmFavoriteIdentity(
+                    DiscoveryManager.get().confirmFavoriteIdentity(
                         serviceInfo.getId(), serviceInfo.getFingerprint());
                     startScreenShareViewerConfirmed(serviceInfo);
                 })
@@ -844,7 +844,7 @@ public class MainActivity extends AppCompatActivity {
         startScreenShareViewerConfirmed(serviceInfo);
     }
 
-    private void startScreenShareViewerConfirmed(@NonNull final LssDeviceInfo serviceInfo) {
+    private void startScreenShareViewerConfirmed(@NonNull final DeviceInfo serviceInfo) {
         if (requestScreenShare()) {
             ContextCompat.startForegroundService(this, new Intent(this, ScreenViewerService.class)
                 .putExtra(ServiceProtocol.EXTRA_SERVICE_INFO, serviceInfo));
@@ -935,7 +935,7 @@ public class MainActivity extends AppCompatActivity {
      *
      * <p>Every control writes its value to {@link Preferences} as soon as it changes, and the
      * running service applies it through its preference observer. The port is the exception: it
-     * is read when {@code LssServer} is constructed, so a changed port applies to the next server
+     * is read when {@code ScreenShareServer} is constructed, so a changed port applies to the next server
      * start. Current preference values are loaded when the sheet is shown, not when it is built,
      * because the same instance is reused.</p>
      */
@@ -1173,8 +1173,8 @@ public class MainActivity extends AppCompatActivity {
                     if (oldItem.getType() != newItem.getType()) {
                         return false;
                     }
-                    final LssDeviceInfo oldDevice = oldItem.getDevice();
-                    final LssDeviceInfo newDevice = newItem.getDevice();
+                    final DeviceInfo oldDevice = oldItem.getDevice();
+                    final DeviceInfo newDevice = newItem.getDevice();
                     if (oldDevice == null || newDevice == null) {
                         return true;
                     }
@@ -1221,7 +1221,7 @@ public class MainActivity extends AppCompatActivity {
                 ((DiscoveryHeaderViewHolder) holder).update(row.getType());
                 return;
             }
-            final LssDeviceInfo device = row.getDevice();
+            final DeviceInfo device = row.getDevice();
             if (device != null) {
                 ((DiscoveryListViewHolder) holder).update(device);
             }
@@ -1270,7 +1270,7 @@ public class MainActivity extends AppCompatActivity {
             mFavoriteView = itemView.findViewById(R.id.favorite);
         }
 
-        public void update(@NonNull final LssDeviceInfo item) {
+        public void update(@NonNull final DeviceInfo item) {
             mNameView.setText(item.displayName());
             final DeviceAddress address = item.primaryAddress();
             mAddressView.setText(address == null ? ""

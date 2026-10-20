@@ -23,7 +23,7 @@ import lombok.experimental.Accessors;
  * list a stable order regardless of NSD callback order.</p>
  *
  * @deprecated the UI and {@code Intent} contract use
- *     {@link com.obby.android.localscreenshare.discovery.model.LssDeviceInfo}. This class remains
+ *     {@link com.obby.android.localscreenshare.discovery.model.DeviceInfo}. This class remains
  *     only for the legacy NSD projection and the pre-store listener contract, and will be removed
  *     once nothing reads it.
  */
@@ -32,24 +32,24 @@ import lombok.experimental.Accessors;
 @Data
 @AllArgsConstructor(access = AccessLevel.PRIVATE)
 @Builder(builderClassName = "Builder", toBuilder = true)
-public class LssServiceInfo implements Comparable<LssServiceInfo>, Parcelable {
-    public static final Creator<LssServiceInfo> CREATOR = new Creator<>() {
+public class LegacyServiceInfo implements Comparable<LegacyServiceInfo>, Parcelable {
+    public static final Creator<LegacyServiceInfo> CREATOR = new Creator<>() {
         @Override
-        public LssServiceInfo createFromParcel(Parcel in) {
-            return new LssServiceInfo(in);
+        public LegacyServiceInfo createFromParcel(Parcel in) {
+            return new LegacyServiceInfo(in);
         }
 
         @Override
-        public LssServiceInfo[] newArray(int size) {
-            return new LssServiceInfo[size];
+        public LegacyServiceInfo[] newArray(int size) {
+            return new LegacyServiceInfo[size];
         }
     };
 
-    private static final Comparator<LssServiceInfo> COMPARATOR =
-        Comparator.nullsLast(Comparator.comparing(LssServiceInfo::getHostAddress)
-            .thenComparing(LssServiceInfo::getPort)
-            .thenComparing(LssServiceInfo::getName)
-            .thenComparing(LssServiceInfo::getId));
+    private static final Comparator<LegacyServiceInfo> COMPARATOR =
+        Comparator.nullsLast(Comparator.comparing(LegacyServiceInfo::getHostAddress)
+            .thenComparing(LegacyServiceInfo::getPort)
+            .thenComparing(LegacyServiceInfo::getName)
+            .thenComparing(LegacyServiceInfo::getId));
 
     /**
      * Stable service identity, generated per installation and also used as the NSD service name.
@@ -85,7 +85,7 @@ public class LssServiceInfo implements Comparable<LssServiceInfo>, Parcelable {
     private final String mFingerprint;
 
     @SuppressWarnings("DataFlowIssue")
-    private LssServiceInfo(@NonNull final Parcel in) {
+    private LegacyServiceInfo(@NonNull final Parcel in) {
         mId = in.readString();
         mName = in.readString();
         mHostAddress = in.readString();
@@ -98,7 +98,7 @@ public class LssServiceInfo implements Comparable<LssServiceInfo>, Parcelable {
      * Orders by host address, port, name and id.
      */
     @Override
-    public int compareTo(LssServiceInfo serviceInfo) {
+    public int compareTo(LegacyServiceInfo serviceInfo) {
         return COMPARATOR.compare(this, serviceInfo);
     }
 

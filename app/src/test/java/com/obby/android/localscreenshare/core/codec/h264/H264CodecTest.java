@@ -4,6 +4,7 @@ import com.obby.android.localscreenshare.core.codec.CodecIds;
 import com.obby.android.localscreenshare.core.codec.CodecRegistration;
 import com.obby.android.localscreenshare.core.codec.CodecRegistry;
 import com.obby.android.localscreenshare.core.codec.jpeg.JpegCodec;
+import com.obby.android.localscreenshare.core.codec.mediacodec.MediaCodecBridgeFactory;
 import com.obby.android.localscreenshare.core.model.BitstreamFormat;
 import com.obby.android.localscreenshare.core.support.FakeMediaCodecBridgeFactory;
 

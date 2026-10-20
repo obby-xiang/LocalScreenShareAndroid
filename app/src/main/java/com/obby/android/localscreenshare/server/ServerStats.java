@@ -25,16 +25,16 @@ import lombok.experimental.Accessors;
 @Data
 @AllArgsConstructor(access = AccessLevel.PRIVATE)
 @Builder(builderClassName = "Builder", toBuilder = true)
-public class LssServerStats implements Parcelable {
-    public static final Creator<LssServerStats> CREATOR = new Creator<>() {
+public class ServerStats implements Parcelable {
+    public static final Creator<ServerStats> CREATOR = new Creator<>() {
         @Override
-        public LssServerStats createFromParcel(Parcel in) {
-            return new LssServerStats(in);
+        public ServerStats createFromParcel(Parcel in) {
+            return new ServerStats(in);
         }
 
         @Override
-        public LssServerStats[] newArray(int size) {
-            return new LssServerStats[size];
+        public ServerStats[] newArray(int size) {
+            return new ServerStats[size];
         }
     };
 
@@ -55,7 +55,7 @@ public class LssServerStats implements Parcelable {
     private final List<TransportStats> mTransports;
 
     @SuppressWarnings("DataFlowIssue")
-    private LssServerStats(@NonNull final Parcel in) {
+    private ServerStats(@NonNull final Parcel in) {
         mOutboundDataSize = in.readLong();
         mOutboundDataRate = in.readLong();
         mTransports = in.createTypedArrayList(TransportStats.CREATOR);

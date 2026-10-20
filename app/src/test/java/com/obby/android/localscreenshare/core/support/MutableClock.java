@@ -1,6 +1,6 @@
 package com.obby.android.localscreenshare.core.support;
 
-import com.obby.android.localscreenshare.core.stream.TimeSource;
+import com.obby.android.localscreenshare.core.util.TimeSource;
 
 /**
  * Deterministic JVM clock for queue, runtime, and session tests.

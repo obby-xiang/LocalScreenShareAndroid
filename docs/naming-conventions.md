@@ -3,7 +3,7 @@
 > 生效日期：2026-10-20。
 > 适用范围：本仓库全部新代码。存量代码按 TB-ENG-011（代码结构梳理与命名统一）的 R1–R4 批次逐步对齐，不在本规范生效时做一次性重命名。
 > 根包约束：根包 `com.obby.android.localscreenshare` 不可变更；本规范只约束其子包、类型、成员与资源。
-> 依据：TB-ENG-011 的盘点结论与经用户批准的调整方案。本规范是 R1–R4 重构批次与今后新代码的依据；文中出现的改名目标在对应批次落地前仍是目标态，不是当前代码事实。
+> 依据：TB-ENG-011 的盘点结论与经用户批准的调整方案。本规范是 R1–R4 重构批次与今后新代码的依据；R1–R4 已于 2026-10-20 全部落地，文中目标名即当前实现。
 > 相关文档：[任务看板](task-board.md) · [决策看板](decision-board.md) · [项目现状与技术审查](project-assessment.md)
 
 ## 1. 包
@@ -12,7 +12,7 @@
 
 - 包名全小写、单数、无下划线；不得出现 `core/Codec`、`discovery/utils` 这类写法。
 - 只使用两种切法：
-  - **技术层**：`core/model`、`core/codec`、`core/stream`、`core/client`、`core/render`。
+  - **技术层**：`core/model`、`core/codec`、`core/stream`、`core/client`、`core/render`、`core/util`。
   - **领域**：`discovery`、`identity`、`settings`。
 - 同一个父包下不混用两种切法：`discovery` 的子包按发现领域内的职责划分，`core` 的子包按技术层划分，二者不互相嵌套。
 
@@ -52,8 +52,8 @@ ui / service
 | `settings` | `Preferences`、`DiscoverySettings`、`VisibilityPolicy` | 设置的持久化入口、设置模型与可见性决策同属一个领域包，不再散落在 `support` 与 `discovery`，也消除了 `settings↔discovery` 环 |
 | `discovery/legacy` | 废弃 DTO | 仅保留兼容期引用；新增代码不得引用，批次结束后可删除 |
 | `discovery/ui` | 列表投影（`DiscoveryListModel`） | 纯显示投影，不持有 store，也不引用 Android 视图类型 |
-| `core/codec/mediacodec` | MIME 通用的 MediaCodec 桥 | 从 `core/codec/h264` 拆出与 H.264 无关的桥接；`h264` 只保留 H.264 特有逻辑 |
-| `core/util` | `TimeSource` 等通用工具 | framework 内部纯工具；`support` 不得依赖它（见 1.4） |
+| `core/codec/mediacodec` | MIME 通用的 MediaCodec 桥 | 从 `core/codec/h264` 拆出与 H.264 无关的桥接；`h264` 只保留 H.264 特有逻辑（R4 已落地） |
+| `core/util` | `TimeSource` 等通用工具 | framework 内部纯工具；`support` 不得依赖它（见 1.4）（R4 已落地） |
 | 取消 `utils` | `IntentUtils`、`NetUtils`、`NsdResolver`、`ResourceUtils`、`ThreadUtils`、`WindowUtils` | 并入 `support`，不保留 `utils` 包 |
 
 ## 2. 类名
@@ -183,8 +183,11 @@ ui / service
 | `AndroidKeystoreIdentityProvider` 实现 `IdentityKeyStore`（已于 R2 修复：改名为 `AndroidKeystoreKeyStore`） | 类名是 Provider（能力供给），实际扮演 Store（持久化读写）；类名与接口角色互换 | `app/src/main/java/.../identity/AndroidKeystoreKeyStore.java:34` |
 | `LssService` / `LssClientService`（已于 R2 修复：改名为 `ScreenShareService` / `ScreenViewerService`） | 服务端与客户端语义无法从名字区分：前者是服务端（被看方），后者是客户端（看方），`Lss` 前缀不携带角色信息 | `app/src/main/java/.../service/ScreenShareService.java:152`、`app/src/main/java/.../service/ScreenViewerService.java:123` |
 | `DeviceListModel`（已于 R2 修复：改名为 `DiscoveryListModel`） | 是发现列表的行投影（分节、排序、空态），不是 MVVM 的 Model；放在 `discovery` 根包也看不出显示职责 | `app/src/main/java/.../discovery/ui/DiscoveryListModel.java:39` |
-| `discoverServices()` / `stopServiceDiscovery()`（已于 R2 修复：对称化为 `startDiscovery()` / `stopDiscovery()`） | 同一生命周期两端的动词不对称，调用方无法靠命名推断配对 | `app/src/main/java/.../discovery/LssServiceDiscoveryManager.java:295`、同文件 `:355` |
+| `discoverServices()` / `stopServiceDiscovery()`（已于 R2 修复：对称化为 `startDiscovery()` / `stopDiscovery()`） | 同一生命周期两端的动词不对称，调用方无法靠命名推断配对 | `app/src/main/java/.../discovery/DiscoveryManager.java:295`、同文件 `:355` |
 | `Constants`（已于 R3 修复：拆为 `NsdConstants`、`MulticastConstants`、`RegisterConstants`、`ScanConstants`、`GrpcConstants` 与 `ServiceProtocol`；`support/Constants` 仅余 2 个运行时值） | 56 个常量、6 个域（资源尺寸、NSD、Action/Extra、窗口类型、MessageId、gRPC 限额）、全仓库 236 处引用；任一处新增都扩大公共面 | `app/src/main/java/.../support/Constants.java:19` |
+| `LssServer`、`LssClient`、`LssServerInfo`、`LssDeviceInfo` 等 13 个 `Lss*` 类型（已于 R4 修复：去掉品牌前缀） | `Lss` 是品牌前缀，不携带角色信息；包名已提供领域上下文（`server`、`client`、`discovery/model`）时仍重复领域前缀 | `app/src/main/java/.../server/ScreenShareServer.java:147`、`app/src/main/java/.../client/ScreenShareClient.java:67`、`app/src/main/java/.../discovery/model/DeviceInfo.java:35` |
+| `core/codec/h264` 中的 `MediaCodec*Bridge`、`AndroidMediaCodec*Bridge`、`*Format`、`EncodedSample`、`DecodedOutput`（已于 R4 修复：迁至 `core/codec/mediacodec`） | MIME 通用的 MediaCodec 桥与 H.264 专属逻辑同包，包的职责无法从名字判断；H.264 之外的编解码器无法复用这些桥 | `app/src/main/java/.../core/codec/mediacodec/MediaCodecBridgeFactory.java:18` |
+| `core/stream/TimeSource`（已于 R4 修复：迁至 `core/util`） | 通用时间源混在流管线包内，`core/stream` 之外的 9 处引用被迫依赖流管线包 | `app/src/main/java/.../core/util/TimeSource.java:11` |
 
 R2 批次同时处理了盘点中的其余命名问题：`KeystoreIdentityProvider` → `DefaultIdentityProvider`（真正的 `IdentityProvider` 实现）、`NsdUtils` → `NsdResolver`、`support/Reference` → `MutableReference`、`discovery/VisibilityPolicy` 迁入 `settings`、`deviceStore()` / `favoriteStore()` 改为 `getDeviceStore()` / `getFavoriteStore()`，以及资源键、布局 id 与主题名的领域前置统一。
 
@@ -203,6 +206,7 @@ R2 批次同时处理了盘点中的其余命名问题：`KeystoreIdentityProvid
 | --- | --- | --- |
 | gRPC `*CallHandler` 命名 | `RegisterCallHandler`、`StreamCallHandler` 等 | 保留 `*CallHandler`：与 gRPC 框架自身的 `ServerCallHandler` 语义一致。这是 `*Handler` 的唯一变体豁免，不扩展出其他 `*Handler` 形式 |
 | `core.codec` 与 `core.codec.jpeg` 的包环 | `CodecRegistry` 硬编码注册 `JpegCodec`，`JpegCodec` 又引用 `core.codec` 的 `CodecDescriptor` 与 `CodecRegistration` | 本次不修。修复需要改注册逻辑（把内置注册移出 `core.codec` 或改为注入），不是纯结构移动，另行处理 |
+| `settings` 对 feature 常量类的依赖 | `settings/DiscoverySettings`、`settings/Preferences` 引用 `discovery` 的 `NsdConstants`、`RegisterConstants`、`MulticastConstants` | 例外允许，不视为方向违规：`*Constants` 是纯值持有者，不含行为、不持有状态，也不反向依赖 `settings`；携带逻辑的 feature 类型仍受 1.4 约束 |
 
 ### 7.3 评审顺序
 

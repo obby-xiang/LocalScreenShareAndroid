@@ -2,6 +2,7 @@ package com.obby.android.localscreenshare.core.codec.h264;
 
 import com.obby.android.localscreenshare.core.codec.Decoder;
 import com.obby.android.localscreenshare.core.codec.DecoderFactory;
+import com.obby.android.localscreenshare.core.codec.mediacodec.MediaCodecBridgeFactory;
 import com.obby.android.localscreenshare.core.model.StreamDescriptor;
 import com.obby.android.localscreenshare.core.model.StreamKey;
 import com.obby.android.localscreenshare.core.render.RenderTarget;

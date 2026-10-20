@@ -62,10 +62,10 @@ import com.obby.android.localscreenshare.MainActivity;
 import com.obby.android.localscreenshare.R;
 import com.obby.android.localscreenshare.client.ClientMediaReceiver;
 import com.obby.android.localscreenshare.client.ClientSecureListener;
-import com.obby.android.localscreenshare.client.LssClient;
-import com.obby.android.localscreenshare.client.LssClientObserver;
-import com.obby.android.localscreenshare.client.LssClientStats;
-import com.obby.android.localscreenshare.client.LssClientStatsListener;
+import com.obby.android.localscreenshare.client.ScreenShareClient;
+import com.obby.android.localscreenshare.client.ClientObserver;
+import com.obby.android.localscreenshare.client.ClientStats;
+import com.obby.android.localscreenshare.client.ClientStatsListener;
 import com.obby.android.localscreenshare.core.client.ClientMediaSession;
 import com.obby.android.localscreenshare.core.client.ClientStateListener;
 import com.obby.android.localscreenshare.core.codec.CodecIds;
@@ -75,10 +75,10 @@ import com.obby.android.localscreenshare.core.model.ClientSessionKey;
 import com.obby.android.localscreenshare.core.model.ClientState;
 import com.obby.android.localscreenshare.core.model.StreamKey;
 import com.obby.android.localscreenshare.core.stream.ClientCapabilities;
-import com.obby.android.localscreenshare.core.stream.TimeSource;
+import com.obby.android.localscreenshare.core.util.TimeSource;
 import com.obby.android.localscreenshare.discovery.favorite.FavoriteStore;
 import com.obby.android.localscreenshare.discovery.model.DeviceAddress;
-import com.obby.android.localscreenshare.discovery.model.LssDeviceInfo;
+import com.obby.android.localscreenshare.discovery.model.DeviceInfo;
 import com.obby.android.localscreenshare.render.SurfaceRenderTarget;
 import com.obby.android.localscreenshare.settings.Preferences;
 import com.obby.android.localscreenshare.support.MutableReference;
@@ -100,7 +100,7 @@ import java.util.Objects;
  * {@link Constants#EXTRA_SERVICE_INFO} after the notification and overlay permissions have been
  * granted. {@link #onStartCommand(Intent, int, int)} creates the notification channel, promotes
  * the service to the foreground with the remote-messaging type, resets any previous session,
- * creates an {@link LssClient} and shows the loading overlay before the client connects. A
+ * creates an {@link ScreenShareClient} and shows the loading overlay before the client connects. A
  * repeated start for the same target leaves the running session alone; a start for a different
  * target replaces it. {@link #stopService()} tears down the client, the overlays and the
  * foreground notification and calls {@link #stopSelf()}; {@link #onDestroy()} only unregisters the
@@ -109,12 +109,12 @@ import java.util.Objects;
  * <p><b>Connection state.</b> Until the first frame arrives the loading overlay is shown. The
  * first frame is reported as {@code onConnected}, which swaps the loading overlay for the viewer;
  * a later disconnect, or a failed first connection, closes the client, shows a floating
- * confirmation and offers a retry. The retry creates a new client because an {@link LssClient} is
+ * confirmation and offers a retry. The retry creates a new client because an {@link ScreenShareClient} is
  * single-use. Cancelling the confirmation broadcasts
  * {@link Constants#ACTION_STOP_CLIENT_SERVICE}.</p>
  *
- * <p><b>Threading and ownership.</b> All service callbacks and {@link LssClientObserver}
- * callbacks run on the main thread; {@link LssClient} decodes frames on its own executor and
+ * <p><b>Threading and ownership.</b> All service callbacks and {@link ClientObserver}
+ * callbacks run on the main thread; {@link ScreenShareClient} decodes frames on its own executor and
  * delivers them on the main thread. A received frame arrives as a {@link MutableReference} owned by the
  * viewer, which clears the previous frame when it stores a new one. All overlay windows are added
  * and removed on the main thread and require the overlay permission checked by
@@ -127,15 +127,15 @@ public class ScreenViewerService extends Service {
 
     // Target of the current session; null while stopped.
     @Nullable
-    private LssDeviceInfo mServiceInfo;
+    private DeviceInfo mServiceInfo;
 
     // Single-use client; replaced by a new instance on retry and nulled on stop.
     @Nullable
-    private LssClient mClient;
+    private ScreenShareClient mClient;
 
     // Last stats sample received on the main thread.
     @Nullable
-    private LssClientStats mClientStats;
+    private ClientStats mClientStats;
 
     // Overlay shown while connecting; the same instance is reused across retries.
     @Nullable
@@ -183,11 +183,11 @@ public class ScreenViewerService extends Service {
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
 
     @NonNull
-    private final LssClientStatsListener mClientStatsListener = this::onClientStatsChanged;
+    private final ClientStatsListener mClientStatsListener = this::onClientStatsChanged;
 
-    // Client callbacks are delivered on the main thread; see LssClient.
+    // Client callbacks are delivered on the main thread; see ScreenShareClient.
     @NonNull
-    private final LssClientObserver mClientObserver = new LssClientObserver() {
+    private final ClientObserver mClientObserver = new ClientObserver() {
         @Override
         public void onConnected() {
             mIsConnected = true;
@@ -230,7 +230,7 @@ public class ScreenViewerService extends Service {
                 mClient = null;
             }
 
-            // An LssClient cannot be restarted, so a retry builds a new instance and shows the
+            // An ScreenShareClient cannot be restarted, so a retry builds a new instance and shows the
             // loading overlay again. The confirmation is a floating window because the activity
             // may not be visible.
             final Context themedContext = new ContextThemeWrapper(ScreenViewerService.this, R.style.Theme_LocalScreenShareAndroid);
@@ -239,7 +239,7 @@ public class ScreenViewerService extends Service {
                     HtmlCompat.FROM_HTML_MODE_LEGACY))
                 .setPositiveButton(android.R.string.ok, (dialog, which) -> {
                     final ClientMediaReceiver receiver = startMediaSession();
-                    mClient = new LssClient(hostOf(mServiceInfo), portOf(mServiceInfo));
+                    mClient = new ScreenShareClient(hostOf(mServiceInfo), portOf(mServiceInfo));
                     mClient.setClientStatsListener(mClientStatsListener);
                     mScreenShareLoading.show();
                     mClient.start(mClientObserver, receiver);
@@ -349,7 +349,7 @@ public class ScreenViewerService extends Service {
             return START_NOT_STICKY;
         }
 
-        final LssDeviceInfo serviceInfo = intent.getParcelableExtra(ServiceProtocol.EXTRA_SERVICE_INFO);
+        final DeviceInfo serviceInfo = intent.getParcelableExtra(ServiceProtocol.EXTRA_SERVICE_INFO);
         if (serviceInfo == null || serviceInfo.primaryAddress() == null) {
             Log.w(mTag, "onStartCommand: no usable device in the intent");
             stopService();
@@ -402,7 +402,7 @@ public class ScreenViewerService extends Service {
         teardownMediaSession();
 
         final ClientMediaReceiver receiver = startMediaSession();
-        mClient = new LssClient(hostOf(mServiceInfo), portOf(mServiceInfo));
+        mClient = new ScreenShareClient(hostOf(mServiceInfo), portOf(mServiceInfo));
         mClient.setClientStatsListener(mClientStatsListener);
         mScreenShareLoading = new ScreenShareLoading(this, mServiceInfo);
         mScreenShareLoading.show();
@@ -418,7 +418,7 @@ public class ScreenViewerService extends Service {
      * timestamps that change on every observation, and a changed timestamp must not restart a
      * healthy session.</p>
      */
-    private boolean isSameTarget(@NonNull final LssDeviceInfo candidate) {
+    private boolean isSameTarget(@NonNull final DeviceInfo candidate) {
         if (mServiceInfo == null) {
             return false;
         }
@@ -430,20 +430,20 @@ public class ScreenViewerService extends Service {
 
     /** Returns the host of the device to dial, or an empty string when it has no address. */
     @NonNull
-    private static String hostOf(@Nullable final LssDeviceInfo device) {
+    private static String hostOf(@Nullable final DeviceInfo device) {
         final DeviceAddress address = device == null ? null : device.primaryAddress();
         return address == null ? "" : address.getHost();
     }
 
     /** Returns the port of the device to dial, or {@code 0} when it has no address. */
-    private static int portOf(@Nullable final LssDeviceInfo device) {
+    private static int portOf(@Nullable final DeviceInfo device) {
         final DeviceAddress address = device == null ? null : device.primaryAddress();
         return address == null ? 0 : address.getPort();
     }
 
     /** Returns the display name of the device, never null. */
     @NonNull
-    private static String nameOf(@Nullable final LssDeviceInfo device) {
+    private static String nameOf(@Nullable final DeviceInfo device) {
         return device == null ? "" : device.displayName();
     }
 
@@ -488,7 +488,7 @@ public class ScreenViewerService extends Service {
 
     // Stats are sampled every three seconds on the main thread; the rate is mirrored into the
     // notification.
-    private void onClientStatsChanged(@NonNull final LssClientStats clientStats) {
+    private void onClientStatsChanged(@NonNull final ClientStats clientStats) {
         mClientStats = clientStats;
         updateInboundDataRate(mClientStats.getInboundDataRate());
     }
@@ -603,7 +603,7 @@ public class ScreenViewerService extends Service {
 
         @SuppressWarnings("DataFlowIssue")
         @SuppressLint("InflateParams")
-        private ScreenShareLoading(@NonNull final Context context, @NonNull final LssDeviceInfo serviceInfo) {
+        private ScreenShareLoading(@NonNull final Context context, @NonNull final DeviceInfo serviceInfo) {
             final Context themedContext = new ContextThemeWrapper(context, R.style.Theme_LocalScreenShareAndroid);
             mWindowManager = themedContext.getSystemService(WindowManager.class);
             mLoadingView = LayoutInflater.from(themedContext).inflate(R.layout.widget_screen_share_loading, null);
@@ -674,7 +674,7 @@ public class ScreenViewerService extends Service {
         private final Context mContext;
 
         @NonNull
-        private final LssDeviceInfo mServiceInfo;
+        private final DeviceInfo mServiceInfo;
 
         @NonNull
         private final WindowManager mWindowManager;
@@ -705,7 +705,7 @@ public class ScreenViewerService extends Service {
         private int mScale;
 
         private SurfaceShareViewer(@NonNull final Context context,
-                                   @NonNull final LssDeviceInfo serviceInfo) {
+                                   @NonNull final DeviceInfo serviceInfo) {
             mContext = new ContextThemeWrapper(context, R.style.Theme_LocalScreenShareAndroid);
             mServiceInfo = serviceInfo;
             mWindowManager = mContext.getSystemService(WindowManager.class);
@@ -908,7 +908,7 @@ public class ScreenViewerService extends Service {
         private final Context mContext;
 
         @NonNull
-        private final LssDeviceInfo mServiceInfo;
+        private final DeviceInfo mServiceInfo;
 
         @NonNull
         private final WindowManager mWindowManager;
@@ -987,7 +987,7 @@ public class ScreenViewerService extends Service {
             };
 
         @SuppressLint("InflateParams")
-        private ScreenShareViewer(@NonNull final Context context, @NonNull final LssDeviceInfo serviceInfo) {
+        private ScreenShareViewer(@NonNull final Context context, @NonNull final DeviceInfo serviceInfo) {
             mContext = new ContextThemeWrapper(context, R.style.Theme_LocalScreenShareAndroid);
             mServiceInfo = serviceInfo;
             mWindowManager = mContext.getSystemService(WindowManager.class);

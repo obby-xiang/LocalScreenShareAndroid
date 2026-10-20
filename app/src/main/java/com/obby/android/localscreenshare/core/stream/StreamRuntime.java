@@ -16,6 +16,7 @@ import com.obby.android.localscreenshare.core.model.EncodedAccessUnit;
 import com.obby.android.localscreenshare.core.model.StreamDescriptor;
 import com.obby.android.localscreenshare.core.model.StreamKey;
 import com.obby.android.localscreenshare.core.model.StreamParameters;
+import com.obby.android.localscreenshare.core.util.TimeSource;
 
 import java.util.ArrayList;
 import java.util.List;

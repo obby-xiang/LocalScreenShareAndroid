@@ -3,7 +3,7 @@ package com.obby.android.localscreenshare.discovery.udp;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
-import com.obby.android.localscreenshare.core.stream.TimeSource;
+import com.obby.android.localscreenshare.core.util.TimeSource;
 import com.obby.android.localscreenshare.discovery.model.DeviceAddress;
 import com.obby.android.localscreenshare.discovery.model.DiscoveryChannel;
 import com.obby.android.localscreenshare.discovery.provider.DeviceObservation;

@@ -3,7 +3,7 @@ package com.obby.android.localscreenshare.server;
 import com.obby.android.localscreenshare.core.support.MutableClock;
 import com.obby.android.localscreenshare.discovery.model.DevicePresence;
 import com.obby.android.localscreenshare.discovery.model.DiscoveryChannel;
-import com.obby.android.localscreenshare.discovery.model.LssDeviceInfo;
+import com.obby.android.localscreenshare.discovery.model.DeviceInfo;
 import com.obby.android.localscreenshare.discovery.register.RegisterClient;
 import com.obby.android.localscreenshare.discovery.register.RegisterConstants;
 import com.obby.android.localscreenshare.discovery.store.DeviceStore;
@@ -75,7 +75,7 @@ public class RegisterCallHandlerTest {
         assertTrue(response.get().getAccepted());
         assertEquals(SELF_ID, response.get().getSelf().getDeviceId());
 
-        LssDeviceInfo device = mStore.device(PEER_ID);
+        DeviceInfo device = mStore.device(PEER_ID);
         assertNotNull(device);
         assertEquals(FINGERPRINT, device.getFingerprint());
         assertEquals(DevicePresence.CONFIRMED, device.getPresence());

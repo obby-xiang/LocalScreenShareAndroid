@@ -5,7 +5,7 @@ import com.obby.android.localscreenshare.discovery.model.DeviceAddress;
 import com.obby.android.localscreenshare.discovery.model.DeviceRole;
 import com.obby.android.localscreenshare.discovery.model.DiscoveryChannel;
 import com.obby.android.localscreenshare.discovery.model.JoinPolicy;
-import com.obby.android.localscreenshare.discovery.model.LssDeviceInfo;
+import com.obby.android.localscreenshare.discovery.model.DeviceInfo;
 import com.obby.android.localscreenshare.discovery.model.ShareState;
 import com.obby.android.localscreenshare.discovery.provider.DeviceObservation;
 
@@ -108,7 +108,7 @@ public class NsdTxtRecordTest {
         assertEquals("Kitchen TV", value(attributes, NsdConstants.NSD_SERVICE_ATTR_NAME));
 
         Map<String, byte[]> untitled = NsdTxtRecord.encode(
-            LssDeviceInfo.builder().id(DEVICE_ID).build(), NsdTxtRecord.Namespace.LEGACY, true);
+            DeviceInfo.builder().id(DEVICE_ID).build(), NsdTxtRecord.Namespace.LEGACY, true);
         assertEquals("LSS-L7Q3K9M2", value(untitled, NsdConstants.NSD_SERVICE_ATTR_NAME));
     }
 
@@ -163,7 +163,7 @@ public class NsdTxtRecordTest {
         for (int i = 0; i < 100; i++) {
             name.append('x');
         }
-        LssDeviceInfo device = LssDeviceInfo.builder().id(DEVICE_ID).name(name.toString()).build();
+        DeviceInfo device = DeviceInfo.builder().id(DEVICE_ID).name(name.toString()).build();
 
         Map<String, byte[]> attributes = NsdTxtRecord.encode(device, NsdTxtRecord.Namespace.CURRENT, true);
 
@@ -173,7 +173,7 @@ public class NsdTxtRecordTest {
 
     @Test
     public void nonAsciiNameRoundTripsAsUtf8() {
-        LssDeviceInfo device = LssDeviceInfo.builder().id(DEVICE_ID).name("Küche-TV").build();
+        DeviceInfo device = DeviceInfo.builder().id(DEVICE_ID).name("Küche-TV").build();
 
         Map<String, byte[]> attributes = NsdTxtRecord.encode(device, NsdTxtRecord.Namespace.CURRENT, true);
 
@@ -209,8 +209,8 @@ public class NsdTxtRecordTest {
         assertTrue(NsdTxtRecord.decode(attributes()).isEmpty());
     }
 
-    private static LssDeviceInfo device(boolean secure) {
-        return LssDeviceInfo.builder()
+    private static DeviceInfo device(boolean secure) {
+        return DeviceInfo.builder()
             .id(DEVICE_ID)
             .name("Kitchen TV")
             .role(DeviceRole.SERVER)

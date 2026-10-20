@@ -1,5 +1,6 @@
 package com.obby.android.localscreenshare.core.codec.h264;
 
+import com.obby.android.localscreenshare.core.codec.mediacodec.DecoderFormat;
 import com.obby.android.localscreenshare.core.model.CodecConfigPart;
 
 import java.util.ArrayList;

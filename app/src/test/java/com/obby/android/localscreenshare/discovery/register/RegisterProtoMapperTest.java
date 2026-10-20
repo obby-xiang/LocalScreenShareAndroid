@@ -5,7 +5,7 @@ import com.obby.android.localscreenshare.discovery.model.DeviceAddress;
 import com.obby.android.localscreenshare.discovery.model.DeviceRole;
 import com.obby.android.localscreenshare.discovery.model.DiscoveryChannel;
 import com.obby.android.localscreenshare.discovery.model.JoinPolicy;
-import com.obby.android.localscreenshare.discovery.model.LssDeviceInfo;
+import com.obby.android.localscreenshare.discovery.model.DeviceInfo;
 import com.obby.android.localscreenshare.discovery.model.ShareState;
 import com.obby.android.localscreenshare.discovery.provider.DeviceObservation;
 import com.obby.android.localscreenshare.grpc.screenstream.DeviceSummary;
@@ -51,7 +51,7 @@ public class RegisterProtoMapperTest {
 
     @Test
     public void summaryOmitsAbsentOptionalFields() {
-        LssDeviceInfo device = LssDeviceInfo.builder()
+        DeviceInfo device = DeviceInfo.builder()
             .id(DEVICE_ID)
             .protocolVersion("1.0")
             .capabilities(1)
@@ -173,8 +173,8 @@ public class RegisterProtoMapperTest {
             .build();
     }
 
-    private static LssDeviceInfo device() {
-        return LssDeviceInfo.builder()
+    private static DeviceInfo device() {
+        return DeviceInfo.builder()
             .id(DEVICE_ID)
             .fingerprint(FINGERPRINT)
             .name("Living room")

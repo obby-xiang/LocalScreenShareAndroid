@@ -1,10 +1,10 @@
 package com.obby.android.localscreenshare.discovery.store;
 
 import com.obby.android.localscreenshare.core.support.MutableClock;
-import com.obby.android.localscreenshare.discovery.legacy.LssServiceInfo;
+import com.obby.android.localscreenshare.discovery.legacy.LegacyServiceInfo;
 import com.obby.android.localscreenshare.discovery.model.DevicePresence;
 import com.obby.android.localscreenshare.discovery.model.DiscoveryChannel;
-import com.obby.android.localscreenshare.discovery.model.LssDeviceInfo;
+import com.obby.android.localscreenshare.discovery.model.DeviceInfo;
 import com.obby.android.localscreenshare.discovery.provider.DeviceObservation;
 
 import org.junit.Before;
@@ -81,7 +81,7 @@ public class DeviceStoreTest {
         mStore.onObserved(heard(DEVICE_ID, "10.0.0.5", 8080, mClock.nowMs()));
 
         assertEquals(1, mStore.snapshot().size());
-        LssDeviceInfo device = mStore.snapshot().get(0);
+        DeviceInfo device = mStore.snapshot().get(0);
         assertEquals(DevicePresence.HEARD, device.getPresence());
         assertFalse(device.isConfirmed());
         assertEquals(0L, device.getLastConfirmedMs());
@@ -212,7 +212,7 @@ public class DeviceStoreTest {
 
     @Test
     public void listenersAreNotifiedOnlyWhenTheSnapshotChanges() {
-        List<List<LssDeviceInfo>> calls = new ArrayList<>();
+        List<List<DeviceInfo>> calls = new ArrayList<>();
         DeviceStoreListener listener = calls::add;
         mStore.addListener(listener);
 
@@ -237,7 +237,7 @@ public class DeviceStoreTest {
     public void legacySnapshotUsesShortIdFallbackAndPrimaryAddress() {
         mStore.onObserved(heard(DEVICE_ID, "10.0.0.5", 8080, mClock.nowMs()));
 
-        List<LssServiceInfo> services = mStore.legacySnapshot();
+        List<LegacyServiceInfo> services = mStore.legacySnapshot();
 
         assertEquals(1, services.size());
         assertEquals(DEVICE_ID, services.get(0).getId());
@@ -257,7 +257,7 @@ public class DeviceStoreTest {
             .lastSeenMs(mClock.nowMs())
             .build());
 
-        List<LssServiceInfo> services = mStore.legacySnapshot();
+        List<LegacyServiceInfo> services = mStore.legacySnapshot();
 
         assertEquals(2, services.size());
         assertEquals("192.168.1.20", services.get(0).getHostAddress());
@@ -266,7 +266,7 @@ public class DeviceStoreTest {
 
     @Test
     public void clearPublishesEmptySnapshot() {
-        List<List<LssDeviceInfo>> calls = new ArrayList<>();
+        List<List<DeviceInfo>> calls = new ArrayList<>();
         mStore.addListener(calls::add);
         mStore.onObserved(heard(DEVICE_ID, "10.0.0.5", 8080, mClock.nowMs()));
 

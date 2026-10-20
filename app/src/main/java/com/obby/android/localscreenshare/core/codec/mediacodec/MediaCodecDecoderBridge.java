@@ -1,4 +1,4 @@
-package com.obby.android.localscreenshare.core.codec.h264;
+package com.obby.android.localscreenshare.core.codec.mediacodec;
 
 /**
  * SPI for the decoder side of a platform media codec.

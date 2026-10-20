@@ -5,7 +5,7 @@ import com.obby.android.localscreenshare.discovery.model.DevicePresence;
 import com.obby.android.localscreenshare.discovery.model.DeviceRole;
 import com.obby.android.localscreenshare.discovery.model.DiscoveryChannel;
 import com.obby.android.localscreenshare.discovery.model.JoinPolicy;
-import com.obby.android.localscreenshare.discovery.model.LssDeviceInfo;
+import com.obby.android.localscreenshare.discovery.model.DeviceInfo;
 import com.obby.android.localscreenshare.discovery.model.ShareState;
 
 import org.junit.Test;
@@ -151,12 +151,12 @@ public class DiscoveryListModelTest {
         assertEquals("10.0.0.5:8080", DiscoveryListModel.addressText(
             device(SERVER_ID, DeviceRole.SERVER, DevicePresence.HEARD, false, ShareState.IDLE,
                 JoinPolicy.OPEN, "10.0.0.5")));
-        assertEquals("", DiscoveryListModel.addressText(LssDeviceInfo.builder().id(SERVER_ID).build()));
+        assertEquals("", DiscoveryListModel.addressText(DeviceInfo.builder().id(SERVER_ID).build()));
     }
 
-    private static LssDeviceInfo device(String id, DeviceRole role, DevicePresence presence,
+    private static DeviceInfo device(String id, DeviceRole role, DevicePresence presence,
         boolean favorite, ShareState state, JoinPolicy join, String host) {
-        return LssDeviceInfo.builder()
+        return DeviceInfo.builder()
             .id(id)
             .role(role)
             .presence(presence)

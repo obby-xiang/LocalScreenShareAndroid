@@ -11,17 +11,17 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import com.obby.android.localscreenshare.App;
-import com.obby.android.localscreenshare.core.stream.TimeSource;
+import com.obby.android.localscreenshare.core.util.TimeSource;
 import com.obby.android.localscreenshare.discovery.favorite.FavoriteDevice;
 import com.obby.android.localscreenshare.discovery.favorite.FavoriteStore;
-import com.obby.android.localscreenshare.discovery.legacy.LssServiceDiscoveryListener;
-import com.obby.android.localscreenshare.discovery.legacy.LssServiceInfo;
+import com.obby.android.localscreenshare.discovery.legacy.LegacyServiceDiscoveryListener;
+import com.obby.android.localscreenshare.discovery.legacy.LegacyServiceInfo;
 import com.obby.android.localscreenshare.discovery.manual.ManualAddressProvider;
 import com.obby.android.localscreenshare.discovery.model.DeviceAddress;
 import com.obby.android.localscreenshare.discovery.model.DeviceRole;
 import com.obby.android.localscreenshare.discovery.model.DiscoveryChannel;
 import com.obby.android.localscreenshare.discovery.model.JoinPolicy;
-import com.obby.android.localscreenshare.discovery.model.LssDeviceInfo;
+import com.obby.android.localscreenshare.discovery.model.DeviceInfo;
 import com.obby.android.localscreenshare.discovery.model.ShareState;
 import com.obby.android.localscreenshare.discovery.nsd.NsdDiscoveryProvider;
 import com.obby.android.localscreenshare.discovery.provider.DeviceObservation;
@@ -68,8 +68,8 @@ import lombok.NoArgsConstructor;
  * Process-wide discovery facade that publishes the LAN screen-stream servers it can reach.
  *
  * <p>The manager keeps the original public contract — subscribe, unsubscribe and receive an
- * {@link LssServiceInfo} snapshot — and adds the store contract the unified list renders:
- * {@link #addDeviceListener(DeviceStoreListener)} delivers the immutable {@link LssDeviceInfo}
+ * {@link LegacyServiceInfo} snapshot — and adds the store contract the unified list renders:
+ * {@link #addDeviceListener(DeviceStoreListener)} delivers the immutable {@link DeviceInfo}
  * snapshot. All state lives in {@link DeviceStore}. Three sources feed observations into the store
  * in parallel: {@link NsdDiscoveryProvider} for mDNS, {@link UdpMulticastDiscoveryProvider} for the
  * multicast announcement channel, and {@link ManualAddressProvider} for favorites and addresses
@@ -91,7 +91,7 @@ import lombok.NoArgsConstructor;
  *
  * <p><b>Threading.</b> All manager state is confined to the main thread: NSD and multicast
  * callbacks are marshaled by the providers, the store is main-thread confined and is driven from
- * here, and {@link LssServiceDiscoveryListener} callbacks are therefore main-thread callbacks. The
+ * here, and {@link LegacyServiceDiscoveryListener} callbacks are therefore main-thread callbacks. The
  * public methods must be called on the main thread. Listener notifications carry an unmodifiable
  * snapshot that is replaced, never mutated, on change.</p>
  *
@@ -103,8 +103,8 @@ import lombok.NoArgsConstructor;
  * mode applies without restarting a share session.</p>
  */
 @NoArgsConstructor(access = AccessLevel.PRIVATE)
-public final class LssServiceDiscoveryManager {
-    private static final String TAG = "LssServiceDiscoveryManager";
+public final class DiscoveryManager {
+    private static final String TAG = "DiscoveryManager";
 
     // Connectivity callbacks often arrive in bursts; one restart per burst is enough.
     private static final long NETWORK_CHANGE_DEBOUNCE_MS = 500L;
@@ -125,7 +125,7 @@ public final class LssServiceDiscoveryManager {
 
     // Main-thread snapshot; unmodifiable and replaced whenever the discovered set changes.
     @NonNull
-    private List<LssServiceInfo> mServiceInfoList = Collections.emptyList();
+    private List<LegacyServiceInfo> mServiceInfoList = Collections.emptyList();
 
     @NonNull
     private final DeviceStore mDeviceStore = new DeviceStore(TimeSource.MONOTONIC);
@@ -196,7 +196,7 @@ public final class LssServiceDiscoveryManager {
 
     // Copy-on-write so dispatch can iterate while a listener removes itself.
     @NonNull
-    private final List<LssServiceDiscoveryListener> mServiceDiscoveryListeners = new CopyOnWriteArrayList<>();
+    private final List<LegacyServiceDiscoveryListener> mServiceDiscoveryListeners = new CopyOnWriteArrayList<>();
 
     // Consumers of the store snapshot itself; the activity renders the list from these.
     @NonNull
@@ -283,7 +283,7 @@ public final class LssServiceDiscoveryManager {
     };
 
     @NonNull
-    public static LssServiceDiscoveryManager get() {
+    public static DiscoveryManager get() {
         return InstanceHolder.INSTANCE;
     }
 
@@ -294,7 +294,7 @@ public final class LssServiceDiscoveryManager {
      * Otherwise the listener receives the current snapshot synchronously before this method
      * returns, whether or not discovery was just started.</p>
      */
-    public void startDiscovery(@NonNull final LssServiceDiscoveryListener listener) {
+    public void startDiscovery(@NonNull final LegacyServiceDiscoveryListener listener) {
         Log.i(TAG, "startDiscovery: discover services");
 
         if (mServiceDiscoveryListeners.contains(listener)) {
@@ -316,7 +316,7 @@ public final class LssServiceDiscoveryManager {
      * was not running.
      *
      * <p>This is the rendering contract introduced with the unified list: the listener gets the
-     * immutable {@link LssDeviceInfo} snapshot, which carries identity, addresses, presence and
+     * immutable {@link DeviceInfo} snapshot, which carries identity, addresses, presence and
      * status. Must be called on the main thread; the current snapshot is delivered synchronously
      * before this method returns. A duplicate subscription is ignored.</p>
      */
@@ -354,7 +354,7 @@ public final class LssServiceDiscoveryManager {
      * resulting empty snapshot is not broadcast because the listener list is empty at that
      * point.</p>
      */
-    public void stopDiscovery(@NonNull final LssServiceDiscoveryListener listener) {
+    public void stopDiscovery(@NonNull final LegacyServiceDiscoveryListener listener) {
         Log.i(TAG, "stopDiscovery: stop service discovery");
 
         if (!mServiceDiscoveryListeners.remove(listener)) {
@@ -420,7 +420,7 @@ public final class LssServiceDiscoveryManager {
 
         FavoriteDevice existing = mFavoriteStore.find(id);
         if (existing == null) {
-            final LssDeviceInfo device = mDeviceStore.device(id);
+            final DeviceInfo device = mDeviceStore.device(id);
             final DeviceAddress address = device == null ? null : device.primaryAddress();
             if (device == null || address == null) {
                 return false;
@@ -611,7 +611,7 @@ public final class LssServiceDiscoveryManager {
     private DeviceSummary selfSummary() {
         try {
             final DeviceIdentity identity = IdentityManager.get().getIdentity();
-            final LssDeviceInfo self = LssDeviceInfo.builder()
+            final DeviceInfo self = DeviceInfo.builder()
                 .id(identity.getId())
                 .fingerprint(identity.getFingerprint())
                 .role(DeviceRole.BOTH)
@@ -741,7 +741,7 @@ public final class LssServiceDiscoveryManager {
     /** Counts the devices with an application-level confirmation, used by the scan grace. */
     private int confirmedDeviceCount() {
         int confirmed = 0;
-        for (final LssDeviceInfo device : mDeviceStore.snapshot()) {
+        for (final DeviceInfo device : mDeviceStore.snapshot()) {
             if (device.isConfirmed()) {
                 confirmed++;
             }
@@ -833,10 +833,10 @@ public final class LssServiceDiscoveryManager {
 
     /**
      * Rebuilds the legacy snapshot and notifies listeners only when it differs from the previous
-     * one. Equality relies on the value semantics of {@link LssServiceInfo}.
+     * one. Equality relies on the value semantics of {@link LegacyServiceInfo}.
      */
     private void updateServiceInfoList() {
-        final List<LssServiceInfo> serviceInfoList = mDeviceStore.legacySnapshot();
+        final List<LegacyServiceInfo> serviceInfoList = mDeviceStore.legacySnapshot();
         if (Objects.equals(mServiceInfoList, serviceInfoList)) {
             Log.w(TAG, "updateServiceInfoList: service info list not changed");
             return;
@@ -850,7 +850,7 @@ public final class LssServiceDiscoveryManager {
 
     // Holds the process-wide instance; initialized on the first call to get().
     private static class InstanceHolder {
-        private static final LssServiceDiscoveryManager INSTANCE = new LssServiceDiscoveryManager();
+        private static final DiscoveryManager INSTANCE = new DiscoveryManager();
     }
 
     // Holds the single-thread scan executor; created on the first scan request.

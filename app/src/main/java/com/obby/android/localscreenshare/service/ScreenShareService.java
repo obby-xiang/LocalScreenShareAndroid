@@ -70,7 +70,7 @@ import com.obby.android.localscreenshare.core.model.StreamKey;
 import com.obby.android.localscreenshare.core.model.StreamParameters;
 import com.obby.android.localscreenshare.core.stream.StreamHub;
 import com.obby.android.localscreenshare.core.stream.StreamRuntime;
-import com.obby.android.localscreenshare.discovery.LssServiceDiscoveryManager;
+import com.obby.android.localscreenshare.discovery.DiscoveryManager;
 import com.obby.android.localscreenshare.discovery.model.AuthMode;
 import com.obby.android.localscreenshare.discovery.model.DeviceRole;
 import com.obby.android.localscreenshare.discovery.model.ShareState;
@@ -85,11 +85,11 @@ import com.obby.android.localscreenshare.discovery.udp.SocketMulticastTransport;
 import com.obby.android.localscreenshare.identity.DeviceIdentity;
 import com.obby.android.localscreenshare.identity.IdentityManager;
 import com.obby.android.localscreenshare.identity.IdentityUnavailableException;
-import com.obby.android.localscreenshare.server.LssServer;
-import com.obby.android.localscreenshare.server.LssServerInfo;
-import com.obby.android.localscreenshare.server.LssServerInfoListener;
-import com.obby.android.localscreenshare.server.LssServerStats;
-import com.obby.android.localscreenshare.server.LssServerStatsListener;
+import com.obby.android.localscreenshare.server.ScreenShareServer;
+import com.obby.android.localscreenshare.server.ServerInfo;
+import com.obby.android.localscreenshare.server.ServerInfoListener;
+import com.obby.android.localscreenshare.server.ServerStats;
+import com.obby.android.localscreenshare.server.ServerStatsListener;
 import com.obby.android.localscreenshare.settings.DiscoverySettings;
 import com.obby.android.localscreenshare.settings.Preferences;
 import com.obby.android.localscreenshare.settings.VisibilityPolicy;
@@ -110,7 +110,7 @@ import java.util.Random;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
- * Foreground service that captures the screen and serves it to clients through {@link LssServer}.
+ * Foreground service that captures the screen and serves it to clients through {@link ScreenShareServer}.
  *
  * <p><b>Lifecycle.</b> The service is started, not bound, by {@link MainActivity} right after the
  * user grants screen capture; the consent result travels in
@@ -131,7 +131,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * {@code lss-service-image-reader} thread, keeps only the newest image, throttles frames to the
  * configured frame rate using the image timestamp, copies the RGBA plane into a reusable
  * {@link Bitmap}, compresses it to JPEG with the configured quality and hands the
- * {@link ScreenFrame} to {@link LssServer#postScreenFrame}. The security flag travels with each
+ * {@link ScreenFrame} to {@link ScreenShareServer#postScreenFrame}. The security flag travels with each
  * frame.</p>
  *
  * <p><b>Threading.</b> Service callbacks, server listeners, preference changes and all state
@@ -163,7 +163,7 @@ public class ScreenShareService extends Service {
 
     // Main-thread state; non-null only between a successful start and stopService().
     @Nullable
-    private LssServer mServer;
+    private ScreenShareServer mServer;
 
     // Multicast announcer; non-null only while the server advertises itself.
     @Nullable
@@ -229,10 +229,10 @@ public class ScreenShareService extends Service {
     // Last values received from the server on the main thread; replayed to newly registered
     // clients.
     @Nullable
-    private LssServerInfo mServerInfo;
+    private ServerInfo mServerInfo;
 
     @Nullable
-    private LssServerStats mServerStats;
+    private ServerStats mServerStats;
 
     // Last values rendered into the notification; used to skip redundant notification updates.
     private int mConnectionCount;
@@ -279,12 +279,12 @@ public class ScreenShareService extends Service {
         }
     }));
 
-    // LssServer invokes both listeners on the main thread.
+    // ScreenShareServer invokes both listeners on the main thread.
     @NonNull
-    private final LssServerInfoListener mServerInfoListener = this::onServerInfoChanged;
+    private final ServerInfoListener mServerInfoListener = this::onServerInfoChanged;
 
     @NonNull
-    private final LssServerStatsListener mServerStatsListener = this::onServerStatsChanged;
+    private final ServerStatsListener mServerStatsListener = this::onServerStatsChanged;
 
     // Registered on the main looper. onStop is reported when the user revokes capture or the
     // system ends it; the resize and visibility callbacks are informational only.
@@ -581,12 +581,12 @@ public class ScreenShareService extends Service {
         // The server binds the configured port and starts advertising over NSD; its listeners
         // are invoked on the main thread. The discovery store is shared with the activity side so
         // Register-learned peers appear in the device list.
-        mServer = new LssServer(this);
+        mServer = new ScreenShareServer(this);
         mServer.setServerInfoListener(mServerInfoListener);
         mServer.setServerStatsListener(mServerStatsListener);
         mServer.setStream(mStreamHub, mStreamRuntime);
         mServer.setSecure(mIsProjectionSecure);
-        mServer.setDeviceStore(LssServiceDiscoveryManager.get().getDeviceStore());
+        mServer.setDeviceStore(DiscoveryManager.get().getDeviceStore());
 
         try {
             mServer.start();
@@ -826,7 +826,7 @@ public class ScreenShareService extends Service {
      */
     @Nullable
     private Announcement buildAnnouncement() {
-        final LssServerInfo serverInfo = mServerInfo;
+        final ServerInfo serverInfo = mServerInfo;
         if (serverInfo == null || serverInfo.getPort() <= 0) {
             return null;
         }
@@ -857,14 +857,14 @@ public class ScreenShareService extends Service {
     }
 
     // Replays the latest server info to every registered client.
-    private void onServerInfoChanged(@NonNull final LssServerInfo serverInfo) {
+    private void onServerInfoChanged(@NonNull final ServerInfo serverInfo) {
         mServerInfo = serverInfo;
         mClientMessengers.forEach(this::notifyServerInfoChanged);
     }
 
     // Forwards stats and updates the notification only when the displayed counters change.
     @SuppressLint("MissingPermission")
-    private void onServerStatsChanged(@NonNull final LssServerStats serverStats) {
+    private void onServerStatsChanged(@NonNull final ServerStats serverStats) {
         mServerStats = serverStats;
         mClientMessengers.forEach(this::notifyServerStatsChanged);
 

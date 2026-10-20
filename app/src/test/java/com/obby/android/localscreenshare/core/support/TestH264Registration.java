@@ -3,7 +3,7 @@ package com.obby.android.localscreenshare.core.support;
 import com.obby.android.localscreenshare.core.codec.CodecDescriptor;
 import com.obby.android.localscreenshare.core.codec.CodecRegistration;
 import com.obby.android.localscreenshare.core.codec.h264.H264Codec;
-import com.obby.android.localscreenshare.core.codec.h264.MediaCodecBridgeFactory;
+import com.obby.android.localscreenshare.core.codec.mediacodec.MediaCodecBridgeFactory;
 
 /**
  * Builds an H.264 registration whose surface requirements are disabled for JVM tests.

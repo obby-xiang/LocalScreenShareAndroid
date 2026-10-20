@@ -6,7 +6,7 @@ import com.obby.android.localscreenshare.discovery.model.DevicePresence;
 import com.obby.android.localscreenshare.discovery.model.DeviceRole;
 import com.obby.android.localscreenshare.discovery.model.DiscoveryChannel;
 import com.obby.android.localscreenshare.discovery.model.JoinPolicy;
-import com.obby.android.localscreenshare.discovery.model.LssDeviceInfo;
+import com.obby.android.localscreenshare.discovery.model.DeviceInfo;
 import com.obby.android.localscreenshare.discovery.model.ShareState;
 import com.obby.android.localscreenshare.discovery.provider.DeviceObservation;
 
@@ -38,7 +38,7 @@ public class DeviceStoreMergeTest {
         mStore.onObserved(observed(DiscoveryChannel.MULTICAST, DEVICE_ID, "192.168.1.7", 9090, mClock.nowMs()));
 
         assertEquals(1, mStore.size());
-        LssDeviceInfo device = mStore.device(DEVICE_ID);
+        DeviceInfo device = mStore.device(DEVICE_ID);
         assertEquals(2, device.getAddresses().size());
         assertEquals(DevicePresence.HEARD, device.getPresence());
     }
@@ -49,7 +49,7 @@ public class DeviceStoreMergeTest {
         mStore.onObserved(observed(DiscoveryChannel.MULTICAST, DEVICE_ID, "192.168.1.7", 9090, mClock.nowMs()));
         mStore.confirm(DEVICE_ID, DiscoveryChannel.MULTICAST, "192.168.1.7", 9090);
 
-        LssDeviceInfo device = mStore.device(DEVICE_ID);
+        DeviceInfo device = mStore.device(DEVICE_ID);
 
         assertEquals("192.168.1.7", device.primaryAddress().getHost());
         assertTrue(device.primaryAddress().isConfirmed());
@@ -77,7 +77,7 @@ public class DeviceStoreMergeTest {
 
         mStore.onObserved(observed(DiscoveryChannel.NSD, DEVICE_ID, "10.0.0.5", 8080, mClock.nowMs()));
 
-        LssDeviceInfo device = mStore.device(DEVICE_ID);
+        DeviceInfo device = mStore.device(DEVICE_ID);
         assertEquals("Kitchen", device.getName());
         assertEquals(DeviceRole.SERVER, device.getRole());
         assertEquals(ShareState.LIVE, device.getState());
@@ -94,7 +94,7 @@ public class DeviceStoreMergeTest {
         mStore.onObserved(fingerprinted("fp-a"));
         mStore.onObserved(fingerprinted("fp-b"));
 
-        LssDeviceInfo device = mStore.device(DEVICE_ID);
+        DeviceInfo device = mStore.device(DEVICE_ID);
 
         assertEquals("fp-a", device.getFingerprint());
         assertTrue(device.isIdentityChanged());
@@ -122,7 +122,7 @@ public class DeviceStoreMergeTest {
             .lost(true)
             .build());
 
-        LssDeviceInfo device = mStore.device(DEVICE_ID);
+        DeviceInfo device = mStore.device(DEVICE_ID);
         assertEquals(1, device.getAddresses().size());
         assertEquals("192.168.1.7", device.primaryAddress().getHost());
         assertEquals(DevicePresence.HEARD, device.getPresence());

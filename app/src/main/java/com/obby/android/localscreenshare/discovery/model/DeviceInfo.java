@@ -23,7 +23,7 @@ import lombok.ToString;
  * capabilities, every address the device was seen at, and the store-derived presence. It is
  * {@link Parcelable} so the viewer service can receive the complete description through
  * {@code ServiceProtocol.EXTRA_SERVICE_INFO}, while
- * {@link com.obby.android.localscreenshare.discovery.legacy.LssServiceInfo}
+ * {@link com.obby.android.localscreenshare.discovery.legacy.LegacyServiceInfo}
  * stays only as the legacy NSD adapter contract.</p>
  *
  * <p>The display name is optional because the device name is not broadcast by default. Callers
@@ -32,7 +32,7 @@ import lombok.ToString;
  */
 @Getter
 @ToString
-public final class LssDeviceInfo implements Parcelable {
+public final class DeviceInfo implements Parcelable {
 
     /** Length of the short id used for the display-name fallback and the NSD instance name. */
     public static final int SHORT_ID_LENGTH = 8;
@@ -44,15 +44,15 @@ public final class LssDeviceInfo implements Parcelable {
     public static final String DEFAULT_PROTOCOL_VERSION = "1.0";
 
     /** Restores a device description from a parcel written by {@link #writeToParcel(Parcel, int)}. */
-    public static final Creator<LssDeviceInfo> CREATOR = new Creator<>() {
+    public static final Creator<DeviceInfo> CREATOR = new Creator<>() {
         @Override
-        public LssDeviceInfo createFromParcel(final Parcel in) {
-            return new LssDeviceInfo(in);
+        public DeviceInfo createFromParcel(final Parcel in) {
+            return new DeviceInfo(in);
         }
 
         @Override
-        public LssDeviceInfo[] newArray(final int size) {
-            return new LssDeviceInfo[size];
+        public DeviceInfo[] newArray(final int size) {
+            return new DeviceInfo[size];
         }
     };
 
@@ -108,7 +108,7 @@ public final class LssDeviceInfo implements Parcelable {
      * @throws IllegalArgumentException if {@code id} is blank
      */
     @Builder(builderMethodName = "builder")
-    private LssDeviceInfo(final String id, final String fingerprint, final String name,
+    private DeviceInfo(final String id, final String fingerprint, final String name,
         final DeviceRole role, final ShareState state, final JoinPolicy join,
         final boolean secure, final AuthMode auth, final String protocolVersion,
         final int metadataVersion, final int capabilities, final List<DeviceAddress> addresses,
@@ -142,7 +142,7 @@ public final class LssDeviceInfo implements Parcelable {
     }
 
     /** Restores a device description written by {@link #writeToParcel(Parcel, int)}. */
-    private LssDeviceInfo(@NonNull final Parcel in) {
+    private DeviceInfo(@NonNull final Parcel in) {
         this(in.readString(), in.readString(), in.readString(),
             DeviceRole.valueOf(in.readString()), ShareState.valueOf(in.readString()),
             JoinPolicy.valueOf(in.readString()), in.readInt() != 0, AuthMode.valueOf(in.readString()),
@@ -206,10 +206,10 @@ public final class LssDeviceInfo implements Parcelable {
         if (this == o) {
             return true;
         }
-        if (!(o instanceof LssDeviceInfo)) {
+        if (!(o instanceof DeviceInfo)) {
             return false;
         }
-        final LssDeviceInfo that = (LssDeviceInfo) o;
+        final DeviceInfo that = (DeviceInfo) o;
         return secure == that.secure && metadataVersion == that.metadataVersion
             && capabilities == that.capabilities && lastSeenMs == that.lastSeenMs
             && lastConfirmedMs == that.lastConfirmedMs && favorite == that.favorite

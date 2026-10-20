@@ -7,7 +7,7 @@ import com.obby.android.localscreenshare.discovery.model.AuthMode;
 import com.obby.android.localscreenshare.discovery.model.DeviceRole;
 import com.obby.android.localscreenshare.discovery.model.DiscoveryChannel;
 import com.obby.android.localscreenshare.discovery.model.JoinPolicy;
-import com.obby.android.localscreenshare.discovery.model.LssDeviceInfo;
+import com.obby.android.localscreenshare.discovery.model.DeviceInfo;
 import com.obby.android.localscreenshare.discovery.model.ShareState;
 import com.obby.android.localscreenshare.discovery.provider.DeviceObservation;
 
@@ -116,7 +116,7 @@ public final class Announcement {
         this.secure = secure;
         this.auth = auth == null ? AuthMode.UNKNOWN : auth;
         this.protocolVersion = protocolVersion == null || protocolVersion.trim().isEmpty()
-            ? LssDeviceInfo.DEFAULT_PROTOCOL_VERSION : protocolVersion;
+            ? DeviceInfo.DEFAULT_PROTOCOL_VERSION : protocolVersion;
         this.metadataVersion = metadataVersion;
         this.capabilities = capabilities;
         this.port = port;

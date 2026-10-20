@@ -2,7 +2,7 @@ package com.obby.android.localscreenshare.discovery.store;
 
 import androidx.annotation.NonNull;
 
-import com.obby.android.localscreenshare.discovery.model.LssDeviceInfo;
+import com.obby.android.localscreenshare.discovery.model.DeviceInfo;
 
 import java.util.List;
 
@@ -17,5 +17,5 @@ import java.util.List;
 public interface DeviceStoreListener {
 
     /** Called with the new snapshot; {@code devices} is never null and never mutated. */
-    void onDevicesChanged(@NonNull List<LssDeviceInfo> devices);
+    void onDevicesChanged(@NonNull List<DeviceInfo> devices);
 }

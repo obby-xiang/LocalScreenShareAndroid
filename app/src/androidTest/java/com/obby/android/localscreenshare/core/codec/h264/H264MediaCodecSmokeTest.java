@@ -8,6 +8,11 @@ import android.view.Surface;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 
 import com.obby.android.localscreenshare.core.codec.CodecRegistration;
+import com.obby.android.localscreenshare.core.codec.mediacodec.AndroidMediaCodecBridgeFactory;
+import com.obby.android.localscreenshare.core.codec.mediacodec.AndroidMediaCodecDecoderBridge;
+import com.obby.android.localscreenshare.core.codec.mediacodec.AndroidMediaCodecEncoderBridge;
+import com.obby.android.localscreenshare.core.codec.mediacodec.DecoderFormat;
+import com.obby.android.localscreenshare.core.codec.mediacodec.EncoderFormat;
 
 import org.junit.Test;
 import org.junit.runner.RunWith;

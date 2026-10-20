@@ -7,7 +7,7 @@ import lombok.Data;
 import lombok.experimental.Accessors;
 
 /**
- * Immutable snapshot of the inbound traffic measured by an {@link LssClient}.
+ * Immutable snapshot of the inbound traffic measured by an {@link ScreenShareClient}.
  *
  * <p>Values cover the interval since the previous collection, not the whole session.</p>
  */
@@ -15,7 +15,7 @@ import lombok.experimental.Accessors;
 @Data
 @AllArgsConstructor(access = AccessLevel.PRIVATE)
 @Builder(builderClassName = "Builder", toBuilder = true)
-public class LssClientStats {
+public class ClientStats {
     /**
      * Inbound wire bytes received during the collection interval.
      */

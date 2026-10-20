@@ -14,7 +14,7 @@ import android.util.Log;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
-import com.obby.android.localscreenshare.core.stream.TimeSource;
+import com.obby.android.localscreenshare.core.util.TimeSource;
 import com.obby.android.localscreenshare.discovery.model.DiscoveryChannel;
 import com.obby.android.localscreenshare.discovery.provider.DeviceObservation;
 import com.obby.android.localscreenshare.discovery.provider.DiscoveryProvider;

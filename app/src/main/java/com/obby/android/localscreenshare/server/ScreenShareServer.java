@@ -23,7 +23,7 @@ import androidx.core.content.ContextCompat;
 import com.obby.android.localscreenshare.core.codec.CodecRegistry;
 import com.obby.android.localscreenshare.core.stream.StreamHub;
 import com.obby.android.localscreenshare.core.stream.StreamRuntime;
-import com.obby.android.localscreenshare.core.stream.TimeSource;
+import com.obby.android.localscreenshare.core.util.TimeSource;
 import com.obby.android.localscreenshare.discovery.favorite.FavoriteStore;
 import com.obby.android.localscreenshare.discovery.model.AuthMode;
 import com.obby.android.localscreenshare.discovery.model.DeviceAddress;
@@ -31,7 +31,7 @@ import com.obby.android.localscreenshare.discovery.model.DevicePresence;
 import com.obby.android.localscreenshare.discovery.model.DeviceRole;
 import com.obby.android.localscreenshare.discovery.model.DiscoveryChannel;
 import com.obby.android.localscreenshare.discovery.model.JoinPolicy;
-import com.obby.android.localscreenshare.discovery.model.LssDeviceInfo;
+import com.obby.android.localscreenshare.discovery.model.DeviceInfo;
 import com.obby.android.localscreenshare.discovery.model.ShareState;
 import com.obby.android.localscreenshare.discovery.nsd.NsdConstants;
 import com.obby.android.localscreenshare.discovery.nsd.NsdResolver;
@@ -111,7 +111,7 @@ import lombok.experimental.Accessors;
  * <p><b>Lifecycle.</b> The constructor builds the gRPC server object and its executor but does not
  * bind a port. {@link #start()} binds the configured port, registers both NSD service types, the
  * default-network callback and the Wi-Fi AP state receiver, publishes an initial
- * {@link LssServerInfo} with a placeholder host address, and starts the periodic stats sampling.
+ * {@link ServerInfo} with a placeholder host address, and starts the periodic stats sampling.
  * {@link #stop()} releases all of them in reverse order and shuts the gRPC executor down; late
  * NSD, network and gRPC callbacks then observe nulled state and become no-ops.</p>
  *
@@ -125,7 +125,7 @@ import lombok.experimental.Accessors;
  * <p><b>Host address discovery.</b> The host address is not known when the gRPC port is bound. The
  * server resolves its own NSD registration and re-resolves it whenever the default network
  * changes, a network capability changes or the Wi-Fi AP state changes; resolve failures are
- * retried with a bounded timeout and a backoff. {@link LssServerInfoListener} is notified whenever
+ * retried with a bounded timeout and a backoff. {@link ServerInfoListener} is notified whenever
  * the resulting address changes.</p>
  *
  * <p><b>Threading.</b> {@link #start()}, {@link #stop()}, the info and stats listeners and all
@@ -144,7 +144,7 @@ import lombok.experimental.Accessors;
  * values change.</p>
  */
 @Accessors(prefix = "m")
-public final class LssServer {
+public final class ScreenShareServer {
     private static final long UPDATE_SERVER_STATS_INTERVAL_MS = 3000L;
 
     // Schema version of the discovery metadata written into the NSD TXT record.
@@ -168,7 +168,7 @@ public final class LssServer {
 
     // Published identity; null while stopped.
     @Nullable
-    private LssServerInfo mServerInfo;
+    private ServerInfo mServerInfo;
 
     // Primary registration used for resolve and re-register attempts; null while stopped.
     @Nullable
@@ -191,15 +191,15 @@ public final class LssServer {
 
     // Last sampled value; used to suppress duplicate listener calls.
     @Nullable
-    private LssServerStats mServerStats;
+    private ServerStats mServerStats;
 
     @Setter
     @Nullable
-    private LssServerInfoListener mServerInfoListener;
+    private ServerInfoListener mServerInfoListener;
 
     @Setter
     @Nullable
-    private LssServerStatsListener mServerStatsListener;
+    private ServerStatsListener mServerStatsListener;
 
     // Media stream wiring: the hub owns per-client send sessions and the runtime owns the encoder.
     // Both are assembled and started by ScreenShareService before the server accepts streams.
@@ -231,7 +231,7 @@ public final class LssServer {
     // Set by stop(); late stream calls become no-ops.
     private volatile boolean mIsStopped;
 
-    private final String mTag = "LssServer@" + hashCode();
+    private final String mTag = "ScreenShareServer@" + hashCode();
 
     @NonNull
     private final Context mContext;
@@ -364,7 +364,7 @@ public final class LssServer {
                 return;
             }
 
-            final LssServerStats serverStats = mServerProfile.collect();
+            final ServerStats serverStats = mServerProfile.collect();
             if (Objects.equals(mServerStats, serverStats)) {
                 Log.w(mTag, "mUpdateServerStatsRunnable: server stats not changed");
             } else {
@@ -555,7 +555,7 @@ public final class LssServer {
         }
     };
 
-    public LssServer(@NonNull final Context context) {
+    public ScreenShareServer(@NonNull final Context context) {
         mContext = context;
         mNsdManager = mContext.getSystemService(NsdManager.class);
         mConnectivityManager = mContext.getSystemService(ConnectivityManager.class);
@@ -594,7 +594,7 @@ public final class LssServer {
      *
      * <p>Must be called once on the main thread. When this method returns, the gRPC server is
      * accepting calls and the info listener, if any, has already been notified with the initial
-     * {@link LssServerInfo}. The host address in that first notification is
+     * {@link ServerInfo}. The host address in that first notification is
      * {@link Constants#UNKNOWN_HOST_ADDRESS} until NSD resolution succeeds.</p>
      *
      * @throws IOException if the port cannot be bound or the server cannot start
@@ -611,7 +611,7 @@ public final class LssServer {
             throw new IOException("device identity unavailable", e);
         }
 
-        mServerInfo = LssServerInfo.builder()
+        mServerInfo = ServerInfo.builder()
             .id(identity.getId())
             .deviceId(identity.getId())
             .fingerprint(identity.getFingerprint())
@@ -620,7 +620,7 @@ public final class LssServer {
             .port(mGrpcServer.getPort())
             .build();
 
-        final LssDeviceInfo advertisement = buildAdvertisement(mServerInfo);
+        final DeviceInfo advertisement = buildAdvertisement(mServerInfo);
         // Compatibility mode publishes only the legacy type, so a legacy peer sees this device
         // and this device never advertises a record that requires the new TXT keys.
         final DiscoverySettings settings = Preferences.get().getDiscoverySettings();
@@ -698,7 +698,7 @@ public final class LssServer {
             mLegacyRegistration = null;
         }
 
-        final LssDeviceInfo advertisement = buildAdvertisement(mServerInfo);
+        final DeviceInfo advertisement = buildAdvertisement(mServerInfo);
         final DiscoverySettings settings = Preferences.get().getDiscoverySettings();
         mPrimaryRegistration = settings.isCompatOnly() ? null
             : new Registration(NsdConstants.NSD_SERVICE_TYPE,
@@ -769,7 +769,7 @@ public final class LssServer {
         mGrpcServerExecutor.shutdownNow();
     }
 
-    private void updateServerInfo(@NonNull final LssServerInfo serverInfo) {
+    private void updateServerInfo(@NonNull final ServerInfo serverInfo) {
         if (Objects.equals(mServerInfo, serverInfo)) {
             Log.w(mTag, "updateServerInfo: server info not changed");
             return;
@@ -809,7 +809,7 @@ public final class LssServer {
      */
     @Nullable
     private DeviceSummary buildDeviceSummary() {
-        final LssServerInfo serverInfo = mServerInfo;
+        final ServerInfo serverInfo = mServerInfo;
         if (serverInfo == null) {
             return null;
         }
@@ -820,7 +820,7 @@ public final class LssServer {
             addresses.add(new DeviceAddress(hostAddress, serverInfo.getPort(), DiscoveryChannel.MULTICAST));
         }
 
-        final LssDeviceInfo device = LssDeviceInfo.builder()
+        final DeviceInfo device = DeviceInfo.builder()
             .id(serverInfo.getDeviceId())
             .fingerprint(serverInfo.getFingerprint())
             .name(Preferences.get().isShareNameEnabled() ? Preferences.get().getDeviceAlias() : null)
@@ -849,11 +849,11 @@ public final class LssServer {
     }
 
     @NonNull
-    private LssDeviceInfo buildAdvertisement(@NonNull final LssServerInfo serverInfo) {        // The fingerprint is deliberately absent: it never goes into the mDNS record and travels
+    private DeviceInfo buildAdvertisement(@NonNull final ServerInfo serverInfo) {        // The fingerprint is deliberately absent: it never goes into the mDNS record and travels
         // with the application-level handshake (Register and HELLO) instead.
         final DiscoverySettings settings = Preferences.get().getDiscoverySettings();
         final long nowMs = System.currentTimeMillis();
-        return LssDeviceInfo.builder()
+        return DeviceInfo.builder()
             .id(serverInfo.getDeviceId())
             .name(Preferences.get().getDeviceAlias())
             .role(DeviceRole.SERVER)
@@ -876,10 +876,10 @@ public final class LssServer {
      * name sharing.
      */
     @NonNull
-    private NsdServiceInfo buildNsdServiceInfo(@NonNull final LssDeviceInfo advertisement,
+    private NsdServiceInfo buildNsdServiceInfo(@NonNull final DeviceInfo advertisement,
         @NonNull final NsdTxtRecord.Namespace namespace) {
         final NsdServiceInfo nsdServiceInfo = new NsdServiceInfo();
-        nsdServiceInfo.setServiceName(LssDeviceInfo.NAME_PREFIX + advertisement.shortId());
+        nsdServiceInfo.setServiceName(DeviceInfo.NAME_PREFIX + advertisement.shortId());
         nsdServiceInfo.setServiceType(namespace == NsdTxtRecord.Namespace.LEGACY
             ? NsdConstants.NSD_SERVICE_TYPE_LEGACY : NsdConstants.NSD_SERVICE_TYPE);
         nsdServiceInfo.setPort(mGrpcServer.getPort());
@@ -1063,17 +1063,17 @@ public final class LssServer {
         }
 
         @NonNull
-        public LssServerStats collect() {
+        public ServerStats collect() {
             synchronized (mLock) {
                 // getAndSet closes the current interval and opens the next one.
                 final long startTimestamp = mCollectionTimestamp.getAndSet(SystemClock.elapsedRealtimeNanos());
                 final long endTimestamp = mCollectionTimestamp.get();
-                final List<LssServerStats.TransportStats> transports = mTransports.stream()
+                final List<ServerStats.TransportStats> transports = mTransports.stream()
                     .map(transportProfile -> {
                         final long outboundDataSize = transportProfile.getAndResetOutboundDataSize();
                         final long outboundDataRate = Math.round((double) outboundDataSize
                             / (endTimestamp - startTimestamp) * Duration.ofSeconds(1L).toNanos());
-                        return LssServerStats.TransportStats.builder()
+                        return ServerStats.TransportStats.builder()
                             .remoteAddress(transportProfile.getRemoteAddress().toString())
                             .outboundDataSize(outboundDataSize)
                             .outboundDataRate(outboundDataRate)
@@ -1081,12 +1081,12 @@ public final class LssServer {
                     })
                     .collect(Collectors.toUnmodifiableList());
                 final long outboundDataSize = transports.stream()
-                    .map(LssServerStats.TransportStats::getOutboundDataSize)
+                    .map(ServerStats.TransportStats::getOutboundDataSize)
                     .reduce(0L, Long::sum);
                 final long outboundDataRate = Math.round((double) outboundDataSize / (endTimestamp - startTimestamp)
                     * Duration.ofSeconds(1L).toNanos());
 
-                return LssServerStats.builder()
+                return ServerStats.builder()
                     .outboundDataSize(outboundDataSize)
                     .outboundDataRate(outboundDataRate)
                     .transports(transports)

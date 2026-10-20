@@ -2,10 +2,10 @@ package com.obby.android.localscreenshare.core.support;
 
 import android.view.Surface;
 
-import com.obby.android.localscreenshare.core.codec.h264.EncodedSample;
-import com.obby.android.localscreenshare.core.codec.h264.EncoderFormat;
-import com.obby.android.localscreenshare.core.codec.h264.EncoderStreamFormat;
-import com.obby.android.localscreenshare.core.codec.h264.MediaCodecEncoderBridge;
+import com.obby.android.localscreenshare.core.codec.mediacodec.EncodedSample;
+import com.obby.android.localscreenshare.core.codec.mediacodec.EncoderFormat;
+import com.obby.android.localscreenshare.core.codec.mediacodec.EncoderStreamFormat;
+import com.obby.android.localscreenshare.core.codec.mediacodec.MediaCodecEncoderBridge;
 import com.obby.android.localscreenshare.core.model.ColorInfo;
 
 import java.util.ArrayList;

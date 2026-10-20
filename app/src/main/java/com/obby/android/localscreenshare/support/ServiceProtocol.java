@@ -51,7 +51,7 @@ public final class ServiceProtocol {
     /**
      * Intent extra carrying the device the client service connects to.
      *
-     * <p>The value is a {@code LssDeviceInfo}; its primary address is the endpoint and its id and
+     * <p>The value is a {@code DeviceInfo}; its primary address is the endpoint and its id and
      * fingerprint bind the session to the discovered device.</p>
      */
     public static final String EXTRA_SERVICE_INFO = "serviceInfo";

@@ -7,7 +7,7 @@ import com.obby.android.localscreenshare.discovery.model.AuthMode;
 import com.obby.android.localscreenshare.discovery.model.DeviceRole;
 import com.obby.android.localscreenshare.discovery.model.DiscoveryChannel;
 import com.obby.android.localscreenshare.discovery.model.JoinPolicy;
-import com.obby.android.localscreenshare.discovery.model.LssDeviceInfo;
+import com.obby.android.localscreenshare.discovery.model.DeviceInfo;
 import com.obby.android.localscreenshare.discovery.model.ShareState;
 import com.obby.android.localscreenshare.discovery.provider.DeviceObservation;
 
@@ -44,7 +44,7 @@ public final class NsdTxtRecord {
     /** TXT value limit from RFC 6763; larger values are ignored while decoding. */
     private static final int MAX_VALUE_BYTES = 255;
 
-    /** TXT namespace written by {@link #encode(LssDeviceInfo, Namespace, boolean)}. */
+    /** TXT namespace written by {@link #encode(DeviceInfo, Namespace, boolean)}. */
     public enum Namespace {
         /** Current {@code _lss._tcp} record: the full minimal set. */
         CURRENT,
@@ -96,14 +96,14 @@ public final class NsdTxtRecord {
      * @param shareName whether the user allowed broadcasting the device name
      */
     @NonNull
-    public static Map<String, byte[]> encode(@NonNull final LssDeviceInfo device,
+    public static Map<String, byte[]> encode(@NonNull final DeviceInfo device,
         @NonNull final Namespace namespace, final boolean shareName) {
         final Map<String, byte[]> attributes = new LinkedHashMap<>();
         putValue(attributes, NsdConstants.NSD_SERVICE_ATTR_ID, device.getId());
 
         if (namespace == Namespace.LEGACY) {
             final String legacyName = shareName && device.getName() != null
-                ? truncate(device.getName()) : LssDeviceInfo.NAME_PREFIX + device.shortId();
+                ? truncate(device.getName()) : DeviceInfo.NAME_PREFIX + device.shortId();
             putValue(attributes, NsdConstants.NSD_SERVICE_ATTR_NAME, legacyName);
             return attributes;
         }

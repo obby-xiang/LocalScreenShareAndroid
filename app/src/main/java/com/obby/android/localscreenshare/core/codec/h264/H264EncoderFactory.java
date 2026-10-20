@@ -4,6 +4,7 @@ import com.obby.android.localscreenshare.core.codec.CodecIds;
 import com.obby.android.localscreenshare.core.codec.Encoder;
 import com.obby.android.localscreenshare.core.codec.EncoderFactory;
 import com.obby.android.localscreenshare.core.codec.EncoderOutput;
+import com.obby.android.localscreenshare.core.codec.mediacodec.MediaCodecBridgeFactory;
 import com.obby.android.localscreenshare.core.model.StreamDescriptor;
 import com.obby.android.localscreenshare.core.model.StreamKey;
 import com.obby.android.localscreenshare.core.model.StreamParameters;

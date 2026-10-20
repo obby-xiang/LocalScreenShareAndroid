@@ -1,4 +1,4 @@
-package com.obby.android.localscreenshare.core.codec.h264;
+package com.obby.android.localscreenshare.core.codec.mediacodec;
 
 /**
  * Creates the platform bridges used by the H.264 encoder and decoder.

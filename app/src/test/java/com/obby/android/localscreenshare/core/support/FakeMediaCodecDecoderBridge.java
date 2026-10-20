@@ -1,8 +1,8 @@
 package com.obby.android.localscreenshare.core.support;
 
-import com.obby.android.localscreenshare.core.codec.h264.DecodedOutput;
-import com.obby.android.localscreenshare.core.codec.h264.DecoderFormat;
-import com.obby.android.localscreenshare.core.codec.h264.MediaCodecDecoderBridge;
+import com.obby.android.localscreenshare.core.codec.mediacodec.DecodedOutput;
+import com.obby.android.localscreenshare.core.codec.mediacodec.DecoderFormat;
+import com.obby.android.localscreenshare.core.codec.mediacodec.MediaCodecDecoderBridge;
 
 import java.util.ArrayList;
 import java.util.Collections;

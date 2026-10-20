@@ -19,7 +19,7 @@ import java.util.UUID;
  *
  * <p>The handler owns the join, keyframe-request and drain lifecycle for a single client. It never
  * starts threads itself: {@link #drainOnce()} is driven by the owner (a per-client drain thread in
- * {@link LssServer}), so the handler stays synchronous and unit-testable. A join is attempted on
+ * {@link ScreenShareServer}), so the handler stays synchronous and unit-testable. A join is attempted on
  * the first HELLO; when the active runtime has not published a descriptor yet the join is retried
  * on subsequent drain calls until it succeeds, and a rejected or fallback-requiring client is
  * closed. An empty capability set is treated as the H.264 compatibility baseline.</p>

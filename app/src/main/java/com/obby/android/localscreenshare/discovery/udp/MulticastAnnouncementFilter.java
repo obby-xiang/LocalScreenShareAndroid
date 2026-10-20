@@ -2,7 +2,7 @@ package com.obby.android.localscreenshare.discovery.udp;
 
 import androidx.annotation.NonNull;
 
-import com.obby.android.localscreenshare.core.stream.TimeSource;
+import com.obby.android.localscreenshare.core.util.TimeSource;
 import com.obby.android.localscreenshare.discovery.register.RegisterConstants;
 
 import java.util.Iterator;

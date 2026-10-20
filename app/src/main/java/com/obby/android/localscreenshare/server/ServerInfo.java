@@ -24,16 +24,16 @@ import lombok.experimental.Accessors;
 @Data
 @AllArgsConstructor(access = AccessLevel.PRIVATE)
 @Builder(builderClassName = "Builder", toBuilder = true)
-public class LssServerInfo implements Parcelable {
-    public static final Creator<LssServerInfo> CREATOR = new Creator<>() {
+public class ServerInfo implements Parcelable {
+    public static final Creator<ServerInfo> CREATOR = new Creator<>() {
         @Override
-        public LssServerInfo createFromParcel(Parcel in) {
-            return new LssServerInfo(in);
+        public ServerInfo createFromParcel(Parcel in) {
+            return new ServerInfo(in);
         }
 
         @Override
-        public LssServerInfo[] newArray(int size) {
-            return new LssServerInfo[size];
+        public ServerInfo[] newArray(int size) {
+            return new ServerInfo[size];
         }
     };
 
@@ -83,7 +83,7 @@ public class LssServerInfo implements Parcelable {
     private final String mFingerprint;
 
     @SuppressWarnings("DataFlowIssue")
-    private LssServerInfo(@NonNull final Parcel in) {
+    private ServerInfo(@NonNull final Parcel in) {
         mId = in.readString();
         mName = in.readString();
         mHostAddress = in.readString();

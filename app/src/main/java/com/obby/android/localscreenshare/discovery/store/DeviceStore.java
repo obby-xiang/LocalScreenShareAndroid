@@ -3,12 +3,12 @@ package com.obby.android.localscreenshare.discovery.store;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
-import com.obby.android.localscreenshare.core.stream.TimeSource;
-import com.obby.android.localscreenshare.discovery.legacy.LssServiceInfo;
+import com.obby.android.localscreenshare.core.util.TimeSource;
+import com.obby.android.localscreenshare.discovery.legacy.LegacyServiceInfo;
 import com.obby.android.localscreenshare.discovery.model.DeviceAddress;
 import com.obby.android.localscreenshare.discovery.model.DevicePresence;
 import com.obby.android.localscreenshare.discovery.model.DiscoveryChannel;
-import com.obby.android.localscreenshare.discovery.model.LssDeviceInfo;
+import com.obby.android.localscreenshare.discovery.model.DeviceInfo;
 import com.obby.android.localscreenshare.discovery.provider.DeviceObservation;
 
 import java.util.ArrayList;
@@ -62,12 +62,12 @@ public final class DeviceStore {
     /** Interval of the store-wide main-thread tick. */
     public static final long TICK_INTERVAL_MS = 1_000L;
 
-    private static final Comparator<LssDeviceInfo> SNAPSHOT_COMPARATOR =
-        Comparator.comparingInt((LssDeviceInfo device) -> presenceRank(device.getPresence()))
+    private static final Comparator<DeviceInfo> SNAPSHOT_COMPARATOR =
+        Comparator.comparingInt((DeviceInfo device) -> presenceRank(device.getPresence()))
             .thenComparing(device -> !device.isFavorite())
-            .thenComparing(Comparator.comparingLong(LssDeviceInfo::getLastConfirmedMs).reversed())
-            .thenComparing(LssDeviceInfo::displayName)
-            .thenComparing(LssDeviceInfo::getId);
+            .thenComparing(Comparator.comparingLong(DeviceInfo::getLastConfirmedMs).reversed())
+            .thenComparing(DeviceInfo::displayName)
+            .thenComparing(DeviceInfo::getId);
 
     @NonNull
     private final TimeSource mTimeSource;
@@ -81,7 +81,7 @@ public final class DeviceStore {
     private final List<DeviceStoreListener> mListeners = new CopyOnWriteArrayList<>();
 
     @NonNull
-    private List<LssDeviceInfo> mSnapshot = Collections.emptyList();
+    private List<DeviceInfo> mSnapshot = Collections.emptyList();
 
     public DeviceStore(@NonNull final TimeSource timeSource) {
         mTimeSource = Objects.requireNonNull(timeSource, "timeSource");
@@ -260,7 +260,7 @@ public final class DeviceStore {
 
     /** Returns the current immutable snapshot, ordered by presence, favorite, confirmation and name. */
     @NonNull
-    public List<LssDeviceInfo> snapshot() {
+    public List<DeviceInfo> snapshot() {
         return mSnapshot;
     }
 
@@ -268,18 +268,18 @@ public final class DeviceStore {
      * Returns the snapshot projected onto the legacy UI contract.
      *
      * <p>Only devices with an address are included; the display name falls back to
-     * {@code LSS-<short id>} so the non-null {@link LssServiceInfo#getName() name} contract keeps
+     * {@code LSS-<short id>} so the non-null {@link LegacyServiceInfo#getName() name} contract keeps
      * holding. The list is sorted exactly like the pre-store discovery manager sorted it.</p>
      */
     @NonNull
-    public List<LssServiceInfo> legacySnapshot() {
-        final List<LssServiceInfo> services = new ArrayList<>();
-        for (final LssDeviceInfo device : mSnapshot) {
+    public List<LegacyServiceInfo> legacySnapshot() {
+        final List<LegacyServiceInfo> services = new ArrayList<>();
+        for (final DeviceInfo device : mSnapshot) {
             final DeviceAddress address = device.primaryAddress();
             if (address == null) {
                 continue;
             }
-            services.add(LssServiceInfo.builder()
+            services.add(LegacyServiceInfo.builder()
                 .id(device.getId())
                 .name(device.displayName())
                 .hostAddress(address.getHost())
@@ -293,8 +293,8 @@ public final class DeviceStore {
 
     /** Returns the current description of one device, or null when it is unknown or expired. */
     @Nullable
-    public LssDeviceInfo device(@NonNull final String id) {
-        for (final LssDeviceInfo device : mSnapshot) {
+    public DeviceInfo device(@NonNull final String id) {
+        for (final DeviceInfo device : mSnapshot) {
             if (device.getId().equals(id)) {
                 return device;
             }
@@ -310,7 +310,7 @@ public final class DeviceStore {
     private void refresh(final long nowMs) {
         mEntries.values().removeIf(entry -> entry.isExpired(nowMs, HEARD_TTL_MS, CONFIRMED_TTL_MS, REMOVE_AFTER_MS));
 
-        final List<LssDeviceInfo> snapshot = buildSnapshot(nowMs);
+        final List<DeviceInfo> snapshot = buildSnapshot(nowMs);
         if (snapshot.equals(mSnapshot)) {
             return;
         }
@@ -322,8 +322,8 @@ public final class DeviceStore {
     }
 
     @NonNull
-    private List<LssDeviceInfo> buildSnapshot(final long nowMs) {
-        final List<LssDeviceInfo> devices = new ArrayList<>(mEntries.size());
+    private List<DeviceInfo> buildSnapshot(final long nowMs) {
+        final List<DeviceInfo> devices = new ArrayList<>(mEntries.size());
         for (final DeviceEntry entry : mEntries.values()) {
             final List<DeviceAddress> addresses = new ArrayList<>();
             for (final DeviceAddress address : entry.addresses()) {
@@ -332,7 +332,7 @@ public final class DeviceStore {
                 addresses.add(address.withConfirmation(stillConfirmed, address.getLastConfirmedMs()));
             }
 
-            devices.add(LssDeviceInfo.builder()
+            devices.add(DeviceInfo.builder()
                 .id(entry.id)
                 .fingerprint(entry.fingerprint)
                 .name(entry.name)

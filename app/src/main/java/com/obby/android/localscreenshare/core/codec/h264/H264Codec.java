@@ -3,6 +3,8 @@ package com.obby.android.localscreenshare.core.codec.h264;
 import com.obby.android.localscreenshare.core.codec.CodecDescriptor;
 import com.obby.android.localscreenshare.core.codec.CodecIds;
 import com.obby.android.localscreenshare.core.codec.CodecRegistration;
+import com.obby.android.localscreenshare.core.codec.mediacodec.AndroidMediaCodecBridgeFactory;
+import com.obby.android.localscreenshare.core.codec.mediacodec.MediaCodecBridgeFactory;
 import com.obby.android.localscreenshare.core.model.BitstreamFormat;
 
 /**

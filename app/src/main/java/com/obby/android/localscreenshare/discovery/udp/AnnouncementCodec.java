@@ -10,7 +10,7 @@ import com.google.gson.JsonPrimitive;
 import com.obby.android.localscreenshare.discovery.model.AuthMode;
 import com.obby.android.localscreenshare.discovery.model.DeviceRole;
 import com.obby.android.localscreenshare.discovery.model.JoinPolicy;
-import com.obby.android.localscreenshare.discovery.model.LssDeviceInfo;
+import com.obby.android.localscreenshare.discovery.model.DeviceInfo;
 import com.obby.android.localscreenshare.discovery.model.ShareState;
 
 import java.nio.charset.StandardCharsets;
@@ -147,7 +147,7 @@ public final class AnnouncementCodec {
                 .secure(booleanValue(json, KEY_SECURE, false))
                 .auth(AuthMode.fromWire(stringValue(json, KEY_AUTH, true)))
                 .protocolVersion(protocolVersion == null
-                    ? LssDeviceInfo.DEFAULT_PROTOCOL_VERSION : protocolVersion)
+                    ? DeviceInfo.DEFAULT_PROTOCOL_VERSION : protocolVersion)
                 .metadataVersion(intValue(json, KEY_METADATA_VERSION, 0))
                 .capabilities(intValue(json, KEY_CAPABILITIES, 0))
                 .port(clampPort(intValue(json, KEY_PORT, 0)))

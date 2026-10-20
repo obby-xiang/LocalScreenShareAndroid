@@ -51,7 +51,7 @@ import lombok.experimental.Accessors;
 /**
  * Client endpoint for one remote screen stream over the bidirectional gRPC stream.
  *
- * <p>Each instance owns an OkHttp-backed {@link ManagedChannel}. {@link #start(LssClientObserver,
+ * <p>Each instance owns an OkHttp-backed {@link ManagedChannel}. {@link #start(ClientObserver,
  * ClientMediaReceiver)} opens the stream, announces the client with a HELLO and hands every server
  * message to a dedicated single-thread decode executor that drives the {@link ClientMediaReceiver}.
  * Decoding therefore never runs on the gRPC executor. {@link #requestKeyframe()} asks the server for
@@ -64,7 +64,7 @@ import lombok.experimental.Accessors;
  * callbacks are always delivered on the main thread.</p>
  */
 @Accessors(prefix = "m")
-public final class LssClient {
+public final class ScreenShareClient {
     private static final long UPDATE_CLIENT_STATS_INTERVAL_MS = 3000L;
 
     // Bounds the decode queue so a catastrophically slow decoder cannot grow it without limit;
@@ -80,14 +80,14 @@ public final class LssClient {
 
     // Last sampled value; used to suppress duplicate listener calls.
     @Nullable
-    private LssClientStats mClientStats;
+    private ClientStats mClientStats;
 
     // Invoked on the main thread by mUpdateClientStatsRunnable.
     @Setter
     @Nullable
-    private LssClientStatsListener mClientStatsListener;
+    private ClientStatsListener mClientStatsListener;
 
-    private final String mTag = "LssClient@" + hashCode();
+    private final String mTag = "ScreenShareClient@" + hashCode();
 
     // Created in the constructor; shut down permanently by stop().
     @NonNull
@@ -165,7 +165,7 @@ public final class LssClient {
                 return;
             }
 
-            final LssClientStats clientStats = mClientProfile.collect();
+            final ClientStats clientStats = mClientProfile.collect();
             if (Objects.equals(mClientStats, clientStats)) {
                 Log.w(mTag, "mUpdateClientStatsRunnable: client stats not changed");
             } else {
@@ -190,7 +190,7 @@ public final class LssClient {
      * @param host remote host address
      * @param port remote gRPC port
      */
-    public LssClient(@NonNull final String host, final int port) {
+    public ScreenShareClient(@NonNull final String host, final int port) {
         mGrpcChannel = OkHttpChannelBuilder.forAddress(host, port, InsecureChannelCredentials.create())
             .flowControlWindow(GrpcConstants.GRPC_FLOW_CONTROL_WINDOW)
             .maxInboundMessageSize(GrpcConstants.GRPC_MAX_INBOUND_MESSAGE_SIZE)
@@ -202,7 +202,7 @@ public final class LssClient {
     /**
      * Opens the bidirectional stream, announces the client and starts the periodic stats sampling.
      *
-     * <p>Returns immediately. {@link LssClientObserver#onConnected()} is reported on the main thread
+     * <p>Returns immediately. {@link ClientObserver#onConnected()} is reported on the main thread
      * when the first server message arrives, which means the transport is established; the session's
      * own state listener reports the transition to streaming. A HELLO carries this client's id; the
      * capability set is left empty until runtime probing lands, which the server treats as the
@@ -214,7 +214,7 @@ public final class LssClient {
      * @param observer receiver of connection-state callbacks
      * @param receiver media session driver; every server message is handed to it on the decode thread
      */
-    public void start(@NonNull final LssClientObserver observer,
+    public void start(@NonNull final ClientObserver observer,
                       @NonNull final ClientMediaReceiver receiver) {
         mRequestObserver = ScreenStreamServiceGrpc.newStub(mGrpcChannel)
             .stream(new StreamObserver<ServerMessage>() {
@@ -339,7 +339,7 @@ public final class LssClient {
         }
 
         @NonNull
-        public LssClientStats collect() {
+        public ClientStats collect() {
             synchronized (mLock) {
                 // getAndSet closes the current interval and opens the next one.
                 final long startTimestamp = mCollectionTimestamp.getAndSet(SystemClock.elapsedRealtimeNanos());
@@ -347,7 +347,7 @@ public final class LssClient {
                 final long inboundDataSize = mInboundDataSize.getAndSet(0L);
                 final long inboundDataRate = Math.round((double) inboundDataSize / (endTimestamp - startTimestamp)
                     * Duration.ofSeconds(1L).toNanos());
-                return LssClientStats.builder()
+                return ClientStats.builder()
                     .inboundDataSize(inboundDataSize)
                     .inboundDataRate(inboundDataRate)
                     .build();

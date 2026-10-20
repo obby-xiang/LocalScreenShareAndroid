@@ -1,4 +1,4 @@
-package com.obby.android.localscreenshare.core.codec.h264;
+package com.obby.android.localscreenshare.core.codec.mediacodec;
 
 /**
  * Outcome of one {@link MediaCodecDecoderBridge#dequeueOutput(long)} call.

@@ -2,7 +2,7 @@ package com.obby.android.localscreenshare.discovery.scan;
 
 import androidx.annotation.NonNull;
 
-import com.obby.android.localscreenshare.core.stream.TimeSource;
+import com.obby.android.localscreenshare.core.util.TimeSource;
 import com.obby.android.localscreenshare.grpc.screenstream.DeviceSummary;
 
 import java.net.Inet4Address;

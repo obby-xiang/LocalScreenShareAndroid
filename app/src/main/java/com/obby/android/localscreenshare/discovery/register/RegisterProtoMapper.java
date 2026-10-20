@@ -8,7 +8,7 @@ import com.obby.android.localscreenshare.discovery.model.DeviceAddress;
 import com.obby.android.localscreenshare.discovery.model.DeviceRole;
 import com.obby.android.localscreenshare.discovery.model.DiscoveryChannel;
 import com.obby.android.localscreenshare.discovery.model.JoinPolicy;
-import com.obby.android.localscreenshare.discovery.model.LssDeviceInfo;
+import com.obby.android.localscreenshare.discovery.model.DeviceInfo;
 import com.obby.android.localscreenshare.discovery.model.ShareState;
 import com.obby.android.localscreenshare.discovery.provider.DeviceObservation;
 import com.obby.android.localscreenshare.grpc.screenstream.DeviceSummary;
@@ -33,7 +33,7 @@ public final class RegisterProtoMapper {
 
     /** Builds the discovery summary of a device, including every address the store knows. */
     @NonNull
-    public static DeviceSummary toSummary(@NonNull final LssDeviceInfo device) {
+    public static DeviceSummary toSummary(@NonNull final DeviceInfo device) {
         final DeviceSummary.Builder builder = DeviceSummary.newBuilder()
             .setDeviceId(device.getId())
             .setRole(device.getRole().toWire())

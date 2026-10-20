@@ -8,7 +8,7 @@ import java.util.List;
  * Receives the current list of discovered servers.
  */
 @FunctionalInterface
-public interface LssServiceDiscoveryListener {
+public interface LegacyServiceDiscoveryListener {
     /**
      * Called on the main thread with an unmodifiable, sorted snapshot.
      *
@@ -17,5 +17,5 @@ public interface LssServiceDiscoveryListener {
      *
      * @param services current servers, sorted by host address, port, name and id
      */
-    void onServicesChanged(@NonNull List<LssServiceInfo> services);
+    void onServicesChanged(@NonNull List<LegacyServiceInfo> services);
 }

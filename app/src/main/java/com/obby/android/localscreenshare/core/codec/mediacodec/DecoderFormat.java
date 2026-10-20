@@ -1,4 +1,4 @@
-package com.obby.android.localscreenshare.core.codec.h264;
+package com.obby.android.localscreenshare.core.codec.mediacodec;
 
 import android.view.Surface;
 
@@ -7,7 +7,7 @@ import android.view.Surface;
  * {@link MediaCodecDecoderBridge#configure(DecoderFormat)}.
  *
  * <p>The two CSD blobs are Annex B parameter-set NAL units, start code included, produced by
- * {@link H264ConfigExtractor#toAnnexB(byte[])}. Config parts themselves are stored without start
+ * {@link com.obby.android.localscreenshare.core.codec.h264.H264ConfigExtractor#toAnnexB(byte[])}. Config parts themselves are stored without start
  * codes, but the platform decoder expects Annex B here. The sizes are the descriptor's coded size,
  * not its visible size.</p>
  *

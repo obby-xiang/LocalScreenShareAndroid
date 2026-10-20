@@ -1,4 +1,4 @@
-package com.obby.android.localscreenshare.core.stream;
+package com.obby.android.localscreenshare.core.util;
 
 /**
  * Monotonic millisecond time source.
