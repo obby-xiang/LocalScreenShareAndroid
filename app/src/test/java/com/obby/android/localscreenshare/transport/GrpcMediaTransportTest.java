@@ -36,6 +36,26 @@ public class GrpcMediaTransportTest {
     private static final StreamKey KEY = new StreamKey("session", "stream");
 
     @Test
+    public void sendPongEmitsTheEchoAndIsSilentAfterClose() throws IOException {
+        RecordingObserver observer = new RecordingObserver();
+        GrpcMediaTransport transport = new GrpcMediaTransport(observer, false);
+
+        transport.sendPong(9, 4_242L);
+
+        assertEquals(1, observer.messages.size());
+        ServerMessage message = observer.messages.get(0);
+        assertEquals(ServerMessage.PayloadCase.PONG, message.getPayloadCase());
+        assertEquals(9, message.getPong().getSeq());
+        assertEquals(4_242L, message.getPong().getClientUptimeMs());
+
+        transport.close();
+        transport.sendPong(10, 5_000L);
+
+        assertEquals("a closing transport drops the echo instead of throwing", 1,
+                observer.messages.size());
+    }
+
+    @Test
     public void sendDescriptorEmitsDescriptorPayloadWithSecureFlag() throws IOException {
         RecordingObserver observer = new RecordingObserver();
         GrpcMediaTransport transport = new GrpcMediaTransport(observer, true);

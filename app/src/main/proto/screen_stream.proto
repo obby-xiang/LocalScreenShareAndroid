@@ -18,6 +18,7 @@ message ClientMessage {
     Hello hello = 1;
     Ready ready = 2;
     RequestKeyframe request_keyframe = 3;
+    Ping ping = 4;
   }
 }
 
@@ -73,6 +74,20 @@ message Ready {}
 
 message RequestKeyframe {}
 
+// Application-level round-trip probe. The server echoes the fields verbatim and never adds its
+// own clock, so the measurement needs no clock synchronisation. A peer that does not know the
+// field treats the message as payload-not-set and ignores it.
+message Ping {
+  int32 seq = 1;
+  int64 client_uptime_ms = 2;
+}
+
+// Echo of a Ping. It bypasses the media queue so the sample measures the path, not the queue.
+message Pong {
+  int32 seq = 1;
+  int64 client_uptime_ms = 2;
+}
+
 message Capabilities {
   repeated CodecCapability codecs = 1;
 }
@@ -94,6 +109,7 @@ message ServerMessage {
   oneof payload {
     Descriptor descriptor = 1;
     AccessUnit access_unit = 2;
+    Pong pong = 3;
   }
 }
 

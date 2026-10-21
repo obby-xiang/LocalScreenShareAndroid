@@ -21,8 +21,11 @@ import com.obby.android.localscreenshare.core.stream.CodecCapability;
 import com.obby.android.localscreenshare.grpc.screenstream.Capabilities;
 import com.obby.android.localscreenshare.grpc.screenstream.ClientMessage;
 import com.obby.android.localscreenshare.grpc.screenstream.Hello;
+import com.obby.android.localscreenshare.grpc.screenstream.Ping;
+import com.obby.android.localscreenshare.grpc.screenstream.Pong;
 import com.obby.android.localscreenshare.grpc.screenstream.Ready;
 import com.obby.android.localscreenshare.grpc.screenstream.RequestKeyframe;
+import com.obby.android.localscreenshare.grpc.screenstream.ServerMessage;
 
 import org.junit.Test;
 
@@ -193,6 +196,39 @@ public class ScreenStreamProtoMapperTest {
                 ClientMessage.newBuilder()
                         .setRequestKeyframe(RequestKeyframe.getDefaultInstance()).build(), listener);
         assertTrue(listener.keyframeSeen);
+
+        listener = new RecordingListener();
+        ScreenStreamProtoMapper.dispatchClientMessage(
+                ClientMessage.newBuilder()
+                        .setPing(Ping.newBuilder().setSeq(7).setClientUptimeMs(1_000L).build())
+                        .build(), listener);
+        assertTrue(listener.pingSeen);
+        assertEquals(7, listener.pingSeq);
+    }
+
+    @Test
+    public void pingAndPong_roundTripThroughTheWireFormat() throws Exception {
+        ClientMessage ping = ClientMessage.newBuilder()
+                .setPing(Ping.newBuilder().setSeq(3).setClientUptimeMs(123_456L).build())
+                .build();
+        ClientMessage parsedPing = ClientMessage.parseFrom(ping.toByteArray());
+        assertEquals(ClientMessage.PayloadCase.PING, parsedPing.getPayloadCase());
+        assertEquals(3, parsedPing.getPing().getSeq());
+        assertEquals(123_456L, parsedPing.getPing().getClientUptimeMs());
+
+        ServerMessage pong = ServerMessage.newBuilder()
+                .setPong(Pong.newBuilder().setSeq(3).setClientUptimeMs(123_456L).build())
+                .build();
+        ServerMessage parsedPong = ServerMessage.parseFrom(pong.toByteArray());
+        assertEquals(ServerMessage.PayloadCase.PONG, parsedPong.getPayloadCase());
+        assertEquals(3, parsedPong.getPong().getSeq());
+        assertEquals(123_456L, parsedPong.getPong().getClientUptimeMs());
+
+        // An unknown payload is still ignored instead of failing the stream.
+        assertEquals(ClientMessage.PayloadCase.PAYLOAD_NOT_SET,
+                ClientMessage.getDefaultInstance().getPayloadCase());
+        assertEquals(ServerMessage.PayloadCase.PAYLOAD_NOT_SET,
+                ServerMessage.getDefaultInstance().getPayloadCase());
     }
 
     @Test
@@ -206,6 +242,8 @@ public class ScreenStreamProtoMapperTest {
         boolean helloSeen;
         boolean readySeen;
         boolean keyframeSeen;
+        boolean pingSeen;
+        int pingSeq;
 
         @Override
         public void onHello(Hello hello) {
@@ -220,6 +258,12 @@ public class ScreenStreamProtoMapperTest {
         @Override
         public void onRequestKeyframe(RequestKeyframe requestKeyframe) {
             keyframeSeen = true;
+        }
+
+        @Override
+        public void onPing(Ping ping) {
+            pingSeen = true;
+            pingSeq = ping.getSeq();
         }
     }
 }

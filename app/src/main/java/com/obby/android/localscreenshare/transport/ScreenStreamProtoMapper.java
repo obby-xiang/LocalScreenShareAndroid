@@ -262,6 +262,9 @@ public final class ScreenStreamProtoMapper {
             case REQUEST_KEYFRAME:
                 listener.onRequestKeyframe(message.getRequestKeyframe());
                 break;
+            case PING:
+                listener.onPing(message.getPing());
+                break;
             case PAYLOAD_NOT_SET:
             default:
                 throw new IllegalArgumentException("client message has no recognized payload");

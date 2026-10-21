@@ -1025,9 +1025,9 @@ public final class ScreenShareServer {
                 return new NoopClientObserver();
             }
             final InetSocketAddress remoteAddress = REMOTE_ADDRESS.get();
+            final GrpcMediaTransport transport = new GrpcMediaTransport(responseObserver, mSecure);
             final StreamCallHandler handler = new StreamCallHandler(mStreamHub, mStreamRuntime,
-                    new GrpcMediaTransport(responseObserver, mSecure), mStreamCallListener,
-                    remoteAddress);
+                    transport, mStreamCallListener, remoteAddress, transport::sendPong);
             mStreamCallHandlers.add(handler);
             final Thread drain = new Thread(() -> drainLoop(handler, responseObserver),
                     "lss-stream-drain-" + handler.hashCode());

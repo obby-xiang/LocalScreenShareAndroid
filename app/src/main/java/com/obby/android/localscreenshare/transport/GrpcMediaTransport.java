@@ -3,6 +3,7 @@ package com.obby.android.localscreenshare.transport;
 import com.obby.android.localscreenshare.core.model.EncodedAccessUnit;
 import com.obby.android.localscreenshare.core.model.StreamDescriptor;
 import com.obby.android.localscreenshare.core.stream.MediaTransport;
+import com.obby.android.localscreenshare.grpc.screenstream.Pong;
 import com.obby.android.localscreenshare.grpc.screenstream.ServerMessage;
 
 import java.io.IOException;
@@ -72,6 +73,31 @@ public final class GrpcMediaTransport implements MediaTransport {
     public void close() {
         synchronized (sendLock) {
             closed = true;
+        }
+    }
+
+    /**
+     * Echoes one round-trip probe.
+     *
+     * <p>Serialized behind the same lock as the media sends, because the observer is not
+     * thread-safe and the echo arrives on the gRPC callback thread while media leaves from the
+     * drain thread. The echo deliberately bypasses the session queue: measuring the queue would
+     * hide the path latency this sample exists to capture. A closing transport drops the echo
+     * silently, which costs one sample and never disturbs the caller.</p>
+     *
+     * @param seq            sequence number the client assigned to the ping
+     * @param clientUptimeMs client uptime the ping carried, echoed verbatim
+     */
+    public void sendPong(int seq, long clientUptimeMs) {
+        try {
+            send(ServerMessage.newBuilder()
+                    .setPong(Pong.newBuilder()
+                            .setSeq(seq)
+                            .setClientUptimeMs(clientUptimeMs)
+                            .build())
+                    .build());
+        } catch (IOException ignored) {
+            // The transport is closing; the client simply records one lost sample.
         }
     }
 

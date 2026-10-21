@@ -50,6 +50,9 @@ public final class StreamCallHandler {
     // peer address (tests, or a call whose transport attributes carry none).
     private final InetSocketAddress remoteAddress;
 
+    // Echo target for round-trip probes; NO_OP when the caller does not measure round trips.
+    private final PongTarget pongTarget;
+
     private ClientSessionKey key;
 
     private ClientSendSession attachedSession;
@@ -106,6 +109,27 @@ public final class StreamCallHandler {
      */
     public StreamCallHandler(StreamHub hub, StreamRuntime runtime, MediaTransport transport,
                              StreamCallListener listener, InetSocketAddress remoteAddress) {
+        this(hub, runtime, transport, listener, remoteAddress, PongTarget.NO_OP);
+    }
+
+    /**
+     * Creates a handler for one client that also echoes round-trip probes.
+     *
+     * <p>The echo target is a narrow callback rather than a wider transport interface, so the
+     * media transport contract stays unchanged and a transport that cannot echo simply drops the
+     * probe.</p>
+     *
+     * @param hub           stream hub the client joins; required
+     * @param runtime       active stream runtime; required
+     * @param transport     transport owned by this call; required
+     * @param listener      receiver of call events; required
+     * @param remoteAddress address the call arrived on, or null when unknown
+     * @param pongTarget    echo target for round-trip probes; required
+     * @throws IllegalArgumentException if any required argument is null
+     */
+    public StreamCallHandler(StreamHub hub, StreamRuntime runtime, MediaTransport transport,
+                             StreamCallListener listener, InetSocketAddress remoteAddress,
+                             PongTarget pongTarget) {
         if (hub == null) {
             throw new IllegalArgumentException("hub must not be null");
         }
@@ -118,33 +142,50 @@ public final class StreamCallHandler {
         if (listener == null) {
             throw new IllegalArgumentException("listener must not be null");
         }
+        if (pongTarget == null) {
+            throw new IllegalArgumentException("pongTarget must not be null");
+        }
         this.hub = hub;
         this.runtime = runtime;
         this.transport = transport;
         this.listener = listener;
         this.remoteAddress = remoteAddress;
+        this.pongTarget = pongTarget;
     }
 
     /**
      * Handles one client control message; a second HELLO after joining is ignored.
+     *
+     * <p>A round-trip probe is answered outside the handler monitor: the echo shares the
+     * transport's send lock with media, so a blocked echo must never stall a drain. Every other
+     * payload keeps running under the monitor, because it may change the join state.</p>
      */
-    public synchronized void onClientMessage(ClientMessage message) {
-        if (closed || message == null) {
+    public void onClientMessage(ClientMessage message) {
+        if (message == null || isClosed()) {
             return;
         }
-        switch (message.getPayloadCase()) {
-            case HELLO:
-                onHello(message.getHello());
-                break;
-            case READY:
-                // The drain loop retries a pending join; no explicit work here.
-                break;
-            case REQUEST_KEYFRAME:
-                runtime.requestJoinPoint();
-                break;
-            case PAYLOAD_NOT_SET:
-            default:
-                break;
+        if (message.getPayloadCase() == ClientMessage.PayloadCase.PING) {
+            pongTarget.sendPong(message.getPing().getSeq(), message.getPing().getClientUptimeMs());
+            return;
+        }
+        synchronized (this) {
+            if (closed || message == null) {
+                return;
+            }
+            switch (message.getPayloadCase()) {
+                case HELLO:
+                    onHello(message.getHello());
+                    break;
+                case READY:
+                    // The drain loop retries a pending join; no explicit work here.
+                    break;
+                case REQUEST_KEYFRAME:
+                    runtime.requestJoinPoint();
+                    break;
+                case PAYLOAD_NOT_SET:
+                default:
+                    break;
+            }
         }
     }
 

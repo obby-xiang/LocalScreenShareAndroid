@@ -28,6 +28,7 @@ import com.obby.android.localscreenshare.grpc.screenstream.Capabilities;
 import com.obby.android.localscreenshare.grpc.screenstream.ClientMessage;
 import com.obby.android.localscreenshare.grpc.screenstream.CodecCapability;
 import com.obby.android.localscreenshare.grpc.screenstream.Hello;
+import com.obby.android.localscreenshare.grpc.screenstream.Ping;
 import com.obby.android.localscreenshare.grpc.screenstream.RequestKeyframe;
 
 import org.junit.Test;
@@ -220,6 +221,47 @@ public class StreamCallHandlerTest {
         assertEquals(0, transport.getAbortCount());
     }
 
+    @Test
+    public void ping_isEchoedWithoutTouchingTheSessionState() throws Exception {
+        Fixture fixture = fixture(FakeCodec.DEFAULT_CODEC_ID);
+        FakeTransport transport = new FakeTransport();
+        RecordingPongTarget pongTarget = new RecordingPongTarget();
+        StreamCallHandler handler = new StreamCallHandler(fixture.hub, fixture.runtime, transport,
+                StreamCallListener.NO_OP, null, pongTarget);
+
+        handler.onClientMessage(hello(FakeCodec.DEFAULT_CODEC_ID));
+        ClientSessionKey key = new ClientSessionKey(STREAM_KEY, "client-1");
+        ClientState stateAfterHello = fixture.hub.getSession(key).getState();
+        int eventsAfterHello = transport.getEvents().size();
+
+        handler.onClientMessage(ClientMessage.newBuilder()
+                .setPing(Ping.newBuilder().setSeq(5).setClientUptimeMs(1_234L).build())
+                .build());
+
+        assertEquals(1, pongTarget.count);
+        assertEquals(5, pongTarget.lastSeq);
+        assertEquals(1_234L, pongTarget.lastClientUptimeMs);
+        assertEquals("a probe must not queue media", eventsAfterHello,
+                transport.getEvents().size());
+        assertEquals(stateAfterHello, fixture.hub.getSession(key).getState());
+        assertFalse(handler.isClosed());
+    }
+
+    @Test
+    public void ping_isIgnoredAfterClose() {
+        Fixture fixture = fixture(FakeCodec.DEFAULT_CODEC_ID);
+        RecordingPongTarget pongTarget = new RecordingPongTarget();
+        StreamCallHandler handler = new StreamCallHandler(fixture.hub, fixture.runtime,
+                new FakeTransport(), StreamCallListener.NO_OP, null, pongTarget);
+        handler.close();
+
+        handler.onClientMessage(ClientMessage.newBuilder()
+                .setPing(Ping.newBuilder().setSeq(1).build())
+                .build());
+
+        assertEquals(0, pongTarget.count);
+    }
+
     private static Fixture fixture(String codecId) {
         FakeCodec codec = new FakeCodec(codecId, 0, false, false);
         CodecRegistry registry = new CodecRegistry();
@@ -320,6 +362,22 @@ public class StreamCallHandlerTest {
             rejectionKey = key;
             rejectionTransportId = transportId;
             rejectionReason = reason;
+        }
+    }
+
+    /**
+     * Records the echoes a handler sends.
+     */
+    private static final class RecordingPongTarget implements PongTarget {
+        int count;
+        int lastSeq;
+        long lastClientUptimeMs;
+
+        @Override
+        public void sendPong(int seq, long clientUptimeMs) {
+            count++;
+            lastSeq = seq;
+            lastClientUptimeMs = clientUptimeMs;
         }
     }
 }

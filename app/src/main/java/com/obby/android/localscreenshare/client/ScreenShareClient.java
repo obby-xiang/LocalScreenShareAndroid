@@ -10,8 +10,10 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import com.obby.android.localscreenshare.core.metrics.PipelineMetrics;
+import com.obby.android.localscreenshare.core.metrics.RttEstimator;
 import com.obby.android.localscreenshare.grpc.screenstream.ClientMessage;
 import com.obby.android.localscreenshare.grpc.screenstream.Hello;
+import com.obby.android.localscreenshare.grpc.screenstream.Ping;
 import com.obby.android.localscreenshare.grpc.screenstream.RequestKeyframe;
 import com.obby.android.localscreenshare.grpc.screenstream.ScreenStreamServiceGrpc;
 import com.obby.android.localscreenshare.grpc.screenstream.ServerMessage;
@@ -71,6 +73,10 @@ public final class ScreenShareClient {
     // Number of client-id characters kept for log correlation.
     private static final int SESSION_ID_TAIL_LENGTH = 8;
 
+    // Cadence of the round-trip probe. One probe per second is under 40 bytes per second and far
+    // below any congestion-visible load.
+    private static final long PING_INTERVAL_MS = 1000L;
+
     // Bounds the decode queue so a catastrophically slow decoder cannot grow it without limit;
     // a rejected message is dropped and the session recovers on the next join point.
     private static final int DECODE_QUEUE_CAPACITY = 256;
@@ -98,6 +104,36 @@ public final class ScreenShareClient {
     // Random per-run session id announced in the HELLO; logs print its tail only.
     @Nullable
     private String mClientId;
+
+    // Round-trip estimator fed by the echo messages; only records into mMetrics.
+    @NonNull
+    private final RttEstimator mRttEstimator;
+
+    // Sends one probe, sweeps the unanswered ones and reschedules itself; runs on the main thread.
+    @NonNull
+    private final Runnable mPingRunnable = new Runnable() {
+        @Override
+        public void run() {
+            mMainHandler.removeCallbacks(mPingRunnable);
+            final StreamObserver<ClientMessage> observer = mRequestObserver;
+            if (mIsStopped || observer == null) {
+                return;
+            }
+            final int seq = mRttEstimator.beginProbe();
+            try {
+                observer.onNext(ClientMessage.newBuilder()
+                    .setPing(Ping.newBuilder()
+                        .setSeq(seq)
+                        .setClientUptimeMs(SystemClock.elapsedRealtime())
+                        .build())
+                    .build());
+            } catch (RuntimeException ignored) {
+                // The stream is already terminating; the sweep below records the lost sample.
+            }
+            mRttEstimator.checkTimeouts();
+            mMainHandler.postDelayed(mPingRunnable, PING_INTERVAL_MS);
+        }
+    };
 
     // Invoked on the main thread by mUpdateClientStatsRunnable.
     @Setter
@@ -230,6 +266,7 @@ public final class ScreenShareClient {
             throw new IllegalArgumentException("metrics must not be null");
         }
         mMetrics = metrics;
+        mRttEstimator = new RttEstimator(metrics, metrics.getClock());
         mGrpcChannel = OkHttpChannelBuilder.forAddress(host, port, InsecureChannelCredentials.create())
             .flowControlWindow(GrpcConstants.GRPC_FLOW_CONTROL_WINDOW)
             .maxInboundMessageSize(GrpcConstants.GRPC_MAX_INBOUND_MESSAGE_SIZE)
@@ -264,6 +301,13 @@ public final class ScreenShareClient {
                     if (mIsStopped) {
                         return;
                     }
+                    if (value.getPayloadCase() == ServerMessage.PayloadCase.PONG) {
+                        // The echo never enters the decode queue: it measures the path, and waiting
+                        // behind frames would turn it into a queue-depth measurement.
+                        mRttEstimator.onPong(value.getPong().getSeq());
+                        ensureConnected();
+                        return;
+                    }
                     // One clock read marks the arrival; everything downstream measures from it.
                     final long arrivalNs = mMetrics.nowNs();
                     // Decoding runs on the dedicated decode thread, never on the gRPC executor.
@@ -286,13 +330,23 @@ public final class ScreenShareClient {
                         requestKeyFrameThrottled();
                     }
                     if (!mIsConnected) {
-                        mIsConnected = true;
-                        mMainHandler.post(() -> {
-                            if (!mIsStopped) {
-                                observer.onConnected();
-                            }
-                        });
+                        ensureConnected();
                     }
+                }
+
+                /**
+                 * Reports the connection once, on the first server message of any kind.
+                 */
+                private void ensureConnected() {
+                    if (mIsConnected) {
+                        return;
+                    }
+                    mIsConnected = true;
+                    mMainHandler.post(() -> {
+                        if (!mIsStopped) {
+                            observer.onConnected();
+                        }
+                    });
                 }
 
                 @Override
@@ -336,6 +390,7 @@ public final class ScreenShareClient {
 
         mClientProfile = new ClientProfile(mMetrics);
         mMainHandler.postDelayed(mUpdateClientStatsRunnable, UPDATE_CLIENT_STATS_INTERVAL_MS);
+        mMainHandler.postDelayed(mPingRunnable, PING_INTERVAL_MS);
     }
 
     /**
@@ -389,6 +444,7 @@ public final class ScreenShareClient {
      */
     public void stop() {
         mIsStopped = true;
+        mMainHandler.removeCallbacks(mPingRunnable);
         mClientProfile = null;
         mClientStats = null;
         mRequestObserver = null;
