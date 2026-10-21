@@ -159,6 +159,8 @@ public final class MetricsFormatter {
                     Unit.NANOS, Stat.MAX),
             new WindowRow(ClientMetricNames.JOIN_LATENCY, PipelineMetrics.Window.JOIN_LATENCY,
                     Unit.NANOS, Stat.P95),
+            new WindowRow(CatchUpMetricNames.RX_CATCH_UP_LATENCY,
+                    PipelineMetrics.Window.CATCH_UP_LATENCY, Unit.NANOS, Stat.P50, Stat.P95),
             new WindowRow(ClientMetricNames.SWITCH_BLACKOUT, PipelineMetrics.Window.SWITCH_BLACKOUT,
                     Unit.NANOS, Stat.MAX),
             new WindowRow(RttMetricNames.RTT, PipelineMetrics.Window.RTT,
@@ -332,9 +334,9 @@ public final class MetricsFormatter {
      * Renders the three debug-overlay lines.
      *
      * <p>The shape is fixed: frame rate, bitrate and round trip on the first line; queue depth,
-     * decode latency and lateness on the second; relative delay, stalls, local drops and key-frame
-     * requests on the third. Missing values print as {@code n/a} instead of disappearing, so the
-     * overlay does not reflow while a user watches it.</p>
+     * decode latency and lateness on the second; relative delay, stalls, local drops, catch-ups and
+     * key-frame requests on the third. Missing values print as {@code n/a} instead of disappearing,
+     * so the overlay does not reflow while a user watches it.</p>
      *
      * @param snapshot snapshot to render; must not be null
      * @return an immutable list of exactly three lines
@@ -403,6 +405,7 @@ public final class MetricsFormatter {
         appendMillis(delay, snapshot.getWindow(PipelineMetrics.Window.ROWD).getP95());
         delay.append(" | stall ").append(snapshot.getCounter(PipelineMetrics.Counter.STALLS));
         delay.append(" | drop ").append(snapshot.getCounter(PipelineMetrics.Counter.PRESENT_DROPS));
+        delay.append(" | cu ").append(snapshot.getCounter(PipelineMetrics.Counter.CATCH_UP_EPISODES));
         delay.append(" | kf ").append(snapshot.getCounter(PipelineMetrics.Counter.KEYFRAME_REQUESTS));
         lines.add(delay.toString());
 
@@ -462,7 +465,31 @@ public final class MetricsFormatter {
                 PipelineMetrics.Counter.FREEZES, null);
         appendCounters(out, snapshot, ClientMetricNames.KEYFRAME_SENT,
                 PipelineMetrics.Counter.KEYFRAME_REQUESTS, null);
+        appendCounters(out, snapshot, CatchUpMetricNames.RX_CATCH_UP,
+                PipelineMetrics.Counter.CATCH_UP_EPISODES, null);
+        appendCounters(out, snapshot, CatchUpMetricNames.RX_CATCH_UP_SHED,
+                PipelineMetrics.Counter.CATCH_UP_SHEDS, null);
+        appendCounters(out, snapshot, CatchUpMetricNames.RX_CONVERGE_FAIL,
+                PipelineMetrics.Counter.CONVERGENCE_FAILURES, null);
+        appendCatchUpReason(out, snapshot);
         appendRttFields(out, snapshot);
+    }
+
+    /**
+     * Appends the signal that started the latest catch-up, when one happened.
+     *
+     * <p>The field is omitted before the first episode, so a viewer that never fell behind produces
+     * the same line it did before the catch-up existed.</p>
+     */
+    private static void appendCatchUpReason(StringBuilder out, MetricsSnapshot snapshot) {
+        long reason = snapshot.getGauge(PipelineMetrics.Gauge.CATCH_UP_REASON);
+        if (reason == 0L) {
+            return;
+        }
+        out.append(' ').append(CatchUpMetricNames.RX_CATCH_UP_REASON).append('=')
+                .append(reason == PipelineMetrics.CATCH_UP_REASON_QUEUE_DEPTH
+                        ? CatchUpMetricNames.REASON_QUEUE_DEPTH
+                        : CatchUpMetricNames.REASON_QUEUE_WAIT);
     }
 
     /**

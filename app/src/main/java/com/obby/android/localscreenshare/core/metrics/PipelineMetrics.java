@@ -134,7 +134,12 @@ public final class PipelineMetrics {
         /**
          * Application-level round-trip time, in nanoseconds.
          */
-        RTT
+        RTT,
+
+        /**
+         * Catch-up start to the accepted join point that ended it, in nanoseconds.
+         */
+        CATCH_UP_LATENCY
     }
 
     /**
@@ -230,7 +235,22 @@ public final class PipelineMetrics {
         /**
          * Round-trip samples that timed out.
          */
-        RTT_LOST
+        RTT_LOST,
+
+        /**
+         * Catch-up episodes started by the viewer.
+         */
+        CATCH_UP_EPISODES,
+
+        /**
+         * Messages discarded because a catch-up superseded them before they were decoded.
+         */
+        CATCH_UP_SHEDS,
+
+        /**
+         * Catch-up attempts aborted because the stream did not converge.
+         */
+        CONVERGENCE_FAILURES
     }
 
     /**
@@ -257,8 +277,25 @@ public final class PipelineMetrics {
          * One when the capture-to-output probe disabled itself after repeated implausible
          * samples, otherwise zero.
          */
-        CAP_TO_OUT_SUPPRESSED
+        CAP_TO_OUT_SUPPRESSED,
+
+        /**
+         * Signal that started the latest catch-up; see {@link #CATCH_UP_REASON_QUEUE_WAIT} and
+         * {@link #CATCH_UP_REASON_QUEUE_DEPTH}. Zero before the first episode.
+         */
+        CATCH_UP_REASON
     }
+
+    /**
+     * {@link Gauge#CATCH_UP_REASON} value: an access unit waited longer than the backlog threshold
+     * between submission and decode start.
+     */
+    public static final long CATCH_UP_REASON_QUEUE_WAIT = 1L;
+
+    /**
+     * {@link Gauge#CATCH_UP_REASON} value: the decode queue reached its backlog depth.
+     */
+    public static final long CATCH_UP_REASON_QUEUE_DEPTH = 2L;
 
     private final boolean enabled;
 

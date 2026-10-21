@@ -159,6 +159,28 @@ public class MetricsFormatterTest {
     }
 
     @Test
+    public void clientLine_printsCatchUpCountersAndReasonOnlyAfterAnEpisode() {
+        PipelineMetrics metrics = PipelineMetrics.create(new MutableNanoClock(), 16);
+        assertFalse(MetricsFormatter.toLogLine(Role.CLIENT, metrics.snapshot(5000L))
+                .contains("rx.catchup"));
+
+        metrics.add(PipelineMetrics.Counter.CATCH_UP_EPISODES, 2L);
+        metrics.add(PipelineMetrics.Counter.CATCH_UP_SHEDS, 512L);
+        metrics.add(PipelineMetrics.Counter.CONVERGENCE_FAILURES, 1L);
+        metrics.setGauge(PipelineMetrics.Gauge.CATCH_UP_REASON,
+                PipelineMetrics.CATCH_UP_REASON_QUEUE_DEPTH);
+        metrics.record(PipelineMetrics.Window.CATCH_UP_LATENCY, 420_000_000L);
+
+        String line = MetricsFormatter.toLogLine(Role.CLIENT, metrics.snapshot(5000L));
+
+        assertTrue(line.contains(" rx.catchup=2"));
+        assertTrue(line.contains(" rx.catchup.shed=512"));
+        assertTrue(line.contains(" rx.converge.fail=1"));
+        assertTrue(line.contains(" rx.catchup.why=qDepth"));
+        assertTrue(line.contains(" rx.catchup.lat.p50=420.0"));
+    }
+
+    @Test
     public void clientLine_defaultsToPingPongKind() {
         PipelineMetrics metrics = PipelineMetrics.create(new MutableNanoClock(), 16);
         metrics.increment(PipelineMetrics.Counter.RTT_SAMPLES);
@@ -196,7 +218,7 @@ public class MetricsFormatterTest {
         assertEquals(3, lines.size());
         assertEquals("30.0 fps | 3.8 Mbps | RTT 4.2 ms", lines.get(0));
         assertEquals("q 2 | dec 12.0 ms (p95 31.0) | late 0.0", lines.get(1));
-        assertEquals("rowd +8.0 | stall 1 | drop 0 | kf 0", lines.get(2));
+        assertEquals("rowd +8.0 | stall 1 | drop 0 | cu 0 | kf 0", lines.get(2));
     }
 
     @Test
@@ -206,7 +228,7 @@ public class MetricsFormatterTest {
         assertEquals(3, lines.size());
         assertEquals("n/a fps | n/a Mbps | RTT n/a", lines.get(0));
         assertEquals("q 0 | dec n/a | late 0.0", lines.get(1));
-        assertEquals("rowd +0.0 | stall 0 | drop 0 | kf 0", lines.get(2));
+        assertEquals("rowd +0.0 | stall 0 | drop 0 | cu 0 | kf 0", lines.get(2));
     }
 
     @Test

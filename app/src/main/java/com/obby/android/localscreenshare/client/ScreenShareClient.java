@@ -9,9 +9,11 @@ import android.util.Log;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
+import com.obby.android.localscreenshare.core.client.CatchUpPolicy;
 import com.obby.android.localscreenshare.core.metrics.PipelineMetrics;
 import com.obby.android.localscreenshare.core.metrics.RttEstimator;
 import com.obby.android.localscreenshare.core.model.ClientSessionKey;
+import com.obby.android.localscreenshare.core.model.ClientState;
 import com.obby.android.localscreenshare.grpc.screenstream.ClientMessage;
 import com.obby.android.localscreenshare.grpc.screenstream.Hello;
 import com.obby.android.localscreenshare.grpc.screenstream.Ping;
@@ -36,6 +38,7 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 import io.grpc.CallOptions;
@@ -59,13 +62,19 @@ import lombok.experimental.Accessors;
  * ClientMediaReceiver)} opens the stream, announces the client with a HELLO and hands every server
  * message to a dedicated single-thread decode executor that drives the {@link ClientMediaReceiver}.
  * Decoding therefore never runs on the gRPC executor. {@link #requestKeyframe()} asks the server for
- * a random-access point. {@link #stop()} shuts the channel and both executors down permanently, so
- * an instance is single-use.</p>
+ * a random-access point. A decode backlog that persists makes the client <i>catch up</i>: it
+ * discards what is queued, flushes the decoder and resumes on a fresh join point, because H.264
+ * cannot resume on a P frame whose references were dropped; {@link CatchUpPolicy} owns when that
+ * happens. {@link #stop()} shuts the channel and both executors down permanently, so an instance is
+ * single-use.</p>
  *
  * <p><b>Threading.</b> {@link #start} and {@link #stop} are expected on the main thread. gRPC
  * transport invokes the response observer on threads of the private {@code lss-grpc-client-*}
  * executor; that observer only enqueues work onto the {@code lss-client-decode} thread. Observer
- * callbacks are always delivered on the main thread.</p>
+ * callbacks are always delivered on the main thread. The catch-up decisions run on the decode
+ * thread; the only state they share with the transport thread is the catch-up generation, an
+ * {@link AtomicInteger}. Writes to the request observer stay on the main thread: the media path
+ * posts its key-frame request instead of writing from the decode thread.</p>
  */
 @Accessors(prefix = "m")
 public final class ScreenShareClient {
@@ -83,6 +92,21 @@ public final class ScreenShareClient {
     // transport thread that detected the overflow.
     @NonNull
     private final KeyFrameRequestThrottle mKeyFrameRequestThrottle = new KeyFrameRequestThrottle();
+
+    // Decides when the decode backlog is given up; sampled on the decode thread, one call per
+    // decoded message.
+    @NonNull
+    private final CatchUpPolicy mCatchUpPolicy = new CatchUpPolicy();
+
+    // Orders decode-queue submissions against catch-up episodes. A task records the value it was
+    // submitted under; when an episode bumps it, the tasks already queued are discarded instead of
+    // decoded. Written on the decode thread, read on the transport thread.
+    @NonNull
+    private final AtomicInteger mCatchUpGeneration = new AtomicInteger();
+
+    // Moment the current catch-up started, in the metric scope's clock; only valid while
+    // mCatchUpPolicy reports an episode.
+    private long mCatchUpStartedNs;
 
     // Lifecycle flag, written and read on the main thread; once set, callbacks become no-ops.
     private boolean mIsStopped;
@@ -309,15 +333,13 @@ public final class ScreenShareClient {
                     }
                     // One clock read marks the arrival; everything downstream measures from it.
                     final long arrivalNs = mMetrics.nowNs();
+                    final int generation = mCatchUpGeneration.get();
+                    final boolean descriptor =
+                        value.getPayloadCase() == ServerMessage.PayloadCase.DESCRIPTOR;
                     // Decoding runs on the dedicated decode thread, never on the gRPC executor.
                     try {
-                        mDecodeExecutor.execute(() -> {
-                            if (!mIsStopped) {
-                                mMetrics.record(PipelineMetrics.Window.QUEUE_WAIT,
-                                    mMetrics.nowNs() - arrivalNs);
-                                receiver.onServerMessage(value, arrivalNs);
-                            }
-                        });
+                        mDecodeExecutor.execute(
+                            () -> onDecodeTask(receiver, value, arrivalNs, generation, descriptor));
                         mMetrics.record(PipelineMetrics.Window.QUEUE_DEPTH,
                             mDecodeExecutor.getQueue().size());
                     } catch (RejectedExecutionException e) {
@@ -326,7 +348,7 @@ public final class ScreenShareClient {
                         // periodic key frame.
                         mMetrics.increment(PipelineMetrics.Counter.ARRIVAL_SHEDS);
                         Log.w(mTag, "onNext: decode queue full, dropping a message");
-                        requestKeyFrameThrottled();
+                        requestKeyFrameThrottledFromMediaPath();
                     }
                     if (!mIsConnected) {
                         ensureConnected();
@@ -408,12 +430,16 @@ public final class ScreenShareClient {
 
     /**
      * Asks the server for a random-access point; a no-op before start or after stop.
+     *
+     * <p>Writes to the request observer, which is not thread-safe, so this runs on the main thread
+     * only; the media path reaches it through {@link #requestKeyFrameThrottledFromMediaPath()}.</p>
      */
     public void requestKeyframe() {
         final StreamObserver<ClientMessage> observer = mRequestObserver;
         if (observer == null || mIsStopped) {
             return;
         }
+        mMetrics.increment(PipelineMetrics.Counter.KEYFRAME_REQUESTS);
         observer.onNext(ClientMessage.newBuilder()
             .setRequestKeyframe(RequestKeyframe.getDefaultInstance())
             .build());
@@ -428,6 +454,112 @@ public final class ScreenShareClient {
         if (mKeyFrameRequestThrottle.tryAcquire(SystemClock.elapsedRealtime())) {
             requestKeyframe();
         }
+    }
+
+    /**
+     * Asks for a key frame from the media path, which does not run on the main thread.
+     *
+     * <p>The request observer is a plain gRPC {@link StreamObserver} and must not be written from
+     * two threads at once, while the ping probe and the viewer service both write from the main
+     * thread. The request is therefore posted there; the throttle still applies inside the post, so
+     * a burst of congestion events collapses into one request and a post that arrives after
+     * {@link #stop()} sends nothing.</p>
+     */
+    private void requestKeyFrameThrottledFromMediaPath() {
+        mMainHandler.post(this::requestKeyFrameThrottled);
+    }
+
+    /**
+     * Runs one server message on the decode thread: skips it when a catch-up superseded it,
+     * otherwise applies it and samples the backlog.
+     *
+     * <p>The generation check is what makes a catch-up cheap: the access units already queued
+     * belong to the pictures the viewer decided to skip, so they are counted and discarded without
+     * deserializing a payload or touching the decoder. Descriptors are exempt, because dropping one
+     * would leave the session waiting for an epoch it can no longer learn.</p>
+     *
+     * <p>After the message is applied, a session that is streaming again ends the episode and its
+     * recovery time is recorded. The backlog sample is taken afterwards, so the join point that
+     * just ended an episode cannot immediately start another one.</p>
+     */
+    private void onDecodeTask(@NonNull ClientMediaReceiver receiver,
+                              @NonNull ServerMessage message, long arrivalNs, int generation,
+                              boolean descriptor) {
+        if (mIsStopped) {
+            return;
+        }
+        if (CatchUpPolicy.isSuperseded(generation, mCatchUpGeneration.get(), descriptor)) {
+            mMetrics.increment(PipelineMetrics.Counter.CATCH_UP_SHEDS);
+            return;
+        }
+
+        final long nowNs = mMetrics.nowNs();
+        final long queueWaitNs = nowNs - arrivalNs;
+        mMetrics.record(PipelineMetrics.Window.QUEUE_WAIT, queueWaitNs);
+        receiver.onServerMessage(message, arrivalNs);
+
+        if (mCatchUpPolicy.isCatchingUp()
+                && receiver.getSession().getState() == ClientState.STREAMING) {
+            finishCatchUp(nowNs);
+        }
+
+        final CatchUpPolicy.Decision decision = mCatchUpPolicy.onSample(nowNs,
+            mDecodeExecutor.getQueue().size(), queueWaitNs);
+        if (decision == CatchUpPolicy.Decision.START_CATCH_UP) {
+            startCatchUp(receiver, nowNs);
+        } else if (decision == CatchUpPolicy.Decision.CONVERGENCE_FAILED) {
+            reportConvergenceFailure();
+        }
+    }
+
+    /**
+     * Records the join point that ended the current catch-up.
+     */
+    private void finishCatchUp(long nowNs) {
+        mCatchUpPolicy.onJoinPoint(nowNs);
+        mMetrics.record(PipelineMetrics.Window.CATCH_UP_LATENCY, nowNs - mCatchUpStartedNs);
+        Log.i(mTag, String.format("finishCatchUp: recovered in %d ms",
+            (nowNs - mCatchUpStartedNs) / 1_000_000L));
+    }
+
+    /**
+     * Gives up the decode backlog and resumes on a fresh join point.
+     *
+     * <p>Order matters. The generation is bumped first, so every task already queued becomes a
+     * no-op and the queue drains at memory speed instead of decode speed. The session is then
+     * flushed and moved to {@code RESYNCING}, which is what keeps the following P frames out of the
+     * decoder. The key-frame request goes last, through the main-thread marshaller.</p>
+     */
+    private void startCatchUp(@NonNull ClientMediaReceiver receiver, long nowNs) {
+        mCatchUpGeneration.incrementAndGet();
+        mCatchUpStartedNs = nowNs;
+        mMetrics.increment(PipelineMetrics.Counter.CATCH_UP_EPISODES);
+        mMetrics.setGauge(PipelineMetrics.Gauge.CATCH_UP_REASON,
+            mCatchUpPolicy.getLastReason() == CatchUpPolicy.Reason.QUEUE_DEPTH
+                ? PipelineMetrics.CATCH_UP_REASON_QUEUE_DEPTH
+                : PipelineMetrics.CATCH_UP_REASON_QUEUE_WAIT);
+
+        receiver.getSession().onCatchUp();
+        requestKeyFrameThrottledFromMediaPath();
+        Log.i(mTag, String.format(
+            "startCatchUp: dropped the decode backlog, reason = %s, depth = %d, attempts = %d",
+            mCatchUpPolicy.getLastReason(), mDecodeExecutor.getQueue().size(),
+            mCatchUpPolicy.getConsecutiveCatchUps()));
+    }
+
+    /**
+     * Reports that dropping the backlog did not restore real-time playback.
+     *
+     * <p>Nothing is requested here on purpose: the stream is simply slower than its source, and
+     * lowering the server's parameters is a fan-out decision that affects every viewer. The
+     * picture keeps playing late until the hold expires and the next episode is attempted.</p>
+     */
+    private void reportConvergenceFailure() {
+        mMetrics.increment(PipelineMetrics.Counter.CONVERGENCE_FAILURES);
+        Log.w(mTag, String.format(
+            "reportConvergenceFailure: %d catch-ups did not converge, holding off for %d ms",
+            mCatchUpPolicy.getConsecutiveCatchUps(),
+            CatchUpPolicy.HOLD_NANOS / 1_000_000L));
     }
 
     /**
