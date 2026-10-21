@@ -314,8 +314,8 @@ public final class ViewerPanelView extends FrameLayout {
         try {
             return textureView.getBitmap();
         } catch (RuntimeException e) {
-            // A texture that is being torn down can refuse the read; the switch then shows the
-            // placeholder instead of failing.
+            // A texture that is being torn down can refuse the read; the switch then simply has no
+            // still frame to show and the incoming host waits for its first decoded frame.
             return null;
         }
     }
