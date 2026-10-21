@@ -21,8 +21,9 @@
 
 ## 🎯 当前焦点
 
+- 2026-10-21 **测试分层裁决**：功能做完只跑对应的短小功能测试；稳定性/长时/耐力类一律先登记、不逐棒穿插，统一到全部功能完成后执行。被延后的项（TB-WIN-001 ⑨ 连切 20 次与全项点位、Q-2 1080p 观看端终验、DV-001 全量基线、N1 过载掉线、N2 线程尖峰、TLS D9 30 min 功耗/D10 备份恢复、API 25 出画）已收口到 [TB-ENG-013](#tb-eng-013)，各项写明来源与阻塞条件。
 - 2026-10-21 T6 复测（r2）报告的三个缺陷已修复：**N-r2-1**（客户端对信任失败完全静默，与既有 R5-01 同源）新增 `client/StreamFailure` 把终止原因归一化（gRPC `Status` code/description + 原因链），`ScreenShareClient` 对每个终止记结构化日志，`ClientObserver.onDisconnected(StreamFailure)` 让观看端把身份类拒绝（`identity_mismatch`/`identity_changed`/`pin_unknown`/`invalid_chain`）显示为"设备身份校验失败"专属文案而不是"是否重试"；**N-r2-3** 冷启动首个 TLS 探针单独放宽到 5 s（`MANUAL_PROBE_FIRST_TIMEOUT_MS`）、探测失败补 `Log.w` 与"无法连接该地址"toast、并修掉探测任务抛异常时回调永不触发的静默路径；**N-r2-2** 把计划 9.7 的 D5 判据改写为实测语义（同地址新设备 + 提示 + 显式信任恢复），DV-022 补注。顺带登记 API 25 模拟器软解出画失败（N-r2-5，环境项）与 `insecure_transport` 分支不可达的评估结论。详见 [TB-DISC-010](#tb-disc-010)。
-- 2026-10-21 第 12 问“窗口化 ↔ 界面化”已落地代码层面（[TB-WIN-001](#tb-win-001)，方案 B）：悬浮窗与全屏 `ViewerActivity` 是同一会话的两个显示宿主，切换只把解码器输出面换到新宿主并按最新 descriptor 重建解码器（新增 `ClientMediaSession.rebindSurface()` 与 `render/SwitchableRenderTarget`），网络会话、认证与 Service 均不重建；末帧快照 + 200 ms 缩放过渡、悬浮窗“展开全屏”与 Activity“收起小窗/停止观看”入口、`ViewerPanelView`/`ViewerMenuFactory` 两个宿主共用渲染与菜单。全量 **1098 tests / 103 classes / 0 failures / 0 errors / 0 skipped**，`assembleDebug` 与 `lintDebug` 通过；**设备验证已通过（r2，2026-10-21）**：10 条点位 9 条 ✅、⑦ 通知动作不可脚本化需手测、⑧ 重连链路未跑完，20 次连续切换无崩溃/无 ANR/无解码器错误（细节与耗时表见条目）。首轮设备验证暴露的 P0（`ViewerActivity` 构造期 `new GestureDetector(this, …)` → 展开即 FATAL）已修复，并把该反模式升级为[命名规范第 8 章](naming-conventions.md#8-android-组件构造禁令强制)。[TB-CORE-002](#tb-core-002) 因此转为部分完成（“关窗不等于停会话”仍待 [DV-008](decision-board.md)），[DB-WIN-003](decision-board.md#db-win-003) 改写为方案 B。
+- 2026-10-21 第 12 问“窗口化 ↔ 界面化”已落地代码层面（[TB-WIN-001](#tb-win-001)，方案 B）：悬浮窗与全屏 `ViewerActivity` 是同一会话的两个显示宿主，切换只把解码器输出面换到新宿主并按最新 descriptor 重建解码器（新增 `ClientMediaSession.rebindSurface()` 与 `render/SwitchableRenderTarget`），网络会话、认证与 Service 均不重建；末帧快照 + 200 ms 缩放过渡、悬浮窗“展开全屏”与 Activity“收起小窗/停止观看”入口、`ViewerPanelView`/`ViewerMenuFactory` 两个宿主共用渲染与菜单。全量 **1098 tests / 103 classes / 0 failures / 0 errors / 0 skipped**，`assembleDebug` 与 `lintDebug` 通过；**设备功能冒烟已通过（r2，2026-10-21）**：出画 → 双击菜单「展开全屏」→ 全屏出画 → 返回收起回悬浮窗 → 停止观看，`Unable to instantiate`/`FATAL` 计数 0；裁决前那一轮复验的 10 条点位读数与耗时表见条目，其中连切 20 次等长时/稳定性项按当日裁决并入 [TB-ENG-013](#tb-eng-013) 统一回归。首轮设备验证暴露的 P0（`ViewerActivity` 构造期 `new GestureDetector(this, …)` → 展开即 FATAL）已修复，并把该反模式升级为[命名规范第 8 章](naming-conventions.md#8-android-组件构造禁令强制)。[TB-CORE-002](#tb-core-002) 因此转为部分完成（“关窗不等于停会话”仍待 [DV-008](decision-board.md)），[DB-WIN-003](decision-board.md#db-win-003) 改写为方案 B。
 - 2026-10-21 T6 设备报告的 TLS 阻塞项已修复并取得设备证据：**N-t6-1**（AndroidKeyStore 私钥只授权 SHA-256，Conscrypt 握手要 raw digest → `INCOMPATIBLE_DIGEST`，双向双版本全败）改为授权 `{SHA-256, NONE}` + 旧密钥一次性探针重建；**N-t6-2**（服务启动在主线程做 keystore 工作，失败路径 5.4 s 触发 ANR）把 `ScreenShareServer.start()` 移到 `lss-server-control` 线程并用纯 JVM 状态机裁定启停所有权；**N-t6-3**（重置身份后通知栏指纹不刷新）在重置广播里刷新通知。顺带补上手动探测通道缺失的客户端证书（服务端 `clientAuth=REQUIRE` 下探测必然失败）。全量 **1055 tests / 97 classes / 0 failures / 0 errors / 0 skipped**；真机（API 29）服务端 → 模拟器（API 36）观看端 TLS 1.3 双向握手出画通过，详见 [TB-DISC-010](#tb-disc-010) 与 [TB-DISC-012](#tb-disc-012)。
 - 基线参考：`65a34dc`（TB-ENG-004 完成标记）。
 - 编码框架隔离核心批次（Task 1–9，代码范围 `9f650dc..2a95ab2`）见 [TB-DOC-008](#tb-doc-008) 与 [TB-FW-001](#tb-fw-001)；最近完成的条目见 [TB-ENG-004](#tb-eng-004) 与 [TB-ENG-003](#tb-eng-003)。
@@ -63,6 +64,7 @@
 
 | ID | 状态 | 优先级 | 标题 | 创建 | 完成 | 关联 |
 | --- | --- | --- | --- | --- | --- | --- |
+| TB-ENG-013 | 📋 待办 | 🟡 P2 | 统一回归：稳定性/长时测试清单（功能全部完成后执行） | 2026-10-21 | — | [TB-WIN-001](#tb-win-001) |
 | TB-DISC-012 | 📋 待办 | 🟡 P2 | 双真机联机验证 | 2026-10-20 | — | [发现调研](discovery-research.md) |
 | TB-DISC-011 | 📋 待办 | 🟡 P3 | 手动添加条目跨重启持久化 | 2026-10-20 | — | [发现调研](discovery-research.md) |
 | TB-MEDIA-004 | 📋 待办 | 🟡 P3 | 首帧绿色花屏自愈 | 2026-10-20 | — | [媒体架构](media-architecture.md) |
@@ -70,6 +72,7 @@
 | TB-ENG-006 | 📋 待办 | 🟡 P2 | JPEG 降级客户端查看器接回 | 2026-10-19 | — | [问题3接线计划](superpowers/plans/2026-10-19-media-path-wiring.md) |
 | TB-CORE-001 | 📋 待办 | 🔴 P0 | 正确性与资源清理 | 2026-10-17 | — | [路线图阶段 1](optimization-roadmap.md) |
 | TB-CORE-002 | 🔶 部分完成 | 🔴 P0 | 会话与渲染目标解耦（解耦已落地，关窗不停会话待 DV-008） | 2026-10-17 | — | [窗口与会话设计](windowing-session-design.md) |
+| TB-WIN-001 | 🔶 部分完成 | 🟠 P1 | 窗口切换（方案 B；功能冒烟通过，全项回归待统一棒） | 2026-10-17 | — | [窗口与会话设计](windowing-session-design.md) |
 | TB-OBS-001 | 🔶 部分完成 | 🔴 P0 | 可观测性与基线（O1–O6 已落地，O7 待设备） | 2026-10-17 | — | [本计划](superpowers/plans/2026-10-21-transport-observability.md) |
 | TB-FW-002 | 🔶 部分完成 | 🟠 P1 | JPEG 适配 | 2026-10-17 | — | [编码框架设计](codec-framework.md) |
 | TB-SEC-001 | 📋 待办 | 🟠 P1 | 配对与传输加密 | 2026-10-17 | — | [媒体架构](media-architecture.md) |
@@ -89,7 +92,6 @@
 
 | ID | 状态 | 优先级 | 标题 | 创建 | 完成 | 关联 |
 | --- | --- | --- | --- | --- | --- | --- |
-| TB-WIN-001 | ✅ 已完成 | 🟠 P1 | 窗口切换（方案 B：悬浮窗 ↔ 全屏 ViewerActivity） | 2026-10-17 | 2026-10-21 | [窗口与会话设计](windowing-session-design.md) |
 | TB-DISC-010 | ✅ 已完成 | 🟠 P1 | 自签 TLS 与 TOFU 身份 pinning | 2026-10-20 | 2026-10-21 | [实施计划](superpowers/plans/2026-10-21-tls-tofu.md) |
 | TB-CLIENT-003 | ✅ 已完成 | 🟠 P1 | 查看器宽高比与缩放质量 | 2026-10-20 | 2026-10-20 | [实施计划](superpowers/plans/2026-10-21-viewer-quality-and-settings.md) |
 | TB-OBS-002 | ✅ 已完成 | 🟠 P1 | RTT 探针（Ping/Pong）与估计器 | 2026-10-21 | 2026-10-21 | [本计划](superpowers/plans/2026-10-21-transport-observability.md) |
@@ -295,22 +297,22 @@
 </details>
 
 <a id="tb-win-001"></a>
-<details><summary>TB-WIN-001 窗口切换（✅ 2026-10-21 · 方案 B）</summary>
+<details><summary>TB-WIN-001 窗口切换（🔶 部分完成 · 功能冒烟通过，全项回归待统一棒 · 方案 B）</summary>
 
-- **状态 / 优先级 / 创建 / 完成**：✅ 已完成 / 🟠 P1 / 2026-10-17 / 2026-10-21
+- **状态 / 优先级 / 创建 / 完成**：🔶 部分完成 / 🟠 P1 / 2026-10-17 / —（代码与修复已落地；⑨ 连切 20 次等长时项按 2026-10-21 裁决并入 [TB-ENG-013](#tb-eng-013)）
 - **任务**：窗口切换：悬浮窗与全屏 `ViewerActivity` 之间 attach/detach 显示宿主，不重建连接；末帧快照 + 缩放过渡；Surface 切换按现有 `SurfaceRenderTarget`/重配置路径重建解码器恢复。
 - **裁决依据**：本棒按用户 2026-10-20 提供的原始设计回答（“窗口化 ↔ 界面化”一节，外部参考未入库）执行**方案 B**（悬浮窗 ↔ 全屏 `ViewerActivity`，经末帧快照过渡），其余范围（PiP、方案 A 直接展开、分屏/freeform）不做。[DB-WIN-003](decision-board.md#db-win-003) 已同步改写。
 - **交付物 / 验证证据**：
   - **B1（`8325a4b`，会话解耦）**：新增 `render/SwitchableRenderTarget`（会话持稳定目标、切换只换 delegate）与 `ClientMediaSession.rebindSurface()`（任意非关闭状态按最新 descriptor 重建解码器；新宿主无 Surface 时进入 `RESYNCING(MISSING_SURFACE)` 而不是结束会话）；新增 `ClientMediaSessionRebindTest` 6 条、`SwitchableRenderTargetTest` 6 条。
   - **B2（本批，宿主切换）**：`render/ViewerPanelView`（纹理 + 末帧快照层 + 调试叠加 + 内容变换，悬浮窗与 Activity 共用）、`render/ViewerContentTransform` 与 `render/ViewerTransitionGeometry`（纯几何，各 8 / 6 条用例）、`render/ViewerMenuFactory`（显示模式/显示大小菜单共用）、`render/ViewerHost`（宿主契约）、`ViewerActivity`（沉浸式全屏宿主，本地 Binder attach，`configChanges` 自行处理旋转，`OnBackPressedDispatcher` 收起）；`ScreenViewerService` 改为会话 + 两个宿主，新增 `ViewerBinder`、末帧快照、`attach/detachHost`、`removeOverlayIfTransitionFinished`（动画结束 + 首帧到达才移除悬浮窗）；悬浮窗双击菜单末行新增“展开全屏”，Activity 双击菜单末行新增“收起小窗”，控制条单点切换、含“停止观看”。
-  - **验证**：`rm -rf app/build/test-results/testDebugUnitTest` 后全量 **1095 tests / 102 classes / 0 failures / 0 errors / 0 skipped**；`assembleDebug` 成功；`lintDebug` 无错误；`check_strings.py` / `check_cjk.py` / `check_docs.py` 通过；HEAD `0058593` 的 Build run [39556254140](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39556254140) 与 Checks run [39556254167](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39556254167) 均 success（W1 的 HEAD `8325a4b`：Build [39554587726](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39554587726)、Checks [39554587701](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39554587701)）。**设备验证未执行**，点位见条目末尾。
+  - **验证**：`rm -rf app/build/test-results/testDebugUnitTest` 后全量 **1095 tests / 102 classes / 0 failures / 0 errors / 0 skipped**；`assembleDebug` 成功；`lintDebug` 无错误；`check_strings.py` / `check_cjk.py` / `check_docs.py` 通过；HEAD `0058593` 的 Build run [39556254140](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39556254140) 与 Checks run [39556254167](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39556254167) 均 success（W1 的 HEAD `8325a4b`：Build [39554587726](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39554587726)、Checks [39554587701](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39554587701)）。**设备验证见下条**。
 - **未覆盖 / 遗留**：关窗仍结束会话（[DV-008](decision-board.md) 未裁决，本棒未改语义）；PiP 与方案 A 不做。
-- **设备验证（r2，2026-10-21）**：上一轮 10 条点位被 P0 阻断（`ViewerActivity` 字段初始化器 `new GestureDetector(this, …)` 在构造期读 Context → 展开即进程 FATAL），本轮修复后复验：
-  - **修复四个提交**：`971b6c1` 手势检测器改在 `onCreate()` 创建（`createGestureDetector()`）；`dad69ae` 切换失败回落悬浮窗 + 中英双语提示 + 两条看门狗；`42066ff` 契约用例 `ComponentConstructionTest` 3 条（扫描组件字段初始化器，负向验证可拦截原缺陷）；`bef6e21` 反模式禁令升级为 [命名规范第 8 章](naming-conventions.md#8-android-组件构造禁令强制)。
-  - **N-w1-2 的实测校正**：最初“2000 ms 未 attach 即提示”在慢机（一次成功切换需 4.3 s 才 attach）**误报**；改为 `ViewerActivity.onCreate()` 回送创建信号后取消看门狗，复验 20 次零误报。
-  - **点位判定**：①✅（`attachActivityHost` 后立即抓到的帧是末帧快照，非黑屏；悬浮窗在首帧后移除）②✅（`detachActivityHost`，窗口 864×1872 恢复出画）③✅（Home 后窗口接管 8.1 fps；从最近任务回来重新 attach）④✅（横屏 2400×1080 同 token 不重建、比例正确）⑤✅（两宿主行集/顺序一致，仅首行百分比与末行动作不同；Activity 侧 60% 与调试开关生效）⑥✅（`onSessionEnded` → 服务 `onDestroy`，通知消失）⑦⚠️ **需手测**（`RECEIVER_NOT_EXPORTED` + 悬浮窗覆盖通知栏，`am broadcast` 无法代按）⑧✅ 对话框可用（点「确定」的重连链路未跑完）⑨✅ 20/20，`FATAL` 0、`ANR` 0、解码器错误 0，PSS 94.5→107.8 MB、线程 56→65（稳态）⑩✅（Activity 宿主 `rx.catchup` 照常；60% 小窗圆角 6× 放大可见）。
+- **设备验证（r2，2026-10-21）**：上一轮 10 条点位被 P0 阻断（`ViewerActivity` 字段初始化器 `new GestureDetector(this, …)` 在构造期读 Context → 展开即进程 FATAL），修复后复验；下面两条按“裁决后”与“裁决前”分开记：
+  - **裁决后的功能冒烟（2026-10-21 15:46–16:10，HEAD `bef6e21`）**：两机 `installDebug` → 出画 → 双击菜单「展开全屏」→ 全屏出画（`attachActivityHost`）→ 返回收起（`detachActivityHost`，悬浮窗恢复出画）→ 停止观看（服务 `onDestroy`，悬浮窗与前台通知消失，App 进程存活）。全程 `Unable to instantiate` 0、`FATAL EXCEPTION` 0、`ANR in com.obby…` 0；展开成功但慢（模拟器 `Displayed +8.8 s`）只触发 `onActivityAttachSlow` 诊断行，未产生误报。证据：`r2/smoke-functional.md`、`r2/shots/r2-01..17*.png`、`r2/logs/emu-{expand,collapse,stop}*.txt`。
+  - **裁决前的一轮复验（15:18–16:10，读数只作参考）**：修复四个提交 `971b6c1`（`onCreate()` 创建手势检测器）、`dad69ae`（失败回落 + 双语提示 + 两条看门狗）、`42066ff`（契约用例 3 条）、`bef6e21`（禁令升级为[第 8 章](naming-conventions.md#8-android-组件构造禁令强制)）；`N-w1-2` 的“2000 ms 未 attach 即提示”在该机实测（成功切换需 4.3 s 才 attach）**误报**，改为 `ViewerActivity.onCreate()` 回送创建信号后取消看门狗。
+  - **点位判定**：①✅（`attachActivityHost` 后立即抓到的帧是末帧快照，非黑屏；悬浮窗在首帧后移除）②✅（`detachActivityHost`，窗口 864×1872 恢复出画）③✅（Home 后窗口接管 8.1 fps；从最近任务回来重新 attach）④✅（横屏 2400×1080 同 token 不重建、比例正确）⑤✅（两宿主行集/顺序一致，仅首行百分比与末行动作不同；Activity 侧 60% 与调试开关生效）⑥✅（`onSessionEnded` → 服务 `onDestroy`，通知消失）⑦⚠️ **需手测**（`RECEIVER_NOT_EXPORTED` + 悬浮窗覆盖通知栏，`am broadcast` 无法代按）⑧✅ 对话框可用（点「确定」的重连链路未跑完）⑨⏸️ **延后**（裁决前跑过 20/20：`FATAL` 0、`ANR` 0、解码器错误 0，PSS 94.5→107.8 MB、线程 56→65；按 2026-10-21 裁决不作完成判据，归 [TB-ENG-013](#tb-eng-013) 复跑）⑩✅（Activity 宿主 `rx.catchup` 照常；60% 小窗圆角 6× 放大可见）。
   - **切换耗时（模拟器）**：点击 → attach 均值 3.37 s（1.8–5.4），attach → 悬浮窗移除均值 1.22 s（0.5–2.4），单次合计均值 4.58 s；该模拟器 `Displayed +2.8~5.1 s`、`Skipped 153 frames`，真机预期低一个量级（本轮无真机观看端）。
-  - **新问题**：N-w2-1 创建信号依赖同进程（若将来拆 `:viewer` 进程需改 IPC）；N-w2-2 循环后出现瞬时 `grpc-okhttp-*` 线程尖峰（139–147 → 10 s 内回落 3，非泄漏）；N-w2-3 `removeOverlayIfTransitionFinished` 双次触发只造成日志重复；N-w2-4 悬浮窗层级高于最近任务/通知栏；N-w2-5 `uiautomator dump` 需先杀残留进程。报告：`device-test-2026-10-21-windowing/r2/report.md`（`STATUS: PASS`，⑦ 手测、⑧ 部分）。
+  - **新问题**：N-w2-1 创建信号依赖同进程（若将来拆 `:viewer` 进程需改 IPC）；N-w2-2 循环后出现瞬时 `grpc-okhttp-*` 线程尖峰（139–147 → 10 s 内回落 3，非泄漏）；N-w2-3 `removeOverlayIfTransitionFinished` 双次触发只造成日志重复；N-w2-4 悬浮窗层级高于最近任务/通知栏；N-w2-5 `uiautomator dump` 需先杀残留进程。报告：`device-test-2026-10-21-windowing/r2/report.md`（该报告的 `STATUS: PASS` 是裁决前口径，本条状态以裁决后口径为准：功能冒烟通过、全项归 [TB-ENG-013](#tb-eng-013)）。
 - **设备验证点位（原始清单，①–⑩ 见上条判定）**：① 展开：200 ms 动画、无黑屏、首帧后移除悬浮窗；② 返回收起；③ Home 接管与回来重展开；④ 旋转；⑤ 双宿主菜单一致；⑥ 停止观看；⑦ 通知栏“停止查看”（**不可脚本化，需手测**：接收器 `RECEIVER_NOT_EXPORTED`，`am broadcast` 无效，通知栏又被悬浮窗覆盖）；⑧ 展开态重试对话框；⑨ 连续 20 次切换；⑩ API 25 设备（本轮按用户给的 10 条执行，未启用 API 25 镜像）。
 - **关联文档**：[窗口与会话设计](windowing-session-design.md)、[路线图阶段 3](optimization-roadmap.md)
 
@@ -392,6 +394,25 @@
 - **任务**：正式发布签名加固：把示例签名回退与正式签名隔离；使用私有 keystore + 本地 `signing.properties` 或 CI secrets；明确保管、备份、轮换与升级一致性；验证同 `applicationId` 的覆盖安装和不同签名的失败提示。
 - **交付物 / 验证证据**：交付：签名配置说明、本地/CI 发布流程检查、升级安装验证记录。验证：正式包只由私有签名构建；仓库不含真实材料；同签名可覆盖安装，不同签名失败时明确告知用户卸载会清数据；当前未执行。
 - **关联文档**：[启动与签名检查清单](startup-checklist.md)、[项目现状安全边界](project-assessment.md)
+
+</details>
+
+<a id="tb-eng-013"></a>
+<details><summary>TB-ENG-013 统一回归：稳定性/长时测试清单（📋 待办 · 功能全部完成后执行）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟡 P2 / 2026-10-21 / —
+- **来源**：2026-10-21 用户裁决——**功能做完只做对应的短小功能测试；稳定性/长时/耐力类测试一律先登记看板，统一到全部功能完成后回归执行**。该条已写入两份交接提示词 §1（`2026-10-21-quality-metrics-tls-done.md`、`2026-10-20-discovery-refactor-done.md` 的「测试分层」）。本条目是被延后测试的唯一收口处：任何一棒都不再为这些项单独排设备时间，也不把它们写成“已通过”或“未通过”。
+- **待执行清单（按依赖排序；每项写明来源与阻塞条件）**：
+  1. **TB-WIN-001 全项 10 点位**（来源 [TB-WIN-001](#tb-win-001) 点位清单）：①–⑧、⑩ 随统一棒复跑；**⑨ 连续切换 20 次**属长时类，须与 5 分钟窗口一起跑，逐次记录 `attach`/`detach` 时刻、`FATAL`/`ANR` 计数、`PSS`、线程数与解码器错误；⑦ 通知栏“停止查看”仍需人手点（`RECEIVER_NOT_EXPORTED`）。**阻塞：无**（功能已冒烟通过）。
+  2. **Q-2 1080p 观看端终验**（来源 [TB-CLIENT-005](#tb-client-005) 的追赶策略）：1080p30 下 `rx.catchup`/`rx.catchup.shed`/`rx.catchup.lat`/`rx.converge.fail` 与 `dec.lat`/`pres.drop` 的收敛行为、停帧恢复时延。**阻塞：需要第二台真机**——模拟器软解 + QEMU NAT 排队会把解码端积压混进传输结论。
+  3. **DV-001 全量基线**（来源 [DV-001](decision-board.md)、[TB-OBS-001](#tb-obs-001) O7）：同设备同网络的 TCP 基线（`rtt.p50/p95`、`rx.arr.p95/p99`、`rx.rowd.p95`、`rx.stall`、`pres.late.p95`、`dec.deadlineMiss`、`tx.send.p95`、`enc.cap2out.p95`）与 5 分钟窗口，读数必须同时带 `rx.catchup*`。**阻塞：功能冻结（避免基线口径随代码漂移）+ 仪表读数稳定**。
+  4. **N1 过载掉线排查**（来源 `device-test-2026-10-21-tls-t6/report.md` §5.4）：该轮未复现自发掉线，但 `rx.stall.max=34.7 s`、`rtt.lost=317`、1 次 `DECODE_FAILURE` 重同步说明触发条件仍在。统一棒用可控过载（限速/弱网）复现并按同一采样口径取证。**阻塞：需可复现的弱网注入手段**。
+  5. **N2 线程尖峰**（来源同上）：观看端 `threads` 56→359→526→215、服务端 671，均出现在会话重建/编码器重启瞬间；**“尖峰是否回落、是否泄漏”仍未回答**。统一棒在尖峰时刻抓 `dumpsys meminfo` 与线程名快照。**阻塞：无**（需与 ⑨ 的循环同一轮做）。
+  6. **TLS D9 30 min 功耗 / D10 备份恢复**（来源 [TB-DISC-010](#tb-disc-010) 与 `2026-10-21-tls-tofu.md` §9.7）：D9 只做了短版（35 min 1080p30：电池 36→39 ℃、`thermal=0`），需补 30 min 全量；D10 备份/恢复（导出→重装→恢复→同 id/指纹与信任库一致）未测。**阻塞：D10 需明确备份格式与范围**（是否含 keystore 私钥）。
+  7. **API 25 出画兼容性**（来源 `N-r2-5`）：API 25 模拟器软解 `0x80001019` 导致握手正常、有数据无画面；**阻塞：需要 API 25 真机或带硬解镜像**，否则只能验证“握手 + 有数据”，出画判据不闭环。
+- **执行口径**：一次统一棒只装一个已推送 HEAD、仓库零改动；每项记录取数窗口、宿主负载与 guest `top`；不得把“没测到”写成“没问题”；运行前后偏好/输入法/方向逐字节还原；不得放宽判据，判据不可达时须写明机制理由。
+- **完成判据**：以上 7 项均有可核对证据（截图/日志/读数）并按[维护方式](#-维护方式)写回各自条目；阻塞未解除的项保持 📋 待办并注明阻塞原因。
+- **关联文档**：[TB-WIN-001](#tb-win-001)、[TB-OBS-001](#tb-obs-001)、[TB-CLIENT-005](#tb-client-005)、[TB-DISC-010](#tb-disc-010)、[DV-001](decision-board.md)、[路线图](optimization-roadmap.md)
 
 </details>
 
