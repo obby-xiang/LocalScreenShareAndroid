@@ -20,6 +20,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.core.content.ContextCompat;
 
+import com.obby.android.localscreenshare.core.audio.AudioHub;
 import com.obby.android.localscreenshare.core.codec.CodecRegistry;
 import com.obby.android.localscreenshare.core.model.ClientSessionKey;
 import com.obby.android.localscreenshare.core.stream.SessionSnapshot;
@@ -223,6 +224,11 @@ public final class ScreenShareServer {
 
     @Nullable
     private StreamRuntime mStreamRuntime;
+
+    // Optional audio fan-out of the same session. The server only passes it to the call handlers;
+    // the capture side owns its lifecycle, and null simply means this session carries no audio.
+    @Nullable
+    private AudioHub mAudioHub;
 
     // Live stream calls; used to attribute a session's counters to the remote address its call
     // arrived on. Closed handlers are pruned on every statistics collection.
@@ -611,6 +617,18 @@ public final class ScreenShareServer {
     public void setStream(@NonNull final StreamHub hub, @NonNull final StreamRuntime runtime) {
         mStreamHub = hub;
         mStreamRuntime = runtime;
+    }
+
+    /**
+     * Attaches the optional audio fan-out of the same session.
+     *
+     * <p>Null is the normal value on a device that cannot or does not share audio: the call handler
+     * then never attaches an audio session and the stream stays video-only. The hub is owned by
+     * {@link com.obby.android.localscreenshare.service.ScreenShareService}, exactly like the video
+     * hub.</p>
+     */
+    public void setAudioHub(@Nullable final AudioHub audioHub) {
+        mAudioHub = audioHub;
     }
 
     /**
@@ -1192,7 +1210,8 @@ public final class ScreenShareServer {
             final InetSocketAddress remoteAddress = REMOTE_ADDRESS.get();
             final GrpcMediaTransport transport = new GrpcMediaTransport(responseObserver, mSecure);
             final StreamCallHandler handler = new StreamCallHandler(mStreamHub, mStreamRuntime,
-                    transport, mStreamCallListener, remoteAddress, transport::sendPong, peer);
+                    transport, mStreamCallListener, remoteAddress, transport::sendPong, peer,
+                    mAudioHub, transport);
             mStreamCallHandlers.add(handler);
             final Thread drain = new Thread(() -> drainLoop(handler, responseObserver),
                     "lss-stream-drain-" + handler.hashCode());

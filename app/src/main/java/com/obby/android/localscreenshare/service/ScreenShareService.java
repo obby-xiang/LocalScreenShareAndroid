@@ -61,6 +61,7 @@ import com.google.android.material.color.MaterialColors;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.obby.android.localscreenshare.MainActivity;
 import com.obby.android.localscreenshare.R;
+import com.obby.android.localscreenshare.core.audio.AudioHub;
 import com.obby.android.localscreenshare.core.codec.CodecIds;
 import com.obby.android.localscreenshare.core.codec.CodecRegistry;
 import com.obby.android.localscreenshare.core.codec.EncoderSizeAlignment;
@@ -271,6 +272,11 @@ public class ScreenShareService extends Service {
 
     @Nullable
     private StreamHub mStreamHub;
+
+    // Optional audio fan-out of the same session; created with the stream pipeline and detached
+    // with it. Null means this session carries no audio.
+    @Nullable
+    private AudioHub mAudioHub;
 
     @Nullable
     private StreamKey mStreamKey;
@@ -853,6 +859,7 @@ public class ScreenShareService extends Service {
             }
         });
         server.setStream(mStreamHub, mStreamRuntime);
+        server.setAudioHub(mAudioHub);
         server.setSecure(mIsProjectionSecure);
         server.setDeviceStore(DiscoveryManager.get().getDeviceStore());
         mServer = server;
@@ -995,6 +1002,7 @@ public class ScreenShareService extends Service {
             mStreamHub.unregister(mStreamKey);
             mStreamHub = null;
         }
+        mAudioHub = null;
         mStreamKey = null;
         mCodecRegistry = null;
 
@@ -1439,6 +1447,7 @@ public class ScreenShareService extends Service {
                 TimeSource.MONOTONIC, mMetrics);
         mStreamHub.register(mStreamRuntime);
         mStreamHub.activate(mStreamKey);
+        mAudioHub = new AudioHub();
         mStreamRuntime.start();
 
         // The sampler closes an interval over the encoder output counters; created with the scope so

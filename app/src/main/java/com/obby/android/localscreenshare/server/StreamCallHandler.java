@@ -1,5 +1,9 @@
 package com.obby.android.localscreenshare.server;
 
+import com.obby.android.localscreenshare.core.audio.AudioHub;
+import com.obby.android.localscreenshare.core.audio.AudioSendSession;
+import com.obby.android.localscreenshare.core.audio.AudioTransport;
+import com.obby.android.localscreenshare.core.audio.AudioCodecIds;
 import com.obby.android.localscreenshare.core.model.ClientSessionKey;
 import com.obby.android.localscreenshare.core.stream.ClientCapabilities;
 import com.obby.android.localscreenshare.core.stream.ClientSendSession;
@@ -36,8 +40,20 @@ import java.util.UUID;
  * and closes itself, and the hub terminates the replaced transport with an explicit status so the
  * old client stops waiting for media. {@link #close()} detaches only the session this handler
  * attached, so an old call ending never detaches its replacement.</p>
+ *
+ * <p><b>Audio.</b> When the call carries an {@link AudioHub}, a successful video join also attaches
+ * an audio session for clients that declared an AAC decoder. Audio is drained first, at most
+ * {@value #AUDIO_DRAIN_BURST} frames per call, and then one video item is drained, so audio never
+ * starves video. An audio transport failure only detaches audio: the handler keeps the video
+ * session and reports the reason for logs, because a failure in the optional track must not end the
+ * stream the user is watching.</p>
  */
 public final class StreamCallHandler {
+
+    /**
+     * Maximum audio frames drained before one video item in a single drain call.
+     */
+    private static final int AUDIO_DRAIN_BURST = 4;
 
     private final StreamHub hub;
 
@@ -78,6 +94,16 @@ public final class StreamCallHandler {
 
     // Reason the join was rejected, or null when the client attached or never attempted to join.
     private String joinFailure;
+
+    // Optional audio fan-out of the session; null when the call carries no audio.
+    private final AudioHub audioHub;
+
+    // Audio transport of the call, usually the same object as the media transport.
+    private final AudioTransport audioTransport;
+
+    private AudioSendSession audioSession;
+
+    private String audioUnavailableReason;
 
     /**
      * Creates a handler for one client that reports no events to a listener.
@@ -157,6 +183,33 @@ public final class StreamCallHandler {
     public StreamCallHandler(StreamHub hub, StreamRuntime runtime, MediaTransport transport,
                              StreamCallListener listener, InetSocketAddress remoteAddress,
                              PongTarget pongTarget, TlsCertificate peerCertificate) {
+        this(hub, runtime, transport, listener, remoteAddress, pongTarget, peerCertificate,
+                null, null);
+    }
+
+    /**
+     * Creates a handler that also drives the optional audio track of the call.
+     *
+     * <p>The audio hub and the audio transport are optional as a pair: a call without audio passes
+     * null for both, and a client that does not declare an audio decoder simply never gets an audio
+     * session. The transport is passed separately from the media transport because only the
+     * production transport implements both; a test double usually implements one.</p>
+     *
+     * @param hub             stream hub the client joins; required
+     * @param runtime         active stream runtime; required
+     * @param transport       transport owned by this call; required
+     * @param listener        receiver of call events; required
+     * @param remoteAddress   address the call arrived on, or null when unknown
+     * @param pongTarget      echo target for round-trip probes; required
+     * @param peerCertificate identity proven by the handshake, or null when unverified
+     * @param audioHub        audio fan-out of the session, or null when the call carries no audio
+     * @param audioTransport  audio transport of the call, or null when the call carries no audio
+     * @throws IllegalArgumentException if any required argument is null
+     */
+    public StreamCallHandler(StreamHub hub, StreamRuntime runtime, MediaTransport transport,
+                             StreamCallListener listener, InetSocketAddress remoteAddress,
+                             PongTarget pongTarget, TlsCertificate peerCertificate,
+                             AudioHub audioHub, AudioTransport audioTransport) {
         if (hub == null) {
             throw new IllegalArgumentException("hub must not be null");
         }
@@ -179,6 +232,8 @@ public final class StreamCallHandler {
         this.remoteAddress = remoteAddress;
         this.pongTarget = pongTarget;
         this.peerCertificate = peerCertificate;
+        this.audioHub = audioHub;
+        this.audioTransport = audioTransport;
     }
 
     /**
@@ -260,7 +315,53 @@ public final class StreamCallHandler {
         }
         // Drain outside the monitor: the transport send may block on a slow client, and a
         // concurrent close() detaches the session first, so this becomes a no-op or fails cleanly.
-        return hub.drainOne(sessionKey);
+        // Audio goes first, but only for a bounded burst, so a continuous audio track can never
+        // starve video.
+        boolean audioSent = false;
+        for (int i = 0; i < AUDIO_DRAIN_BURST; i++) {
+            if (!drainAudioOnce()) {
+                break;
+            }
+            audioSent = true;
+        }
+        final boolean videoSent = hub.drainOne(sessionKey);
+        return audioSent || videoSent;
+    }
+
+    /**
+     * Drains at most one audio item.
+     *
+     * <p>A transport failure is contained here: the audio session is already detached by the hub,
+     * the reason is kept for logs, and the method returns false so the video drain continues. That
+     * is the whole point of a separate track - losing audio must not end the stream.</p>
+     *
+     * @return true when an audio message was sent
+     */
+    private boolean drainAudioOnce() {
+        final AudioHub audio = audioHub;
+        final ClientSessionKey sessionKey;
+        final AudioSendSession session;
+        synchronized (this) {
+            if (closed || audio == null || audioSession == null) {
+                return false;
+            }
+            sessionKey = key;
+            session = audioSession;
+        }
+        if (sessionKey == null || audio.getSession(sessionKey) != session) {
+            return false;
+        }
+        try {
+            return audio.drainOne(sessionKey);
+        } catch (IOException | RuntimeException e) {
+            synchronized (this) {
+                if (audioSession == session) {
+                    audioSession = null;
+                    audioUnavailableReason = "audio transport failed";
+                }
+            }
+            return false;
+        }
     }
 
     /**
@@ -268,6 +369,16 @@ public final class StreamCallHandler {
      */
     public synchronized boolean isClosed() {
         return closed;
+    }
+
+    /**
+     * Returns why audio is not being sent on this call, or null when it is or was never attached.
+     *
+     * <p>Informational only: a client without an audio decoder and a failing audio transport look
+     * the same to the video stream, which is exactly the isolation the design promises.</p>
+     */
+    public synchronized String getAudioUnavailableReason() {
+        return audioUnavailableReason;
     }
 
     /**
@@ -324,6 +435,10 @@ public final class StreamCallHandler {
             return;
         }
         closed = true;
+        if (audioHub != null && key != null && audioSession != null) {
+            audioHub.detachIfCurrent(key, audioSession);
+        }
+        audioSession = null;
         if (key != null) {
             hub.detachIfCurrent(key, attachedSession);
             key = null;
@@ -402,6 +517,7 @@ public final class StreamCallHandler {
                 attachedSession = decision.getSession();
                 attached = true;
                 pendingJoin = false;
+                attachAudio(candidate);
                 break;
             case NOT_READY:
                 // Keep the join pending; the drain loop retries once a descriptor is published.
@@ -415,6 +531,32 @@ public final class StreamCallHandler {
                 break;
             default:
                 break;
+        }
+    }
+
+    /**
+     * Attaches the audio session after a successful video join; called under the handler monitor.
+     *
+     * <p>Audio is optional by construction: a call without an audio hub, a client that declared no
+     * audio decoder or an audio join that fails all leave the video session untouched. The reason
+     * is recorded for logs so "the viewer has no sound" can be answered without guessing.</p>
+     */
+    private void attachAudio(ClientSessionKey sessionKey) {
+        if (audioHub == null || audioTransport == null) {
+            return;
+        }
+        if (!pendingCapabilities.supportsAudio(AudioCodecIds.AAC)) {
+            audioUnavailableReason = "client does not declare an audio decoder";
+            return;
+        }
+        try {
+            if (audioHub.join(sessionKey, pendingCapabilities, audioTransport)) {
+                audioSession = audioHub.getSession(sessionKey);
+            } else {
+                audioUnavailableReason = "audio join refused";
+            }
+        } catch (RuntimeException e) {
+            audioUnavailableReason = "audio join failed";
         }
     }
 

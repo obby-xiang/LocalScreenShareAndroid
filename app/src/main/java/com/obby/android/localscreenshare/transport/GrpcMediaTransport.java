@@ -1,5 +1,8 @@
 package com.obby.android.localscreenshare.transport;
 
+import com.obby.android.localscreenshare.core.audio.AudioTransport;
+import com.obby.android.localscreenshare.core.model.AudioAccessUnit;
+import com.obby.android.localscreenshare.core.model.AudioDescriptor;
 import com.obby.android.localscreenshare.core.model.EncodedAccessUnit;
 import com.obby.android.localscreenshare.core.model.StreamDescriptor;
 import com.obby.android.localscreenshare.core.stream.MediaTransport;
@@ -9,6 +12,7 @@ import com.obby.android.localscreenshare.grpc.screenstream.ServerMessage;
 import java.io.IOException;
 
 import io.grpc.Status;
+import io.grpc.stub.ServerCallStreamObserver;
 import io.grpc.stub.StreamObserver;
 
 /**
@@ -29,8 +33,15 @@ import io.grpc.stub.StreamObserver;
  * ran, because a revoked session must not leave the peer waiting; aborting twice does nothing the
  * second time. Both are serialized with sends behind the same lock, so an {@code onError} never
  * races an in-flight {@code onNext}.</p>
+ *
+ * <p><b>Audio.</b> The same object also carries the audio track through {@link AudioTransport}.
+ * Audio sends check {@code isReady()} first and report "not ready" instead of queueing, so a client
+ * that cannot keep up loses audio frames rather than adding latency to both tracks. The send lock
+ * is shared with video because the observer is not thread-safe; a video send can therefore delay one
+ * audio frame by the duration of that send, which is bounded by one access unit on a local
+ * network.</p>
  */
-public final class GrpcMediaTransport implements MediaTransport {
+public final class GrpcMediaTransport implements MediaTransport, AudioTransport {
 
     private final StreamObserver<ServerMessage> observer;
 
@@ -66,6 +77,20 @@ public final class GrpcMediaTransport implements MediaTransport {
     public void sendAccessUnit(EncodedAccessUnit accessUnit) throws IOException {
         send(ServerMessage.newBuilder()
                 .setAccessUnit(ScreenStreamProtoMapper.toProtoAccessUnit(accessUnit))
+                .build());
+    }
+
+    @Override
+    public boolean sendAudioDescriptor(AudioDescriptor descriptor) throws IOException {
+        return sendIfReady(ServerMessage.newBuilder()
+                .setAudioDescriptor(ScreenStreamProtoMapper.toProtoAudioDescriptor(descriptor))
+                .build());
+    }
+
+    @Override
+    public boolean sendAudioUnit(AudioAccessUnit accessUnit) throws IOException {
+        return sendIfReady(ServerMessage.newBuilder()
+                .setAudioAccessUnit(ScreenStreamProtoMapper.toProtoAudioAccessUnit(accessUnit))
                 .build());
     }
 
@@ -124,6 +149,30 @@ public final class GrpcMediaTransport implements MediaTransport {
                 throw new IOException("transport is closed");
             }
             observer.onNext(message);
+        }
+    }
+
+    /**
+     * Sends an audio message only when the call is ready to take it.
+     *
+     * <p>The readiness check and the send share the send lock, so an {@code onNext} never races a
+     * concurrent {@link #close()} or {@link #abort(String)}. An observer that is not a
+     * {@link ServerCallStreamObserver} (client-side fakes, tests) is always treated as ready.</p>
+     *
+     * @return true when the message was handed to the observer, false when the call was not ready
+     * @throws IOException if the transport was already closed
+     */
+    private boolean sendIfReady(ServerMessage message) throws IOException {
+        synchronized (sendLock) {
+            if (closed) {
+                throw new IOException("transport is closed");
+            }
+            if (observer instanceof ServerCallStreamObserver
+                    && !((ServerCallStreamObserver<?>) observer).isReady()) {
+                return false;
+            }
+            observer.onNext(message);
+            return true;
         }
     }
 }
