@@ -1632,9 +1632,21 @@ public class MainActivity extends AppCompatActivity {
 
         mCodecSettingView = settingsDialog.findViewById(R.id.codec_setting);
 
+        // Thermal throttling is a temporary override of the two sliders above, never a stored
+        // video value, so it lives at the bottom of the sheet with its own explanation.
+        final MaterialSwitch thermalThrottleSettingView =
+            settingsDialog.findViewById(R.id.thermal_throttle_setting);
+        thermalThrottleSettingView.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            if (Preferences.get().isThermalThrottleEnabled() != isChecked) {
+                Preferences.get().setThermalThrottleEnabled(isChecked);
+            }
+        });
+
         settingsDialog.setOnShowListener(dialog -> {
             settingsDialog.getBehavior().setState(BottomSheetBehavior.STATE_EXPANDED);
             applyVideoSettingsControls();
+            thermalThrottleSettingView.setChecked(Preferences.get().isThermalThrottleEnabled());
+            thermalThrottleSettingView.jumpDrawablesToCurrentState();
         });
         settingsDialog.setOnDismissListener(dialog -> {
             mTrackingSliders.clear();

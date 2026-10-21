@@ -184,6 +184,12 @@ public final class Preferences {
      */
     public static final String KEY_AUDIO_ENABLED = "audio_enabled";
 
+    /**
+     * Whether a hot device may lower the applied frame rate and capture size; see
+     * {@link #isThermalThrottleEnabled()}.
+     */
+    public static final String KEY_THERMAL_THROTTLE = "thermal_throttle";
+
     private static final String KEY_AUDIO_CHANNELS = "audio_channels";
 
     private static final String KEY_AUDIO_BITRATE = "audio_bitrate";
@@ -427,6 +433,25 @@ public final class Preferences {
      */
     public void setAudioEnabled(final boolean isEnabled) {
         mPreferences.edit().putBoolean(KEY_AUDIO_ENABLED, isEnabled).commit();
+    }
+
+    /**
+     * Whether a hot device may lower the applied frame rate and capture size; defaults to true.
+     *
+     * <p>On by default because the alternative is a device that keeps encoding at full rate while
+     * the platform is already throttling it, which costs heat and battery for a picture the
+     * viewer can barely receive. The switch only controls the temporary override: the stored frame
+     * rate and capture percentage are never written by it.</p>
+     */
+    public boolean isThermalThrottleEnabled() {
+        return mPreferences.getBoolean(KEY_THERMAL_THROTTLE, true);
+    }
+
+    /**
+     * Persists the thermal-throttle intent; a running share applies or drops the override at once.
+     */
+    public void setThermalThrottleEnabled(final boolean isEnabled) {
+        mPreferences.edit().putBoolean(KEY_THERMAL_THROTTLE, isEnabled).commit();
     }
 
     /**

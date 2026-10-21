@@ -95,6 +95,7 @@ import com.obby.android.localscreenshare.core.stream.SessionMetricsSnapshot;
 import com.obby.android.localscreenshare.core.stream.StreamHub;
 import com.obby.android.localscreenshare.core.stream.StreamQueueLimits;
 import com.obby.android.localscreenshare.core.stream.StreamRuntime;
+import com.obby.android.localscreenshare.core.stream.ThermalThrottlePolicy;
 import com.obby.android.localscreenshare.core.stream.ViewerCapturePolicy;
 import com.obby.android.localscreenshare.core.util.NanoClock;
 import com.obby.android.localscreenshare.core.util.TimeSource;
@@ -448,6 +449,18 @@ public class ScreenShareService extends Service {
     // Last values rendered into the notification; used to skip redundant notification updates.
     private int mConnectionCount;
 
+    // Thermal status source; non-null only between onCreate and onDestroy, and only on API 29+.
+    @Nullable
+    private ThermalMonitor mThermalMonitor;
+
+    // Thermal tier currently applied to the capture parameters. NONE means the user's stored values
+    // apply; a hotter tier lowers what is applied without touching the preferences.
+    @NonNull
+    private ThermalThrottlePolicy.Tier mThermalTier = ThermalThrottlePolicy.Tier.NONE;
+
+    // Last status reported by the monitor; kept for the log line even when the tier does not change.
+    private int mThermalStatus = ThermalThrottlePolicy.STATUS_NONE;
+
     // Badge of the most recent first-contact viewer; cleared when no viewer is connected.
     @Nullable
     private String mNewPeerBadge;
@@ -552,9 +565,11 @@ public class ScreenShareService extends Service {
                         }
 
                         // Frame-rate throttle: drop images that arrive before the configured
-                        // interval since the last accepted frame. Timestamps are nanoseconds.
+                        // interval since the last accepted frame. Timestamps are nanoseconds. The
+                        // rate is the effective one, so a thermal cap applies without a rebuild of
+                        // the JPEG path.
                         if (mFrameTimestamp >= 0L
-                            && image.getTimestamp() - mFrameTimestamp < mNanosPerSecond / mProjectionFrameRate) {
+                            && image.getTimestamp() - mFrameTimestamp < mNanosPerSecond / effectiveProjectionFrameRate()) {
                             return;
                         }
 
@@ -709,6 +724,12 @@ public class ScreenShareService extends Service {
                     updateNotification();
                 }
                 break;
+            case Preferences.KEY_THERMAL_THROTTLE:
+                // The switch is the single source of intent: turning it off restores the user's
+                // frame rate and capture scale immediately, turning it on applies what the device
+                // reports right now. The stored projection values are never touched either way.
+                onThermalThrottleSettingChanged();
+                break;
             case Preferences.KEY_METRICS_ENABLED:
                 break;
             default:
@@ -853,6 +874,10 @@ public class ScreenShareService extends Service {
             + mProjectionSizeAlignment.getWidthAlignment() + "x"
             + mProjectionSizeAlignment.getHeightAlignment());
         Preferences.get().addObserver(mPreferencesObserver);
+
+        // The thermal tier has to be known before the stream pipeline is built, so the first
+        // encoder configuration already carries the values the device allows.
+        startThermalMonitor();
     }
 
     /**
@@ -867,6 +892,7 @@ public class ScreenShareService extends Service {
         unregisterReceiver(mBroadcastReceiver);
         Preferences.get().removeObserver(mPreferencesObserver);
         mMainHandler.removeCallbacks(mEncoderRebuildRunnable);
+        stopThermalMonitor();
         stopAnnouncements();
         // Queued work still runs; a start in flight finishes and stops its own server.
         mServerControlExecutor.shutdown();
@@ -1974,13 +2000,144 @@ public class ScreenShareService extends Service {
     }
 
     /**
+     * Starts watching the platform thermal status where the platform exposes one.
+     *
+     * <p>The SDK gate is explicit because lint cannot see through a helper that would classify
+     * support (the audio start path learned that the hard way). Below API 29 no status exists, so
+     * the ladder stays at the user's settings and nothing is logged beyond one informational line;
+     * on API 29+ a missing thermal service only disables the ladder, never the share.</p>
+     */
+    private void startThermalMonitor() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            Log.i(mTag, "startThermalMonitor: no thermal status below API 29");
+            return;
+        }
+        final ThermalMonitor monitor = new ThermalMonitor(this, this::onThermalStatusReported);
+        if (!monitor.start()) {
+            Log.w(mTag, "startThermalMonitor: thermal status listener is unavailable");
+            return;
+        }
+        mThermalMonitor = monitor;
+    }
+
+    /**
+     * Stops watching the thermal status; idempotent.
+     *
+     * <p>The SDK gate is explicit so lint can see that the call is only reachable on API 29+,
+     * where the monitor is created in the first place.</p>
+     */
+    private void stopThermalMonitor() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            return;
+        }
+        final ThermalMonitor monitor = mThermalMonitor;
+        mThermalMonitor = null;
+        if (monitor != null) {
+            monitor.stop();
+        }
+    }
+
+    /**
+     * Hops a thermal notification onto the main thread, where the tier and its actions live.
+     */
+    private void onThermalStatusReported(final int status) {
+        mMainHandler.post(() -> onThermalStatusChanged(status));
+    }
+
+    /**
+     * Recomputes the tier for a reported status and applies it when it changed.
+     *
+     * <p>Only a tier change is acted on: {@code LIGHT} to {@code MODERATE} is still the band in
+     * which the user's settings apply, and an unchanged tier rebuilds nothing.</p>
+     */
+    private void onThermalStatusChanged(final int status) {
+        mThermalStatus = status;
+        final ThermalThrottlePolicy.Tier next = Preferences.get().isThermalThrottleEnabled()
+            ? ThermalThrottlePolicy.tierFor(status) : ThermalThrottlePolicy.Tier.NONE;
+        applyThermalTier(next, next == ThermalThrottlePolicy.Tier.NONE ? "recover" : "throttle");
+    }
+
+    /**
+     * Applies the switch: turning it off restores the user's settings at once, turning it on
+     * applies the status the device reports right now.
+     */
+    private void onThermalThrottleSettingChanged() {
+        if (!Preferences.get().isThermalThrottleEnabled()) {
+            applyThermalTier(ThermalThrottlePolicy.Tier.NONE, "disabled");
+            return;
+        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            // No thermal status exists here, so switching the toggle on changes nothing.
+            return;
+        }
+        final ThermalMonitor monitor = mThermalMonitor;
+        if (monitor != null) {
+            onThermalStatusChanged(monitor.getCurrentStatus());
+        }
+    }
+
+    /**
+     * Moves the applied capture parameters to {@code tier} and publishes the change.
+     *
+     * <p>The preferences are never written: the tier only changes what
+     * {@link #effectiveProjectionFrameRate()} and {@link #effectiveProjectionScale()} return, so
+     * the user's values come back the moment the tier returns to {@link
+     * ThermalThrottlePolicy.Tier#NONE}. A size change goes through the ordinary resize path, which
+     * switches the encoder before it resizes the display; a frame-rate-only change rebuilds the
+     * encoder, because the frame-rate hint is read when the encoder is configured. Both run on the
+     * main thread, so two thermal transitions cannot race for one configuration epoch.</p>
+     */
+    private void applyThermalTier(@NonNull final ThermalThrottlePolicy.Tier tier,
+                                  @NonNull final String event) {
+        if (tier == mThermalTier) {
+            return;
+        }
+        mThermalTier = tier;
+        Log.i(mTag, "thermal: event=" + event + " status=" + mThermalStatus + " tier=" + tier
+            + " frameRate=" + effectiveProjectionFrameRate() + "/" + mProjectionFrameRate
+            + " scale=" + effectiveProjectionScale() + "/" + mProjectionScale);
+        if (mServer != null) {
+            updateNotification();
+        }
+        if (mStreamRuntime == null || mVirtualDisplay == null) {
+            // The start path reads the effective values, so a tier that changed while stopped is
+            // already part of the next session.
+            return;
+        }
+        if (!Objects.equals(mProjectionSize, getProjectionSize())) {
+            updateProjectionSize();
+        } else {
+            scheduleEncoderRebuild();
+        }
+    }
+
+    /**
+     * Returns the frame rate the capture may use: the user's value capped by the thermal tier.
+     */
+    private int effectiveProjectionFrameRate() {
+        return ThermalThrottlePolicy.capFrameRate(mThermalTier, mProjectionFrameRate);
+    }
+
+    /**
+     * Returns the capture percentage the display may use: the user's value capped by the thermal
+     * tier.
+     */
+    private int effectiveProjectionScale() {
+        return ThermalThrottlePolicy.capScalePercent(mThermalTier, mProjectionScale);
+    }
+
+    /**
      * Returns the validated projection settings snapshot read from the preferences.
+     *
+     * <p>The frame rate and the capture percentage are the effective values: the user's stored
+     * choice lowered by the thermal tier, so the encoder is configured with what the device allows
+     * right now without the stored preference ever changing.</p>
      */
     @NonNull
     private ProjectionSettings buildProjectionSettings() {
         return ProjectionSettings.of(Preferences.get().getProjectionBitrate(),
-            Preferences.get().getProjectionFrameRate(), Preferences.get().getProjectionIdrIntervalMs(),
-            Preferences.get().getProjectionScale(), Preferences.get().getProjectionQuality(),
+            effectiveProjectionFrameRate(), Preferences.get().getProjectionIdrIntervalMs(),
+            effectiveProjectionScale(), Preferences.get().getProjectionQuality(),
             Preferences.get().getProjectionCodec());
     }
 
@@ -2022,18 +2179,20 @@ public class ScreenShareService extends Service {
     }
 
     /**
-     * Maximum window bounds of the current display, scaled by the projection scale preference and
+     * Maximum window bounds of the current display, scaled by the effective capture percentage and
      * aligned to the encoder's size step.
      *
-     * <p>The alignment is applied here, before anything uses the size, so the virtual display, the
-     * descriptor and the encoder all get the same geometry. A percentage can therefore land on an
-     * odd size such as 885x1918 without reaching the encoder, which is what made the hardware
+     * <p>The percentage is the user's value lowered by the thermal tier, so a device that is hot
+     * enough to halve the capture area gets the smaller geometry on both the display and the
+     * encoder. The alignment is applied here, before anything uses the size, so the virtual display,
+     * the descriptor and the encoder all get the same geometry. A percentage can therefore land on
+     * an odd size such as 885x1918 without reaching the encoder, which is what made the hardware
      * encoder refuse the configuration in the 2026-10-21 device test.</p>
      */
     @NonNull
     private Size getProjectionSize() {
         final Rect windowBounds = WindowUtils.getMaximumWindowBounds(this);
-        final float scale = mProjectionScale / 100f;
+        final float scale = effectiveProjectionScale() / 100f;
         return new Size(
             mProjectionSizeAlignment.alignWidth((int) (windowBounds.width() * scale)),
             mProjectionSizeAlignment.alignHeight((int) (windowBounds.height() * scale)));
@@ -2078,25 +2237,50 @@ public class ScreenShareService extends Service {
     }
 
     /**
-     * Returns the badge and fingerprint guide, or null when neither is available.
+     * Returns the notification's sub-text: the thermal override, the new-peer badge, the audio
+     * reason and the fingerprint guide, whichever apply. Null when none does.
      */
     @Nullable
     private String notificationSubText() {
         final String fingerprint = localFingerprintText();
-        final String details;
-        if (mNewPeerBadge == null) {
-            details = fingerprint;
-        } else {
-            details = fingerprint == null ? mNewPeerBadge : mNewPeerBadge + " · " + fingerprint;
+        String details = mNewPeerBadge;
+        if (fingerprint != null) {
+            details = details == null ? fingerprint : details + " · " + fingerprint;
         }
-        if (mAudioAvailability == AudioAvailability.AVAILABLE) {
-            return details;
+
+        // The thermal line is the only visible sign of a temporary override, so it is prepended
+        // while a tier is active and disappears as soon as the device cools down.
+        final String thermal = thermalStatusText();
+        if (thermal != null) {
+            details = details == null ? thermal : thermal + " · " + details;
         }
-        final String audio = audioReasonText(mAudioAvailability);
-        if (audio == null) {
-            return details;
+
+        if (mAudioAvailability != AudioAvailability.AVAILABLE) {
+            final String audio = audioReasonText(mAudioAvailability);
+            if (audio != null) {
+                details = details == null ? audio : audio + " · " + details;
+            }
         }
-        return details == null ? audio : audio + " · " + details;
+        return details;
+    }
+
+    /**
+     * Resolves the active thermal tier to a localized line, or null when no tier is active.
+     */
+    @Nullable
+    private String thermalStatusText() {
+        switch (mThermalTier) {
+            case REDUCED:
+                return getString(R.string.service_notification_thermal_reduced,
+                    ThermalThrottlePolicy.THROTTLED_FRAME_RATE_LIMIT);
+            case MINIMAL:
+                return getString(R.string.service_notification_thermal_minimal,
+                    ThermalThrottlePolicy.THROTTLED_FRAME_RATE_LIMIT,
+                    ThermalThrottlePolicy.MINIMAL_SCALE_LIMIT_PERCENT);
+            case NONE:
+            default:
+                return null;
+        }
     }
 
     /**

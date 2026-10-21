@@ -75,6 +75,10 @@
     <string name="video_settings_rebuild_hint">"Changing the screen size, frame rate or key-frame interval rebuilds the encoder; the picture may pause briefly and resynchronize."</string>
     <string name="video_settings_frame_rate_note">"Rates above 60 fps require encoder support on this device."</string>
     <string name="video_settings_codec_locked_note">"This version always uses H.264."</string>
+    <string name="thermal_throttle_setting_label">"Reduce load when hot"</string>
+    <string name="thermal_throttle_setting_note">"Lowers the frame rate when the device reports a severe thermal status and halves the screen size at a critical one. Your video settings come back once the device cools down."</string>
+    <string name="service_notification_thermal_reduced">"Thermal limit: <xliff:g id="fps">%1$d</xliff:g> fps"</string>
+    <string name="service_notification_thermal_minimal">"Thermal limit: <xliff:g id="fps">%1$d</xliff:g> fps, <xliff:g id="scale">%2$d</xliff:g>%% screen"</string>
     <string name="projection_size_rejected">"This screen size could not be applied; sharing stays at <xliff:g id="width">%1$d</xliff:g>×<xliff:g id="height">%2$d</xliff:g>."</string>
     <string name="start_service_failed">"Failed to start the screen sharing service."</string>
     <string name="tls_first_connect_message">"Key fingerprint (SHA-256):
