@@ -101,6 +101,18 @@ public class StreamFailureTest {
     }
 
     @Test
+    public void aReasonThatIsNotARefusalStillAllowsARetry() {
+        // The retry prompt is the fallback for a lost path, so a refusal must be the only class of
+        // failure that suppresses it; anything else keeps the reason the server sent.
+        final StreamFailure failure = StreamFailure.from(Status.UNAVAILABLE
+            .withDescription("transport closed").asRuntimeException());
+
+        assertFalse(failure.isAuthorizationRejected());
+        assertFalse(failure.isIdentityRejected());
+        assertEquals("transport closed", failure.getReason());
+    }
+
+    @Test
     public void aServerReasonThatIsNotAboutIdentityKeepsItsDescription() {
         final StreamFailure failure = StreamFailure.from(Status.ABORTED
             .withDescription("session taken over by a newer connection")
