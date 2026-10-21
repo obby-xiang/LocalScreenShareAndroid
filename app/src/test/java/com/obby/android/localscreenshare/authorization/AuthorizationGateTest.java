@@ -182,6 +182,81 @@ public class AuthorizationGateTest {
         assertFalse(fixture.gate.isAuthorized(DEVICE_ID, FINGERPRINT));
     }
 
+    @Test
+    public void reviewAllowsAGrantedIdentity() {
+        final Fixture fixture = new Fixture(true);
+        fixture.store.authorize(DEVICE_ID, FINGERPRINT, "Laptop", 1L);
+
+        assertEquals(AuthorizationGate.Review.ALLOW, fixture.gate.review(DEVICE_ID, FINGERPRINT));
+    }
+
+    @Test
+    public void reviewAllowsWhenTheFeatureIsOff() {
+        final Fixture fixture = new Fixture(false);
+
+        assertEquals(AuthorizationGate.Review.ALLOW, fixture.gate.review(DEVICE_ID, FINGERPRINT));
+    }
+
+    @Test
+    public void reviewReportsWaitingForAPeerThatIsStillAsking() {
+        final Fixture fixture = new Fixture(true);
+        fixture.gate.request(DEVICE_ID, FINGERPRINT, "Laptop");
+
+        assertEquals(AuthorizationGate.Review.WAITING, fixture.gate.review(DEVICE_ID, FINGERPRINT));
+    }
+
+    @Test
+    public void reviewDeniesAPeerWithNeitherAGrantNorARequest() {
+        final Fixture fixture = new Fixture(true);
+
+        assertEquals(AuthorizationGate.Review.DENY, fixture.gate.review(DEVICE_ID, FINGERPRINT));
+    }
+
+    @Test
+    public void reviewIsNotWaitingForAnotherIdentity() {
+        final Fixture fixture = new Fixture(true);
+        fixture.gate.request(DEVICE_ID, FINGERPRINT, "Laptop");
+
+        assertEquals(AuthorizationGate.Review.DENY,
+            fixture.gate.review("BBBBBBBBBBBBBBBBBBBBBBBBBB", FINGERPRINT));
+        assertEquals(AuthorizationGate.Review.DENY,
+            fixture.gate.review(DEVICE_ID, "b3RoZXItZmluZ2VycHJpbnQtb3RoZXItZmluZ2Vy"));
+    }
+
+    @Test
+    public void reviewStopsWaitingOnceTheRequestWasAnswered() {
+        final Fixture wrongAnswer = new Fixture(true);
+        final long denied = wrongAnswer.gate.request(DEVICE_ID, FINGERPRINT, "Laptop");
+        wrongAnswer.gate.resolve(denied, ApprovalOutcome.DENY);
+
+        assertEquals(AuthorizationGate.Review.DENY, wrongAnswer.gate.review(DEVICE_ID, FINGERPRINT));
+
+        final Fixture cancelled = new Fixture(true);
+        final long withdrawn = cancelled.gate.request(DEVICE_ID, FINGERPRINT, "Laptop");
+        cancelled.gate.cancel(withdrawn);
+
+        assertEquals(AuthorizationGate.Review.DENY, cancelled.gate.review(DEVICE_ID, FINGERPRINT));
+    }
+
+    @Test
+    public void reviewAllowsAfterAnAlwaysAnswer() {
+        final Fixture fixture = new Fixture(true);
+        final long requestId = fixture.gate.request(DEVICE_ID, FINGERPRINT, "Laptop");
+        fixture.gate.resolve(requestId, ApprovalOutcome.ALLOW_ALWAYS);
+
+        assertEquals(AuthorizationGate.Review.ALLOW, fixture.gate.review(DEVICE_ID, FINGERPRINT));
+    }
+
+    @Test
+    public void reviewDeniesAPeerWhoseGrantWasRevokedMidStream() {
+        final Fixture fixture = new Fixture(true);
+        fixture.store.authorize(DEVICE_ID, FINGERPRINT, "Laptop", 1L);
+
+        fixture.store.revoke(DEVICE_ID);
+
+        assertEquals(AuthorizationGate.Review.DENY, fixture.gate.review(DEVICE_ID, FINGERPRINT));
+    }
+
     // Shared fixture: one store over fake storage, one mutable clock and one recording listener.
     private static final class Fixture {
         private final MutableClock clock = new MutableClock(1_000L);
