@@ -116,7 +116,8 @@ public final class ScreenShareClient {
         public void run() {
             mMainHandler.removeCallbacks(mPingRunnable);
             final StreamObserver<ClientMessage> observer = mRequestObserver;
-            if (mIsStopped || observer == null) {
+            if (mIsStopped || observer == null || !mMetrics.isEnabled()) {
+                // A disabled scope must stay free of samples and of probe traffic.
                 return;
             }
             final int seq = mRttEstimator.beginProbe();
@@ -390,7 +391,9 @@ public final class ScreenShareClient {
 
         mClientProfile = new ClientProfile(mMetrics);
         mMainHandler.postDelayed(mUpdateClientStatsRunnable, UPDATE_CLIENT_STATS_INTERVAL_MS);
-        mMainHandler.postDelayed(mPingRunnable, PING_INTERVAL_MS);
+        if (mMetrics.isEnabled()) {
+            mMainHandler.postDelayed(mPingRunnable, PING_INTERVAL_MS);
+        }
     }
 
     /**
