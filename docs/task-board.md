@@ -42,6 +42,7 @@
 - 2026-10-21 该轮设备验证首轮被 **D-1（P0，阻断）** 挡住并已修复：两个服务把设备采样器写在字段初始化器里，`Class.newInstance` 期间 `attachBaseContext` 尚未调用 → 采样器构造读 `getApplicationContext()` 得到 null base → `Unable to instantiate service` → App 每次启动 FATAL（真机 API 29 与模拟器 API 36 同栈，与 `metrics_enabled` 无关）。改为首次采样惰性创建（`service/LazyContextValue` + 3 条契约用例），两处服务同步改；全量 **902 tests / 0 failures / 0 errors / 0 skipped**（80 个测试类）。设备复验：两机冷启动进主界面、真机开共享 1080×2340、模拟器手动添加后出画一轮，两机 crash buffer 为空。D-2（滑杆下限 17% vs 推算 14%）已核清为口径差异（声明下限 176×144 与硬编实拒阈 144×144），代码无算错，结论与证据见 [TB-OBS-001](#tb-obs-001)。同类反模式禁令已写入[本计划](superpowers/plans/2026-10-21-transport-observability.md) 8.1。
 - 2026-10-21 设备验证 r2 报告的 3 个仪表缺陷已修复（[TB-OBS-001](#tb-obs-001)）：**I-1** 速率字段改为「差分窗口 ÷ 实测间隔」（新增 `MetricsRate`/`RateSampler`，删掉 `MetricsSnapshot.perSecond`/`bitrateBps`，服务端 5 s 行、观看端 5 s 行与 1 s HUD 各持独立基线）；**I-2** 观看端在 `ClientMediaReceiver` 按收到的 AU 累加 `ACCESS_UNITS`/`ACCESS_UNIT_BYTES`（复用到达侧已反序列化的数据，无新增打点），HUD 首行与新增的 `rx.auRate`/`rx.bitrate` 有数；**I-3** 新增 `StreamHub.snapshotSessionMetrics()` + `MetricsFormatter.toSessionLogLine()`，服务端每 5 s 为每个会话说一行 `sid=… tx.send/tx.qResidency/tx.qDepth`（会话 scope 只读、不注册，热路径锁纪律不变）。**Q-1** 按调研结论实现：`max-fps-to-encoder` 私有/公开键 + 失败回退（`new EncoderFormat(...)` 单构造 + `configureWithFallback`），帧率设置从此进入编码器限帧路径；设备是否真的限帧仍待验证棒实测。**Q-2/Q-3** 登记为 [TB-CLIENT-005](#tb-client-005)（解码队列不收敛）与 [TB-CLIENT-006](#tb-client-006)（小窗 HUD 折行），本棒不修。全量 **928 tests / 0 failures / 0 errors / 0 skipped**（82 个测试类），`assembleDebug` 成功；设备复测未执行。
 - 阶段 0 的仪表部分已就位，但基线报告与 DV-001/DV-018 的实测数值仍缺；阶段 1 之后的代码优化尚未开始，当前没有进行中的代码任务。
+- 2026-10-21 **Q-2 落地（[TB-CLIENT-005](#tb-client-005)）**：观看端新增解码追赶（catch-up）——积压持续 2 s 即作废已入队的 AU、flush 解码器，只从下一个校验过的 IDR 恢复；冷却 5 s，连续 3 次不收敛上报 `rx.converge.fail` 并停 30 s，不自动降服务端参数（属 DV-012）。新增 `rx.catchup`/`rx.catchup.shed`/`rx.catchup.lat`/`rx.catchup.why`/`rx.converge.fail` 与 HUD `cu`。全量 **946 tests / 0 failures / 0 errors / 0 skipped**（84 个测试类），`assembleDebug` 成功。**设备实测不在本棒**：[DV-001](decision-board.md) 全量基线待下一次设备棒随该策略一起执行。
 - 下一步：按 [渐进优化路线图](optimization-roadmap.md) 的阶段 0 启动可观测性与基线，落地顺序以 [编码框架](codec-framework.md) 为准。
 - 前置约束：拿到基线前，不预设任何性能、发热或延迟收益。
 - 设备验证未解禁：双语资源与系统语言跟随仅经构建、单测与代码审查确认。
@@ -74,7 +75,6 @@
 | TB-AUDIO-001 | 📋 待办 | 🟡 P2 | 音频链路 | 2026-10-17 | — | [媒体架构](media-architecture.md) |
 | TB-CLIENT-001 | 📋 待办 | 🟡 P2 | 客户端画质与多客户端 | 2026-10-17 | — | [媒体架构](media-architecture.md) |
 | TB-CLIENT-002 | 📋 待办 | 🟡 P2 | 单流与多档流策略 | 2026-10-17 | — | [媒体架构](media-architecture.md) |
-| TB-CLIENT-005 | 📋 待办 | 🟡 P2 | 观看端解码队列背压与降载 | 2026-10-21 | — | [TB-OBS-001](#tb-obs-001) |
 | TB-CLIENT-006 | 📋 待办 | ⚪ P3 | 小窗 HUD 折行与字号自适应 | 2026-10-21 | — | [TB-OBS-001](#tb-obs-001) |
 | TB-CTRL-001 | 📋 待办 | 🟡 P2 | 单客户端反控 | 2026-10-17 | — | [媒体架构](media-architecture.md) |
 | TB-ENG-001 | 📋 待办 | 🟡 P2 | 测试与发布工程 | 2026-10-17 | — | [项目现状](project-assessment.md) |
@@ -90,6 +90,7 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | TB-CLIENT-003 | ✅ 已完成 | 🟠 P1 | 查看器宽高比与缩放质量 | 2026-10-20 | 2026-10-20 | [实施计划](superpowers/plans/2026-10-21-viewer-quality-and-settings.md) |
 | TB-OBS-002 | ✅ 已完成 | 🟠 P1 | RTT 探针（Ping/Pong）与估计器 | 2026-10-21 | 2026-10-21 | [本计划](superpowers/plans/2026-10-21-transport-observability.md) |
+| TB-CLIENT-005 | ✅ 已完成 | 🟡 P2 | 观看端解码队列背压与追赶（catch-up） | 2026-10-21 | 2026-10-21 | [TB-OBS-001](#tb-obs-001) |
 | TB-ENG-007 | ✅ 已完成 | 🟡 P2 | 客户端发送统计并入服务端统计（已并入 TB-OBS-001 O3） | 2026-10-19 | 2026-10-21 | [本计划](superpowers/plans/2026-10-21-transport-observability.md) |
 | TB-CLIENT-004 | ✅ 已完成 | 🟡 P2 | 客户端呈现调度与关键帧恢复 | 2026-10-20 | 2026-10-20 | [实施计划](superpowers/plans/2026-10-21-viewer-quality-and-settings.md) |
 | TB-ENG-005 | ✅ 已完成 | 🟡 P2 | 新视频设置界面（码率/IDR 可写，编码格式只读） | 2026-10-19 | 2026-10-20 | [实施计划](superpowers/plans/2026-10-21-viewer-quality-and-settings.md) |
@@ -268,7 +269,7 @@
     - **I-2（P2）观看端 HUD 首行恒 0**：根因是全仓只有 `StreamRuntime`（服务端）累加 `ACCESS_UNITS`/`ACCESS_UNIT_BYTES`，观看端从不累加。修法：`ClientMediaReceiver` 增加 `PipelineMetrics` 依赖，在 `ACCESS_UNIT` 分支用**已反序列化**的 `EncodedAccessUnit.getPayloadLength()` 计数（无新增时钟读取、无重复反序列化；关闭态只是一次 volatile 读）；观看端 5 s 行同时新增 `rx.auRate`/`rx.bitrate`（`ClientMetricNames`），HUD 首行与日志从此同源。
     - **I-3（P1，取证缺口）`tx.send`/`tx.qResidency`/`tx.qDepth` 不进服务端日志**：根因是 `StreamHub.join()` 给每个 `ClientSendSession` 发的是 `metrics.newScope()` 返回的**独立实例**，服务端 5 s 行只快照服务自己那份 scope。修法：新增 `core/stream/SessionMetricsSnapshot` 与 `StreamHub.snapshotSessionMetrics(periodMs)`（会话表在锁内拷贝、每个 scope 锁外读取，与既有 `snapshotSessions()` 同一模式），`ClientSendSession.snapshotMetrics()` 直接读自己的 scope；新增 `MetricsFormatter.toSessionLogLine()` 复用同一套键输出 `role=server period=5000 sid=… tx.send.p50/p95/max tx.qResidency.p95/max tx.qDepth.max tx.sent tx.resync`，服务端 5 s 循环为每个会话各打一行（无样本的会话跳过）。会话 scope 的 `SENT_UNITS`/`RESYNCS` 在既有计数点补写，`tx.drop` 仍无来源（丢弃数在队列内部、读取需进同步块，按热路径纪律本棒不加探针）。`sid` 口径抽到 `ClientSessionKey.tailOf()`，两端同一实现。
     - **验证**：新增 `RateSamplerTest`（差分口径、实测周期、零帧、无区间、关闭态、双读者独立基线）与 `AndroidMediaCodecEncoderBridgeTest`（Q-1 回退）；`MetricsFormatterTest` 覆盖速率省略/零速率/会话行/客户端速率，`StreamHubTest` 覆盖会话指标导出与排序，`ClientMediaReceiverTest` 覆盖计数与关闭态，`ClientSessionKeyTest` 覆盖 sid 尾截取；全量 **928 tests / 0 failures / 0 errors / 0 skipped**（82 个测试类），`:app:assembleDebug` 与 `:app:compileDebugAndroidTestJavaWithJavac` 成功。**设备复测未执行**：真机/模拟器上「速率读数是否回到 <2 Mbps 量级」「HUD 首行是否有数」「服务端日志是否出现 sid 行」三个点位留给验证棒。
-  - **未完成（O7）**：基线执行、注入拥塞对照实验、基线报告与 [DV-001](decision-board.md) 裁决全部未做；本节所有指标都没有设备数值。
+  - **未完成（O7）**：基线执行、注入拥塞对照实验、基线报告与 [DV-001](decision-board.md) 裁决全部未做；本节所有指标都没有设备数值。**DV-001 全量基线待 Q-2（[TB-CLIENT-005](#tb-client-005)）落地后执行**：其代码已于 2026-10-21 落地（追赶 + `rx.catchup*` 指标），但设备未验证，因此基线必须等该条通过设备棒、并在 1080p 读数里同时记录 `rx.catchup`/`rx.catchup.lat`/`rx.converge.fail`，否则观看端积压会冒充传输结论。
 - **边界与风险**：`enc.cap2out` 依赖「采集 PTS 与单调钟同基」的假设（已自校准 + 越界停用）；`rx.rowd` 依赖 30 s 滑动最小值抵消时钟差；TCP 上没有丢帧只有晚到，因此 DV-001 的判据是卡顿时长与频率而不是丢包率；`ServerStats` 的 `Parcel` 往返只能在设备上验证。
 - **关联文档**：[本计划](superpowers/plans/2026-10-21-transport-observability.md)、[路线图阶段 0](optimization-roadmap.md)、[项目现状](project-assessment.md)、[DV-001](decision-board.md)、[DV-018](decision-board.md)
 
@@ -335,13 +336,9 @@
 </details>
 
 <a id="tb-client-005"></a>
-<details><summary>TB-CLIENT-005 观看端解码队列背压与降载（📋 待办 · 设备验证 Q-2 登记）</summary>
+<details><summary>TB-CLIENT-005 观看端解码队列背压与追赶（✅ 2026-10-21，详情见已完成条目）</summary>
 
-- **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟡 P2 / 2026-10-21 / —
-- **任务**：观看端在 1080p 30 fps 下解码跟不上时，`ScreenShareClient` 的 `LinkedBlockingQueue(256)` 只做「满则丢弃新消息」，已入队的帧不会作废，画面可长期滞后 20–26 s（实测 `rx.qWait.p50` 15–19 s、HUD `q 256`、`rx.shed` > 7 000、同步抓帧滞后 ≈26 s；断开重连后 `qWait` 立刻回到 0.4 ms，说明队列本身不清空就永远追不上）。本条目要做的是**背压与降载策略**：至少包含「解码线程积压时丢弃到最新可解码点（等 IDR/join point）+ 队列水位驱动的降载信号」，并决定是否需要向服务端表达「我处理不过来」（例如请求更低档位的控制消息或降分辨率）。
-- **交付物 / 验证证据**：交付：接收侧的丢弃/追赶策略与状态机（何时清队列、何时等 IDR、何时请求关键帧）、队列水位指标与 HUD 呈现、必要的单测与设备点位。验证：1080p 30 fps 下连续播放 3 min，`rx.qWait.p50` 不超过数百毫秒、同步抓帧滞后 < 1 s、`rx.shed` 不持续增长；链路干净时不得因策略本身丢帧（`rx.seqGap` 与 `pres.drop` 不因策略上升）。
-- **已观察实例**：`device-test-2026-10-21-metrics-r2/report.md` §7（Q-2），证据 `shots/lag-phone.png`、`shots/lag2-*.png`；`ScreenShareClient.DECODE_QUEUE_CAPACITY = 256`。
-- **关联文档**：[TB-OBS-001](#tb-obs-001)、[媒体架构](media-architecture.md)、[决策 DB-OBS-002](decision-board.md)
+本条目已实现解码追赶（catch-up）并完成 JVM 验证；交付物、指标与设备点位见「✅ 已完成条目」中的同名块。设备实测不在本棒。
 
 </details>
 
@@ -408,6 +405,24 @@
 </details>
 
 ### ✅ 已完成条目
+
+<a id="tb-client-005"></a>
+<details><summary>TB-CLIENT-005 观看端解码队列背压与追赶（✅ 2026-10-21）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：✅ 已完成 / 🟡 P2 / 2026-10-21 / 2026-10-21
+- **任务**：1080p 30 fps 观看时解码跟不上，`ScreenShareClient` 的 `LinkedBlockingQueue(256)` 只做「满则丢弃新消息」，已入队的帧不会作废，画面可长期滞后 20–26 s（`rx.qWait.p50` 12–22 s、HUD `q 256`、`rx.shed` 数千；断开重连后立刻回到 0.3–0.6 ms，说明不清空队列就永远追不上）。要求：解码积压时丢弃到最新可解码点（等 IDR/join point）、队列水位驱动的追赶状态机，以及可观测手段。
+- **交付物 / 验证证据**：交付（`acde892` 策略与 flush 原语、`f86f758` 队列接线与指标）：
+  - **检测**：`core/client/CatchUpPolicy` 以解码线程解码每条消息时已有的两个量作为输入——该条的排队等待时间（同一个值记入 `rx.qWait`）与解码队列深度；等待 ≥ 1 s **或**深度 ≥ 64，且**持续 2 s** 才判定积压（单帧抖动不触发）。阈值全部是公开常量，Javadoc 标注「待设备校准」。
+  - **触发**：追赶代次 +1 → 已入队 AU 全部作废（不反序列化、不进解码器，计入 `rx.catchup.shed`；描述符例外，永不丢，否则会话会等一个再也收不到的 epoch）→ `ClientMediaSession.onCatchUp()` flush 解码器并转 `RESYNCING`（新原因 `CATCH_UP`）→ 主线程发关键帧请求。此后只接受经 `H264CodecPolicy.isJoinPoint` 校验的 IDR，P 帧进不了解码器，恢复从完整图像开始。
+  - **防抖 / 升级**：两次追赶至少间隔 5 s；连续 3 次仍不收敛 → 计 `rx.converge.fail` 并停 30 s（流畅优先，不无限追）；追赶 3 s 内等不到 join point 自动释放（避免一次关键帧丢失锁死机制）；队列清零满 5 s 计为收敛并清零连续计数。**不自动降服务端参数**：单流扇出会影响所有观看者，降档属 [DV-012](decision-board.md) 范围。
+  - **可观测**：`rx.catchup`、`rx.catchup.shed`、`rx.catchup.lat.p50/p95`（追赶开始到 join point，即收敛时间）、`rx.catchup.why=qWait|qDepth`、`rx.converge.fail`；HUD 第三行追加 `cu` 计数；logcat 有 `startCatchUp` / `finishCatchUp` / `reportConvergenceFailure` 三条结构化行；会话重同步仍走既有 `RESYNCS` 与原因行。
+  - **顺带收口**：`Decoder` / `MediaCodecDecoderBridge` 各加 `flush()`（H.264 清 codec 缓冲、待测码表与时间轴锚点并回到“只认 IDR”，JPEG 无操作）；媒体线程不再直接写 gRPC `StreamObserver`（关键帧请求统一 post 到主线程），队列满路径原有的跨线程 `onNext` 一并收口；`requestKeyframe()` 计入既有 `KEYFRAME_REQUESTS`，HUD 的 `kf` 从此有数。
+- **验证**：`CatchUpPolicyTest` 12 例（阈值 / 持续 / 冷却 / 升级与保持 / 超时 / 代次判定）、`ClientMediaSessionCatchUpTest` 3 例（flush 一次、P 帧被拒、IDR 恢复、无解码器返回 false）、`H264DecoderTest` 新增 2 例（flush 后只认 IDR、未 configure 不触碰桥接）、`MetricsFormatterTest` 断言新键与 HUD 形状；全量 **946 tests / 0 failures / 0 errors / 0 skipped**（84 个测试类；基线 928 / 82），`assembleDebug` 成功。**设备实测未执行**，点位见下。
+- **给验证棒的点位**：① 1080p 30 fps 连播 3 min：`rx.qWait.p50` 应在数百毫秒内、`rx.qDepth` 不再长期贴 256、`rx.catchup` 有值且 `rx.catchup.shed` 只在追赶瞬间跳变；② 同步抓帧对照滞后 < 1 s，断开重连语义不变；③ 每次 `startCatchUp` 后允许一次短黑/短暂花屏候选，但若 IDR 之后仍持续花屏即为关键帧边界缺陷；④ 若 3 min 内出现 `rx.converge.fail`，结合 `rx.catchup.lat` 与此时 `dec.lat` 判断“解码能力确实低于码流”——这是 [DV-012](decision-board.md) 降档的判据，不是本策略失败；⑤ 干净链路（720p 或低码率）连播时 `rx.catchup` 必须为 0，`rx.seqGap`、`pres.drop` 不因策略上升。
+- **边界与风险**：追赶把“持续滞后”换成一次可见的短停顿/黑帧，这是 H.264 不能丢中间 P 帧的必然代价；作废的 AU 会让 `rx.seqGap` 同步增加（与既有本地 shed 同源），将来按 `rx.seqGap − rx.catchup.shed` 读“真实丢帧”；阈值与冷却全部未经设备校准；不收敛时选择“继续播放旧滞后画面”而非反复重置，30 s 后重试一次。
+- **关联文档**：[TB-OBS-001](#tb-obs-001)、[媒体架构](media-architecture.md)、[决策 DV-001](decision-board.md)、[决策 DB-OBS-002](decision-board.md)
+
+</details>
 
 <a id="tb-obs-002"></a>
 <details><summary>TB-OBS-002 RTT 探针（Ping/Pong）与估计器（✅ 2026-10-21）</summary>

@@ -638,7 +638,7 @@
 
 | ID | 事项 | 日期 | 当前处理 | 所需证据 / 触发条件 | 关联 |
 | --- | --- | --- | --- | --- | --- |
-| DV-001 | TCP 是否需要升级为 RTP/UDP。 | 2026-10-17 | 第一版保持统一 gRPC 双向流（TCP 承载）；不做未测量的切换。仪表已就位，判据改为四类联合归因，见 DB-OBS-002。 | 同设备同网络的 TCP 基线：`rtt.p50/p95`（Ping/Pong）、`rx.arr.p95/p99`、`rx.rowd.p95`、`rx.stall`、`pres.late.p95`、`dec.deadlineMiss`、`tx.send.p95`、`enc.cap2out.p95`；重传次数不可见，用「到达空窗 + 延迟增长 + 发送阻塞且序号不缺」代替。 | DB-NET-001、DB-OBS-002、[TB-OBS-001](task-board.md#tb-obs-001)、[TB-OBS-002](task-board.md#tb-obs-002) |
+| DV-001 | TCP 是否需要升级为 RTP/UDP。 | 2026-10-17 | 第一版保持统一 gRPC 双向流（TCP 承载）；不做未测量的切换。仪表已就位，判据改为四类联合归因，见 DB-OBS-002。**全量基线待 Q-2 落地后执行**（[TB-CLIENT-005](task-board.md#tb-client-005) 的观看端追赶已落地代码、设备未验证），基线须同时记录 `rx.catchup`/`rx.catchup.lat`/`rx.converge.fail`。 | 同设备同网络的 TCP 基线：`rtt.p50/p95`（Ping/Pong）、`rx.arr.p95/p99`、`rx.rowd.p95`、`rx.stall`、`pres.late.p95`、`dec.deadlineMiss`、`tx.send.p95`、`enc.cap2out.p95`；重传次数不可见，用「到达空窗 + 延迟增长 + 发送阻塞且序号不缺」代替。 | DB-NET-001、DB-OBS-002、[TB-OBS-001](task-board.md#tb-obs-001)、[TB-OBS-002](task-board.md#tb-obs-002)、[TB-CLIENT-005](task-board.md#tb-client-005) |
 | DV-002 | 是否需要 WebRTC。 | 2026-10-17 | 不作为默认基线，保留为浏览器/跨网/完整栈的可选路径。 | 产品确认需要浏览器客户端、跨网/NAT 穿透或完整音视频栈；或 TCP/RTP 无法满足目标场景。 | DB-NET-001 |
 | DV-003 | HEVC 是否作为默认高档位启用。 | 2026-10-17 | 保持 H.264 兼容档保底，HEVC 仅在双方探测支持且实测有收益时启用。 | 服务端与客户端均探测支持；同场景实测相比 H.264 有明确码率或画质收益；专利与分发政策可接受。 | DB-CODEC-001、DB-CODEC-007 |
 | DV-004 | 方案 A 在目标设备上能否真正最大化；Surface 失效后 `retryConfigure()` 恢复是否可靠。 | 2026-10-17 | 方案 A 为第一版基线，方案 B 为增强。 | 目标设备的悬浮窗最大尺寸、系统栏/挖孔/圆角行为；`retryConfigure()` 的失败率与恢复时间；不再只以车机为测试前提。 | DB-WIN-003 |
