@@ -112,6 +112,41 @@ public class AudioJitterBufferTest {
     }
 
     @Test
+    public void aShortGapIsFilledByTheMeasuredAmount() {
+        AudioJitterBuffer buffer = new AudioJitterBuffer();
+
+        AudioJitterBuffer.Underrun underrun = buffer.onUnderrun(64L, FRAME_US);
+
+        assertFalse(underrun.isRestart());
+        // 64 ms of missing media is four whole frames, not the single frame the old recovery wrote.
+        assertEquals(4, underrun.getSilenceFrames());
+        assertEquals(1, buffer.getUnderruns());
+        assertEquals(4, buffer.getSilencedFrames());
+    }
+
+    @Test
+    public void aGapBelowOneFrameAsksForOneFrame() {
+        AudioJitterBuffer buffer = new AudioJitterBuffer();
+
+        AudioJitterBuffer.Underrun underrun = buffer.onUnderrun(3L, FRAME_US);
+
+        assertFalse(underrun.isRestart());
+        assertEquals(1, underrun.getSilenceFrames());
+    }
+
+    @Test
+    public void aLongGapRestartsPlaybackInsteadOfPadding() {
+        AudioJitterBuffer buffer = new AudioJitterBuffer();
+
+        AudioJitterBuffer.Underrun underrun =
+                buffer.onUnderrun(AudioJitterBuffer.RESTART_GAP_MS, FRAME_US);
+
+        assertTrue(underrun.isRestart());
+        assertEquals(0, underrun.getSilenceFrames());
+        assertEquals(0, buffer.getSilencedFrames());
+    }
+
+    @Test
     public void driftGuardRespectsThresholdAndCooldown() {
         AudioJitterBuffer buffer = new AudioJitterBuffer();
 

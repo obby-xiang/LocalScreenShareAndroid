@@ -235,15 +235,28 @@ public final class AudioJitterBuffer {
     }
 
     /**
-     * Records an underrun and asks for one silence frame.
+     * Decides how to recover from a starvation that has already lasted {@code gapMs}.
      *
+     * <p>The number of silence frames is the gap itself, rounded up to whole frames, because that is
+     * how much media time the output is missing: writing one frame per empty poll - the previous
+     * behaviour - recovered slower than the gap grew and left the sink empty in between. A gap past
+     * {@link #RESTART_GAP_MS} is not padded at all: re-prefilling the reservoir is both cheaper and
+     * quieter than writing dozens of frames while the track stays starved.</p>
+     *
+     * @param gapMs           measured time the output has been starved, in milliseconds
      * @param frameDurationUs duration of one frame, or non-positive for the AAC default
-     * @return the number of silence frames to write, always one
+     * @return the recovery decision; never null
      */
-    public int onUnderrun(long frameDurationUs) {
+    public Underrun onUnderrun(long gapMs, long frameDurationUs) {
         underruns++;
-        silencedFrames++;
-        return 1;
+        if (gapMs >= RESTART_GAP_MS) {
+            return new Underrun(true, 0);
+        }
+        final long frameUs = frameDurationUs > 0 ? frameDurationUs : DEFAULT_FRAME_US;
+        final long frameMs = Math.max(1L, (frameUs + 500L) / 1_000L);
+        final int frames = (int) Math.max(1L, (Math.max(0L, gapMs) + frameMs - 1) / frameMs);
+        silencedFrames += frames;
+        return new Underrun(false, frames);
     }
 
     /**

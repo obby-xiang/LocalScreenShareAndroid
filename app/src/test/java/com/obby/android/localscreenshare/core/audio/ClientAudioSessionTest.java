@@ -13,6 +13,7 @@ import com.obby.android.localscreenshare.core.model.CodecConfigPart;
 import com.obby.android.localscreenshare.core.support.FakeAudioDecoder;
 import com.obby.android.localscreenshare.core.support.FakeAudioSink;
 import com.obby.android.localscreenshare.core.support.MutableAudioClock;
+import com.obby.android.localscreenshare.core.util.NanoClock;
 
 import org.junit.Test;
 
@@ -116,7 +117,7 @@ public class ClientAudioSessionTest {
         fixture.session.onAccessUnit(unit(1, 0, 0L));
         assertEquals(0, fixture.sink.getPlayCount());
 
-        fixture.clock.advanceMs(AudioJitterBuffer.MAX_PREFILL_WAIT_MS);
+        fixture.advanceMs(AudioJitterBuffer.MAX_PREFILL_WAIT_MS);
         fixture.session.onAccessUnit(unit(1, 1, FRAME_US));
 
         assertEquals(1, fixture.sink.getPlayCount());
@@ -271,7 +272,7 @@ public class ClientAudioSessionTest {
 
     @Test
     public void anIdleWriterWaitsForTheNextEnqueueInsteadOfPolling() throws Exception {
-        Fixture fixture = new Fixture(true);
+        Fixture fixture = new Fixture(true, new MutableAudioClock(0L));
         fixture.session.onDescriptor(descriptor(1));
 
         fixture.session.onAccessUnit(unit(1, 0, 0L));
@@ -282,6 +283,36 @@ public class ClientAudioSessionTest {
         assertTrue(awaitWriterState(fixture.session, Thread.State.WAITING));
         assertEquals(1L, fixture.session.getWrittenFrames());
         fixture.session.close();
+    }
+
+    @Test
+    public void aStarvedWriterKeepsTheOutputFed() throws Exception {
+        Fixture fixture = new Fixture(true, NanoClock.MONOTONIC);
+        fixture.session.onDescriptor(descriptor(1));
+        for (int i = 0; i < 6; i++) {
+            fixture.session.onAccessUnit(unit(1, i, i * FRAME_US));
+        }
+        assertTrue(awaitPlayback(fixture));
+
+        // Nothing arrives for three frames worth of wall time; the writer has to fill the gap with
+        // silence instead of letting the track run dry.
+        Thread.sleep(100L);
+
+        // Six frames were received, so every frame beyond the sixth is silence the writer produced.
+        assertTrue("the writer must keep the track fed",
+                fixture.session.getWrittenFrames() > 6L);
+        fixture.session.close();
+    }
+
+    private static boolean awaitPlayback(Fixture fixture) throws InterruptedException {
+        final long deadlineNs = System.nanoTime() + 2_000_000_000L;
+        while (System.nanoTime() < deadlineNs) {
+            if (fixture.sink.getPlayCount() > 0) {
+                return true;
+            }
+            Thread.sleep(1L);
+        }
+        return false;
     }
 
     private static boolean awaitWriterState(ClientAudioSession session, Thread.State expected)
@@ -315,16 +346,21 @@ public class ClientAudioSessionTest {
 
         private final FakeAudioSink sink = new FakeAudioSink();
 
-        private final MutableAudioClock clock = new MutableAudioClock(0L);
+        private final NanoClock clock;
 
         private final ClientAudioSession session;
 
         private Fixture() {
-            this(false);
+            this(false, new MutableAudioClock(0L));
         }
 
-        private Fixture(boolean asyncWriter) {
+        private Fixture(boolean asyncWriter, NanoClock clock) {
+            this.clock = clock;
             session = new ClientAudioSession(decoder, sink, null, clock, asyncWriter);
+        }
+
+        private void advanceMs(long deltaMs) {
+            ((MutableAudioClock) clock).advanceMs(deltaMs);
         }
     }
 }

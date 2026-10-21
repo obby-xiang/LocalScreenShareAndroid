@@ -35,12 +35,7 @@ public final class ClientAudioSession {
     /**
      * Quiet period after which an empty queue is treated as an underrun, in milliseconds.
      */
-    private static final long UNDERRUN_QUIET_MS = 40L;
-
-    /**
-     * Writer wait while a starvation is being timed, in milliseconds.
-     */
-    private static final long WRITER_WAIT_MS = 20L;
+    private static final long UNDERRUN_QUIET_MS = 20L;
 
     /**
      * Lifecycle state of the client audio track.
@@ -120,7 +115,7 @@ public final class ClientAudioSession {
 
     private byte[] silenceFrame;
 
-    private long lastEnqueuedMs = Long.MIN_VALUE;
+    private long starvedSinceMs = Long.MIN_VALUE;
 
     private long lastDriftCheckMs = Long.MIN_VALUE;
 
@@ -379,7 +374,6 @@ public final class ClientAudioSession {
                         // anchored by video keeps its anchor untouched.
                         sessionClock.anchorIfUnset(ptsUs, clock.nowNs());
                     }
-                    lastEnqueuedMs = nowMs();
                     if (plan.isStartPlayback() && !playing) {
                         playing = true;
                         sink.play();
@@ -407,7 +401,10 @@ public final class ClientAudioSession {
     }
 
     /**
-     * Writes at most one buffered frame; the writer thread runs exactly this method in a loop.
+     * Writes at most one buffered frame; this is the write half of the writer loop.
+     *
+     * <p>Synchronous sessions call it after every access unit instead of running a writer thread,
+     * which is how the JVM tests drive exactly the same write path.</p>
      *
      * @return true when a frame was written
      */
@@ -722,6 +719,9 @@ public final class ClientAudioSession {
                     return;
                 }
                 frame = pending.pollFirst();
+                if (frame != null) {
+                    starvedSinceMs = Long.MIN_VALUE;
+                }
             }
             if (frame != null) {
                 if (!writeFrame(frame)) {
@@ -729,7 +729,8 @@ public final class ClientAudioSession {
                 }
                 continue;
             }
-            boolean underrun = false;
+            final int fillFrames;
+            final boolean restart;
             synchronized (lock) {
                 if (closed) {
                     return;
@@ -738,37 +739,109 @@ public final class ClientAudioSession {
                     continue;
                 }
                 final long currentMs = nowMs();
-                underrun = playing && silenceFrame != null && lastEnqueuedMs != Long.MIN_VALUE
-                        && currentMs - lastEnqueuedMs >= UNDERRUN_QUIET_MS;
-                if (underrun) {
-                    buffer.onUnderrun(frameDurationUsLocked());
-                }
-                try {
-                    if (underrun) {
-                        lock.wait(WRITER_WAIT_MS);
-                    } else {
-                        lock.wait();
+                final long gapMs = currentMs - starvedSinceMs;
+                if (!playing || silenceFrame == null) {
+                    // Nothing to keep fed: sleep until the next enqueue starts playback again.
+                    starvedSinceMs = Long.MIN_VALUE;
+                    fillFrames = 0;
+                    restart = false;
+                    if (!awaitLocked(0L)) {
+                        return;
                     }
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
+                } else if (starvedSinceMs == Long.MIN_VALUE) {
+                    // The queue just ran dry; the quiet period keeps a single late frame from being
+                    // turned into a silence burst.
+                    starvedSinceMs = currentMs;
+                    fillFrames = 0;
+                    restart = false;
+                    if (!awaitLocked(UNDERRUN_QUIET_MS)) {
+                        return;
+                    }
+                } else if (gapMs < UNDERRUN_QUIET_MS) {
+                    fillFrames = 0;
+                    restart = false;
+                    if (!awaitLocked(UNDERRUN_QUIET_MS - gapMs)) {
+                        return;
+                    }
+                } else {
+                    final AudioJitterBuffer.Underrun underrun =
+                            buffer.onUnderrun(gapMs, frameDurationUsLocked());
+                    starvedSinceMs = Long.MIN_VALUE;
+                    restart = underrun.isRestart();
+                    fillFrames = underrun.getSilenceFrames();
+                }
+            }
+            if (restart) {
+                restartPlayback();
+                continue;
+            }
+            for (int i = 0; i < fillFrames; i++) {
+                if (!writeSilence()) {
                     return;
                 }
             }
-            if (underrun) {
-                // Silence keeps the output fed; dropping samples instead would speed the track up.
-                final byte[] silence;
-                final long ptsUs;
-                synchronized (lock) {
-                    silence = silenceFrame;
-                    ptsUs = lastWrittenPtsUs;
-                }
-                if (silence != null) {
-                    metrics.increment(PipelineMetrics.Counter.AUDIO_UNDERRUNS);
-                    if (!writeFrame(new PcmFrame(silence, ptsUs, true))) {
-                        return;
-                    }
-                }
+        }
+    }
+
+    /**
+     * Waits on the session lock, for good when {@code waitMs} is not positive.
+     *
+     * @return false when the writer was interrupted and has to stop
+     */
+    private boolean awaitLocked(long waitMs) {
+        try {
+            if (waitMs > 0L) {
+                lock.wait(waitMs);
+            } else {
+                lock.wait();
             }
+            return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+    }
+
+    /**
+     * Writes one silence frame to close a measured gap.
+     *
+     * <p>Silence keeps the output fed; dropping samples instead would speed the track up. The frame
+     * extends the written position by its own duration, which is what re-aligns the timeline with
+     * the wall clock after the gap.</p>
+     *
+     * @return false when the sink failed, which has already moved the session to {@code UNAVAILABLE}
+     */
+    private boolean writeSilence() {
+        final byte[] silence;
+        final long ptsUs;
+        synchronized (lock) {
+            silence = silenceFrame;
+            ptsUs = lastWrittenPtsUs;
+        }
+        if (silence == null) {
+            return true;
+        }
+        metrics.increment(PipelineMetrics.Counter.AUDIO_UNDERRUNS);
+        return writeFrame(new PcmFrame(silence, ptsUs, true));
+    }
+
+    /**
+     * Restarts a playback that starved for longer than the fill limit.
+     *
+     * <p>Padding a long gap means writing frames while the sink stays empty, which is slower than the
+     * gap and audible. Pausing and dropping the queue instead lets the next decoded frame re-anchor
+     * the timeline, and the prefill decision starts over with a full reservoir.</p>
+     */
+    private void restartPlayback() {
+        sink.pause();
+        synchronized (lock) {
+            if (closed) {
+                return;
+            }
+            pending.clear();
+            playing = false;
+            starvedSinceMs = Long.MIN_VALUE;
+            buffer.reset();
         }
     }
 
