@@ -21,6 +21,7 @@
 
 ## 🎯 当前焦点
 
+- 2026-10-21 **第 8 问剩余部分：无观看者懒停 + 热降档（[TB-POWER-001](#tb-power-001)）**：核查确认视频侧此前**完全不看观看者数量**（服务一端启动即持续合成 + 编码，0 观看者与有人观看功耗相同；音频侧早已按 `AudioCapturePolicy` 懒停）。新增纯决策 `core/stream/ViewerCapturePolicy`（0 观看者且运行时 `READY` → 摘下 `VirtualDisplay` 输出面，编码器保持分配；首个观看者 → 重新绑面 + 请求关键帧；未 `READY` 不暂停，否则 H.264 的 SPS/PPS 永远发不出、客户端只会收到 `NOT_READY`），服务端用独立 1 s 轮询执行；新增纯决策 `core/stream/ThermalThrottlePolicy`（`LIGHT`/`MODERATE` 不动 → `SEVERE` 帧率 30 → `CRITICAL`+ 帧率 30 + 采集 50%，未知值按不动）与 `service/ThermalMonitor`（API 29 显式门控，注册后补发当前状态），降档只改**生效值**、不写偏好，回落/关开关即恢复；通知副标题显示「过热降档」，视频设置 sheet 新增「过热时自动降档」开关（默认开，中英双语）。提交 `377e581`（懒停）、`00ee006`（档位策略）、`68bfd5e`（接线 + 开关 + 通知）及本条目的文档登记；全量 **1275 tests / 124 classes / 0 failures / 0 errors / 0 skipped**（基线 1262/122，只增不减），`assembleDebug` 与 `:app:lintDebug`（0 errors / 146 warnings）通过，三项 checks 通过。**设备验证未执行**，点位见 [TB-POWER-001](#tb-power-001)。
 - 2026-10-21 **Build CI 红灯修复（`5d186c6`，lint `NewApi`）**（[TB-AUDIO-001](#tb-audio-001)）：`6210a0b` 把 `startAudioPipeline` 的 API 29 显式门控换成 `AudioAvailability.forCaptureStart(SDK_INT, ...)` 后，lint 无法穿透该分类器判断 SDK 版本，`:app:lintDebug` 重新报 `ScreenShareService.java:1682` 的 `new PlaybackCaptureSource(...)`「Call requires API level 29 (current min is 25): PlaybackCaptureSource [NewApi]」；`f968b5f` 的 Build run [39586027806](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39586027806) 因此在 `Build with Gradle` 失败（Checks 一直 success）。修法：构造采集源之前恢复 `Build.VERSION.SDK_INT < Q` 提前返回，降级原因仍由 `AudioAvailability.forApiLevel` 产出，权限与 app-op 判定不变。全量 **1262 tests / 122 classes / 0 failures / 0 errors / 0 skipped**；`assembleDebug`、`lintDebug`（0 errors / 146 warnings）与三项 checks 通过；`5d186c6` 的 Build run [39586878963](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39586878963) 与 Checks run [39586878970](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39586878970) 双绿。
 - 2026-10-21 **音频 N6-1 修复（`5799139`，`AV_OFFSET` 量纲 + 漂移守卫）**（[TB-AUDIO-001](#tb-audio-001)/[TB-AUDIO-003](#tb-audio-003)，来源 `device-test-2026-10-21-audio/fix-n1n2/`）：`AudioSink.getPlayheadNs()`（音轨内纳秒）与 `SessionClock.map()`（开机单调时钟）相减的量纲错误，改为采样侧回报**帧计数**（`getPresentedFrames(nowNs)`，用 `AudioTrack` 时间戳外推）、会话侧换算**可闻位置的流时间**（末端 Pts − 排队帧时长，输出缓冲 64 ms 因此被抵消），两步算术抽到纯 JVM 的 `core/audio/AudioPlayhead`；守卫阈值/冷却维持 40 ms / 2 s，但改为只对**偏移的变化量**动作 —— 稳定偏差（实测 160–447 ms，来自解码首帧锚点与观看端画面滞后）不能让一帧媒体消掉，追它只会每 2 s 补一帧静音直到流结束，固定偏差交给 `AV_OFFSET` 与 A8 校准。全量 **1262 tests / 122 classes / 0 failures / 0 errors**；`assembleDebug` 与三项 checks 通过；真机服务端 + 模拟器观看 60 s：`av.offset.p50/p95` 由 **76 289 206 ms（≈21 h）** 降到 **160–168 ms / 170–200 ms**（p95），`audio.dropped = 0`，N1/N2 路径回归通过。**N3 听感**与 **N6-3 平台权限边角**仍遗留。
 - 2026-10-21 **音频设备验证 N1/N2/N4 修复**（[TB-AUDIO-001](#tb-audio-001)/[TB-AUDIO-003](#tb-audio-003)，来源 `device-test-2026-10-21-audio/report.md`）：N1 把已埋点但从未输出的客户端音频指标接到 `lss.metrics role=client` 与 HUD（`av.offset.p50/p95`、`audio.frames/dropped/underruns`，HUD 第 4 行）；N2 按 D9 实现无观看者懒停采（新增纯决策 `core/audio/AudioCapturePolicy`，`ScreenShareService` 用 1 s 观看者轮询驱动，0 观看者 → `ACTIVE→OFF` + `AudioAvailability.NO_VIEWERS`，首个观看者 ≈0.5 s 内恢复）；N4 采集启动前补 `AppOpsManager.unsafeCheckOpNoThrow` 只读检查（不调 `noteOp`），`adb revoke`+`grant` 留下的 uid-mode `ignore` 归为 `PERMISSION_DENIED`。全量 **1248 tests / 121 classes / 0 failures / 0 errors**（`6210a0b`）；`assembleDebug` 与三项 checks 通过；真机 + 模拟器快验通过（停采/恢复、日志与 HUD 音频行、app-op 降级）。**N3 仍待真机听感复核**；**N6** 已由上一行修复（N6-1/N6-2 关闭，N6-3 遗留）。
@@ -69,6 +70,7 @@
 
 | ID | 状态 | 优先级 | 标题 | 创建 | 完成 | 关联 |
 | --- | --- | --- | --- | --- | --- | --- |
+| TB-POWER-001 | 🔶 部分完成 | 🟠 P1 | 无观看者懒停与热降档（代码完成，设备验证待棒） | 2026-10-21 | — | [决策 DB-POWER-001](decision-board.md#db-power-001) |
 | TB-ENG-013 | 📋 待办 | 🟡 P2 | 统一回归：稳定性/长时测试清单（功能全部完成后执行） | 2026-10-21 | — | [TB-WIN-001](#tb-win-001) |
 | TB-DISC-012 | 📋 待办 | 🟡 P2 | 双真机联机验证 | 2026-10-20 | — | [发现调研](discovery-research.md) |
 | TB-DISC-011 | 📋 待办 | 🟡 P3 | 手动添加条目跨重启持久化 | 2026-10-20 | — | [发现调研](discovery-research.md) |
@@ -253,6 +255,33 @@
 - **交付物 / 验证证据（2026-10-21，随 [TB-WIN-001](#tb-win-001)）**：Service 持有 `ClientMediaSession` 与固定的 `SwitchableRenderTarget`；悬浮窗与全屏 Activity 均以 `render/ViewerHost` 身份 attach/detach，切换只重建解码器（`ClientMediaSession.rebindSurface()`），网络会话/认证/descriptor 不变；几何、安全标志与调试行由 Service 统一下发，宿主可延迟接入。JVM 证据见 TB-WIN-001 的 12 条用例；窗口切换的设备验证未执行。
 - **未完成部分**：`关闭窗口不等于停止会话` —— 关窗/断开仍结束会话（保持现状），待 [DV-008](decision-board.md) 产品裁决；JPEG 降级查看器（[TB-ENG-006](#tb-eng-006)）未接回。
 - **关联文档**：[路线图阶段 1](optimization-roadmap.md)、[窗口与会话设计](windowing-session-design.md)
+
+</details>
+
+<a id="tb-power-001"></a>
+<details><summary>TB-POWER-001 无观看者懒停与热降档（🔶 部分完成 · 代码与 JVM 验证完成，设备验证待棒）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：🔶 部分完成 / 🟠 P1 / 2026-10-21 / —（代码完成 2026-10-21；设备验证未执行）
+- **任务**：第 8 问（发烫/功耗）的剩余部分。问答给出的四条根因里，「没有客户端时也持续编码」与「默认 30fps」两条此前只做了音频侧（`AudioCapturePolicy` 懒停采），视频侧未核查；本条目补齐视频侧懒停与热降档，不做多档编码器实例/多档流（DV-012/015 服务端部分）与功耗数值建模。
+- **核查结论（懒停）**：视频侧此前**完全不参考观看者数量**——`StreamRuntime.start()` 创建编码器后 `VirtualDisplay` 立刻开始合成，`onImageAvailable`/编码输出一路走到 `StreamHub`，0 观看者时扇出列表为空但合成与编码照常，因此「无人观看」与「有人观看」的功耗相同。音频侧已有 `AudioCapturePolicy`（0 观看者 → `ACTIVE→OFF`），本条目按同一规则补视频侧。
+- **实施范围（提交 `377e581`、`00ee006`、`68bfd5e`）**：
+  - `core/stream/ViewerCapturePolicy`（纯决策，6 条 JVM 用例）：0 观看者且运行时 `READY` → `PAUSE`；有观看者且已暂停 → `RESUME`；未 `READY` 或观看者数量未知 → `NONE`。
+  - `ScreenShareService`：独立的 1 s 观看者轮询（与音频轮询分开，因为视频要覆盖所有 API 等级且与声音开关无关）。`PAUSE` 用 `VirtualDisplay.setSurface(null)` 摘下输出面（合成与编码同时停止，编码器保持分配、已发布描述符继续有效）；`RESUME` 重新绑定当前编码器面（JPEG 路径绑定 `ImageReader` 面）并 `requestJoinPoint()`；暂停期间的分辨率切换/编码器重建不再把显示面接回去；`stopService()` 先停轮询再复位状态。不暂停「未 READY」的运行时是硬约束：H.264 的 SPS/PPS 来自首个输出格式，没有帧就永远发不出配置，客户端会一直 `NOT_READY`。
+  - `core/stream/ThermalThrottlePolicy`（纯决策，7 条 JVM 用例）：`NONE`/`LIGHT`/`MODERATE` → `NONE`；`SEVERE` → `REDUCED`（帧率 ≤30）；`CRITICAL`/`EMERGENCY`/`SHUTDOWN` → `MINIMAL`（帧率 ≤30 且采集 ≤50%）；未知/未来值按 `NONE`；上限只降不升。
+  - `service/ThermalMonitor`（`@RequiresApi(29)` 封装 `addThermalStatusListener`/`getCurrentThermalStatus`，注册后补发当前状态）；`ScreenShareService` 在 `onCreate` 起监听、`onDestroy` 停监听，`applyThermalTier` 只改**生效值**（`effectiveProjectionFrameRate`/`effectiveProjectionScale`）：尺寸变化走既有「先换编码器再改显示」编排，仅帧率变化走 300 ms 防抖重建（`switchDescriptor`），回落/关开关立即恢复用户设定；用户偏好全程不被改写。
+  - 可观测：档位变化打 `thermal: event=throttle|recover|disabled status=… tier=… frameRate=生效/用户 scale=生效/用户`；懒停/恢复打 `capture: event=pause|resume reason=…`；通知副标题在降档期间显示「过热降档：30 fps（，50% 画面）」，与指纹、音频原因合并；`lss.device` 行继续复用既有 `thermal` 字段。
+  - 设置：视频设置 sheet 新增「过热时自动降档」开关（`KEY_THERMAL_THROTTLE`，默认开，中英双语 + 说明文案）。
+- **验证证据（JVM）**：`rm -rf app/build/test-results/testDebugUnitTest` 后 `./gradlew :app:testDebugUnitTest` 全量 **1275 tests / 124 classes / 0 failures / 0 errors / 0 skipped**（基线 1262/122，只增不减，新增 `ViewerCapturePolicyTest` 6 条与 `ThermalThrottlePolicyTest` 7 条）；`./gradlew :app:assembleDebug` 通过；`:app:lintDebug` **0 errors / 146 warnings**（Thermal API 的 `NewApi` 由 `ThermalMonitor` 的 `@RequiresApi(29)` + `ScreenShareService` 中的显式 `SDK_INT` 门控满足，`stopThermalMonitor`/`onThermalThrottleSettingChanged` 也各有一处显式门控）；`check_strings.py`（144 键双一致）、`check_cjk.py`、`check_docs.py` 通过。
+- **设备验证点位（短小口径，未执行）**：
+  1. **懒停生效**：开共享、不连接任何观看端 → 10 s 内 logcat 出现 `capture: event=pause reason=no_viewer sessions=0`，随后 `lss.metrics` 行不再有 `enc.auRate`/`enc.bitrate`、`enc.cap2out` 不再出新样本；对照前后 CPU 占用与机身温度。
+  2. **恢复**：连接观看端 → ≤1 s 内 `capture: event=resume reason=viewer_joined`，首帧出现且画面正常；断开再连重复 3 次（记录「加入 → 首帧」时延）。
+  3. **热降档（SEVERE）**：`adb shell cmd thermalservice override-status 3`（该命令走 shell 权限；机型不支持时改看 `adb shell dumpsys thermalservice` 的当前状态，或临时用代码桩把 status 固定为 3）→ 期望 `thermal: event=throttle status=3 tier=REDUCED frameRate=30/<用户值>`，`enc.outInterval.p50 ≈ 33 ms`（或至少明显上升），通知副标题出现「过热降档」。
+  4. **热降档（CRITICAL）**：`override-status 4` → `tier=MINIMAL … scale=50/<用户值>`，采集尺寸按 50% 生效（日志/描述符或 `dumpsys` 可见），画面仍是同一内容只是更小。
+  5. **恢复与不覆盖偏好**：`override-status 0` → `thermal: event=recover status=0 tier=NONE`，尺寸与帧率回到用户值，通知副标题的降档文案消失；视频设置里的滑杆数值**从未改变**。
+  6. **开关**：关闭「过热时自动降档」→ `event=disabled` 且立即恢复；重新打开 → 按当前热状态重新降档。
+  7. **切换停顿**：降档/恢复时观看端黑屏时长 ≤209 ms（棒一已知 `switchDescriptor` 口径）。
+- **未覆盖 / 遗留**：① **设备验证未执行**，以上 7 条全部待棒；② `setSurface(null)` 在个别 OEM 上重新绑定后可能黑屏，若出现则改为「暂停即关闭并重建运行时」并重测首帧时延（DV-025）；③ 暂停期间编码器仍占用硬件实例，未做「暂停即释放编码器」的评估（会推进 `configEpoch` 并让客户端重新同步）；④ 多档编码器实例/多档流（DV-012/015 服务端部分）与功耗数值建模按范围不做；⑤ API 25–28 无热状态，热降档在这些版本恒为不动；⑥ 首帧 30 fps 默认值未改（`ProjectionSettings.DEFAULT_FRAME_RATE` 仍为 60，用户可调；是否改默认属于产品决策，未在本棒裁决）。
+- **关联文档**：[决策 DB-POWER-001](decision-board.md#db-power-001)、[决策 DB-POWER-002](decision-board.md#db-power-002)、[DV-024](decision-board.md)、[DV-025](decision-board.md)、[DV-015](decision-board.md)、[媒体架构](media-architecture.md)
 
 </details>
 
