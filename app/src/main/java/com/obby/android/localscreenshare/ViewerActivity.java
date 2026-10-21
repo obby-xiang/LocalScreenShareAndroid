@@ -102,26 +102,6 @@ public class ViewerActivity extends AppCompatActivity implements ViewerHost {
     @Nullable
     private AlertDialog mDialog;
 
-    private final GestureDetector mGestureDetector = new GestureDetector(this,
-        new GestureDetector.SimpleOnGestureListener() {
-            @Override
-            public boolean onDown(@NonNull MotionEvent e) {
-                return true;
-            }
-
-            @Override
-            public boolean onSingleTapConfirmed(@NonNull MotionEvent e) {
-                toggleControls();
-                return true;
-            }
-
-            @Override
-            public boolean onDoubleTap(@NonNull MotionEvent e) {
-                showZoomModeDialog();
-                return true;
-            }
-        });
-
     // Latest stream state pushed by the service; used to fit the content box.
     private int mContentWidth;
 
@@ -202,6 +182,10 @@ public class ViewerActivity extends AppCompatActivity implements ViewerHost {
     protected void onCreate(@Nullable final Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
+        // The launch succeeded, however long the bind takes afterwards; this is what keeps the
+        // service from reporting a failure on a slow device.
+        ScreenViewerService.onViewerActivityCreated();
+
         WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
         final WindowInsetsControllerCompat controller =
             WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView());
@@ -214,6 +198,12 @@ public class ViewerActivity extends AppCompatActivity implements ViewerHost {
         mControlsView = findViewById(R.id.viewer_controls);
         final ViewerPanelView panel = mPanelView;
 
+        // The base context is attached by now, so the detector can read the display metrics it
+        // needs to resolve tap timeouts. Never a field initialiser: the framework constructs the
+        // activity before attachBaseContext, so that route throws and kills the process (see the
+        // ban in docs/naming-conventions.md, chapter 8).
+        final GestureDetector gestureDetector = createGestureDetector();
+
         final View collapseButton = findViewById(R.id.viewer_collapse_button);
         collapseButton.setOnClickListener(v -> collapse(true, true));
         final View stopButton = findViewById(R.id.viewer_stop_button);
@@ -221,7 +211,7 @@ public class ViewerActivity extends AppCompatActivity implements ViewerHost {
             new Intent(ServiceProtocol.ACTION_STOP_CLIENT_SERVICE).setPackage(getPackageName())));
 
         panel.getTextureView().setOnTouchListener((v, event) -> {
-            mGestureDetector.onTouchEvent(event);
+            gestureDetector.onTouchEvent(event);
             return true;
         });
         panel.addOnLayoutChangeListener((v, left, top, right, bottom, oldLeft, oldTop, oldRight,
@@ -235,6 +225,38 @@ public class ViewerActivity extends AppCompatActivity implements ViewerHost {
         });
 
         reloadDisplayPreferences();
+    }
+
+    /**
+     * Builds the tap detector for the picture area.
+     *
+     * <p>Called from {@link #onCreate(Bundle)} and not from a field initialiser: the framework
+     * constructs the activity before attaching its base context, and the detector resolves the
+     * display metrics in its constructor, so an initialiser would throw
+     * {@code NullPointerException} inside {@code Class.newInstance} and kill the process.</p>
+     *
+     * @return a detector wired to the activity's tap handling
+     */
+    @NonNull
+    private GestureDetector createGestureDetector() {
+        return new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
+            @Override
+            public boolean onDown(@NonNull MotionEvent e) {
+                return true;
+            }
+
+            @Override
+            public boolean onSingleTapConfirmed(@NonNull MotionEvent e) {
+                toggleControls();
+                return true;
+            }
+
+            @Override
+            public boolean onDoubleTap(@NonNull MotionEvent e) {
+                showZoomModeDialog();
+                return true;
+            }
+        });
     }
 
     @Override
