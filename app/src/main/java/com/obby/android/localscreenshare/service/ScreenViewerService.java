@@ -314,7 +314,8 @@ public class ScreenViewerService extends Service {
                     HtmlCompat.FROM_HTML_MODE_LEGACY))
                 .setPositiveButton(android.R.string.ok, (dialog, which) -> {
                     final ClientMediaReceiver receiver = startMediaSession();
-                    mClient = new ScreenShareClient(hostOf(mServiceInfo), portOf(mServiceInfo), viewerMetrics());
+                    mClient = new ScreenShareClient(hostOf(mServiceInfo), portOf(mServiceInfo), viewerMetrics(),
+                    mServiceInfo.getId());
                     mClient.setClientStatsListener(mClientStatsListener);
                     mScreenShareLoading.show();
                     mClient.start(mClientObserver, receiver);
@@ -506,7 +507,8 @@ public class ScreenViewerService extends Service {
         }
 
         final ClientMediaReceiver receiver = startMediaSession();
-        mClient = new ScreenShareClient(hostOf(mServiceInfo), portOf(mServiceInfo), viewerMetrics());
+        mClient = new ScreenShareClient(hostOf(mServiceInfo), portOf(mServiceInfo), viewerMetrics(),
+                    mServiceInfo.getId());
         mClient.setClientStatsListener(mClientStatsListener);
         mScreenShareLoading = new ScreenShareLoading(this, mServiceInfo);
         mScreenShareLoading.show();

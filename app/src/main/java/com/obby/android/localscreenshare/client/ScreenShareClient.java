@@ -23,7 +23,11 @@ import com.obby.android.localscreenshare.grpc.screenstream.ServerMessage;
 import com.obby.android.localscreenshare.identity.DeviceIdentity;
 import com.obby.android.localscreenshare.identity.IdentityManager;
 import com.obby.android.localscreenshare.identity.IdentityUnavailableException;
+import com.obby.android.localscreenshare.identity.tls.TlsNames;
+import com.obby.android.localscreenshare.settings.Preferences;
 import com.obby.android.localscreenshare.support.Constants;
+import com.obby.android.localscreenshare.trust.PinningTrustManager;
+import com.obby.android.localscreenshare.trust.TlsPinStore;
 import com.obby.android.localscreenshare.transport.GrpcConstants;
 import com.obby.android.localscreenshare.transport.ScreenStreamProtoMapper;
 
@@ -43,6 +47,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import io.grpc.CallOptions;
 import io.grpc.Channel;
+import io.grpc.ChannelCredentials;
 import io.grpc.ClientCall;
 import io.grpc.ClientInterceptor;
 import io.grpc.ClientStreamTracer;
@@ -50,6 +55,7 @@ import io.grpc.InsecureChannelCredentials;
 import io.grpc.ManagedChannel;
 import io.grpc.Metadata;
 import io.grpc.MethodDescriptor;
+import io.grpc.TlsChannelCredentials;
 import io.grpc.okhttp.OkHttpChannelBuilder;
 import io.grpc.stub.StreamObserver;
 import lombok.Setter;
@@ -268,7 +274,7 @@ public final class ScreenShareClient {
      * @param port remote gRPC port
      */
     public ScreenShareClient(@NonNull final String host, final int port) {
-        this(host, port, PipelineMetrics.NONE);
+        this(host, port, PipelineMetrics.NONE, null);
     }
 
     /**
@@ -285,17 +291,47 @@ public final class ScreenShareClient {
      */
     public ScreenShareClient(@NonNull final String host, final int port,
                              @NonNull final PipelineMetrics metrics) {
+        this(host, port, metrics, null);
+    }
+
+    /**
+     * Creates the gRPC channel and pins the server identity to {@code expectedDeviceId}.
+     *
+     * <p>The channel verifies the peer against {@link TlsPinStore}: a device that was confirmed
+     * before must present the same certificate fingerprint, and a device without a pin is refused
+     * here because the confirmation happens before the viewer starts. The authority override is
+     * fixed so the self-signed certificate has one hostname to match, whatever address the peer
+     * was discovered at.</p>
+     *
+     * @param host             remote host address
+     * @param port             remote gRPC port
+     * @param metrics          metric scope of the receiving pipeline; required
+     * @param expectedDeviceId device id selected in discovery, or null in tests
+     * @throws IllegalArgumentException if {@code metrics} is null
+     */
+    public ScreenShareClient(@NonNull final String host, final int port,
+                             @NonNull final PipelineMetrics metrics,
+                             @Nullable final String expectedDeviceId) {
         if (metrics == null) {
             throw new IllegalArgumentException("metrics must not be null");
         }
         mMetrics = metrics;
         mRttEstimator = new RttEstimator(metrics, metrics.getClock());
-        mGrpcChannel = OkHttpChannelBuilder.forAddress(host, port, InsecureChannelCredentials.create())
+        final boolean isPlaintext = Preferences.get().isTlsAllowPlaintext();
+        final ChannelCredentials credentials = isPlaintext
+            ? InsecureChannelCredentials.create()
+            : TlsChannelCredentials.newBuilder()
+                .trustManager(new PinningTrustManager(expectedDeviceId, TlsPinStore.get()))
+                .build();
+        final OkHttpChannelBuilder builder = OkHttpChannelBuilder.forAddress(host, port, credentials)
             .flowControlWindow(GrpcConstants.GRPC_FLOW_CONTROL_WINDOW)
             .maxInboundMessageSize(GrpcConstants.GRPC_MAX_INBOUND_MESSAGE_SIZE)
             .executor(mGrpcClientExecutor)
-            .intercept(mClientInterceptor)
-            .build();
+            .intercept(mClientInterceptor);
+        if (!isPlaintext) {
+            builder.overrideAuthority(TlsNames.AUTHORITY);
+        }
+        mGrpcChannel = builder.build();
     }
 
     /**

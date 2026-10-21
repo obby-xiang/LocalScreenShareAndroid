@@ -1,6 +1,7 @@
 package com.obby.android.localscreenshare.discovery.register;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import com.obby.android.localscreenshare.discovery.model.DeviceAddress;
 import com.obby.android.localscreenshare.grpc.screenstream.DeviceSummary;
@@ -46,6 +47,17 @@ public final class RegisterClient {
          * Called with the accepted response.
          */
         void onSuccess(@NonNull RegisterResponse response);
+
+        /**
+         * Called with the accepted response and the fingerprint observed in the peer certificate.
+         *
+         * <p>The fingerprint is null when the transport was plaintext. Implementations that only
+         * need the answer keep overriding the one-argument method.</p>
+         */
+        default void onSuccess(@NonNull RegisterResponse response,
+            @Nullable String peerFingerprint) {
+            onSuccess(response);
+        }
 
         /**
          * Called with a short reason when the call failed or was rejected.
@@ -173,6 +185,11 @@ public final class RegisterClient {
             mStub.register(pending.address, request, timeoutMs,
                 new RegisterStub.Callback() {
                     @Override
+                    public void onPeerFingerprint(@NonNull final String spkiFingerprint) {
+                        pending.peerFingerprint = spkiFingerprint;
+                    }
+
+                    @Override
                     public void onResponse(@NonNull final RegisterResponse response) {
                         onAttemptResponse(pending, attemptId, response);
                     }
@@ -200,7 +217,7 @@ public final class RegisterClient {
         final String rejection = RegisterProtoMapper.rejectionReason(response);
         finish(pending);
         if (rejection == null) {
-            deliver(() -> pending.callback.onSuccess(response));
+            deliver(() -> pending.callback.onSuccess(response, pending.peerFingerprint));
         } else {
             // A rejection is definitive: the remote answered, so retrying cannot change it.
             deliver(() -> pending.callback.onFailure(rejection));
@@ -292,6 +309,9 @@ public final class RegisterClient {
         boolean active;
 
         boolean finished;
+
+        // Observed on the transport thread before the response is delivered.
+        volatile String peerFingerprint;
 
         DelayedScheduler.Cancellable timeout;
 

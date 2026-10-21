@@ -39,5 +39,14 @@ public interface RegisterStub {
          * Called when no response arrived; {@code reason} is a short diagnostic code.
          */
         void onFailure(@NonNull String reason);
+
+        /**
+         * Reports the SPKI fingerprint observed in the peer certificate, if the transport had one.
+         *
+         * <p>It is always derived from the certificate, never from the response body. The default
+         * keeps implementations that only care about the answer source-compatible.</p>
+         */
+        default void onPeerFingerprint(@NonNull String spkiFingerprint) {
+        }
     }
 }
