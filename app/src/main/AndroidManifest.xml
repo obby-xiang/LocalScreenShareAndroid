@@ -45,6 +45,13 @@
             android:name=".service.ScreenViewerService"
             android:exported="false"
             android:foregroundServiceType="remoteMessaging" />
+
+        <activity
+            android:name=".ViewerActivity"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.ScreenShare.Viewer" />
     </application>
 
 </manifest>

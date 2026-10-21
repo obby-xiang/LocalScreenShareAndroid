@@ -111,11 +111,11 @@
 | DB-NET-002 | 🟢 已批准·待实施/验证 | 编码框架 | 传输与编解码解耦 | 2026-10-17 | — | [编码框架设计](codec-framework.md) |
 | DB-PLATFORM-001 | ✔️ 已裁决·当前实现符合 | 平台安全 | minSdk 25 为兼容下限 | 2026-10-17 | — | [媒体架构权限与版本门控](media-architecture.md) |
 | DB-SEC-001 | 📝 已裁决·未实施 | 平台安全 | 认证与传输加密目标 | 2026-10-17 | — | [媒体架构安全模型](media-architecture.md) |
-| DB-SESSION-001 | 📝 已裁决·未实施 | 传输会话 | 会话所有权与窗口解耦 | 2026-10-17 | — | [窗口与会话设计](windowing-session-design.md) |
+| DB-SESSION-001 | ✔️ 已裁决·当前实现符合 | 传输会话 | 会话所有权与窗口解耦 | 2026-10-17 | — | [窗口与会话设计](windowing-session-design.md) |
 | DB-SESSION-002 | 📝 已裁决·未实施 | 传输会话 | HELLO 与 IDR 前等待 | 2026-10-17 | — | [媒体架构新客户端加入](media-architecture.md) |
 | DB-WIN-001 | 📝 已裁决·未实施 | 窗口显示 | 跨应用悬浮窗为基线 | 2026-10-17 | — | [窗口与会话设计窗口选型](windowing-session-design.md) |
 | DB-WIN-002 | 📝 已裁决·未实施 | 窗口显示 | 按场景选择渲染视图 | 2026-10-17 | — | [窗口与会话设计实现要点](windowing-session-design.md) |
-| DB-WIN-003 | 📝 已裁决·未实施 | 窗口显示 | 方案 A 展开收起 | 2026-10-17 | — | [窗口与会话设计方案对比](windowing-session-design.md) |
+| DB-WIN-003 | ✔️ 已裁决·当前实现符合 | 窗口显示 | 方案 B 悬浮窗 ↔ 全屏 Activity（2026-10-21 改写） | 2026-10-17 | — | [窗口与会话设计方案对比](windowing-session-design.md) |
 
 ## 📎 裁决详情
 
@@ -441,10 +441,12 @@
 </details>
 
 <a id="db-session-001"></a>
-<details><summary>DB-SESSION-001 会话所有权与窗口解耦（📝 已裁决·未实施 · 2026-10-17）</summary>
+<details><summary>DB-SESSION-001 会话所有权与窗口解耦（✔️ 已裁决·当前实现符合 · 2026-10-17）</summary>
 
-- **状态 / 主题 / 裁决日期 / 验证日期**：📝 已裁决·未实施 / 传输会话 / 2026-10-17 / —
+- **状态 / 主题 / 裁决日期 / 验证日期**：✔️ 已裁决·当前实现符合 / 传输会话 / 2026-10-17 / —
 - **当前裁决**：前台 Service 持有 `ClientSession`；网络、解码、音频、反控、最后一帧与统计归会话；`RenderTarget` 只负责显示 Surface/View。窗口 attach/detach 不停止 Service、不重建网络、不重新认证。
+- **实施情况（2026-10-21，[TB-WIN-001](task-board.md#tb-win-001)）**：`ScreenViewerService` 持有 `ClientMediaSession` 与固定的 `SwitchableRenderTarget`；悬浮窗与全屏 `ViewerActivity` 都实现 `render/ViewerHost`，切换只替换 delegate 并调用 `ClientMediaSession.rebindSurface()` 重建解码器（`retryConfigure()` 仍是 Surface 失效后的唯一恢复入口），网络会话、认证与 descriptor 不变。Device 验证未执行。
+- **未覆盖部分**：裁决里“关闭窗口不等于停止会话”仍未实现——关窗/断开的语义保持现状（结束会话），属 DV-008 待产品裁决项；Activity 生命周期与进程死亡下的连续边界也未实测。
 - **理由**：当前客户端 Service 同时持有连接与悬浮窗，窗口切换容易退化为“停止服务再重连”；先拆会话所有权，再做窗口切换风险最低。
 - **重新评估条件 / 验证证据**：若 Activity 生命周期、进程死亡或权限撤销使会话连续不可行，再定义可接受的恢复边界；需窗口切换、旋转、后台/前台与进程重建实测。
 - **关联文档**：[窗口与会话设计](windowing-session-design.md)、[路线图阶段 1](optimization-roadmap.md)
@@ -489,12 +491,14 @@
 </details>
 
 <a id="db-win-003"></a>
-<details><summary>DB-WIN-003 方案 A 展开收起（📝 已裁决·未实施 · 2026-10-17）</summary>
+<details><summary>DB-WIN-003 方案 B 悬浮窗 ↔ 全屏 Activity（✔️ 已裁决·当前实现符合 · 2026-10-17，2026-10-21 改写）</summary>
 
-- **状态 / 主题 / 裁决日期 / 验证日期**：📝 已裁决·未实施 / 窗口显示 / 2026-10-17 / —
-- **当前裁决**：第一版用方案 A：同一悬浮窗通过 `ValueAnimator` 改变 `LayoutParams` 展开/收起，不切换解码器 Surface；方案 B（`ViewerActivity` + 最后帧快照 + attach 新渲染目标后 `retryConfigure()` 重建解码器）作为需要沉浸式、返回键或输入法时的增强；B 失败时只重建解码器，不重建网络会话。
-- **理由**：方案 A 不触碰 Surface、网络与解码器，风险最低且动画最顺；方案 B 提供标准 Activity 行为，但依赖渲染目标 attach/detach 与解码器重建，以及 Activity 生命周期。
-- **重新评估条件 / 验证证据**：方案 A 在目标 OEM、手机/平板/车机形态能否真正最大化、系统栏与挖孔如何处理；Surface 失效后 `retryConfigure()` 的失败率与恢复时间；沉浸式与输入法是否成为硬需求。
+- **状态 / 主题 / 裁决日期 / 验证日期**：✔️ 已裁决·当前实现符合 / 窗口显示 / 2026-10-17（2026-10-21 改写）/ —
+- **当前裁决**：窗口切换用**方案 B**：悬浮窗与全屏 `ViewerActivity` 是同一会话的两个显示宿主，切换时只 attach/detach 宿主并把解码器输出面切到新宿主，经“末帧快照 + 缩放过渡（200 ms）”保持视觉连续；不重建网络会话、不重建认证、不新建客户端。方案 A（同一悬浮窗直接展开）不实现；PiP、分屏/freeform 不在本轮范围。
+- **改写原因**：用户 2026-10-20 提供的原始设计回答把方案 B 列为推荐路径（会话与界面解耦、`setOutputSurface` 或重建解码器、TextureView 优先、末帧快照过渡），本棒按该回答执行；原裁决“第一版用方案 A”不再成立。
+- **实施情况（2026-10-21，[TB-WIN-001](task-board.md#tb-win-001)）**：`render/SwitchableRenderTarget` + `ClientMediaSession.rebindSurface()` 实现“只重建解码器”；`ViewerActivity` 通过本地 Binder 以 `ViewerHost` 身份 attach，悬浮窗与 Activity 共用 `render/ViewerPanelView`（纹理、快照层、调试叠加）与 `render/ViewerMenuFactory`（显示模式、显示大小菜单）；Surface 切换走现有 `SurfaceRenderTarget` 重建路径，不使用 `MediaCodec.setOutputSurface`（见下）。设备验证未执行。
+- **Surface 切换方式**：`MediaCodec.setOutputSurface` 需要改动解码器桥接层的既有契约（`Decoder` 目前只有 configure/decode/flush/close），并且在目标厂商解码器上的成功率未知；沿用“新宿主 Surface 就绪后重建解码器 + 取新 IDR”的路径，风险最低且与既有 `retryConfigure()` 恢复路径同源。代价是每次切换有一次解码器重建与一次关键帧往返。
+- **重新评估条件 / 验证证据**：切换前后网络/会话/认证不重建、Service 不停、无长时间黑屏；Activity 生命周期、旋转、后台/前台与进程重建实测；目标设备上 `setOutputSurface` 是否值得替换重建路径。
 - **关联文档**：[窗口与会话设计方案对比](windowing-session-design.md)、[路线图阶段 3](optimization-roadmap.md)
 
 </details>
@@ -641,11 +645,11 @@
 | DV-001 | TCP 是否需要升级为 RTP/UDP。 | 2026-10-17 | 第一版保持统一 gRPC 双向流（TCP 承载）；不做未测量的切换。仪表已就位，判据改为四类联合归因，见 DB-OBS-002。**全量基线待 Q-2 落地后执行**（[TB-CLIENT-005](task-board.md#tb-client-005) 的观看端追赶已落地代码、设备未验证），基线须同时记录 `rx.catchup`/`rx.catchup.lat`/`rx.converge.fail`。 | 同设备同网络的 TCP 基线：`rtt.p50/p95`（Ping/Pong）、`rx.arr.p95/p99`、`rx.rowd.p95`、`rx.stall`、`pres.late.p95`、`dec.deadlineMiss`、`tx.send.p95`、`enc.cap2out.p95`；重传次数不可见，用「到达空窗 + 延迟增长 + 发送阻塞且序号不缺」代替。 | DB-NET-001、DB-OBS-002、[TB-OBS-001](task-board.md#tb-obs-001)、[TB-OBS-002](task-board.md#tb-obs-002)、[TB-CLIENT-005](task-board.md#tb-client-005) |
 | DV-002 | 是否需要 WebRTC。 | 2026-10-17 | 不作为默认基线，保留为浏览器/跨网/完整栈的可选路径。 | 产品确认需要浏览器客户端、跨网/NAT 穿透或完整音视频栈；或 TCP/RTP 无法满足目标场景。 | DB-NET-001 |
 | DV-003 | HEVC 是否作为默认高档位启用。 | 2026-10-17 | 保持 H.264 兼容档保底，HEVC 仅在双方探测支持且实测有收益时启用。 | 服务端与客户端均探测支持；同场景实测相比 H.264 有明确码率或画质收益；专利与分发政策可接受。 | DB-CODEC-001、DB-CODEC-007 |
-| DV-004 | 方案 A 在目标设备上能否真正最大化；Surface 失效后 `retryConfigure()` 恢复是否可靠。 | 2026-10-17 | 方案 A 为第一版基线，方案 B 为增强。 | 目标设备的悬浮窗最大尺寸、系统栏/挖孔/圆角行为；`retryConfigure()` 的失败率与恢复时间；不再只以车机为测试前提。 | DB-WIN-003 |
+| DV-004 | 窗口切换后的 Surface 恢复是否可靠；方案 B 的动画与生命周期在目标设备上是否成立。 | 2026-10-17 | 窗口切换按方案 B 落地（2026-10-21 改写，见 [DB-WIN-003](decision-board.md#db-win-003)）：切换只重建解码器、从新 IDR 恢复，网络会话不变。 | 目标设备上切换的主观连续性（黑屏/闪烁时长）、解码器重建失败率与恢复时间、Activity 启动是否被后台启动限制拦截、旋转与前后台切换表现；不再只以车机为测试前提。 | DB-WIN-003 |
 | DV-005 | 音频是否纳入产品范围；API 25–28 是否接受麦克风降级。 | 2026-10-17 | 默认关闭音频；低版本默认无声，麦克风模式需显式选择。 | 场景访谈、可用性测试、目标设备的音频捕获与音画同步实测。 | DB-AUDIO-001 |
 | DV-006 | 反控是否纳入产品范围；无障碍覆盖是否足够。 | 2026-10-17 | 反控默认关闭，只做设计预留。 | 产品确认远程操作需求；目标 App 与系统界面的手势、文本输入、坐标与旋转实测；合规评估。 | DB-CTRL-001 |
 | DV-007 | 手机、平板、车机与多显示器的场景定位分别是什么。 | 2026-10-17 | 车机只是候选场景之一，不是能力基准；设备形态不决定媒体能力。 | 各目标机型与系统版本上的悬浮窗权限、网络、休眠、音频路由、屏幕布局与合规实测；旗舰平板/手机的能力需单独探测。 | DB-WIN-001、DB-CAP-003、[产品语境](product-context.md) |
-| DV-008 | 关闭悬浮窗后，会话应继续后台运行、转入通知，还是立即结束。 | 2026-10-17 | 暂未定义产品行为；当前实现关闭窗口会结束客户端 Service。 | 产品决策与用户任务测试；同时需要定义保留会话时的通知、资源与安全边界。 | DB-SESSION-001、[窗口与会话设计开放问题](windowing-session-design.md) |
+| DV-008 | 关闭悬浮窗后，会话应继续后台运行、转入通知，还是立即结束。 | 2026-10-17 | 暂未定义产品行为；当前实现关闭窗口会结束客户端 Service。2026-10-21 起新增的窗口切换**不改这一语义**：展开到全屏 Activity 时移除悬浮窗不结束会话（只是换显示宿主）；从悬浮窗断开、从 Activity“停止观看”仍结束会话。 | 产品决策与用户任务测试；同时需要定义保留会话时的通知、资源与安全边界。 | DB-SESSION-001、[窗口与会话设计开放问题](windowing-session-design.md) |
 | DV-009 | “仅可信局域网”的安全边界是否可接受。 | 2026-10-17 | 传输加密与设备身份已由 [TB-DISC-010](task-board.md#tb-disc-010) 落地（自签 TLS + TOFU pin，JVM 证据）；配对与授权仍缺，因此维持未裁决；首连强度上限见 DV-022。 | 产品与用户访谈、首次连接风险提示、配对体验测试；若不接受，则先完成配对与授权再扩大使用范围。 | DB-SEC-001、[TB-DISC-010](task-board.md#tb-disc-010) |
 | DV-010 | 多客户端是否需要不同画质或多人控制。 | 2026-10-17 | 默认兼容单流；控制默认单客户端租约。 | 真实多客户端场景、慢客户端与不同屏幕尺寸测试；确认需求后再评估多档流、转码或多控制租约。 | DB-MULTI-001、DB-MULTI-004 |
 | DV-011 | 是否需要严格帧率上限。 | 2026-10-17 | 以 `KEY_FRAME_RATE` 为目标提示，不做严格保证；2026-10-21 起额外把设置值写入 `max-fps-to-encoder`（API 29 公开、值 `"max-fps-to-encoder"`，float）请求编码器丢帧，编码器拒绝时自动去键重配，因此认出该键的机型可真正限帧，其余机型行为不变。 | 产品明确要求固定帧率；需目标设备的实际输出帧率分布（设 15 后 `enc.outInterval.p50` 是否升到 ≈67 ms），以及 GPU 上游调度或版本化参数的验证结果。 | DB-CODEC-004、DB-OBS-003、[TB-ENG-012](task-board.md#tb-eng-012) |

@@ -171,9 +171,8 @@ flowchart LR
 
 ### 6.2 改造内容
 
-- 方案 A：同一悬浮窗展开/收起；`ValueAnimator` 动画 `WindowManager.LayoutParams`；同一 Surface，不切解码器。
-- 方案 B（可选）：`ViewerActivity` + 最后帧快照 + 过渡层；attach 新渲染目标后由 `ClientMediaSession.retryConfigure()` 重建解码器（不重建网络会话）；失败只重建解码器，不重连。
-- 小窗优先 `TextureView`（透明度/圆角/动画）；全屏可用 `SurfaceView`（稳定层）。
+- 窗口切换（2026-10-21 已落地代码层面，[TB-WIN-001](task-board.md#tb-win-001)）：采用**方案 B**——`ViewerActivity` + 最后帧快照 + 缩放过渡层；切换只 attach/detach `ViewerHost` 并由 `ClientMediaSession.rebindSurface()` 重建解码器（不重建网络会话），失败只重建解码器，不重连。方案 A（同一悬浮窗展开）不做。
+- 小窗优先 `TextureView`（透明度/圆角/动画）；全屏复用同一个 `ViewerPanelView`，不维护两套渲染路径。
 - 客户端画质：分辨率/帧率/码率档位；服务端能力探测、客户端解码能力与多客户端策略共同决定；变更时提升 configEpoch 并请求 IDR。
 - 场景档位：悬浮小窗与全屏可以选择不同档位；小窗优先码率/功耗，全屏可请求更高分辨率/帧率；不按 API 等级或设备形态预设上限。
 - 多客户端：观看可多人，控制默认单人；默认兼容单流，确认需求与能力后评估“高档 + H.264 档”的多档流；新客户端不得迫使已有客户端无提示降级；每客户端统计；慢客户端隔离。
@@ -197,8 +196,8 @@ flowchart LR
 
 ### 6.4 退出条件与回滚
 
-- 退出：A 稳定；B 在需要时可用；窗口切换不重连；客户端画质可控。
-- 回滚：A/B 通过开关选择；B 失败时回退 A；JPEG 兼容模式仍可用。
+- 退出：B 稳定；窗口切换不重连；客户端画质可控。
+- 回滚：窗口切换入口（菜单末行）是唯一触发点，可整体移除而不影响悬浮窗路径；切换到全屏失败时悬浮窗继续显示（Activity 启动被拦截或 attach 失败即结束 Activity）；JPEG 兼容模式仍可用。
 
 ## 7. 阶段 4：音频与单客户端反控
 

@@ -11,28 +11,23 @@ import android.content.IntentFilter;
 import android.content.pm.ServiceInfo;
 import android.content.res.Configuration;
 import android.graphics.Bitmap;
-import android.graphics.Color;
 import android.graphics.Canvas;
 import android.graphics.DrawFilter;
 import android.graphics.Matrix;
-import android.graphics.Outline;
 import android.graphics.Paint;
 import android.graphics.PaintFlagsDrawFilter;
 import android.graphics.PixelFormat;
-import android.graphics.Typeface;
-import android.graphics.drawable.ColorDrawable;
 import android.graphics.PointF;
 import android.graphics.Rect;
 import android.os.Build;
+import android.os.Binder;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
-import android.text.TextUtils;
 import android.text.format.Formatter;
 import android.util.DisplayMetrics;
 import android.util.Log;
 import android.util.Size;
-import android.util.TypedValue;
 import android.view.GestureDetector;
 import android.view.Gravity;
 import android.view.LayoutInflater;
@@ -41,11 +36,8 @@ import android.view.TextureView;
 import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.ViewGroup;
-import android.view.ViewOutlineProvider;
 import android.view.WindowManager;
-import android.widget.FrameLayout;
 import android.widget.ImageView;
-import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -70,6 +62,7 @@ import com.google.android.material.shape.ShapeAppearanceModel;
 import com.google.android.material.slider.LabelFormatter;
 import com.google.android.material.slider.Slider;
 import com.obby.android.localscreenshare.MainActivity;
+import com.obby.android.localscreenshare.ViewerActivity;
 import com.obby.android.localscreenshare.R;
 import com.obby.android.localscreenshare.client.ClientMediaReceiver;
 import com.obby.android.localscreenshare.client.ClientSecureListener;
@@ -102,7 +95,9 @@ import com.obby.android.localscreenshare.discovery.model.DeviceInfo;
 import com.obby.android.localscreenshare.render.SurfaceRenderTarget;
 import com.obby.android.localscreenshare.render.SwitchableRenderTarget;
 import com.obby.android.localscreenshare.render.ViewerFitPolicy;
-import com.obby.android.localscreenshare.render.ViewerScaleMenuModel;
+import com.obby.android.localscreenshare.render.ViewerHost;
+import com.obby.android.localscreenshare.render.ViewerMenuFactory;
+import com.obby.android.localscreenshare.render.ViewerPanelView;
 import com.obby.android.localscreenshare.render.ViewerZoomMenuModel;
 import com.obby.android.localscreenshare.render.ZoomMode;
 import com.obby.android.localscreenshare.settings.Preferences;
@@ -211,6 +206,37 @@ public class ScreenViewerService extends Service {
     // created on the first media-session start and reused across retries.
     @Nullable
     private SurfaceShareViewer mSurfaceShareViewer;
+
+    // Full-screen host while the session is expanded; null while the floating window owns the
+    // output. Only one host owns the decoder output at a time.
+    @Nullable
+    private ViewerHost mActivityHost;
+
+    // Output target of the activity host; recreated for every attach because an activity instance
+    // brings its own texture view.
+    @Nullable
+    private SurfaceRenderTarget mActivityRenderTarget;
+
+    // Last frame captured for the incoming host; taken once by that host and then dropped.
+    @Nullable
+    private Bitmap mTransitionSnapshot;
+
+    // Latest stream state pushed by the receiver, forwarded to a host that attaches later: the
+    // descriptor arrives once per connection, so a host that misses it would stay blank.
+    private int mContentWidth;
+
+    private int mContentHeight;
+
+    private int mRotationDegrees;
+
+    private boolean mIsSecure;
+
+    @NonNull
+    private List<String> mHudLines = Collections.emptyList();
+
+    // True once the activity finished its entry animation; the floating window stays mounted until
+    // both this flag and the first decoded frame are set, so the switch never shows black.
+    private boolean mIsActivityTransitionDone;
 
     // Disconnect confirmation; created on demand and dismissed on stop.
     @Nullable
@@ -324,6 +350,11 @@ public class ScreenViewerService extends Service {
                 mSurfaceShareViewer.dismiss();
             }
 
+            if (mActivityHost != null) {
+                // The expanded host keeps the last frame; the retry decision is a floating dialog.
+                mActivityHost.hideSnapshot();
+            }
+
             if (mClient != null) {
                 mClient.stop();
                 mClient = null;
@@ -379,8 +410,18 @@ public class ScreenViewerService extends Service {
                 if (mScreenShareLoading != null) {
                     mScreenShareLoading.dismiss();
                 }
+                final ViewerHost host = mActivityHost;
+                if (host != null) {
+                    // The expanded host has live frames again; the snapshot and the floating window
+                    // are no longer needed. The window is only removed once the entry animation
+                    // finished, so a fast decoder cannot cut the transition short.
+                    host.hideSnapshot();
+                    removeOverlayIfTransitionFinished();
+                    return;
+                }
                 if (mSurfaceShareViewer != null) {
                     mSurfaceShareViewer.show();
+                    mSurfaceShareViewer.fadeOutSnapshot();
                 }
             });
         }
@@ -391,11 +432,7 @@ public class ScreenViewerService extends Service {
     private final ClientSecureListener mClientSecureListener = new ClientSecureListener() {
         @Override
         public void onSecureChanged(final boolean secure) {
-            mMainHandler.post(() -> {
-                if (mSurfaceShareViewer != null) {
-                    mSurfaceShareViewer.setSecure(secure);
-                }
-            });
+            mMainHandler.post(() -> applySecure(secure));
         }
     };
 
@@ -457,12 +494,18 @@ public class ScreenViewerService extends Service {
     }
 
     /**
-     * Returns {@code null}: the client service is start-only and is never bound.
+     * Returns the local binder the full-screen activity uses to attach itself as a display host.
+     *
+     * <p>The service is started by {@link MainActivity}; the viewer activity only binds, so binding
+     * never creates a second session. A null binder is never returned: the activity treats a
+     * session-less service as "finish" through
+     * {@link ViewerBinder#attachHost(ViewerHost)} instead.</p>
      */
-    @Nullable
+    @NonNull
     @Override
     public IBinder onBind(Intent intent) {
-        return null;
+        Log.i(mTag, "onBind: viewer activity bound");
+        return new ViewerBinder();
     }
 
     /**
@@ -622,6 +665,14 @@ public class ScreenViewerService extends Service {
             mScreenShareLoading = null;
         }
 
+        // The expanded host has no session to show any more; it leaves with it. The snapshot is
+        // dropped here because the host that would consume it is gone.
+        if (mActivityHost != null) {
+            mActivityHost.onSessionEnded();
+            mActivityHost = null;
+        }
+        mTransitionSnapshot = null;
+
         teardownMediaSession();
 
         if (mSurfaceShareViewer != null) {
@@ -660,9 +711,11 @@ public class ScreenViewerService extends Service {
      * Builds the client media session for the current target.
      *
      * <p>The registry resolves the H.264 decoder; capabilities are pinned to H.264 until runtime
-     * probing and JPEG fallback land. The surface render target wraps the viewer's texture view,
-     * the receiver drives the session from wire messages on the client's decode thread, and the
-     * surface viewer is mounted immediately so its texture view exposes the surface the decoder
+     * probing and JPEG fallback land. The receiver drives the session from wire messages on the
+     * client's decode thread, and the session receives one stable {@link SwitchableRenderTarget}
+     * whose delegate is the display host that currently owns the output: the floating window's
+     * texture normally, the activity's texture while the session is expanded. When the window owns
+     * the output it is mounted immediately, so its texture view exposes the surface the decoder
      * needs. The registration carries a key-frame requester, so a decoder that had to shed a frame
      * asks the server for a fresh join point.</p>
      */
@@ -679,35 +732,33 @@ public class ScreenViewerService extends Service {
         }
         if (mSurfaceShareViewer == null) {
             mSurfaceShareViewer = new SurfaceShareViewer(this, mServiceInfo,
-                this::syncHudLoop);
+                this::syncHudLoop, this::expandToActivity);
         }
         mOverlayRenderTarget = new SurfaceRenderTarget(mSurfaceShareViewer.getTextureView(),
-                () -> {
-                    // A (re)available surface lets a resynchronizing session retry its decoder.
-                    final ClientMediaSession session = mClientMediaSession;
-                    if (session != null) {
-                        session.retryConfigure();
-                    }
-                });
-        mRenderTarget = new SwitchableRenderTarget(mOverlayRenderTarget);
+            () -> onHostSurfaceAvailable(mOverlayRenderTarget));
+        mActivityRenderTarget = mActivityHost == null ? null
+            : new SurfaceRenderTarget(mActivityHost.getTextureView(),
+                () -> onHostSurfaceAvailable(mActivityRenderTarget));
+        mRenderTarget = new SwitchableRenderTarget(
+            mActivityRenderTarget != null ? mActivityRenderTarget : mOverlayRenderTarget);
         final ClientMediaSession session = new ClientMediaSession(
                 new ClientSessionKey(mStreamKey, "local"), mCodecRegistry,
                 new ClientCapabilities(Collections.singleton(CodecIds.H264)),
                 mRenderTarget, mClientStateListener, mMetrics);
         mClientMediaSession = session;
         mClientMediaReceiver = new ClientMediaReceiver(mStreamKey, session, mClientSecureListener,
-            (visibleWidth, visibleHeight, rotationDegrees) -> mMainHandler.post(() -> {
-                // The descriptor arrives on the decode thread; the window is only touched here.
-                if (mSurfaceShareViewer != null) {
-                    mSurfaceShareViewer.setContentGeometry(visibleWidth, visibleHeight,
-                        rotationDegrees);
-                }
-            }), new ArrivalTracker(mMetrics), mMetrics);
+            (visibleWidth, visibleHeight, rotationDegrees) -> mMainHandler.post(() ->
+                // The descriptor arrives on the decode thread; the hosts are only touched here.
+                applyContentGeometry(visibleWidth, visibleHeight, rotationDegrees)),
+            new ArrivalTracker(mMetrics), mMetrics);
 
         // Mount the surface viewer now so its texture view acquires a surface; the H.264 decoder
         // cannot be created until a surface exists, and STREAMING (which used to trigger the mount)
-        // is only reached once the decoder starts producing frames.
-        mSurfaceShareViewer.show();
+        // is only reached once the decoder starts producing frames. An expanded session keeps the
+        // activity as its host and leaves the window unmounted.
+        if (mActivityHost == null) {
+            mSurfaceShareViewer.show();
+        }
 
         mMainHandler.removeCallbacks(mMetricsLogRunnable);
         if (mMetrics.isEnabled()) {
@@ -717,6 +768,76 @@ public class ScreenViewerService extends Service {
 
         return mClientMediaReceiver;
     }
+
+    /**
+     * Retries the decoder when the surface of the host that owns the output becomes available.
+     *
+     * <p>The inactive host can produce surface events too - a window that is re-added, an activity
+     * that is recreated - and configuring a decoder against a surface nobody displays is exactly the
+     * mistake this check prevents.</p>
+     *
+     * @param target the target that reported availability; may be null after a teardown
+     */
+    private void onHostSurfaceAvailable(@Nullable final SurfaceRenderTarget target) {
+        final ClientMediaSession session = mClientMediaSession;
+        final SwitchableRenderTarget router = mRenderTarget;
+        if (session == null || router == null || target == null
+            || router.getDelegate() != target) {
+            return;
+        }
+        if (session.retryConfigure()) {
+            // The decoder exists now, so the request reaches a decoder that can use the join point.
+            requestKeyFrameForced();
+        }
+    }
+
+    /**
+     * Stores the stream geometry and forwards it to the host that currently owns the output.
+     */
+    private void applyContentGeometry(final int visibleWidth, final int visibleHeight,
+                                      final int rotationDegrees) {
+        mContentWidth = visibleWidth;
+        mContentHeight = visibleHeight;
+        mRotationDegrees = rotationDegrees;
+        final ViewerHost host = activeHost();
+        if (host != null) {
+            host.setContentGeometry(visibleWidth, visibleHeight, rotationDegrees);
+        }
+    }
+
+    /**
+     * Stores the secure flag and forwards it to the host that currently owns the output.
+     */
+    private void applySecure(final boolean secure) {
+        mIsSecure = secure;
+        final ViewerHost host = activeHost();
+        if (host != null) {
+            host.setSecure(secure);
+        }
+    }
+
+    /**
+     * Stores the debug overlay lines and forwards them to the host that currently owns the output.
+     */
+    private void applyHudLines(@NonNull final List<String> lines) {
+        mHudLines = lines;
+        final ViewerHost host = activeHost();
+        if (host != null) {
+            host.setHudLines(lines);
+        }
+    }
+
+    /**
+     * Returns the host that currently owns the decoder output, or null before the session starts.
+     */
+    @Nullable
+    private ViewerHost activeHost() {
+        if (mActivityHost != null) {
+            return mActivityHost;
+        }
+        return mSurfaceShareViewer;
+    }
+
 
     /**
      * Returns the viewer's metric scope, creating it on first use.
@@ -738,12 +859,11 @@ public class ScreenViewerService extends Service {
      */
     private void syncHudLoop() {
         mMainHandler.removeCallbacks(mHudRunnable);
-        final SurfaceShareViewer viewer = mSurfaceShareViewer;
-        if (viewer == null) {
+        if (activeHost() == null) {
             return;
         }
         if (!Preferences.get().isViewerHudEnabled() || mMetrics == null || !mMetrics.isEnabled()) {
-            viewer.setHudLines(Collections.emptyList());
+            applyHudLines(Collections.emptyList());
             return;
         }
         updateHud();
@@ -754,16 +874,15 @@ public class ScreenViewerService extends Service {
      */
     private void updateHud() {
         mMainHandler.removeCallbacks(mHudRunnable);
-        final SurfaceShareViewer viewer = mSurfaceShareViewer;
         final PipelineMetrics metrics = mMetrics;
-        if (viewer == null || metrics == null) {
+        if (activeHost() == null || metrics == null) {
             return;
         }
         if (!Preferences.get().isViewerHudEnabled() || !metrics.isEnabled()) {
-            viewer.setHudLines(Collections.emptyList());
+            applyHudLines(Collections.emptyList());
             return;
         }
-        viewer.setHudLines(MetricsFormatter.toHud(metrics.snapshot(UPDATE_HUD_INTERVAL_MS),
+        applyHudLines(MetricsFormatter.toHud(metrics.snapshot(UPDATE_HUD_INTERVAL_MS),
             mHudRateSampler != null ? mHudRateSampler.sample() : null));
         mMainHandler.postDelayed(mHudRunnable, UPDATE_HUD_INTERVAL_MS);
     }
@@ -821,6 +940,271 @@ public class ScreenViewerService extends Service {
     }
 
     /**
+     * Asks the server for a random-access point without the throttle.
+     *
+     * <p>Used after a decoder rebuild: a rebuilt decoder cannot resume on a P frame, and the periodic
+     * key frame may be seconds away, so the switch would otherwise freeze for that long. The throttle
+     * exists to collapse burst failures, not to delay an explicit user action.</p>
+     */
+    private void requestKeyFrameForced() {
+        if (mClient == null) {
+            return;
+        }
+        Log.i(mTag, "requestKeyFrameForced: asking for a random access point");
+        mClient.requestKeyframe();
+    }
+
+    /**
+     * Opens the full-screen activity for the running session.
+     *
+     * <p>Captures the last frame first: the activity shows it until its own texture produced a
+     * decoded frame, which is what keeps the switch free of a black screen. The activity binds back
+     * to this service and attaches itself as the display host, so nothing here stops or restarts the
+     * client. A failed or blocked activity start leaves the floating window in charge.</p>
+     */
+    private void expandToActivity() {
+        if (mClientMediaSession == null || mActivityHost != null) {
+            return;
+        }
+        Log.i(mTag, "expandToActivity: opening the full-screen viewer");
+        final Intent intent = new Intent(this, ViewerActivity.class);
+        // A service is not an activity context; the new task is what makes the start legal.
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
+            startActivity(intent);
+        } catch (RuntimeException e) {
+            Log.w(mTag, "expandToActivity: starting the activity failed", e);
+        }
+    }
+
+    /**
+     * Returns the floating window rectangle, relative to the display center.
+     *
+     * <p>The overlay window is centred on the display and positioned by offsets, so the rectangle is
+     * expressed the same way; the activity adds its own center to reach view coordinates. Null while
+     * no viewer exists.</p>
+     */
+    @Nullable
+    private Rect getOverlayWindowBounds() {
+        return mSurfaceShareViewer == null ? null : mSurfaceShareViewer.getWindowBounds();
+    }
+
+    /**
+     * Gives the decoder output to {@code host} and rebuilds the decoder against its surface.
+     *
+     * <p>The order matters: the delegate changes first, then the session closes the decoder that
+     * wrote into the previous host and creates one for the new surface, and only then is the previous
+     * target released. A host whose texture view has not produced a surface yet is handled by the
+     * session itself: it waits in {@code RESYNCING} and retries when the surface appears.</p>
+     *
+     * @param host activity that takes over the output; required
+     * @return false when there is no running session to attach to
+     */
+    private boolean attachActivityHost(@NonNull final ViewerHost host) {
+        final ClientMediaSession session = mClientMediaSession;
+        final SwitchableRenderTarget router = mRenderTarget;
+        if (session == null || router == null || mSurfaceShareViewer == null) {
+            return false;
+        }
+        if (mActivityHost == host) {
+            return true;
+        }
+
+        final SurfaceRenderTarget previous = mActivityRenderTarget;
+        mActivityHost = host;
+        mIsActivityTransitionDone = false;
+        mActivityRenderTarget = new SurfaceRenderTarget(host.getTextureView(),
+            () -> onHostSurfaceAvailable(mActivityRenderTarget));
+        router.setDelegate(mActivityRenderTarget);
+
+        // Capture the outgoing host's last frame before the decoder stops writing into it; the
+        // activity shows it until its own surface presents a frame.
+        final ViewerHost outgoing = mSurfaceShareViewer;
+        if (outgoing != null) {
+            mTransitionSnapshot = outgoing.captureSnapshot();
+        }
+
+        // A host that attaches late missed the descriptor, so the current state is pushed here.
+        host.setContentGeometry(mContentWidth, mContentHeight, mRotationDegrees);
+        host.setSecure(mIsSecure);
+        host.setHudLines(mHudLines);
+
+        // A frame can only arrive once a decoder exists, so the key frame is requested after the
+        // rebuild succeeded; a missing surface is covered by the availability callback.
+        final boolean configured = session.rebindSurface();
+        if (configured) {
+            requestKeyFrameForced();
+        }
+        if (previous != null) {
+            previous.release();
+        }
+        Log.i(mTag, "attachActivityHost: decoder output moved to the activity, configured = "
+            + configured);
+        return true;
+    }
+
+    /**
+     * Reports that the activity finished its entry animation, so the floating window can be removed
+     * once frames are flowing again.
+     *
+     * @param host activity that reported the end; ignored when it is no longer the active host
+     */
+    private void finishActivityTransition(@NonNull final ViewerHost host) {
+        if (mActivityHost != host) {
+            return;
+        }
+        mIsActivityTransitionDone = true;
+        removeOverlayIfTransitionFinished();
+    }
+
+    /**
+     * Removes the floating window once the activity both finished its animation and receives frames.
+     *
+     * <p>Two conditions, on purpose: removing the window earlier would delete the live picture while
+     * the snapshot is still growing, and removing it without frames would leave the snapshot as the
+     * only thing on screen with no way back.</p>
+     */
+    private void removeOverlayIfTransitionFinished() {
+        final ClientMediaSession session = mClientMediaSession;
+        if (mActivityHost == null || !mIsActivityTransitionDone || session == null
+            || session.getState() != ClientState.STREAMING) {
+            return;
+        }
+        if (mSurfaceShareViewer != null) {
+            mSurfaceShareViewer.dismiss();
+        }
+        if (mOverlayRenderTarget != null) {
+            // The decoder writes into the activity's surface now; the window's can go until it
+            // returns.
+            mOverlayRenderTarget.release();
+        }
+        Log.i(mTag, "removeOverlayIfTransitionFinished: floating window removed");
+    }
+
+    /**
+     * Gives the decoder output back to the floating window.
+     *
+     * <p>The window is re-added with the activity's last frame on top, so the gap between the old
+     * surface and the new decoder is covered by a picture instead of black. The decoder is rebuilt
+     * before the activity's target is released, and the session, its descriptor and the network
+     * stream are untouched.</p>
+     *
+     * @param host     activity that gives the output back; required
+     * @param snapshot last frame of the activity, or null when it could not be captured
+     */
+    private void detachActivityHost(@NonNull final ViewerHost host,
+                                    @Nullable final Bitmap snapshot) {
+        if (mActivityHost != host) {
+            return;
+        }
+        mActivityHost = null;
+        mIsActivityTransitionDone = false;
+
+        final ClientMediaSession session = mClientMediaSession;
+        final SurfaceRenderTarget previous = mActivityRenderTarget;
+        mActivityRenderTarget = null;
+
+        if (session != null) {
+            if (mRenderTarget != null && mOverlayRenderTarget != null) {
+                mRenderTarget.setDelegate(mOverlayRenderTarget);
+            }
+            if (mSurfaceShareViewer != null) {
+                mSurfaceShareViewer.setContentGeometry(mContentWidth, mContentHeight,
+                    mRotationDegrees);
+                mSurfaceShareViewer.setSecure(mIsSecure);
+                mSurfaceShareViewer.show();
+                mSurfaceShareViewer.showSnapshot(snapshot);
+                mSurfaceShareViewer.setHudLines(mHudLines);
+            }
+            // A frame can only arrive once a decoder exists, so the key frame is requested after the
+            // rebuild succeeded; a missing surface is covered by the availability callback.
+            if (session.rebindSurface()) {
+                requestKeyFrameForced();
+            }
+            if (previous != null) {
+                previous.release();
+            }
+            syncHudLoop();
+        } else if (previous != null) {
+            previous.release();
+        }
+        Log.i(mTag, "detachActivityHost: decoder output returned to the floating window");
+    }
+
+    /**
+     * Hands the frame captured before the switch to the incoming host; ownership transfers.
+     */
+    @Nullable
+    private Bitmap takeTransitionSnapshot() {
+        final Bitmap snapshot = mTransitionSnapshot;
+        mTransitionSnapshot = null;
+        return snapshot;
+    }
+
+    /**
+     * Local binder through which {@link ViewerActivity} attaches itself as a display host.
+     *
+     * <p>Only the activity binds; the floating window is created by the service. The surface is
+     * deliberately narrow: attach, detach with the last frame, take one snapshot, read the window
+     * rectangle for the transition and refresh the debug overlay. Nothing here exposes the client,
+     * the session or the decoder, so a bound activity cannot start, restart or stop the stream.</p>
+     */
+    public final class ViewerBinder extends Binder {
+
+        /**
+         * Registers the activity as the host that owns the decoder output.
+         *
+         * @param host activity host; required
+         * @return false when no session is running, which the activity treats as "finish"
+         */
+        public boolean attachHost(@NonNull final ViewerHost host) {
+            return attachActivityHost(host);
+        }
+
+        /**
+         * Reports that the entry animation finished.
+         *
+         * @param host activity host; required
+         */
+        public void finishTransition(@NonNull final ViewerHost host) {
+            finishActivityTransition(host);
+        }
+
+        /**
+         * Gives the decoder output back to the floating window.
+         *
+         * @param host     activity host; required
+         * @param snapshot last frame of the activity, or null
+         */
+        public void detachHost(@NonNull final ViewerHost host, @Nullable final Bitmap snapshot) {
+            detachActivityHost(host, snapshot);
+        }
+
+        /**
+         * Takes the frame captured before the switch, or null when none was captured.
+         */
+        @Nullable
+        public Bitmap takeSnapshot() {
+            return takeTransitionSnapshot();
+        }
+
+        /**
+         * Returns the floating window rectangle relative to the display center, or null.
+         */
+        @Nullable
+        public Rect getOverlayBounds() {
+            return getOverlayWindowBounds();
+        }
+
+        /**
+         * Re-reads the debug-overlay preference into the refresh loop.
+         */
+        public void refreshHud() {
+            syncHudLoop();
+        }
+    }
+
+    /**
      * Closes the media session and releases the display targets; idempotent.
      */
     private void teardownMediaSession() {
@@ -830,9 +1214,15 @@ public class ScreenViewerService extends Service {
         }
         mClientMediaSession = null;
         mRenderTarget = null;
+        mIsActivityTransitionDone = false;
+        mTransitionSnapshot = null;
         if (mOverlayRenderTarget != null) {
             mOverlayRenderTarget.release();
             mOverlayRenderTarget = null;
+        }
+        if (mActivityRenderTarget != null) {
+            mActivityRenderTarget.release();
+            mActivityRenderTarget = null;
         }
     }
 
@@ -933,25 +1323,32 @@ public class ScreenViewerService extends Service {
     }
 
     /**
-     * Floating, draggable surface viewer for H.264 frames.
+     * Floating, draggable display host for H.264 frames.
      *
-     * <p>Hosts a {@link TextureView} that the decoder renders into directly, so no per-frame
-     * callback is needed. Created and used on the main thread. A long press starts dragging, a
-     * single tap opens the disconnect confirmation and a double tap opens the zoom menu. Opacity,
-     * scale, zoom preset, corner rounding and the normalized location come from the persisted
-     * viewer settings; the secure flag maps to {@code FLAG_SECURE}. The round-rect outline mirrors
-     * the shape of the bitmap viewer this window replaced.</p>
+     * <p>Hosts a {@link ViewerPanelView} whose texture the decoder renders into directly, so no
+     * per-frame callback is needed. Created and used on the main thread. A long press starts
+     * dragging, a single tap opens the disconnect confirmation and a double tap opens the display
+     * menu, whose last row expands the session into the full-screen activity. Opacity, scale, zoom
+     * preset, corner rounding and the normalized location come from the persisted viewer settings;
+     * the secure flag maps to {@code FLAG_SECURE}. The round-rect outline mirrors the shape of the
+     * bitmap viewer this window replaced.</p>
      *
      * <p><b>Geometry.</b> The window size comes from {@link ViewerFitPolicy}: the visible size and
      * rotation reported by the stream descriptor, the usable display bounds, the viewing percentage
      * and the zoom preset. Until the first descriptor arrives the window keeps the legacy "bounds
      * times percentage" size, so the texture view can acquire a surface before any frame exists. A
-     * rotated stream is fitted to the swapped content size and the texture is transformed to match,
-     * which keeps the pixels upright without stretching them.</p>
+     * rotated stream is fitted to the swapped content size and the panel transforms the texture to
+     * match, which keeps the pixels upright without stretching them.</p>
+     *
+     * <p><b>Host role.</b> Implements {@link ViewerHost}: the service hands it the stream geometry,
+     * the secure flag, the debug lines and a switch snapshot while it owns the decoder output. The
+     * window object itself outlives a detach, so expanding into the activity and collapsing back
+     * reuses it instead of building a second one.</p>
      */
-    private static class SurfaceShareViewer {
-        // Corner radius as a fraction of the shorter window side, matching the bitmap viewer.
-        private static final float CORNER_SIZE_RATIO = 1 / 16f;
+    private static class SurfaceShareViewer implements ViewerHost {
+
+        // Cross-fade of the switch snapshot once the rebuilt decoder presents a frame.
+        private static final long SNAPSHOT_FADE_MS = 150L;
 
         @NonNull
         private final Context mContext;
@@ -963,14 +1360,7 @@ public class ScreenViewerService extends Service {
         private final WindowManager mWindowManager;
 
         @NonNull
-        private final FrameLayout mRootView;
-
-        @NonNull
-        private final TextureView mTextureView;
-
-        // Debug overlay; a non-clickable child of the root, so touches still reach the texture.
-        @NonNull
-        private final TextView mHudView;
+        private final ViewerPanelView mPanelView;
 
         @NonNull
         private final WindowManager.LayoutParams mLayoutParams;
@@ -978,10 +1368,39 @@ public class ScreenViewerService extends Service {
         @NonNull
         private final GestureDetector mGestureDetector;
 
-        // Invoked after the overlay preference changed, so the service can start or stop the
-        // one-second refresh loop instead of leaving it running for a hidden overlay.
+        // Invoked after the display menu changed the overlay preference, so the service can start
+        // or stop the one-second refresh loop instead of leaving it running for a hidden overlay.
         @NonNull
         private final Runnable onHudPreferenceChanged;
+
+        // Invoked when the user chooses the expand row of the display menu.
+        @NonNull
+        private final Runnable onExpandRequested;
+
+        // Applies the rows chosen in the shared display menu.
+        @NonNull
+        private final ViewerMenuFactory.Listener mMenuListener =
+            new ViewerMenuFactory.Listener() {
+                @Override
+                public void onZoomModeSelected(@NonNull final ZoomMode mode) {
+                    setZoomMode(mode);
+                }
+
+                @Override
+                public void onScalePercentSelected(final int percent) {
+                    setViewerScale(percent);
+                }
+
+                @Override
+                public void onHudEnabledSelected(final boolean enabled) {
+                    setHudEnabled(enabled);
+                }
+
+                @Override
+                public void onActionSelected() {
+                    onExpandRequested.run();
+                }
+            };
 
         @NonNull
         private final PointF mLocation = new PointF();
@@ -1019,57 +1438,22 @@ public class ScreenViewerService extends Service {
 
         private int mRotationDegrees;
 
-        // Corner radius of the round-rect outline; 0 disables outline clipping.
-        private float mCornerSize;
-
+        @SuppressWarnings("DataFlowIssue")
         private SurfaceShareViewer(@NonNull final Context context,
                                    @NonNull final DeviceInfo serviceInfo,
-                                   @NonNull final Runnable onHudPreferenceChanged) {
+                                   @NonNull final Runnable onHudPreferenceChanged,
+                                   @NonNull final Runnable onExpandRequested) {
             mContext = new ContextThemeWrapper(context, R.style.Theme_ScreenShare);
             mServiceInfo = serviceInfo;
             this.onHudPreferenceChanged = onHudPreferenceChanged;
+            this.onExpandRequested = onExpandRequested;
             mWindowManager = mContext.getSystemService(WindowManager.class);
             mTouchSlop = ViewConfiguration.get(mContext).getScaledTouchSlop();
-            mTextureView = new TextureView(mContext) {
-                @Override
-                protected void onConfigurationChanged(@NonNull final Configuration newConfig) {
-                    super.onConfigurationChanged(newConfig);
-                    // The usable bounds change with rotation and multi-window; re-fit after the new
-                    // configuration has been applied, as the bitmap viewer did.
-                    post(() -> {
-                        if (mRootView.getParent() != null) {
-                            updateView();
-                        }
-                    });
-                }
-            };
-            mTextureView.setOpaque(false);
-            mHudView = new TextView(mContext);
-            mHudView.setTextColor(Color.WHITE);
-            mHudView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f);
-            mHudView.setTypeface(Typeface.MONOSPACE);
-            mHudView.setBackground(new ColorDrawable(0x99000000));
-            mHudView.setPadding(12, 8, 12, 8);
-            mHudView.setLineSpacing(0f, 1.1f);
-            // The overlay never consumes input: without a click listener and with clickable
-            // false, a touch falls through to the texture view underneath.
-            mHudView.setClickable(false);
-            mHudView.setFocusable(false);
-            mHudView.setVisibility(View.GONE);
-            mRootView = new FrameLayout(mContext);
-            mRootView.addView(mTextureView, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-            mRootView.addView(mHudView, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.TOP | Gravity.START));
-            // The outline is evaluated against the current view bounds, so the clipped corners
-            // follow the window size while the radius keeps the bitmap viewer's ratio.
-            mTextureView.setOutlineProvider(new ViewOutlineProvider() {
-                @Override
-                public void getOutline(@NonNull final View view, @NonNull final Outline outline) {
-                    outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), mCornerSize);
-                }
-            });
+            mPanelView = new ViewerPanelView(mContext);
+            final TextureView textureView = mPanelView.getTextureView();
+            // The usable bounds change with rotation and multi-window; re-fit after the new
+            // configuration has been applied, as the bitmap viewer did.
+            mPanelView.setConfigurationListener(this::onViewConfigurationChanged);
             mLayoutParams = new WindowManager.LayoutParams(0, 0, 0, 0, ServiceProtocol.FLOATING_WINDOW_TYPE,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
                 PixelFormat.TRANSLUCENT);
@@ -1097,7 +1481,7 @@ public class ScreenViewerService extends Service {
                     beginDrag(e.getRawX(), e.getRawY());
                 }
             });
-            mTextureView.setOnTouchListener((v, event) -> {
+            textureView.setOnTouchListener((v, event) -> {
                 switch (event.getActionMasked()) {
                     case MotionEvent.ACTION_DOWN:
                         mTouchDownX = event.getRawX();
@@ -1108,19 +1492,19 @@ public class ScreenViewerService extends Service {
                         // moved nothing. The window follows the finger as soon as the touch travels
                         // past the platform's touch slop; a tap or a double tap stays below it, so
                         // the disconnect confirmation and the zoom menu are unaffected.
-                        if (!mTextureView.isActivated()
+                        if (!textureView.isActivated()
                             && hasMovedPastTouchSlop(event.getRawX(), event.getRawY())) {
                             beginDrag(mTouchDownX, mTouchDownY);
                         }
-                        if (mTextureView.isActivated()) {
+                        if (textureView.isActivated()) {
                             updateLocation((int) (event.getRawX() + mDragOffset.x),
                                 (int) (event.getRawY() + mDragOffset.y));
                         }
                         break;
                     case MotionEvent.ACTION_UP:
                     case MotionEvent.ACTION_CANCEL:
-                        if (mTextureView.isActivated()) {
-                            mTextureView.setActivated(false);
+                        if (textureView.isActivated()) {
+                            textureView.setActivated(false);
                             Preferences.get().setViewerLocation(mLocation);
                         }
                         break;
@@ -1137,10 +1521,10 @@ public class ScreenViewerService extends Service {
          * the window does not jump when the drag starts.
          */
         private void beginDrag(final float rawX, final float rawY) {
-            if (mTextureView.isActivated()) {
+            if (mPanelView.getTextureView().isActivated()) {
                 return;
             }
-            mTextureView.setActivated(true);
+            mPanelView.getTextureView().setActivated(true);
             mDragOffset.set(mLayoutParams.x - rawX, mLayoutParams.y - rawY);
         }
 
@@ -1152,8 +1536,9 @@ public class ScreenViewerService extends Service {
         }
 
         @NonNull
-        TextureView getTextureView() {
-            return mTextureView;
+        @Override
+        public TextureView getTextureView() {
+            return mPanelView.getTextureView();
         }
 
         /**
@@ -1161,45 +1546,42 @@ public class ScreenViewerService extends Service {
          *
          * <p>Called on the main thread once per second. An empty list hides the overlay instead of
          * leaving stale numbers on screen, which is what a disabled overlay or a disabled metric
-         * scope looks like.</p>
+         * scope looks like. A disabled preference hides a populated line as well.</p>
          *
          * @param lines rendered lines, or an empty list to hide the overlay
          */
-        void setHudLines(@NonNull final List<String> lines) {
-            if (lines.isEmpty() || !Preferences.get().isViewerHudEnabled()) {
-                mHudView.setText(null);
-                mHudView.setVisibility(View.GONE);
+        @Override
+        public void setHudLines(@NonNull final List<String> lines) {
+            if (!Preferences.get().isViewerHudEnabled()) {
+                mPanelView.setHudLines(Collections.emptyList());
                 return;
             }
-            mHudView.setText(TextUtils.join("\n", lines));
-            mHudView.setVisibility(View.VISIBLE);
+            mPanelView.setHudLines(lines);
         }
 
         /**
          * Hides the overlay when the preference is off and re-shows a populated one otherwise.
          *
-         * <p>The root view owns the window, so the overlay only ever changes visibility; the
-         * texture view, its outline and its transform are untouched.</p>
+         * <p>The panel owns the text, so the overlay only ever changes visibility; the texture
+         * view, its outline and its transform are untouched.</p>
          */
         private void updateHudVisibility() {
             if (!Preferences.get().isViewerHudEnabled()) {
-                mHudView.setText(null);
-                mHudView.setVisibility(View.GONE);
-            } else if (mHudView.getText().length() > 0) {
-                mHudView.setVisibility(View.VISIBLE);
+                mPanelView.setHudLines(Collections.emptyList());
             }
         }
 
         void show() {
-            if (mRootView.getParent() == null) {
+            if (mPanelView.getParent() == null) {
                 mOpacity = Preferences.get().getViewerOpacity();
                 mScale = Preferences.get().getViewerScale();
                 mZoomMode = ZoomMode.fromWire(Preferences.get().getViewerZoomMode());
                 mLocation.set(Preferences.get().getViewerLocation());
                 updateLayoutParams();
-                updateShape();
-                updateContentTransform();
-                mWindowManager.addView(mRootView, mLayoutParams);
+                mPanelView.setRounded(Preferences.get().isViewerRounded());
+                mPanelView.setDisplaySize(0, 0);
+                mPanelView.setContentGeometry(mContentWidth, mContentHeight, mRotationDegrees);
+                mWindowManager.addView(mPanelView, mLayoutParams);
                 updateHudVisibility();
             }
         }
@@ -1212,8 +1594,9 @@ public class ScreenViewerService extends Service {
          * geometry is ignored: a descriptor that only advances the configuration epoch must not
          * touch the window.</p>
          */
-        void setContentGeometry(final int visibleWidth, final int visibleHeight,
-                                final int rotationDegrees) {
+        @Override
+        public void setContentGeometry(final int visibleWidth, final int visibleHeight,
+                                       final int rotationDegrees) {
             if (mContentWidth == visibleWidth && mContentHeight == visibleHeight
                 && mRotationDegrees == rotationDegrees) {
                 return;
@@ -1223,72 +1606,32 @@ public class ScreenViewerService extends Service {
             mContentHeight = visibleHeight;
             mRotationDegrees = rotationDegrees;
 
-            if (mRootView.getParent() != null) {
+            if (mPanelView.getParent() != null) {
                 updateView();
             }
         }
 
         /**
-         * Re-applies the window size, shape and content rotation and pushes them to the window.
+         * Re-applies the window size and shape and pushes them to the window.
          */
         private void updateView() {
             updateLayoutParams();
-            updateShape();
-            updateContentTransform();
-            mWindowManager.updateViewLayout(mRootView, mLayoutParams);
+            mPanelView.setRounded(Preferences.get().isViewerRounded());
+            mPanelView.setContentGeometry(mContentWidth, mContentHeight, mRotationDegrees);
+            mWindowManager.updateViewLayout(mPanelView, mLayoutParams);
             updateHudVisibility();
         }
 
+
         /**
-         * Rotates the decoded content inside the window.
-         *
-         * <p>The decoder writes an unrotated frame and the texture stretches it to the window, so a
-         * quarter-turn stream must be rotated here or it is displayed sideways. The rotated frame
-         * has the swapped aspect ratio, which the window already has, so the content is scaled by
-         * the same swapped factor before the rotation: after rotating, it fills the window exactly.
-         * A half-turn needs no scaling. An identity matrix is applied for the common unrotated
-         * case, so the default behaviour is unchanged.</p>
+         * Re-fits the window after the display configuration changed.
          */
-        private void updateContentTransform() {
-            final int width = mLayoutParams.width;
-            final int height = mLayoutParams.height;
-            final Matrix transform = new Matrix();
-            if (width > 0 && height > 0) {
-                final float centerX = width / 2f;
-                final float centerY = height / 2f;
-                if (mRotationDegrees == 90 || mRotationDegrees == 270) {
-                    transform.setScale((float) height / width, (float) width / height, centerX,
-                        centerY);
-                    transform.postRotate(mRotationDegrees, centerX, centerY);
-                } else if (mRotationDegrees == 180) {
-                    transform.setRotate(180f, centerX, centerY);
+        private void onViewConfigurationChanged() {
+            mPanelView.post(() -> {
+                if (mPanelView.getParent() != null) {
+                    updateView();
                 }
-            }
-            mTextureView.setTransform(transform);
-        }
-
-        /**
-         * Applies the rounded-corner setting to the window outline.
-         *
-         * <p>The radius is a fixed fraction of the shorter window side, capped by the theme's
-         * large corner size, as the bitmap viewer did. Outline clipping is disabled when rounding
-         * is turned off or the window has no measurable size yet.</p>
-         */
-        private void updateShape() {
-            if (!Preferences.get().isViewerRounded()) {
-                mCornerSize = 0f;
-                mTextureView.setClipToOutline(false);
-                mTextureView.invalidateOutline();
-                return;
-            }
-
-            final float maxCornerSize = mContext.getResources().getDimension(
-                ResourceUtils.resolveAttribute(mContext, com.google.android.material.R.attr.shapeCornerSizeLarge));
-            mCornerSize = Math.min(
-                Math.min(mLayoutParams.width, mLayoutParams.height) * CORNER_SIZE_RATIO, maxCornerSize);
-
-            mTextureView.setClipToOutline(mCornerSize > 0f);
-            mTextureView.invalidateOutline();
+            });
         }
 
         void dismiss() {
@@ -1297,12 +1640,14 @@ public class ScreenViewerService extends Service {
                 mDialog.dismiss();
                 mDialog = null;
             }
-            if (mRootView.getParent() != null) {
-                mWindowManager.removeViewImmediate(mRootView);
+            mPanelView.hideSnapshot();
+            if (mPanelView.getParent() != null) {
+                mWindowManager.removeViewImmediate(mPanelView);
             }
         }
 
-        void setSecure(final boolean secure) {
+        @Override
+        public void setSecure(final boolean secure) {
             final boolean currentlySecure =
                 (mLayoutParams.flags & WindowManager.LayoutParams.FLAG_SECURE) != 0;
             if (currentlySecure == secure) {
@@ -1313,10 +1658,74 @@ public class ScreenViewerService extends Service {
             } else {
                 mLayoutParams.flags &= ~WindowManager.LayoutParams.FLAG_SECURE;
             }
-            if (mRootView.getParent() != null) {
-                mWindowManager.updateViewLayout(mRootView, mLayoutParams);
+            if (mPanelView.getParent() != null) {
+                mWindowManager.updateViewLayout(mPanelView, mLayoutParams);
             }
         }
+
+        /**
+         * Shows the last frame of the outgoing host above the live picture.
+         *
+         * <p>Used when the session collapses from the activity back into this window: the window is
+         * re-added and its texture needs a decoder rebuild before it can present anything, so the
+         * captured frame covers that gap instead of a black rectangle.</p>
+         */
+        @Override
+        public void showSnapshot(@Nullable final Bitmap snapshot) {
+            mPanelView.showSnapshot(snapshot);
+        }
+
+        @Override
+        public void hideSnapshot() {
+            mPanelView.hideSnapshot();
+        }
+
+        /**
+         * Fades the switch snapshot out once the live picture is back; the fade is short enough to
+         * hide the decoder rebuild without being noticed as an animation.
+         */
+        void fadeOutSnapshot() {
+            mPanelView.fadeOutSnapshot(SNAPSHOT_FADE_MS);
+        }
+
+        /**
+         * Captures the currently displayed frame for the incoming host.
+         *
+         * @return the frame, or null when the texture cannot be read
+         */
+        @Override
+        @Nullable
+        public Bitmap captureSnapshot() {
+            return mPanelView.captureSnapshot();
+        }
+
+        /**
+         * Returns the window rectangle relative to the display center.
+         *
+         * <p>The window is centred on the display and placed by offsets, which is the same space the
+         * activity needs for its shrink animation. The stored preferences are re-read when the window
+         * was never shown, so a rectangle exists even after the session started expanded.</p>
+         */
+        @NonNull
+        Rect getWindowBounds() {
+            if (mScale <= 0) {
+                mOpacity = Preferences.get().getViewerOpacity();
+                mScale = Preferences.get().getViewerScale();
+                mZoomMode = ZoomMode.fromWire(Preferences.get().getViewerZoomMode());
+                mLocation.set(Preferences.get().getViewerLocation());
+            }
+            updateLayoutParams();
+            final int halfWidth = mLayoutParams.width / 2;
+            final int halfHeight = mLayoutParams.height / 2;
+            return new Rect(mLayoutParams.x - halfWidth, mLayoutParams.y - halfHeight,
+                mLayoutParams.x + halfWidth, mLayoutParams.y + halfHeight);
+        }
+
+        @Override
+        public void onSessionEnded() {
+            // The service removes the window itself; a window has no back stack to leave.
+        }
+
 
         private void showDisconnectDialog() {
             if (mDialog == null) {
@@ -1366,19 +1775,14 @@ public class ScreenViewerService extends Service {
         }
 
         /**
-         * Opens the zoom menu for the current stream geometry.
+         * Opens the display-mode menu for the current stream geometry.
          *
-         * <p>Rows come from {@link ViewerZoomMenuModel}: every row states the scale it would apply,
-         * because the same window size can be reached by more than one preset, and the integer
-         * preset is left out when it only repeats the actual-size window. The current preset is
-         * preselected, and when it was the omitted integer preset the size-equivalent actual-size
-         * row is preselected instead.</p>
-         *
-         * <p>The selected row also carries a visible marker in its own label: the theme's
-         * single-choice item renders no indicator on the device the menu was tested on, so the
-         * checked state existed only in the accessibility tree. The last row opens the
-         * viewing-percentage menu, because the percentage is stored separately from the preset and
-         * one single-choice list cannot mark both.</p>
+         * <p>Rows come from {@link ViewerZoomMenuModel} through {@link ViewerMenuFactory}: every row
+         * states the scale it would apply, because the same window size can be reached by more than
+         * one preset, and the integer preset is left out when it only repeats the actual-size
+         * window. The display-size row opens its own submenu, because the percentage is stored
+         * separately from the preset and one single-choice list cannot mark both. The trailing row
+         * expands the session into the full-screen activity.</p>
          */
         private void showZoomModeDialog() {
             getMaxLayoutBounds(mBounds);
@@ -1387,109 +1791,8 @@ public class ScreenViewerService extends Service {
             final List<ViewerZoomMenuModel.Entry> entries = ViewerZoomMenuModel.build(
                 mContentWidth, mContentHeight, mRotationDegrees, mBounds.width(), mBounds.height(),
                 mScale, minSize, mZoomMode, Preferences.get().isViewerHudEnabled());
-
-            final CharSequence[] labels = new CharSequence[entries.size() + 1];
-            int checked = 0;
-            for (int i = 0; i < entries.size(); i++) {
-                final ViewerZoomMenuModel.Entry entry = entries.get(i);
-                labels[i] = labelOf(entry);
-                if (entry.isSelected()) {
-                    checked = i;
-                }
-            }
-            labels[entries.size()] = mContext.getString(R.string.viewer_scale_menu_entry_percent,
-                mContext.getString(R.string.viewer_scale_setting_label), mScale);
-
-            final AlertDialog dialog = new MaterialAlertDialogBuilder(mContext)
-                .setTitle(R.string.viewer_zoom_mode_title)
-                .setSingleChoiceItems(labels, checked, (target, which) -> {
-                    target.dismiss();
-                    if (which >= entries.size()) {
-                        showViewerScaleDialog();
-                        return;
-                    }
-                    final ViewerZoomMenuModel.Entry entry = entries.get(which);
-                    if (entry.getKind() == ViewerZoomMenuModel.Kind.DEBUG_OVERLAY) {
-                        setHudEnabled(!entry.isSelected());
-                    } else {
-                        setZoomMode(entry.getMode());
-                    }
-                })
-                .setNegativeButton(android.R.string.cancel, null)
-                .create();
-            dialog.getWindow().setType(ServiceProtocol.FLOATING_WINDOW_TYPE);
-            dialog.show();
-        }
-
-        /**
-         * Opens the viewing-percentage menu.
-         *
-         * <p>Rows come from {@link ViewerScaleMenuModel}: the presets plus the applied percentage
-         * when it is not one of them, so the menu never marks a neighbouring preset as current. A
-         * row applies and persists its percentage immediately, on top of whatever zoom preset is
-         * active, and the window is re-fitted in place.</p>
-         */
-        private void showViewerScaleDialog() {
-            final List<ViewerScaleMenuModel.Entry> entries = ViewerScaleMenuModel.build(mScale);
-            final CharSequence[] labels = new CharSequence[entries.size()];
-            int checked = 0;
-            for (int i = 0; i < entries.size(); i++) {
-                final ViewerScaleMenuModel.Entry entry = entries.get(i);
-                labels[i] = markSelection(mContext.getString(R.string.viewer_scale_option_percent,
-                    entry.getPercent()), entry.isSelected());
-                if (entry.isSelected()) {
-                    checked = i;
-                }
-            }
-
-            final AlertDialog dialog = new MaterialAlertDialogBuilder(mContext)
-                .setTitle(R.string.viewer_scale_setting_label)
-                .setSingleChoiceItems(labels, checked, (target, which) -> {
-                    setViewerScale(entries.get(which).getPercent());
-                    target.dismiss();
-                })
-                .setNegativeButton(android.R.string.cancel, null)
-                .create();
-            dialog.getWindow().setType(ServiceProtocol.FLOATING_WINDOW_TYPE);
-            dialog.show();
-        }
-
-        /**
-         * Returns the label of one zoom menu row, including the scale it would apply and the
-         * marker of the currently applied preset.
-         */
-        @NonNull
-        private String labelOf(@NonNull final ViewerZoomMenuModel.Entry entry) {
-            if (entry.getKind() == ViewerZoomMenuModel.Kind.DEBUG_OVERLAY) {
-                return markSelection(mContext.getString(R.string.viewer_debug_overlay_label),
-                    entry.isSelected());
-            }
-            final int percent = entry.getEffectivePercent();
-            final String label;
-            switch (entry.getMode()) {
-                case ONE_TO_ONE:
-                    label = mContext.getString(entry.isClamped()
-                        ? R.string.viewer_zoom_mode_one_to_one_clamped_percent
-                        : R.string.viewer_zoom_mode_one_to_one_percent, percent);
-                    break;
-                case INTEGER:
-                    label = mContext.getString(R.string.viewer_zoom_mode_integer_percent, percent);
-                    break;
-                case FIT:
-                default:
-                    label = mContext.getString(R.string.viewer_zoom_mode_fit_percent, percent);
-                    break;
-            }
-            return markSelection(label, entry.isSelected());
-        }
-
-        /**
-         * Prefixes the marker of the applied value, so the menu shows a selection on screen and not
-         * only in the accessibility tree.
-         */
-        @NonNull
-        private String markSelection(@NonNull final String label, final boolean isSelected) {
-            return isSelected ? mContext.getString(R.string.viewer_menu_current, label) : label;
+            ViewerMenuFactory.createZoomDialog(mContext, entries, mScale,
+                R.string.viewer_action_expand_full_screen, true, mMenuListener).show();
         }
 
         /**
@@ -1501,7 +1804,7 @@ public class ScreenViewerService extends Service {
             }
             mZoomMode = mode;
             Preferences.get().setViewerZoomMode(mode.wire());
-            if (mRootView.getParent() != null) {
+            if (mPanelView.getParent() != null) {
                 updateView();
             }
         }
@@ -1515,7 +1818,7 @@ public class ScreenViewerService extends Service {
             }
             mScale = percent;
             Preferences.get().setViewerScale(percent);
-            if (mRootView.getParent() != null) {
+            if (mPanelView.getParent() != null) {
                 updateView();
             }
         }
@@ -1540,7 +1843,7 @@ public class ScreenViewerService extends Service {
             if (mLayoutParams.x != finalX || mLayoutParams.y != finalY) {
                 mLayoutParams.x = finalX;
                 mLayoutParams.y = finalY;
-                mWindowManager.updateViewLayout(mRootView, mLayoutParams);
+                mWindowManager.updateViewLayout(mPanelView, mLayoutParams);
             }
         }
 
@@ -1554,10 +1857,10 @@ public class ScreenViewerService extends Service {
 
         private void getMaxLayoutBounds(@NonNull final Rect rect) {
             rect.setEmpty();
-            mTextureView.getWindowVisibleDisplayFrame(rect);
+            mPanelView.getWindowVisibleDisplayFrame(rect);
             if (rect.isEmpty()) {
-                // The texture view is not attached yet (mounted before its first layout pass), so
-                // the window frame is unavailable; size the initial window from the display metrics.
+                // The panel is not attached yet (mounted before its first layout pass), so the
+                // window frame is unavailable; size the initial window from the display metrics.
                 final DisplayMetrics metrics = mContext.getResources().getDisplayMetrics();
                 rect.set(0, 0, metrics.widthPixels, metrics.heightPixels);
             }

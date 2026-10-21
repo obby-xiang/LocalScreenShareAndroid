@@ -25,6 +25,9 @@
     <string name="viewer_menu_current">"✓ %1$s"</string>
     <string name="viewer_scale_menu_entry_percent">"%1$s（%2$d%%）"</string>
     <string name="viewer_scale_option_percent">"%1$d%%"</string>
+    <string name="viewer_action_expand_full_screen">"展开全屏"</string>
+    <string name="viewer_action_collapse_to_window">"收起小窗"</string>
+    <string name="viewer_action_stop_viewing">"停止观看"</string>
     <string name="keep_screen_on_setting_label">"屏幕常亮"</string>
     <string name="viewer_opacity_setting_label">"不透明度"</string>
     <string name="viewer_scale_setting_label">"显示大小"</string>

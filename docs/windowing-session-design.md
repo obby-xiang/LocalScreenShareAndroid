@@ -1,7 +1,8 @@
 # 悬浮窗与全屏会话设计
 
-> 状态：目标设计，尚未实现；当前代码只有悬浮窗客户端，没有全屏 Activity。
-> 验证状态：未在设备上验证窗口切换、渲染目标 attach/detach、解码器重建或动画；本文给出方案与验收标准，不声称已经可用。
+> 状态：**方案 B 已落地代码层面（2026-10-21，[TB-WIN-001](task-board.md#tb-win-001)）**，设备验证未执行。
+> 实现入口：`service/ScreenViewerService`（会话与两个宿主）、`render/SwitchableRenderTarget`、`core/client/ClientMediaSession.rebindSurface()`、`ViewerActivity`、`render/ViewerPanelView`、`render/ViewerMenuFactory`。
+> 验证状态：窗口切换、渲染目标 attach/detach、解码器重建与过渡动画均**未在设备上验证**；本文给出方案与验收标准，不声称已经可用。
 > 相关文档：[项目现状](project-assessment.md) · [媒体架构](media-architecture.md) · [路线图](optimization-roadmap.md)
 
 ## 1. 问题
@@ -295,12 +296,14 @@ sequenceDiagram
 | 适用 | 快速全屏播放、监看放大 | 沉浸式观看、需要标准 Activity 行为 |
 | minSdk 25 | 可用 | 可用（解码器重建不依赖额外 API） |
 
-裁决：
+裁决（2026-10-21 改写，见 [DB-WIN-003](decision-board.md#db-win-003)）：
 
-- **第一版用 A 做“展开/收起”**：风险最低，动画最顺，不触碰解码器 Surface。
-- **B 作为需要沉浸式/返回键/输入法时的增强**；先完成 `ClientSession`/`RenderTarget` 抽象，再实现 B。
+- **采用 B**：悬浮窗与全屏 `ViewerActivity` 是同一会话的两个显示宿主，切换只 attach/detach 宿主并重建解码器；这是用户原始设计回答推荐的路径，也是需要沉浸式、返回键与标准 Activity 行为时唯一可行的路径。
+- **不实现 A**（同一悬浮窗直接展开）：它不触碰 Surface，但拿不到 Activity 返回栈、输入法与真正的沉浸式；本轮不保留这条分支。
 - 两者共用同一个会话模型；不要为 B 复制一套网络/解码逻辑。
-- 不要从 Activity 直接创建 `LssClient`；这是导致“切换=重连”的根因。
+- 不要从 Activity 直接创建客户端；这是导致“切换=重连”的根因。Activity 只通过本地 Binder 以 `ViewerHost` 身份 attach，拿不到 `ScreenShareClient`、会话或解码器。
+- **Surface 切换方式**：使用“新宿主 Surface 就绪 → 重建解码器 → 取新 IDR”的既有 `SurfaceRenderTarget` 路径，不使用 `MediaCodec.setOutputSurface`；理由是后者要改动解码器桥接契约，且目标厂商解码器上的成功率未知。代价是每次切换一次解码器重建与一次关键帧往返，已由末帧快照覆盖。
+- **过渡动画**：进入全屏时快照从悬浮窗矩形放大到内容框（200 ms），首帧到达后 150 ms 交叉淡出；收起时快照缩回悬浮窗矩形，随后才移除 Activity 并显示悬浮窗。悬浮窗只在“动画结束 + 首帧到达”后才移除，避免黑屏。
 
 ## 7. 窗口技术选型
 

@@ -3,6 +3,8 @@
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
     <color name="ic_launcher_background">#FFFFFF</color>
+    <!-- Backdrop of the full-screen control bar, so the labels stay readable over any picture. -->
+    <color name="screen_share_viewer_controls_background">#99000000</color>
     <color name="md_theme_primary">#006A60</color>
     <color name="md_theme_onPrimary">#FFFFFF</color>
     <color name="md_theme_primaryContainer">#9EF2E4</color>
