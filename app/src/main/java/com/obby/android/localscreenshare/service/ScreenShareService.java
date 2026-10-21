@@ -90,10 +90,12 @@ import com.obby.android.localscreenshare.core.model.BitstreamFormat;
 import com.obby.android.localscreenshare.core.model.StreamDescriptor;
 import com.obby.android.localscreenshare.core.model.StreamKey;
 import com.obby.android.localscreenshare.core.model.StreamParameters;
+import com.obby.android.localscreenshare.core.stream.RuntimeState;
 import com.obby.android.localscreenshare.core.stream.SessionMetricsSnapshot;
 import com.obby.android.localscreenshare.core.stream.StreamHub;
 import com.obby.android.localscreenshare.core.stream.StreamQueueLimits;
 import com.obby.android.localscreenshare.core.stream.StreamRuntime;
+import com.obby.android.localscreenshare.core.stream.ViewerCapturePolicy;
 import com.obby.android.localscreenshare.core.util.NanoClock;
 import com.obby.android.localscreenshare.core.util.TimeSource;
 import com.obby.android.localscreenshare.discovery.DiscoveryManager;
@@ -165,6 +167,13 @@ import java.util.concurrent.Executors;
  * {@link ScreenFrame} to {@link ScreenShareServer#postScreenFrame}. The security flag travels with each
  * frame.</p>
  *
+ * <p><b>Viewer-driven capture.</b> A running encoder and display would otherwise keep composing and
+ * encoding for an empty audience, so capture follows the viewer count: a one-second watch detaches
+ * the display from its output surface once the runtime published its first configuration and no
+ * client is attached, and re-attaches it with a join-point request when a client arrives. The
+ * encoder stays allocated, so the published descriptor remains valid and the resume costs no
+ * reconfiguration. Audio follows the same rule through its own viewer watch.</p>
+ *
  * <p><b>Threading.</b> Service callbacks, server listeners, preference changes and all state
  * except the capture state run on the main thread. The capture listener runs on the image reader
  * thread; {@code mImageReaderLock} serializes image acquisition, reader replacement and teardown
@@ -214,6 +223,11 @@ public class ScreenShareService extends Service {
     // the time a viewer needs to receive and play its first audio frame, and it avoids a new
     // session callback inside StreamHub, which the audio plan keeps unchanged.
     private static final long AUDIO_VIEWER_WATCH_INTERVAL_MS = 1000L;
+
+    // Cadence of the viewer watch that pauses and resumes video capture. The same one-second poll
+    // is used because the hub has no session-count callback; the cost is one main-thread no-op per
+    // second while a share is running, and the first frame after a resume waits at most this long.
+    private static final long VIDEO_VIEWER_WATCH_INTERVAL_MS = 1000L;
 
     // Main-thread state; non-null only between a successful start and stopService().
     @Nullable
@@ -300,6 +314,24 @@ public class ScreenShareService extends Service {
         }
     };
 
+    // Keeps video capture in step with the viewer count. It is separate from the audio watch
+    // because it has to run on every API level and regardless of the sound switch, while the audio
+    // watch only exists while playback capture can run at all.
+    @NonNull
+    private final Runnable mVideoViewerWatchRunnable = new Runnable() {
+        @Override
+        public void run() {
+            mMainHandler.removeCallbacks(mVideoViewerWatchRunnable);
+
+            if (mVirtualDisplay == null || mStreamRuntime == null) {
+                return;
+            }
+
+            syncVideoCapture();
+            mMainHandler.postDelayed(mVideoViewerWatchRunnable, VIDEO_VIEWER_WATCH_INTERVAL_MS);
+        }
+    };
+
     // Media stream wiring: the runtime owns the encoder and the hub owns per-client sessions. All
     // are assembled on start and torn down before the capture resources are released.
     @Nullable
@@ -367,6 +399,12 @@ public class ScreenShareService extends Service {
     // Main-thread state; resized on configuration changes.
     @Nullable
     private VirtualDisplay mVirtualDisplay;
+
+    // True while the capture display has no surface because no viewer is attached. Volatile
+    // because the capture thread and the encoder-switch path both read it. Paused capture keeps
+    // the encoder allocated but stops every composition and frame, which is where the heat comes
+    // from; it never outlives the session that paused it.
+    private volatile boolean mIsCapturePaused;
 
     // Floating duration chip; added on start and removed on teardown.
     @Nullable
@@ -768,12 +806,27 @@ public class ScreenShareService extends Service {
      * lose the platform's own recovery path.</p>
      */
     private void bindEncoderInputSurface() {
-        if (mVirtualDisplay == null || mStreamRuntime == null) {
+        if (mVirtualDisplay == null || mStreamRuntime == null || mIsCapturePaused) {
             return;
         }
         final Surface surface = mStreamRuntime.getInputSurface();
         if (surface != null) {
             mVirtualDisplay.setSurface(surface);
+        }
+    }
+
+    /**
+     * Points the virtual display at the image reader surface of the JPEG path.
+     *
+     * <p>The reader and its surface survive a pause, so resuming only re-attaches the existing
+     * surface. The lock keeps the call ordered against a resize that replaces the reader.</p>
+     */
+    private void bindImageReaderSurface() {
+        synchronized (mImageReaderLock) {
+            if (mVirtualDisplay == null || mImageReader == null) {
+                return;
+            }
+            mVirtualDisplay.setSurface(mImageReader.getSurface());
         }
     }
 
@@ -1017,6 +1070,10 @@ public class ScreenShareService extends Service {
         mScreenShareChip = new ScreenShareChip(this);
         mScreenShareChip.show();
 
+        // Video follows the same rule as audio: capture starts with the display, and the watch
+        // pauses it as soon as the first published configuration exists and no viewer is attached.
+        startVideoViewerWatch();
+
         // Bound activities learn about the new state only after everything is in place.
         mClientMessengers.forEach(this::notifyServerStarted);
     }
@@ -1060,6 +1117,10 @@ public class ScreenShareService extends Service {
         stopAudioViewerWatch();
         stopAudioPipeline();
         mAudioAvailability = AudioAvailability.AVAILABLE;
+
+        // The watch is stopped before the display it drives is released.
+        stopVideoViewerWatch();
+        mIsCapturePaused = false;
 
         // Stop producing UI first so the chip never outlives the running session.
         if (mScreenShareChip != null) {
@@ -1361,13 +1422,16 @@ public class ScreenShareService extends Service {
                 return;
             }
 
-            // Recreate the reader at the new size, then hand the display the new surface.
+            // Recreate the reader at the new size, then hand the display the new surface. A paused
+            // capture keeps the display detached; the resume path binds the new reader surface.
             mImageReader.close();
             mImageReader = ImageReader.newInstance(mProjectionSize.getWidth(), mProjectionSize.getHeight(),
                 PixelFormat.RGBA_8888, IMAGE_READER_MAX_IMAGES);
             mFrameTimestamp = -1L;
             mImageReader.setOnImageAvailableListener(mOnImageAvailableListener, mImageReaderHandler);
-            mVirtualDisplay.setSurface(mImageReader.getSurface());
+            if (!mIsCapturePaused) {
+                mVirtualDisplay.setSurface(mImageReader.getSurface());
+            }
         }
     }
 
@@ -1620,6 +1684,97 @@ public class ScreenShareService extends Service {
             default:
                 break;
         }
+    }
+
+    /**
+     * Starts the viewer watch that pauses and resumes video capture; idempotent.
+     *
+     * <p>Started once the capture display exists, because the watch can only pause a display that
+     * is already composing. It polls the hub's session count instead of subscribing to a callback:
+     * the hub intentionally has no session listener, and the existing statistics listener fires on
+     * byte-counter changes, which a viewer leaving does not always produce.</p>
+     */
+    private void startVideoViewerWatch() {
+        mMainHandler.removeCallbacks(mVideoViewerWatchRunnable);
+        mMainHandler.post(mVideoViewerWatchRunnable);
+    }
+
+    /**
+     * Stops the viewer watch; idempotent.
+     */
+    private void stopVideoViewerWatch() {
+        mMainHandler.removeCallbacks(mVideoViewerWatchRunnable);
+    }
+
+    /**
+     * Applies the viewer rule to video capture: an unwatched share stops composing and encoding,
+     * the first viewer starts both again.
+     *
+     * <p>Runs on the main thread. The decision is {@link ViewerCapturePolicy}, which keeps the rule
+     * covered by JVM tests; this method only performs it. Pausing detaches the capture display from
+     * its output surface, so the platform stops composing the screen and the encoder receives no
+     * input; the encoder itself stays allocated, which is what makes the resume a re-attach instead
+     * of a reconfiguration and keeps the published descriptor valid for a joining client.</p>
+     */
+    private void syncVideoCapture() {
+        final StreamRuntime runtime = mStreamRuntime;
+        final StreamHub hub = mStreamHub;
+        if (runtime == null || hub == null || mVirtualDisplay == null) {
+            return;
+        }
+        switch (ViewerCapturePolicy.decide(hub.getSessionCount(), mIsCapturePaused,
+                runtime.getState() == RuntimeState.READY)) {
+            case PAUSE:
+                pauseCapture();
+                break;
+            case RESUME:
+                resumeCapture();
+                break;
+            case NONE:
+            default:
+                break;
+        }
+    }
+
+    /**
+     * Detaches the capture display from its output surface because no viewer is attached.
+     *
+     * <p>The pause flag is only raised after the detach succeeded, so a platform that refuses the
+     * call is retried by the next watch turn instead of leaving a display that keeps composing
+     * behind a state that claims it stopped.</p>
+     */
+    private void pauseCapture() {
+        try {
+            mVirtualDisplay.setSurface(null);
+        } catch (RuntimeException e) {
+            Log.w(mTag, "pauseCapture: detaching the capture surface failed", e);
+            return;
+        }
+        mIsCapturePaused = true;
+        Log.i(mTag, "capture: event=pause reason=no_viewer sessions=0");
+    }
+
+    /**
+     * Re-attaches the capture display and asks for a random-access point.
+     *
+     * <p>The display is pointed at the current encoder input (H.264) or image reader surface
+     * (JPEG). The join-point request makes the first unit after the resume an IDR, so the viewer
+     * that triggered the resume does not wait for the next scheduled key frame.</p>
+     */
+    private void resumeCapture() {
+        if (mVirtualDisplay == null) {
+            return;
+        }
+        mIsCapturePaused = false;
+        if (mIsH264) {
+            bindEncoderInputSurface();
+        } else {
+            bindImageReaderSurface();
+        }
+        if (mStreamRuntime != null) {
+            mStreamRuntime.requestJoinPoint();
+        }
+        Log.i(mTag, "capture: event=resume reason=viewer_joined");
     }
 
     /**
