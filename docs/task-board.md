@@ -21,6 +21,8 @@
 
 ## 🎯 当前焦点
 
+- 2026-10-21 **服务端声音传输 A1–A7 落地**（[TB-AUDIO-001](#tb-audio-001)，按[音频计划](superpowers/plans/2026-10-21-audio.md)与第 10.1 章裁决）：新增 `core/audio` 并列契约（描述符/帧/能力/采集/编码/扇出/jitter buffer/会话时钟/状态机），协议只做纯增量（`Capabilities.audio_codecs=2`、`ServerMessage.audio_descriptor=4`/`audio_access_unit=5`），**不改 `StreamHub`、不新增 RPC/端口、不新增依赖**；服务端内录 → AAC-LC → 每客户端独立有界队列 → 同一 `Stream` RPC，客户端解码 → jitter buffer → `AudioTrack`，音视频共用 `SessionClock` 单锚点（目标 |Δ|≤40 ms，帧级丢/补，2 s 冷却）。音频默认关、API 25–28 纯无声（D1 麦克风降级不做，`TB-AUDIO-002` 未激活）。全量 **1236 tests / 120 classes / 0 failures / 0 errors**；`assembleDebug` 与三项 checks 通过；**设备验证未执行**，短期功能点位见 [TB-AUDIO-003](#tb-audio-003)，长时/压力项并入 [TB-ENG-013](#tb-eng-013)。[DB-AUDIO-001](decision-board.md#db-audio-001) 转为“已裁决·代码已实施”，[DV-005](decision-board.md) 补范围结论。
+
 - 2026-10-21 **测试分层裁决**：功能做完只跑对应的短小功能测试；稳定性/长时/耐力类一律先登记、不逐棒穿插，统一到全部功能完成后执行。被延后的项（TB-WIN-001 ⑨ 连切 20 次与全项点位、Q-2 1080p 观看端终验、DV-001 全量基线、N1 过载掉线、N2 线程尖峰、TLS D9 30 min 功耗/D10 备份恢复、API 25 出画）已收口到 [TB-ENG-013](#tb-eng-013)，各项写明来源与阻塞条件。
 - 2026-10-21 T6 复测（r2）报告的三个缺陷已修复：**N-r2-1**（客户端对信任失败完全静默，与既有 R5-01 同源）新增 `client/StreamFailure` 把终止原因归一化（gRPC `Status` code/description + 原因链），`ScreenShareClient` 对每个终止记结构化日志，`ClientObserver.onDisconnected(StreamFailure)` 让观看端把身份类拒绝（`identity_mismatch`/`identity_changed`/`pin_unknown`/`invalid_chain`）显示为"设备身份校验失败"专属文案而不是"是否重试"；**N-r2-3** 冷启动首个 TLS 探针单独放宽到 5 s（`MANUAL_PROBE_FIRST_TIMEOUT_MS`）、探测失败补 `Log.w` 与"无法连接该地址"toast、并修掉探测任务抛异常时回调永不触发的静默路径；**N-r2-2** 把计划 9.7 的 D5 判据改写为实测语义（同地址新设备 + 提示 + 显式信任恢复），DV-022 补注。顺带登记 API 25 模拟器软解出画失败（N-r2-5，环境项）与 `insecure_transport` 分支不可达的评估结论。详见 [TB-DISC-010](#tb-disc-010)。
 - 2026-10-21 第 12 问“窗口化 ↔ 界面化”已落地代码层面（[TB-WIN-001](#tb-win-001)，方案 B）：悬浮窗与全屏 `ViewerActivity` 是同一会话的两个显示宿主，切换只把解码器输出面换到新宿主并按最新 descriptor 重建解码器（新增 `ClientMediaSession.rebindSurface()` 与 `render/SwitchableRenderTarget`），网络会话、认证与 Service 均不重建；末帧快照 + 200 ms 缩放过渡、悬浮窗“展开全屏”与 Activity“收起小窗/停止观看”入口、`ViewerPanelView`/`ViewerMenuFactory` 两个宿主共用渲染与菜单。全量 **1098 tests / 103 classes / 0 failures / 0 errors / 0 skipped**，`assembleDebug` 与 `lintDebug` 通过；**设备功能冒烟已通过（r2，2026-10-21）**：出画 → 双击菜单「展开全屏」→ 全屏出画 → 返回收起回悬浮窗 → 停止观看，`Unable to instantiate`/`FATAL` 计数 0；裁决前那一轮复验的 10 条点位读数与耗时表见条目，其中连切 20 次等长时/稳定性项按当日裁决并入 [TB-ENG-013](#tb-eng-013) 统一回归。首轮设备验证暴露的 P0（`ViewerActivity` 构造期 `new GestureDetector(this, …)` → 展开即 FATAL）已修复，并把该反模式升级为[命名规范第 8 章](naming-conventions.md#8-android-组件构造禁令强制)。[TB-CORE-002](#tb-core-002) 因此转为部分完成（“关窗不等于停会话”仍待 [DV-008](decision-board.md)），[DB-WIN-003](decision-board.md#db-win-003) 改写为方案 B。
@@ -76,7 +78,9 @@
 | TB-OBS-001 | 🔶 部分完成 | 🔴 P0 | 可观测性与基线（O1–O6 已落地，O7 待设备） | 2026-10-17 | — | [本计划](superpowers/plans/2026-10-21-transport-observability.md) |
 | TB-FW-002 | 🔶 部分完成 | 🟠 P1 | JPEG 适配 | 2026-10-17 | — | [编码框架设计](codec-framework.md) |
 | TB-SEC-001 | 📋 待办 | 🟠 P1 | 配对与传输加密 | 2026-10-17 | — | [媒体架构](media-architecture.md) |
-| TB-AUDIO-001 | 📋 待办 | 🟡 P2 | 音频链路 | 2026-10-17 | — | [媒体架构](media-architecture.md) |
+| TB-AUDIO-001 | 🔶 部分完成 | 🟡 P2 | 音频链路（A1–A7 代码完成，设备验证待 TB-AUDIO-003） | 2026-10-17 | — | [音频计划](superpowers/plans/2026-10-21-audio.md) |
+| TB-AUDIO-002 | ⏸ 待裁决 | 🟡 P2 | 麦克风降级（D1=不做，未激活） | 2026-10-21 | — | [音频计划 6.9](superpowers/plans/2026-10-21-audio.md) |
+| TB-AUDIO-003 | ⏳ 等待设备验证 | 🟡 P2 | 音频设备验证清单（并入 TB-ENG-013 统一回归） | 2026-10-21 | — | [音频计划 6.10](superpowers/plans/2026-10-21-audio.md) |
 | TB-CLIENT-001 | 📋 待办 | 🟡 P2 | 客户端画质与多客户端 | 2026-10-17 | — | [媒体架构](media-architecture.md) |
 | TB-CLIENT-002 | 📋 待办 | 🟡 P2 | 单流与多档流策略 | 2026-10-17 | — | [媒体架构](media-architecture.md) |
 | TB-CLIENT-006 | 📋 待办 | ⚪ P3 | 小窗 HUD 折行与字号自适应 | 2026-10-21 | — | [TB-OBS-001](#tb-obs-001) |
@@ -292,7 +296,8 @@
 - **任务**：配对、会话令牌与授权：默认拒绝未配对客户端；观看、音频、反控分级授权；发现默认不广播设备名。
 - **与 TB-DISC-010 的边界**：传输加密与设备身份（SPKI 指纹 + pin）已由 [TB-DISC-010](#tb-disc-010) 提供；TOFU pin 只回答“是不是同一台机器”，**不回答“是否允许观看”**。本条剩余配对、会话令牌、默认拒绝未配对客户端与分级授权。
 - **交付物 / 验证证据**：交付：配对流程、令牌校验、授权策略、安全提示。验证：未配对连接被拒绝、授权分级生效、日志脱敏；当前未执行。
-- **关联文档**：[项目现状安全边界](project-assessment.md)、[媒体架构安全模型](media-architecture.md)、[TB-DISC-010 实施计划](superpowers/plans/2026-10-21-tls-tofu.md)、[路线图阶段 2](optimization-roadmap.md)
+- **音频授权缺口（2026-10-21 登记）**：v1 音频按裁决 D11 采用「能看就能听」——只要视频 join 成功且客户端声明 AAC，`AudioHub` 就向它发音频，没有独立的「允许听」授权项。分级授权（观看/音频/反控）仍归本条；在它落地前，本缺口不得写成“已解决”。
+- **关联文档**：[项目现状安全边界](project-assessment.md)、[媒体架构安全模型](media-architecture.md)、[TB-DISC-010 实施计划](superpowers/plans/2026-10-21-tls-tofu.md)、[音频计划第 8 章](superpowers/plans/2026-10-21-audio.md)、[路线图阶段 2](optimization-roadmap.md)
 
 </details>
 
@@ -319,12 +324,35 @@
 </details>
 
 <a id="tb-audio-001"></a>
-<details><summary>TB-AUDIO-001 音频链路（📋 待办）</summary>
+<details><summary>TB-AUDIO-001 音频链路（🔶 部分完成 · A1–A7 代码与 JVM 验证完成，设备验证待棒）</summary>
 
-- **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟡 P2 / 2026-10-17 / —
-- **任务**：音频：API 29+ 使用 `AudioPlaybackCapture`；API 25–28 默认无声或显式麦克风模式；AAC-LC 兼容优先；统一会话单调时钟与客户端 jitter buffer。
-- **交付物 / 验证证据**：交付：可选音频链路、权限与拒绝提示、同步策略。验证：阶段 4 的权限、版本降级、音画同步、编码项通过；当前未执行。
-- **关联文档**：[路线图阶段 4](optimization-roadmap.md)、[媒体架构音频](media-architecture.md)
+- **状态 / 优先级 / 创建 / 完成**：🔶 部分完成 / 🟡 P2 / 2026-10-17 / —（代码完成 2026-10-21；设备验证未执行）
+- **任务**：音频：API 29+ 使用 `AudioPlaybackCapture`；API 25–28 默认无声（D1=不做麦克风）；AAC-LC 兼容优先；统一会话单调时钟与客户端 jitter buffer。
+- **实施范围（A1–A7，按 [音频计划](superpowers/plans/2026-10-21-audio.md)）**：A1 音频契约与 proto 增量（`audio_descriptor=4`/`audio_access_unit=5`/`Capabilities.audio_codecs=2`）；A2 服务端内录 + AAC-LC 编码水线；A3 `AudioHub` 每客户端有界队列与同 RPC 传输；A4 客户端 AAC 解码、jitter buffer 与 `AudioTrack`；A5 `SessionClock` 音画同轴 + 漂移守卫；A6 开关/权限/通知/静音/HUD；A7 状态机与降级矩阵。**A7b 麦克风降级取消**（D1）。**不改 `StreamHub`、不新增 RPC/端口**。
+- **验证证据（JVM）**：`rm -rf app/build/test-results/testDebugUnitTest` 后 `./gradlew :app:testDebugUnitTest --offline` **1236 tests / 120 classes / 0 failures / 0 errors**（基线 1098/103，只增不减）；`./gradlew :app:assembleDebug --offline` 通过；`check_strings.py`、`check_cjk.py`、`check_docs.py` 通过。协议兼容：旧客户端把新消息当 `PAYLOAD_NOT_SET` 忽略，新客户端对旧服务端永不收到音频。
+- **设备验证**：见 [TB-AUDIO-003](#tb-audio-003) 与计划 6.10；本条目在设备点位通过前不转 ✅。
+- **关联文档**：[音频计划](superpowers/plans/2026-10-21-audio.md)、[路线图阶段 4](optimization-roadmap.md)、[媒体架构音频](media-architecture.md)、[DB-AUDIO-001](decision-board.md#db-audio-001)
+
+</details>
+
+<a id="tb-audio-002"></a>
+<details><summary>TB-AUDIO-002 麦克风降级（⏸ 待裁决 · 未激活）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：⏸ 待裁决 / 🟡 P2 / 2026-10-21 / —
+- **任务**：以显式音源用 `VOICE_COMMUNICATION` + `AcousticEchoCanceler` 采集环境声，持续可见指示，不伪装内录。
+- **当前口径**：用户裁决 D1=**不做**，本条目保持未激活；API 25–28 维持纯无声 + UI 明示。若未来重新裁决为“做”，按[计划 6.9](superpowers/plans/2026-10-21-audio.md) 单开一批，包含 `FOREGROUND_SERVICE_MICROPHONE` 与 `microphone` 类型。
+- **关联文档**：[音频计划 6.9](superpowers/plans/2026-10-21-audio.md)、[DB-AUDIO-001](decision-board.md#db-audio-001)
+
+</details>
+
+<a id="tb-audio-003"></a>
+<details><summary>TB-AUDIO-003 音频设备验证清单（⏳ 等待设备验证）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：⏳ 等待设备验证 / 🟡 P2 / 2026-10-21 / —
+- **任务**：短小功能口径：能采、能传、能播、音画同步观感、降级路径（计划 6.10 的 1–3、5、7 项）。长时/压力/功耗/回声项并入 [TB-ENG-013](#tb-eng-013)。
+- **前置**：设备验证解禁；一台 API 29+ 服务端与一台观看端。
+- **判据**：开启后 5 s 内出声且通知显示采集；关闭/撤销投影后立即停止；拒绝录音权限时开关回弹且视频继续；API 28 设备开关置灰、无声音、无崩溃；观看端静音/取消静音不重启音频。
+- **关联文档**：[音频计划 6.10](superpowers/plans/2026-10-21-audio.md)、[DB-AUDIO-001](decision-board.md#db-audio-001)
 
 </details>
 
@@ -410,6 +438,7 @@
   5. **N2 线程尖峰**（来源同上）：观看端 `threads` 56→359→526→215、服务端 671，均出现在会话重建/编码器重启瞬间；**“尖峰是否回落、是否泄漏”仍未回答**。统一棒在尖峰时刻抓 `dumpsys meminfo` 与线程名快照。**阻塞：无**（需与 ⑨ 的循环同一轮做）。
   6. **TLS D9 30 min 功耗 / D10 备份恢复**（来源 [TB-DISC-010](#tb-disc-010) 与 `2026-10-21-tls-tofu.md` §9.7）：D9 只做了短版（35 min 1080p30：电池 36→39 ℃、`thermal=0`），需补 30 min 全量；D10 备份/恢复（导出→重装→恢复→同 id/指纹与信任库一致）未测。**阻塞：D10 需明确备份格式与范围**（是否含 keystore 私钥）。
   7. **API 25 出画兼容性**（来源 `N-r2-5`）：API 25 模拟器软解 `0x80001019` 导致握手正常、有数据无画面；**阻塞：需要 API 25 真机或带硬解镜像**，否则只能验证“握手 + 有数据”，出画判据不闭环。
+  8. **音频长时/压力项**（来源 [TB-AUDIO-003](#tb-audio-003) 与[音频计划 6.10](superpowers/plans/2026-10-21-audio.md) 的 A8-4/5/6/8）：10 分钟漂移量（`AV_OFFSET` P50/P95）、3 台观看端同时播放与慢客户端音频丢弃、同一 TCP 上音频被视频大帧阻塞的可感知度（`tx.send.p95` 与主观卡顿）、开关音频各 30 分钟的电池/温度/CPU 对比。**阻塞：音频功能设备冒烟通过后**；判据为 `|Δ|` 观感 ≤100 ms、无视频回归。
 - **执行口径**：一次统一棒只装一个已推送 HEAD、仓库零改动；每项记录取数窗口、宿主负载与 guest `top`；不得把“没测到”写成“没问题”；运行前后偏好/输入法/方向逐字节还原；不得放宽判据，判据不可达时须写明机制理由。
 - **完成判据**：以上 7 项均有可核对证据（截图/日志/读数）并按[维护方式](#-维护方式)写回各自条目；阻塞未解除的项保持 📋 待办并注明阻塞原因。
 - **关联文档**：[TB-WIN-001](#tb-win-001)、[TB-OBS-001](#tb-obs-001)、[TB-CLIENT-005](#tb-client-005)、[TB-DISC-010](#tb-disc-010)、[DV-001](decision-board.md)、[路线图](optimization-roadmap.md)
