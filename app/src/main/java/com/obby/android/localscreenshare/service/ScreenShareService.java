@@ -66,12 +66,17 @@ import com.obby.android.localscreenshare.core.codec.CodecRegistry;
 import com.obby.android.localscreenshare.core.codec.EncoderSizeAlignment;
 import com.obby.android.localscreenshare.core.codec.h264.H264Codec;
 import com.obby.android.localscreenshare.core.codec.mediacodec.EncoderAlignmentProbe;
+import com.obby.android.localscreenshare.core.metrics.MetricsFormatter;
+import com.obby.android.localscreenshare.core.metrics.PipelineMetrics;
 import com.obby.android.localscreenshare.core.model.BitstreamFormat;
 import com.obby.android.localscreenshare.core.model.StreamDescriptor;
 import com.obby.android.localscreenshare.core.model.StreamKey;
 import com.obby.android.localscreenshare.core.model.StreamParameters;
 import com.obby.android.localscreenshare.core.stream.StreamHub;
+import com.obby.android.localscreenshare.core.stream.StreamQueueLimits;
 import com.obby.android.localscreenshare.core.stream.StreamRuntime;
+import com.obby.android.localscreenshare.core.util.NanoClock;
+import com.obby.android.localscreenshare.core.util.TimeSource;
 import com.obby.android.localscreenshare.discovery.DiscoveryManager;
 import com.obby.android.localscreenshare.discovery.model.AuthMode;
 import com.obby.android.localscreenshare.discovery.model.DeviceRole;
@@ -167,6 +172,10 @@ public class ScreenShareService extends Service {
     // Merges a burst of encoder-affecting preference changes into one rebuild.
     private static final long ENCODER_REBUILD_DEBOUNCE_MS = 300L;
 
+    // Cadence of the structured metric log line; slower than the three-second UI statistics
+    // because the line is meant for log capture, not for a live display.
+    private static final long UPDATE_METRICS_INTERVAL_MS = 5000L;
+
     // Attempts per encoder switch; the second one covers a transient codec resource shortage
     // without turning a permanently invalid request into an endless rebuild loop.
     private static final int ENCODER_SWITCH_MAX_ATTEMPTS = 2;
@@ -189,6 +198,38 @@ public class ScreenShareService extends Service {
     // Debounced encoder rebuild raised by frame-rate and key-frame-interval changes.
     @NonNull
     private final Runnable mEncoderRebuildRunnable = this::rebuildEncoder;
+
+    // Formats one structured metric line every UPDATE_METRICS_INTERVAL_MS while measuring; runs on
+    // the main thread next to the three-second UI statistics, so no extra thread is created.
+    @NonNull
+    private final Runnable mMetricsLogRunnable = new Runnable() {
+        @Override
+        public void run() {
+            mMainHandler.removeCallbacks(mMetricsLogRunnable);
+
+            final PipelineMetrics metrics = mMetrics;
+            if (metrics == null || !metrics.isEnabled()) {
+                return;
+            }
+
+            final StreamHub hub = mStreamHub;
+            metrics.setGauge(PipelineMetrics.Gauge.PEER_COUNT,
+                hub != null ? hub.getSessionCount() : 0);
+
+            // One warning per service instance: a suppressed probe means the encoder timestamps and
+            // the monotonic clock disagree, so the value would be meaningless rather than absent.
+            if (!mCapToOutSuppressed
+                && metrics.getGauge(PipelineMetrics.Gauge.CAP_TO_OUT_SUPPRESSED) == 1L) {
+                mCapToOutSuppressed = true;
+                Log.w(mTag, "mMetricsLogRunnable: enc.cap2out disabled, encoder timestamps do not"
+                    + " share the monotonic clock base");
+            }
+
+            Log.i(mTag, MetricsFormatter.toLogLine(MetricsFormatter.Role.SERVER,
+                metrics.snapshot(UPDATE_METRICS_INTERVAL_MS)));
+            mMainHandler.postDelayed(mMetricsLogRunnable, UPDATE_METRICS_INTERVAL_MS);
+        }
+    };
 
     // Media stream wiring: the runtime owns the encoder and the hub owns per-client sessions. All
     // are assembled on start and torn down before the capture resources are released.
@@ -256,6 +297,14 @@ public class ScreenShareService extends Service {
 
     @Nullable
     private ServerStats mServerStats;
+
+    // Metric scope of the encode/send pipeline; null while the service is stopped. A disabled
+    // preference yields PipelineMetrics.NONE, so no window and no snapshot exists at all.
+    @Nullable
+    private PipelineMetrics mMetrics;
+
+    // Set once the capture-to-output probe suppressed itself, so the warning is logged once.
+    private boolean mCapToOutSuppressed;
 
     // Last values rendered into the notification; used to skip redundant notification updates.
     private int mConnectionCount;
@@ -786,6 +835,9 @@ public class ScreenShareService extends Service {
         mConnectionCount = 0;
         mOutboundDataRate = 0L;
 
+        mMainHandler.removeCallbacks(mMetricsLogRunnable);
+        mMetrics = null;
+
         // Stop producing UI first so the chip never outlives the running session.
         if (mScreenShareChip != null) {
             mScreenShareChip.dismiss();
@@ -1209,20 +1261,31 @@ public class ScreenShareService extends Service {
     private void startStreamPipeline() {
         mIsH264 = !"jpeg".equals(Preferences.get().getProjectionCodec());
 
+        mMetrics = Preferences.get().isMetricsEnabled()
+            ? PipelineMetrics.create(NanoClock.MONOTONIC)
+            : PipelineMetrics.NONE;
+        mCapToOutSuppressed = false;
+
         mCodecRegistry = CodecRegistry.withDefaults();
         if (mIsH264) {
-            mCodecRegistry.register(H264Codec.androidRegistration());
+            mCodecRegistry.register(H264Codec.androidRegistration(mMetrics, NanoClock.MONOTONIC));
         }
 
         mStreamKey = new StreamKey(Preferences.get().getServiceId(), "screen");
         final StreamParameters parameters = buildProjectionSettings().toStreamParameters();
 
         mStreamRuntime = new StreamRuntime(mCodecRegistry, mStreamKey,
-                buildRequestedDescriptor(1), parameters);
-        mStreamHub = new StreamHub(mCodecRegistry);
+                buildRequestedDescriptor(1), parameters, TimeSource.MONOTONIC,
+                StreamRuntime.DEFAULT_JOIN_POINT_MIN_INTERVAL_MS, mMetrics);
+        mStreamHub = new StreamHub(mCodecRegistry, StreamQueueLimits.defaults(),
+                TimeSource.MONOTONIC, mMetrics);
         mStreamHub.register(mStreamRuntime);
         mStreamHub.activate(mStreamKey);
         mStreamRuntime.start();
+
+        if (mMetrics.isEnabled()) {
+            mMainHandler.postDelayed(mMetricsLogRunnable, UPDATE_METRICS_INTERVAL_MS);
+        }
     }
 
     /**

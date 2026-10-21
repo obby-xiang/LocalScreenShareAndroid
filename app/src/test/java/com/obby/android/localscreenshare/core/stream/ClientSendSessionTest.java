@@ -7,6 +7,7 @@ import com.obby.android.localscreenshare.core.codec.CodecRegistration;
 import com.obby.android.localscreenshare.core.codec.CodecRegistry;
 import com.obby.android.localscreenshare.core.codec.OverflowAction;
 import com.obby.android.localscreenshare.core.codec.jpeg.JpegCodec;
+import com.obby.android.localscreenshare.core.metrics.PipelineMetrics;
 import com.obby.android.localscreenshare.core.model.AccessUnitFlags;
 import com.obby.android.localscreenshare.core.model.BitstreamFormat;
 import com.obby.android.localscreenshare.core.model.ClientSessionKey;
@@ -20,6 +21,7 @@ import com.obby.android.localscreenshare.core.support.BlockingTransport;
 import com.obby.android.localscreenshare.core.support.FakeTransport;
 import com.obby.android.localscreenshare.core.support.JpegFixtures;
 import com.obby.android.localscreenshare.core.support.MutableClock;
+import com.obby.android.localscreenshare.core.support.MutableNanoClock;
 
 import org.junit.Test;
 
@@ -538,6 +540,65 @@ public class ClientSendSessionTest {
     }
 
     @Test
+    public void metrics_recordSendDurationDepthAndQueueResidency() throws Exception {
+        MutableClock clock = new MutableClock();
+        MutableNanoClock nanoClock = new MutableNanoClock();
+        PipelineMetrics metrics = PipelineMetrics.create(nanoClock, 8);
+        AdvancingTransport transport = new AdvancingTransport(nanoClock, 2_000_000L);
+        ClientSendSession session = measuredReferenceSession(transport, clock, metrics);
+
+        assertTrue(session.onDescriptor(referenceDescriptor(1)));
+        assertTrue(session.drainOne());
+        assertEquals("a descriptor send is not a tx.send sample", 0L,
+                metrics.getRecordedCount(PipelineMetrics.Window.SEND));
+
+        assertEquals(QueueOfferResult.ACCEPTED, session.offer(referenceJoin(1, 0L)));
+        clock.advance(40L);
+        assertTrue(session.drainOne());
+
+        assertEquals(1L, metrics.getRecordedCount(PipelineMetrics.Window.SEND));
+        assertEquals(2_000_000L, metrics.stats(PipelineMetrics.Window.SEND).getP50());
+        assertEquals(1L, metrics.getRecordedCount(PipelineMetrics.Window.QUEUE_DEPTH));
+        assertEquals(0L, metrics.stats(PipelineMetrics.Window.QUEUE_DEPTH).getMax());
+        assertEquals(40_000_000L,
+                metrics.stats(PipelineMetrics.Window.QUEUE_RESIDENCY).getP50());
+    }
+
+    @Test
+    public void snapshot_reportsStateStatsAndMeasuredSendLatency() throws Exception {
+        MutableClock clock = new MutableClock();
+        MutableNanoClock nanoClock = new MutableNanoClock();
+        PipelineMetrics metrics = PipelineMetrics.create(nanoClock, 8);
+        AdvancingTransport transport = new AdvancingTransport(nanoClock, 3_500_000L);
+        ClientSendSession session = measuredReferenceSession(transport, clock, metrics);
+
+        assertTrue(session.onDescriptor(referenceDescriptor(1)));
+        assertTrue(session.drainOne());
+        assertEquals(QueueOfferResult.ACCEPTED, session.offer(referenceJoin(1, 0L)));
+        assertTrue(session.drainOne());
+
+        SessionSnapshot snapshot = session.snapshot();
+        assertEquals(SESSION_KEY, snapshot.getKey());
+        assertEquals(CLIENT_ID, snapshot.getClientId());
+        assertEquals(ClientState.STREAMING, snapshot.getState());
+        assertEquals(1L, snapshot.getStats().getSentUnits());
+        assertEquals(3_500_000L, snapshot.getSendP95Ns());
+    }
+
+    @Test
+    public void unmeasuredSession_reportsNoSendLatency() throws Exception {
+        FakeTransport transport = new FakeTransport();
+        ClientSendSession session = referenceSession(transport, new MutableClock(), 64L, 4);
+
+        assertTrue(session.onDescriptor(referenceDescriptor(1)));
+        assertTrue(session.drainOne());
+        assertEquals(QueueOfferResult.ACCEPTED, session.offer(referenceJoin(1, 0L)));
+        assertTrue(session.drainOne());
+
+        assertEquals(0L, session.snapshot().getSendP95Ns());
+    }
+
+    @Test
     public void stats_reportQueuedDroppedResyncSentAndDescriptorCounts() throws Exception {
         FakeTransport transport = new FakeTransport();
         ClientSendSession session = referenceSession(transport, new MutableClock(), 64L, 1);
@@ -697,5 +758,41 @@ public class ClientSendSessionTest {
         assertEquals("resyncCount", resyncCount, stats.getResyncCount());
         assertEquals("sentUnits", sentUnits, stats.getSentUnits());
         assertEquals("descriptorSends", descriptorSends, stats.getDescriptorSends());
+    }
+
+    private static ClientSendSession measuredReferenceSession(FakeTransport transport,
+                                                              MutableClock clock,
+                                                              PipelineMetrics metrics) {
+        CodecRegistry registry = new CodecRegistry();
+        CodecDescriptor codec = new CodecDescriptor(REFERENCE_CODEC_ID, REFERENCE_MIME,
+                BitstreamFormat.ANNEX_B, false, false, false);
+        registry.register(new CodecRegistration(codec,
+                (streamKey, descriptor, parameters, output) -> null,
+                (streamKey, descriptor, renderTarget) -> null,
+                REFERENCE_POLICY, 10));
+        return new ClientSendSession(SESSION_KEY, registry,
+                new StreamQueueLimits(64L, 4, MAX_AGE_MS), transport, clock, metrics);
+    }
+
+    /**
+     * Transport whose access-unit send consumes a fixed amount of the injected nanosecond clock,
+     * which is what makes the measured send duration deterministic.
+     */
+    private static final class AdvancingTransport extends FakeTransport {
+
+        private final MutableNanoClock clock;
+
+        private final long sendNs;
+
+        AdvancingTransport(MutableNanoClock clock, long sendNs) {
+            this.clock = clock;
+            this.sendNs = sendNs;
+        }
+
+        @Override
+        public void sendAccessUnit(EncodedAccessUnit accessUnit) throws IOException {
+            clock.advance(sendNs);
+            super.sendAccessUnit(accessUnit);
+        }
     }
 }

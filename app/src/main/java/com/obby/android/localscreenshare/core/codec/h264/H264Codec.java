@@ -6,7 +6,9 @@ import com.obby.android.localscreenshare.core.codec.CodecRegistration;
 import com.obby.android.localscreenshare.core.codec.KeyFrameRequester;
 import com.obby.android.localscreenshare.core.codec.mediacodec.AndroidMediaCodecBridgeFactory;
 import com.obby.android.localscreenshare.core.codec.mediacodec.MediaCodecBridgeFactory;
+import com.obby.android.localscreenshare.core.metrics.PipelineMetrics;
 import com.obby.android.localscreenshare.core.model.BitstreamFormat;
+import com.obby.android.localscreenshare.core.util.NanoClock;
 
 /**
  * Static registration entry point for the H.264 (AVC) codec.
@@ -62,15 +64,43 @@ public final class H264Codec {
      */
     public static CodecRegistration registration(MediaCodecBridgeFactory bridgeFactory,
                                                  KeyFrameRequester keyFrameRequester) {
+        return registration(bridgeFactory, keyFrameRequester, PipelineMetrics.NONE,
+                NanoClock.MONOTONIC);
+    }
+
+    /**
+     * Builds the H.264 codec registration whose encoders report encode-stage metrics.
+     *
+     * <p>The scope and clock travel with the registration because encoders are created by the
+     * runtime through the registration rather than per call; a shared scope therefore describes
+     * the single active encoder of the process, while a descriptor switch reuses it. A disabled
+     * scope keeps every probe a single volatile read.</p>
+     *
+     * @param bridgeFactory      creates platform codec bridges; required
+     * @param keyFrameRequester  notified when a decoder had to shed a frame; required
+     * @param metrics            metric scope of the active encoder; required
+     * @param clock              clock used by the encode-stage probes; required
+     * @throws IllegalArgumentException if any argument is null
+     */
+    public static CodecRegistration registration(MediaCodecBridgeFactory bridgeFactory,
+                                                 KeyFrameRequester keyFrameRequester,
+                                                 PipelineMetrics metrics, NanoClock clock) {
         if (bridgeFactory == null) {
             throw new IllegalArgumentException("bridgeFactory must not be null");
         }
         if (keyFrameRequester == null) {
             throw new IllegalArgumentException("keyFrameRequester must not be null");
         }
+        if (metrics == null) {
+            throw new IllegalArgumentException("metrics must not be null");
+        }
+        if (clock == null) {
+            throw new IllegalArgumentException("clock must not be null");
+        }
         CodecDescriptor descriptor = new CodecDescriptor(CodecIds.H264, MIME,
                 BitstreamFormat.ANNEX_B, true, true, true);
-        return new CodecRegistration(descriptor, new H264EncoderFactory(bridgeFactory),
+        return new CodecRegistration(descriptor,
+                new H264EncoderFactory(bridgeFactory, metrics, clock),
                 new H264DecoderFactory(bridgeFactory, keyFrameRequester),
                 new H264CodecPolicy(), 10);
     }
@@ -87,6 +117,22 @@ public final class H264Codec {
      */
     public static CodecRegistration androidRegistration() {
         return registration(new AndroidMediaCodecBridgeFactory());
+    }
+
+    /**
+     * Builds the Android-backed H.264 registration whose encoders report encode-stage metrics.
+     *
+     * <p>The scope and clock are handed to every encoder created from this registration, so one
+     * scope describes the single active encoder and survives a descriptor switch.</p>
+     *
+     * @param metrics metric scope of the active encoder; required
+     * @param clock   clock used by the encode-stage probes; required
+     * @throws IllegalArgumentException if any argument is null
+     */
+    public static CodecRegistration androidRegistration(PipelineMetrics metrics,
+                                                        NanoClock clock) {
+        return registration(new AndroidMediaCodecBridgeFactory(), KeyFrameRequester.NONE,
+                metrics, clock);
     }
 
     /**

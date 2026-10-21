@@ -7,10 +7,12 @@ import com.obby.android.localscreenshare.core.model.ClientSessionKey;
 import com.obby.android.localscreenshare.core.model.EncodedAccessUnit;
 import com.obby.android.localscreenshare.core.model.StreamDescriptor;
 import com.obby.android.localscreenshare.core.model.StreamKey;
+import com.obby.android.localscreenshare.core.metrics.PipelineMetrics;
 import com.obby.android.localscreenshare.core.util.TimeSource;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -61,6 +63,7 @@ public final class StreamHub implements StreamRuntimeListener {
     private final CodecRegistry registry;
     private final StreamQueueLimits limits;
     private final TimeSource timeSource;
+    private final PipelineMetrics metrics;
 
     private final Object lock = new Object();
     private final Map<StreamKey, StreamRuntime> runtimes = new ConcurrentHashMap<>();
@@ -85,6 +88,21 @@ public final class StreamHub implements StreamRuntimeListener {
      * @throws IllegalArgumentException if any argument is null
      */
     public StreamHub(CodecRegistry registry, StreamQueueLimits limits, TimeSource timeSource) {
+        this(registry, limits, timeSource, PipelineMetrics.NONE);
+    }
+
+    /**
+     * Creates a hub with explicit queue limits, clock and per-session metric template.
+     *
+     * <p>The limits and clock are copied to every session created by {@link #join}, so they must
+     * be fixed before the first join. The metric scope acts as a template: each session receives
+     * its own scope from {@link PipelineMetrics#newScope()}, because queue depth and send duration
+     * are per viewer, while a disabled template keeps every session unmeasured.</p>
+     *
+     * @throws IllegalArgumentException if any argument is null
+     */
+    public StreamHub(CodecRegistry registry, StreamQueueLimits limits, TimeSource timeSource,
+                     PipelineMetrics metrics) {
         if (registry == null) {
             throw new IllegalArgumentException("registry must not be null");
         }
@@ -94,9 +112,13 @@ public final class StreamHub implements StreamRuntimeListener {
         if (timeSource == null) {
             throw new IllegalArgumentException("timeSource must not be null");
         }
+        if (metrics == null) {
+            throw new IllegalArgumentException("metrics must not be null");
+        }
         this.registry = registry;
         this.limits = limits;
         this.timeSource = timeSource;
+        this.metrics = metrics;
     }
 
     /**
@@ -247,7 +269,8 @@ public final class StreamHub implements StreamRuntimeListener {
                 replacedSession = sessions.remove(key);
                 capabilities.remove(key);
                 createdSession =
-                        new ClientSendSession(key, registry, limits, transport, timeSource);
+                        new ClientSendSession(key, registry, limits, transport, timeSource,
+                                metrics.newScope());
                 createdSession.onDescriptor(activeDescriptor);
                 sessions.put(key, createdSession);
                 capabilities.put(key, caps);
@@ -372,6 +395,29 @@ public final class StreamHub implements StreamRuntimeListener {
      */
     public int getSessionCount() {
         return sessions.size();
+    }
+
+    /**
+     * Returns one snapshot per attached session, ordered by client id and then by stream key.
+     *
+     * <p>The session map is concurrent and unordered, so the result is sorted to make the export
+     * stable across collections: the same set of sessions always produces the same order, which
+     * keeps server statistics comparable between two snapshots. Each snapshot is taken by its own
+     * session under that session's lock, so a concurrent join or detach simply appears or
+     * disappears instead of producing a half-filled row.</p>
+     */
+    public List<SessionSnapshot> snapshotSessions() {
+        List<ClientSendSession> current;
+        synchronized (lock) {
+            current = new ArrayList<>(sessions.values());
+        }
+        List<SessionSnapshot> snapshots = new ArrayList<>(current.size());
+        for (ClientSendSession session : current) {
+            snapshots.add(session.snapshot());
+        }
+        snapshots.sort(Comparator.comparing(SessionSnapshot::getClientId)
+                .thenComparing(snapshot -> snapshot.getKey().getStreamKey().getValue()));
+        return snapshots;
     }
 
     /**

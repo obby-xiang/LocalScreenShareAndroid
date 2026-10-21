@@ -16,6 +16,7 @@ import com.obby.android.localscreenshare.core.model.EncodedAccessUnit;
 import com.obby.android.localscreenshare.core.model.StreamDescriptor;
 import com.obby.android.localscreenshare.core.model.StreamKey;
 import com.obby.android.localscreenshare.core.model.StreamParameters;
+import com.obby.android.localscreenshare.core.metrics.PipelineMetrics;
 import com.obby.android.localscreenshare.core.util.TimeSource;
 
 import java.util.ArrayList;
@@ -65,12 +66,13 @@ import java.util.List;
  */
 public final class StreamRuntime {
 
-    private static final long DEFAULT_JOIN_POINT_MIN_INTERVAL_MS = 100L;
+    public static final long DEFAULT_JOIN_POINT_MIN_INTERVAL_MS = 100L;
 
     private final CodecRegistry registry;
     private final StreamKey streamKey;
     private final TimeSource timeSource;
     private final long joinPointMinIntervalMs;
+    private final PipelineMetrics metrics;
 
     private final Object lock = new Object();
 
@@ -121,6 +123,31 @@ public final class StreamRuntime {
     public StreamRuntime(CodecRegistry registry, StreamKey streamKey,
                          StreamDescriptor descriptor, StreamParameters parameters,
                          TimeSource timeSource, long joinPointMinIntervalMs) {
+        this(registry, streamKey, descriptor, parameters, timeSource, joinPointMinIntervalMs,
+                PipelineMetrics.NONE);
+    }
+
+    /**
+     * Creates a runtime with an injected clock, join-point interval and metric scope.
+     *
+     * <p>The scope receives the fan-out counters - access units, their payload bytes and join
+     * points - and the join-point request counter. It is shared with the encoder created from the
+     * same codec registration, so one scope describes the whole server encode-to-send path.</p>
+     *
+     * @param registry                codec registry used to resolve factories and policies
+     * @param streamKey               identity of the stream this runtime serves
+     * @param descriptor              requested descriptor for the first config epoch
+     * @param parameters              initial rate and cadence hints
+     * @param timeSource              clock used for join-point rate limiting
+     * @param joinPointMinIntervalMs  minimum delay between join-point requests forwarded to the
+     *                                encoder; zero disables rate limiting
+     * @param metrics                 metric scope of the server pipeline; required
+     * @throws IllegalArgumentException if any reference is null
+     */
+    public StreamRuntime(CodecRegistry registry, StreamKey streamKey,
+                         StreamDescriptor descriptor, StreamParameters parameters,
+                         TimeSource timeSource, long joinPointMinIntervalMs,
+                         PipelineMetrics metrics) {
         if (registry == null) {
             throw new IllegalArgumentException("registry must not be null");
         }
@@ -136,12 +163,16 @@ public final class StreamRuntime {
         if (timeSource == null) {
             throw new IllegalArgumentException("timeSource must not be null");
         }
+        if (metrics == null) {
+            throw new IllegalArgumentException("metrics must not be null");
+        }
         this.registry = registry;
         this.streamKey = streamKey;
         this.requested = descriptor;
         this.parameters = parameters;
         this.timeSource = timeSource;
         this.joinPointMinIntervalMs = joinPointMinIntervalMs;
+        this.metrics = metrics;
         this.lastJoinMs = Long.MIN_VALUE;
     }
 
@@ -463,6 +494,7 @@ public final class StreamRuntime {
             }
             throw e;
         }
+        metrics.increment(PipelineMetrics.Counter.JOIN_REQUESTS);
         return true;
     }
 
@@ -751,6 +783,12 @@ public final class StreamRuntime {
             return;
         }
         if (forward) {
+            metrics.increment(PipelineMetrics.Counter.ACCESS_UNITS);
+            metrics.add(PipelineMetrics.Counter.ACCESS_UNIT_BYTES,
+                    accessUnit.getPayloadLength());
+            if (accessUnit.getFlags().isJoinPoint()) {
+                metrics.increment(PipelineMetrics.Counter.JOIN_POINTS);
+            }
             for (StreamRuntimeListener listener : snapshot) {
                 try {
                     listener.onAccessUnit(accessUnit);

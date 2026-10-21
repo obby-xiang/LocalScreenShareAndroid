@@ -3,6 +3,7 @@ package com.obby.android.localscreenshare.core.stream;
 import com.obby.android.localscreenshare.core.codec.CodecRegistry;
 import com.obby.android.localscreenshare.core.codec.CodecSwitchException;
 import com.obby.android.localscreenshare.core.codec.ConfigEpochException;
+import com.obby.android.localscreenshare.core.metrics.PipelineMetrics;
 import com.obby.android.localscreenshare.core.model.BitstreamFormat;
 import com.obby.android.localscreenshare.core.model.EncodedAccessUnit;
 import com.obby.android.localscreenshare.core.model.StreamDescriptor;
@@ -10,6 +11,7 @@ import com.obby.android.localscreenshare.core.model.StreamKey;
 import com.obby.android.localscreenshare.core.model.StreamParameters;
 import com.obby.android.localscreenshare.core.support.FakeCodec;
 import com.obby.android.localscreenshare.core.support.MutableClock;
+import com.obby.android.localscreenshare.core.support.MutableNanoClock;
 
 import org.junit.Test;
 
@@ -32,6 +34,31 @@ public class StreamRuntimeTest {
     private static final StreamKey STREAM_KEY = new StreamKey("session-1", "stream-1");
 
     private static final long JOIN_INTERVAL_MS = 100L;
+
+    @Test
+    public void metrics_countForwardedUnitsBytesJoinPointsAndRequests() {
+        FakeCodec fake = new FakeCodec(FakeCodec.DEFAULT_CODEC_ID, 0, false, false);
+        fake.setAutoEmitJoinOnRequest(false);
+        MutableClock clock = new MutableClock();
+        PipelineMetrics metrics = PipelineMetrics.create(new MutableNanoClock(), 8);
+        CodecRegistry registry = new CodecRegistry();
+        registry.register(fake.registration());
+        StreamRuntime runtime = new StreamRuntime(registry, STREAM_KEY, descriptor(1, 64, 48),
+                StreamParameters.DEFAULT, clock, JOIN_INTERVAL_MS, metrics);
+        runtime.addListener(new RecordingListener());
+
+        runtime.start();
+        assertTrue(runtime.requestJoinPoint());
+        assertEquals(1L, metrics.count(PipelineMetrics.Counter.JOIN_REQUESTS));
+
+        byte[] payload = new byte[]{0x01, 0x02, 0x03};
+        fake.emitJoin(payload);
+        fake.emitNonJoin(new byte[]{0x04, 0x05});
+
+        assertEquals(2L, metrics.count(PipelineMetrics.Counter.ACCESS_UNITS));
+        assertEquals(5L, metrics.count(PipelineMetrics.Counter.ACCESS_UNIT_BYTES));
+        assertEquals(1L, metrics.count(PipelineMetrics.Counter.JOIN_POINTS));
+    }
 
     @Test
     public void start_createsEncoderAndForwardsAccessUnits() {

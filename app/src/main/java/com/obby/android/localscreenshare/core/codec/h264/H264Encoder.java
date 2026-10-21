@@ -12,6 +12,7 @@ import com.obby.android.localscreenshare.core.codec.mediacodec.EncoderFormat;
 import com.obby.android.localscreenshare.core.codec.mediacodec.EncoderStreamFormat;
 import com.obby.android.localscreenshare.core.codec.mediacodec.MediaCodecBridgeFactory;
 import com.obby.android.localscreenshare.core.codec.mediacodec.MediaCodecEncoderBridge;
+import com.obby.android.localscreenshare.core.metrics.PipelineMetrics;
 import com.obby.android.localscreenshare.core.model.AccessUnitFlags;
 import com.obby.android.localscreenshare.core.model.CodecConfigPart;
 import com.obby.android.localscreenshare.core.model.ColorInfo;
@@ -20,6 +21,7 @@ import com.obby.android.localscreenshare.core.model.JoinInfo;
 import com.obby.android.localscreenshare.core.model.StreamDescriptor;
 import com.obby.android.localscreenshare.core.model.StreamKey;
 import com.obby.android.localscreenshare.core.model.StreamParameters;
+import com.obby.android.localscreenshare.core.util.NanoClock;
 
 import java.util.Arrays;
 import java.util.List;
@@ -59,6 +61,19 @@ public final class H264Encoder implements Encoder {
 
     private static final String DRAIN_THREAD_NAME = "h264-encoder-drain";
 
+    /**
+     * Upper bound for a plausible capture-to-output latency, in nanoseconds.
+     *
+     * <p>A sample above this bound means the producer's timestamp base does not match the
+     * monotonic clock, so the sample describes nothing and must not be published.</p>
+     */
+    private static final long MAX_PLAUSIBLE_CAP_TO_OUT_NS = 5_000_000_000L;
+
+    /**
+     * Consecutive implausible capture-to-output samples after which the window is disabled.
+     */
+    private static final int MAX_IMPLAUSIBLE_CAP_TO_OUT_SAMPLES = 3;
+
     private final Object lock = new Object();
 
     private final StreamKey streamKey;
@@ -67,6 +82,13 @@ public final class H264Encoder implements Encoder {
     private final MediaCodecEncoderBridge bridge;
     private final Surface inputSurface;
     private final int configEpoch;
+    private final PipelineMetrics metrics;
+    private final NanoClock clock;
+
+    // Probe state, written on the drain thread only.
+    private boolean capToOutSuppressed;
+    private int implausibleCapToOutSamples;
+    private long lastOutputPtsNs = Long.MIN_VALUE;
 
     private StreamParameters parameters;
 
@@ -108,6 +130,32 @@ public final class H264Encoder implements Encoder {
     public H264Encoder(StreamKey streamKey, StreamDescriptor requestedDescriptor,
                        StreamParameters parameters, EncoderOutput output,
                        MediaCodecBridgeFactory bridgeFactory) {
+        this(streamKey, requestedDescriptor, parameters, output, bridgeFactory,
+                PipelineMetrics.NONE, NanoClock.MONOTONIC);
+    }
+
+    /**
+     * Creates, configures and surface-initializes the encoder with pipeline probes attached.
+     *
+     * <p>The scope receives the encode-stage windows: capture timestamp to retrievable output,
+     * the interval between two output timestamps and the payload size of each emitted access
+     * unit. A disabled scope makes every probe a single volatile read.</p>
+     *
+     * @param streamKey         identity of the stream; required
+     * @param requestedDescriptor requested encode configuration; required
+     * @param parameters        initial rate and cadence hints; required
+     * @param output            sink for configuration, access units and failures; required
+     * @param bridgeFactory     creates the platform encoder bridge; required
+     * @param metrics           metric scope of this encoder; required, may be
+     *                          {@link PipelineMetrics#NONE}
+     * @param clock             clock used by the encode-stage probes; required
+     * @throws EncoderException         if bridge creation, configuration or surface creation fails
+     * @throws IllegalArgumentException if a required argument is null
+     */
+    public H264Encoder(StreamKey streamKey, StreamDescriptor requestedDescriptor,
+                       StreamParameters parameters, EncoderOutput output,
+                       MediaCodecBridgeFactory bridgeFactory, PipelineMetrics metrics,
+                       NanoClock clock) {
         if (streamKey == null) {
             throw new IllegalArgumentException("streamKey must not be null");
         }
@@ -134,12 +182,20 @@ public final class H264Encoder implements Encoder {
         if (bridgeFactory == null) {
             throw new IllegalArgumentException("bridgeFactory must not be null");
         }
+        if (metrics == null) {
+            throw new IllegalArgumentException("metrics must not be null");
+        }
+        if (clock == null) {
+            throw new IllegalArgumentException("clock must not be null");
+        }
 
         this.streamKey = streamKey;
         this.descriptor = requestedDescriptor;
         this.output = output;
         this.parameters = parameters;
         this.configEpoch = requestedDescriptor.getConfigEpoch();
+        this.metrics = metrics;
+        this.clock = clock;
 
         MediaCodecEncoderBridge created = null;
         try {
@@ -646,11 +702,57 @@ public final class H264Encoder implements Encoder {
         if (configParts == null) {
             return;
         }
+        recordAccessUnitMetrics(ptsUs, payload);
         JoinInfo joinInfo = new JoinInfo(configEpoch, configParts);
         AccessUnitFlags flags = AccessUnitFlags.of(joinPoint, joinPoint, false);
         EncodedAccessUnit accessUnit = new EncodedAccessUnit(streamKey, configEpoch, sequence,
                 ptsUs, ptsUs, flags, joinInfo, null, payload);
         output.onAccessUnit(accessUnit);
+    }
+
+    /**
+     * Records the encode-stage windows for one emitted access unit.
+     *
+     * <p>Runs on the drain thread and writes only into the injected scope: one clock read, one
+     * subtraction for the capture-to-output latency, one subtraction for the output interval and
+     * one size sample. The capture-to-output sample self-calibrates instead of trusting the
+     * assumption that the producer's timestamps share the monotonic clock base: a sample outside
+     * {@code (0, 5 s)} is discarded, and three consecutive discarded samples disable the window
+     * for the rest of the encoder's life, so an incompatible timestamp base cannot publish
+     * garbage values.</p>
+     *
+     * @param ptsUs   presentation timestamp reported by the producer, in microseconds
+     * @param payload emitted payload, whose length is the access-unit size
+     */
+    private void recordAccessUnitMetrics(long ptsUs, byte[] payload) {
+        if (!metrics.isEnabled()) {
+            return;
+        }
+        long nowNs = clock.nowNs();
+        long ptsNs = ptsUs * 1000L;
+        if (!capToOutSuppressed) {
+            long capToOutNs = nowNs - ptsNs;
+            if (capToOutNs > 0L && capToOutNs < MAX_PLAUSIBLE_CAP_TO_OUT_NS) {
+                implausibleCapToOutSamples = 0;
+                metrics.record(PipelineMetrics.Window.CAP_TO_OUT, capToOutNs);
+            } else if (++implausibleCapToOutSamples >= MAX_IMPLAUSIBLE_CAP_TO_OUT_SAMPLES) {
+                capToOutSuppressed = true;
+                metrics.setGauge(PipelineMetrics.Gauge.CAP_TO_OUT_SUPPRESSED, 1L);
+            }
+        }
+        if (lastOutputPtsNs != Long.MIN_VALUE && ptsNs > lastOutputPtsNs) {
+            metrics.record(PipelineMetrics.Window.OUT_INTERVAL, ptsNs - lastOutputPtsNs);
+        }
+        lastOutputPtsNs = ptsNs;
+        metrics.record(PipelineMetrics.Window.AU_BYTES, payload.length);
+    }
+
+    /**
+     * Returns whether the capture-to-output probe disabled itself because the producer's
+     * timestamps did not match the monotonic clock; exposed for tests and diagnostics.
+     */
+    public boolean isCapToOutSuppressed() {
+        return capToOutSuppressed;
     }
 
     /**

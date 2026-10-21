@@ -540,6 +540,66 @@ public class StreamHubTest {
     }
 
     @Test
+    public void snapshotSessions_isOrderedByClientIdAndDropsDetachedSessions() {
+        MutableClock clock = new MutableClock();
+        FakeCodec fake = new FakeCodec(ACTIVE_CODEC_ID, 0, false, false);
+        fake.setAutoEmitJoinOnRequest(false);
+        CodecRegistry registry = registry(fake);
+        StreamRuntime runtime = startedRuntime(registry, STREAM_KEY, ACTIVE_CODEC_ID, clock);
+        StreamHub hub = newHub(registry, clock);
+        hub.register(runtime);
+        hub.activate(STREAM_KEY);
+
+        assertTrue(hub.snapshotSessions().isEmpty());
+
+        // Joined out of order on purpose: the export must not depend on map iteration order.
+        assertEquals(JoinDecision.Status.ACCEPTED,
+                hub.join(CLIENT_B, capabilities(ACTIVE_CODEC_ID), new FakeTransport())
+                        .getStatus());
+        assertEquals(JoinDecision.Status.ACCEPTED,
+                hub.join(CLIENT_A, capabilities(ACTIVE_CODEC_ID), new FakeTransport())
+                        .getStatus());
+
+        List<SessionSnapshot> snapshots = hub.snapshotSessions();
+        assertEquals(2, snapshots.size());
+        assertEquals("client-A", snapshots.get(0).getClientId());
+        assertEquals("client-B", snapshots.get(1).getClientId());
+        assertEquals(ClientState.WAIT_RANDOM_ACCESS, snapshots.get(0).getState());
+        assertEquals(0L, snapshots.get(0).getStats().getQueuedUnits());
+        assertEquals("an unmeasured session reports no send latency", 0L,
+                snapshots.get(0).getSendP95Ns());
+
+        hub.detach(CLIENT_A);
+
+        List<SessionSnapshot> remaining = hub.snapshotSessions();
+        assertEquals(1, remaining.size());
+        assertEquals("client-B", remaining.get(0).getClientId());
+    }
+
+    @Test
+    public void snapshotSessions_reportsPerSessionQueueDepth() throws Exception {
+        MutableClock clock = new MutableClock();
+        FakeCodec fake = new FakeCodec(ACTIVE_CODEC_ID, 0, false, false);
+        fake.setAutoEmitJoinOnRequest(false);
+        CodecRegistry registry = registry(fake);
+        StreamRuntime runtime = startedRuntime(registry, STREAM_KEY, ACTIVE_CODEC_ID, clock);
+        StreamHub hub = newHub(registry, clock);
+        hub.register(runtime);
+        hub.activate(STREAM_KEY);
+
+        FakeTransport transport = new FakeTransport();
+        assertEquals(JoinDecision.Status.ACCEPTED,
+                hub.join(CLIENT_A, capabilities(ACTIVE_CODEC_ID), transport).getStatus());
+        fake.emitJoin(new byte[]{0x31});
+        // The descriptor is still pending, so the join point stays queued behind it.
+        assertEquals(1L, hub.snapshotSessions().get(0).getStats().getQueuedUnits());
+
+        drainToStreaming(hub, CLIENT_A, transport);
+        assertEquals(0L, hub.snapshotSessions().get(0).getStats().getQueuedUnits());
+        assertEquals(1L, hub.snapshotSessions().get(0).getStats().getSentUnits());
+    }
+
+    @Test
     public void join_fallbackUsesRegistrationPriorityNotCodecName() {
         FallbackFixture fixture = fallbackFixture();
 

@@ -6,6 +6,7 @@ import com.obby.android.localscreenshare.core.model.ClientSessionKey;
 import com.obby.android.localscreenshare.core.model.ClientState;
 import com.obby.android.localscreenshare.core.model.EncodedAccessUnit;
 import com.obby.android.localscreenshare.core.model.StreamDescriptor;
+import com.obby.android.localscreenshare.core.metrics.PipelineMetrics;
 import com.obby.android.localscreenshare.core.util.TimeSource;
 
 import java.io.IOException;
@@ -42,11 +43,17 @@ import java.util.concurrent.locks.ReentrantLock;
  */
 public final class ClientSendSession {
 
+    /**
+     * Marker for a residency sample that could not be computed.
+     */
+    private static final long LONG_UNSET = Long.MIN_VALUE;
+
     private final ClientSessionKey key;
     private final CodecRegistry registry;
     private final StreamQueueLimits limits;
     private final MediaTransport transport;
     private final TimeSource timeSource;
+    private final PipelineMetrics metrics;
 
     private final Object stateLock = new Object();
     private final ReentrantLock drainLock = new ReentrantLock();
@@ -77,6 +84,29 @@ public final class ClientSendSession {
     public ClientSendSession(ClientSessionKey key, CodecRegistry registry,
                              StreamQueueLimits limits, MediaTransport transport,
                              TimeSource timeSource) {
+        this(key, registry, limits, transport, timeSource, PipelineMetrics.NONE);
+    }
+
+    /**
+     * Creates a session that reports its send-stage metrics to {@code metrics}.
+     *
+     * <p>The scope receives the duration of one transport send call, the queue depth observed by
+     * the drain loop and the residency of the unit that was just polled. Probes read the clock
+     * once per timestamp and run outside the state lock, so a measured session keeps the existing
+     * ordering guarantees and a slow transport still holds no lock that {@link #offer} needs.</p>
+     *
+     * @param key         client and stream identity; required
+     * @param registry    codec registry used to resolve the per-codec policy; required
+     * @param limits      queue bounds applied to each epoch's queue; required
+     * @param transport   transport owned by this session; required
+     * @param timeSource  clock used for queue residency and drops; required
+     * @param metrics     metric scope of this session; required, may be
+     *                    {@link PipelineMetrics#NONE}
+     * @throws IllegalArgumentException if any argument is null
+     */
+    public ClientSendSession(ClientSessionKey key, CodecRegistry registry,
+                             StreamQueueLimits limits, MediaTransport transport,
+                             TimeSource timeSource, PipelineMetrics metrics) {
         if (key == null) {
             throw new IllegalArgumentException("key must not be null");
         }
@@ -92,11 +122,15 @@ public final class ClientSendSession {
         if (timeSource == null) {
             throw new IllegalArgumentException("timeSource must not be null");
         }
+        if (metrics == null) {
+            throw new IllegalArgumentException("metrics must not be null");
+        }
         this.key = key;
         this.registry = registry;
         this.limits = limits;
         this.transport = transport;
         this.timeSource = timeSource;
+        this.metrics = metrics;
     }
 
     /**
@@ -278,6 +312,9 @@ public final class ClientSendSession {
             StreamDescriptor descriptorToSend = null;
             EncodedAccessUnit accessUnitToSend = null;
             int sentEpoch = -1;
+            final boolean measured = metrics.isEnabled();
+            long queueDepth = 0L;
+            long residencyNs = LONG_UNSET;
 
             synchronized (stateLock) {
                 if (detached) {
@@ -288,8 +325,9 @@ public final class ClientSendSession {
                     descriptorToSend = pendingDescriptor;
                     pendingDescriptor = null;
                 } else {
+                    final long nowMs = timeSource.nowMs();
                     QueuePollResult polled = queue != null
-                            ? queue.poll(timeSource.nowMs())
+                            ? queue.poll(nowMs)
                             : QueuePollResult.empty();
                     if (polled.getAccessUnit() == null) {
                         if (polled.isResyncRequired()) {
@@ -302,11 +340,25 @@ public final class ClientSendSession {
                     sentEpoch = currentDescriptor != null
                             ? currentDescriptor.getConfigEpoch()
                             : -1;
+                    if (measured) {
+                        queueDepth = queue.size();
+                        if (polled.getEnqueuedMs() != QueuePollResult.UNKNOWN_ENQUEUED_MS) {
+                            residencyNs = (nowMs - polled.getEnqueuedMs()) * 1_000_000L;
+                        }
+                    }
                 }
             }
 
             if (sendDescriptor) {
                 transport.sendDescriptor(descriptorToSend);
+            } else if (measured) {
+                final long sendStartNs = metrics.nowNs();
+                transport.sendAccessUnit(accessUnitToSend);
+                metrics.record(PipelineMetrics.Window.SEND, metrics.nowNs() - sendStartNs);
+                metrics.record(PipelineMetrics.Window.QUEUE_DEPTH, queueDepth);
+                if (residencyNs != LONG_UNSET) {
+                    metrics.record(PipelineMetrics.Window.QUEUE_RESIDENCY, residencyNs);
+                }
             } else {
                 transport.sendAccessUnit(accessUnitToSend);
             }
@@ -356,6 +408,26 @@ public final class ClientSendSession {
             long dropped = Math.max(droppedUnits, queue != null ? queue.droppedUnits() : 0L);
             return new ClientSendStats(queuedUnits, queuedBytes, dropped, resyncCount,
                     sentUnits, descriptorSends);
+        }
+    }
+
+    /**
+     * Returns a consistent snapshot of the session counters together with its state and measured
+     * send latency.
+     *
+     * <p>Used by the hub to enumerate attached sessions for the server statistics. The percentile
+     * is computed from this session's own metric scope, so a snapshot costs one window copy and
+     * never touches another session.</p>
+     */
+    public SessionSnapshot snapshot() {
+        synchronized (stateLock) {
+            long queuedUnits = queue != null ? queue.size() : 0L;
+            long queuedBytes = queue != null ? queue.bytes() : 0L;
+            long dropped = Math.max(droppedUnits, queue != null ? queue.droppedUnits() : 0L);
+            ClientSendStats current = new ClientSendStats(queuedUnits, queuedBytes, dropped,
+                    resyncCount, sentUnits, descriptorSends);
+            return new SessionSnapshot(key, state, current,
+                    metrics.stats(PipelineMetrics.Window.SEND).getP95());
         }
     }
 

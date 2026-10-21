@@ -10,6 +10,7 @@ import com.obby.android.localscreenshare.core.codec.mediacodec.EncoderStreamForm
 import com.obby.android.localscreenshare.core.codec.mediacodec.MediaCodecBridgeFactory;
 import com.obby.android.localscreenshare.core.codec.mediacodec.MediaCodecDecoderBridge;
 import com.obby.android.localscreenshare.core.codec.mediacodec.MediaCodecEncoderBridge;
+import com.obby.android.localscreenshare.core.metrics.PipelineMetrics;
 import com.obby.android.localscreenshare.core.model.BitstreamFormat;
 import com.obby.android.localscreenshare.core.model.CodecConfigPart;
 import com.obby.android.localscreenshare.core.model.ColorInfo;
@@ -19,6 +20,8 @@ import com.obby.android.localscreenshare.core.model.StreamKey;
 import com.obby.android.localscreenshare.core.model.StreamParameters;
 import com.obby.android.localscreenshare.core.support.FakeMediaCodecEncoderBridge;
 import com.obby.android.localscreenshare.core.support.H264Fixtures;
+import com.obby.android.localscreenshare.core.support.MutableNanoClock;
+import com.obby.android.localscreenshare.core.util.NanoClock;
 
 import org.junit.Test;
 
@@ -83,6 +86,81 @@ public class H264EncoderTest {
     private static final ColorInfo BT709 = new ColorInfo("BT709", "SDR", false);
 
     private static final ColorInfo BT2020 = new ColorInfo("BT2020", "PQ", true);
+
+    @Test
+    public void metrics_recordCaptureToOutputIntervalAndSize() {
+        MutableNanoClock clock = new MutableNanoClock(1_012_000_000L);
+        PipelineMetrics metrics = PipelineMetrics.create(clock, 8);
+        Harness harness = new Harness(metrics, clock);
+        H264Encoder encoder = harness.newStartedEncoder();
+
+        harness.bridge.enqueueFormatChange(H264Fixtures.sps(), H264Fixtures.pps(), WIDTH, HEIGHT);
+        harness.bridge.enqueueSample(idrSample(), 1_000_000L, true, false);
+        EncodedAccessUnit first = harness.output.awaitAccessUnit(AWAIT_TIMEOUT_MS);
+        assertNotNull(first);
+
+        // The clock stands at 1012ms while the producer reported 1000ms, so the encoder waited
+        // exactly 12ms between the capture timestamp and the retrievable output.
+        assertEquals(12_000_000L, metrics.stats(PipelineMetrics.Window.CAP_TO_OUT).getP50());
+        assertEquals(first.getPayloadLength(),
+                metrics.stats(PipelineMetrics.Window.AU_BYTES).getMax());
+        encoder.close();
+    }
+
+    @Test
+    public void metrics_recordOutputIntervalBetweenConsecutiveUnits() {
+        MutableNanoClock clock = new MutableNanoClock(1_000_000_000L);
+        PipelineMetrics metrics = PipelineMetrics.create(clock, 8);
+        Harness harness = new Harness(metrics, clock);
+        H264Encoder encoder = harness.newStartedEncoder();
+
+        harness.bridge.enqueueFormatChange(H264Fixtures.sps(), H264Fixtures.pps(), WIDTH, HEIGHT);
+        harness.bridge.enqueueSample(idrSample(), 1_000_000L, true, false);
+        assertNotNull(harness.output.awaitAccessUnit(AWAIT_TIMEOUT_MS));
+        harness.bridge.enqueueSample(pSample(), 1_033_333L, false, false);
+        assertNotNull(harness.output.awaitAccessUnit(AWAIT_TIMEOUT_MS));
+
+        assertEquals(33_333_000L, metrics.stats(PipelineMetrics.Window.OUT_INTERVAL).getP50());
+        assertEquals(2L, metrics.getRecordedCount(PipelineMetrics.Window.AU_BYTES));
+        encoder.close();
+    }
+
+    @Test
+    public void metrics_suppressCaptureToOutputAfterThreeImplausibleSamples() {
+        // A clock that lags the producer's timestamps makes every sample negative, which is what a
+        // mismatched timestamp base looks like.
+        MutableNanoClock clock = new MutableNanoClock(0L);
+        PipelineMetrics metrics = PipelineMetrics.create(clock, 8);
+        Harness harness = new Harness(metrics, clock);
+        H264Encoder encoder = harness.newStartedEncoder();
+
+        harness.bridge.enqueueFormatChange(H264Fixtures.sps(), H264Fixtures.pps(), WIDTH, HEIGHT);
+        harness.bridge.enqueueSample(idrSample(), 1_000_000L, true, false);
+        assertNotNull(harness.output.awaitAccessUnit(AWAIT_TIMEOUT_MS));
+        harness.bridge.enqueueSample(pSample(), 1_033_333L, false, false);
+        assertNotNull(harness.output.awaitAccessUnit(AWAIT_TIMEOUT_MS));
+        harness.bridge.enqueueSample(pSample(), 1_066_666L, false, false);
+        assertNotNull(harness.output.awaitAccessUnit(AWAIT_TIMEOUT_MS));
+
+        assertTrue(encoder.isCapToOutSuppressed());
+        assertEquals(1L, metrics.getGauge(PipelineMetrics.Gauge.CAP_TO_OUT_SUPPRESSED));
+        assertEquals(0L, metrics.getRecordedCount(PipelineMetrics.Window.CAP_TO_OUT));
+        encoder.close();
+    }
+
+    @Test
+    public void metrics_disabledEncoderStillEmitsAccessUnits() {
+        Harness harness = new Harness();
+        H264Encoder encoder = harness.newStartedEncoder();
+
+        harness.bridge.enqueueFormatChange(H264Fixtures.sps(), H264Fixtures.pps(), WIDTH, HEIGHT);
+        harness.bridge.enqueueSample(idrSample(), 1_000L, true, false);
+        assertNotNull(harness.output.awaitAccessUnit(AWAIT_TIMEOUT_MS));
+
+        assertFalse(encoder.isCapToOutSuppressed());
+        assertEquals(1, harness.output.getAccessUnitCount());
+        encoder.close();
+    }
 
     @Test
     public void constructor_configuresBridgeAndCreatesInputSurfaceBeforeStart() {
@@ -1469,17 +1547,30 @@ public class H264EncoderTest {
         private final RecordingOutput output = new RecordingOutput();
         private final FixedBridgeFactory factory = new FixedBridgeFactory(bridge);
         private final StreamParameters parameters;
+        private final PipelineMetrics metrics;
+        private final NanoClock clock;
 
         Harness() {
             this(PARAMETERS);
         }
 
         Harness(StreamParameters parameters) {
+            this(parameters, PipelineMetrics.NONE, NanoClock.MONOTONIC);
+        }
+
+        Harness(PipelineMetrics metrics, NanoClock clock) {
+            this(PARAMETERS, metrics, clock);
+        }
+
+        Harness(StreamParameters parameters, PipelineMetrics metrics, NanoClock clock) {
             this.parameters = parameters;
+            this.metrics = metrics;
+            this.clock = clock;
         }
 
         H264Encoder newEncoder() {
-            return new H264Encoder(STREAM_KEY, descriptor(), parameters, output, factory);
+            return new H264Encoder(STREAM_KEY, descriptor(), parameters, output, factory, metrics,
+                    clock);
         }
 
         H264Encoder newStartedEncoder() {

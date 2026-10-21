@@ -15,6 +15,7 @@ import java.util.Collections;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
@@ -27,6 +28,28 @@ public class BoundedAccessUnitQueueTest {
     private static final int CONFIG_EPOCH = 1;
 
     private static final long MAX_AGE_MS = 100L;
+
+    @Test
+    public void poll_carriesTheEnqueueTimestampForResidency() {
+        BoundedAccessUnitQueue queue = queue(64L, 4, OverflowAction.KEEP_LATEST_FRAME);
+
+        queue.offer(joinAu(1, 4), 1_234L);
+        QueuePollResult polled = queue.poll(1_300L);
+
+        assertNotNull(polled.getAccessUnit());
+        assertEquals(1_234L, polled.getEnqueuedMs());
+    }
+
+    @Test
+    public void emptyAndResyncResults_haveNoEnqueueTimestamp() {
+        BoundedAccessUnitQueue queue = queue(64L, 4, OverflowAction.KEEP_LATEST_FRAME);
+
+        assertEquals(QueuePollResult.UNKNOWN_ENQUEUED_MS, queue.poll(0L).getEnqueuedMs());
+        assertEquals(QueuePollResult.UNKNOWN_ENQUEUED_MS,
+                QueuePollResult.resync().getEnqueuedMs());
+        assertEquals(QueuePollResult.UNKNOWN_ENQUEUED_MS,
+                QueuePollResult.frame(joinAu(1, 4)).getEnqueuedMs());
+    }
 
     @Test
     public void offer_rejectsNull() {

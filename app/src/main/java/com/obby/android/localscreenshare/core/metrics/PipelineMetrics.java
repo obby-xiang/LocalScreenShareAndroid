@@ -251,7 +251,13 @@ public final class PipelineMetrics {
         /**
          * Number of attached peers at snapshot time.
          */
-        PEER_COUNT
+        PEER_COUNT,
+
+        /**
+         * One when the capture-to-output probe disabled itself after repeated implausible
+         * samples, otherwise zero.
+         */
+        CAP_TO_OUT_SUPPRESSED
     }
 
     private final boolean enabled;
@@ -305,6 +311,20 @@ public final class PipelineMetrics {
             throw new IllegalArgumentException("windowCapacity must be positive");
         }
         return new PipelineMetrics(true, clock, windowCapacity);
+    }
+
+    /**
+     * Creates an equivalent empty scope for another session of the same pipeline.
+     *
+     * <p>Used when one configured scope acts as a template: every client send session needs its
+     * own windows, because queue depth and send duration belong to one viewer, while the clock
+     * and the window capacity stay identical. A disabled template produces {@link #NONE}, so a
+     * pipeline that is not measured never allocates per-session state.</p>
+     *
+     * @return a new empty scope, or {@link #NONE} when this scope is disabled
+     */
+    public PipelineMetrics newScope() {
+        return enabled ? new PipelineMetrics(true, clock, windowCapacity) : NONE;
     }
 
     /**

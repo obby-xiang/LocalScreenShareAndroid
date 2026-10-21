@@ -169,6 +169,11 @@ public final class Preferences {
      */
     public static final String KEY_SHARE_NAME_ENABLED = "share_name_enabled";
 
+    /**
+     * Pipeline-metrics flag shared by both roles; see {@link #isMetricsEnabled()}.
+     */
+    public static final String KEY_METRICS_ENABLED = "metrics_enabled";
+
     private static final String KEY_IDENTITY_ID = "identity_id";
 
     private static final String KEY_IDENTITY_FINGERPRINT = "identity_fingerprint";
@@ -330,6 +335,25 @@ public final class Preferences {
      */
     public void setShareNameEnabled(final boolean isEnabled) {
         mPreferences.edit().putBoolean(KEY_SHARE_NAME_ENABLED, isEnabled).commit();
+    }
+
+    /**
+     * Whether pipeline probes and the structured metric log line are enabled; defaults to false.
+     *
+     * <p>The same key is read by the server and the viewer, because both sides emit the same
+     * {@code lss.metrics} line with a different role. It is off by default so an ordinary run
+     * neither formats a line every five seconds nor keeps any sample window alive; when it is off
+     * every probe is a single volatile read and no snapshot is taken.</p>
+     */
+    public boolean isMetricsEnabled() {
+        return mPreferences.getBoolean(KEY_METRICS_ENABLED, false);
+    }
+
+    /**
+     * Persists the pipeline-metrics flag; a running pipeline picks it up on its next start.
+     */
+    public void setMetricsEnabled(final boolean isEnabled) {
+        mPreferences.edit().putBoolean(KEY_METRICS_ENABLED, isEnabled).commit();
     }
 
     /**

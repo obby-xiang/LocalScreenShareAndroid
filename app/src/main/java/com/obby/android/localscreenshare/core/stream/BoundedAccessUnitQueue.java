@@ -155,7 +155,7 @@ public final class BoundedAccessUnitQueue {
             }
             Entry head = entries.pollFirst();
             totalBytes -= head.accessUnit.getPayloadLength();
-            return QueuePollResult.frame(head.accessUnit);
+            return QueuePollResult.frame(head.accessUnit, head.enqueuedMs);
         }
 
         if (!entries.isEmpty() && hasExpiredEntry(nowMs)) {
@@ -171,7 +171,7 @@ public final class BoundedAccessUnitQueue {
         if (head.accessUnit.getFlags().isJoinPoint() && resyncRequired) {
             resyncRequired = false;
         }
-        return QueuePollResult.frame(head.accessUnit);
+        return QueuePollResult.frame(head.accessUnit, head.enqueuedMs);
     }
 
     /**
