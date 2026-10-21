@@ -36,6 +36,14 @@
                 android:textAppearance="?attr/textAppearanceBodyMedium"
                 android:textColor="?attr/colorOnSurface" />
 
+            <com.google.android.material.textview.MaterialTextView
+                android:id="@+id/secure_setting_note"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textAppearance="?attr/textAppearanceBodySmall"
+                android:textColor="?attr/colorOnSurfaceVariant"
+                android:text="@string/projection_secure_setting_note" />
+
             <com.google.android.material.materialswitch.MaterialSwitch
                 android:id="@+id/audio_setting"
                 android:layout_width="wrap_content"

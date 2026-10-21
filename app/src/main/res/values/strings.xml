@@ -58,6 +58,7 @@
     <string name="discovery_identity_changed_connect">"This device's identity changed since it was saved. Connect anyway? The favorite will be updated to the new identity."</string>
     <string name="server_port_setting_label">"Server port"</string>
     <string name="projection_secure_setting_label">"Private screen"</string>
+    <string name="projection_secure_setting_note">"Prevents screenshots and screen recording of the viewer window on the other device. This protects the display only; the connection stays encrypted either way."</string>
     <string name="projection_scale_setting_label">"Screen size"</string>
     <string name="projection_frame_rate_setting_label">"Max frame rate"</string>
     <string name="projection_quality_setting_label">"Screen quality"</string>
@@ -111,7 +112,8 @@ This can happen after a reinstall, a data reset or a key reset. Connect only if 
     <string name="tls_new_device_badge">"New device: <xliff:g id="id">%1$s</xliff:g>"</string>
     <string name="tls_peer_rejected_toast">"Refused a connection from <xliff:g id="id">%1$s</xliff:g>: identity check failed."</string>
     <string name="tls_plaintext_warning">"Transport encryption is off (development override)."</string>
-    <string name="tls_device_not_encrypted">"This device does not support encrypted connections."</string>
+    <string name="tls_device_not_encrypted">"Unencrypted transport"</string>
+    <string name="tls_device_not_encrypted_message">"This device only offers an unencrypted connection, which the hidden plaintext override enables for development. This device requires an encrypted connection, so the screen cannot be opened."</string>
     <string name="device_identity_label">"Device ID"</string>
     <string name="device_identity_unavailable">"Unavailable"</string>
     <string name="device_identity_changed">"This device has a new identity, for example after restoring a backup or clearing the app data. Other devices that saved this one, including their favorites, must confirm it again."</string>

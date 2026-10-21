@@ -59,6 +59,14 @@ public final class Announcement {
     @NonNull
     private final JoinPolicy join;
 
+    /**
+     * Transport security capability of the sender.
+     *
+     * <p>True while the sender serves TLS, which is the normal state; only the hidden plaintext
+     * override turns it false. It never describes the shared picture: the "private screen" setting
+     * protects the viewer's window from screenshots and travels with the stream descriptor, not with
+     * the announcement. A viewer refuses a device on this field alone (N1).</p>
+     */
     private final boolean secure;
 
     @NonNull

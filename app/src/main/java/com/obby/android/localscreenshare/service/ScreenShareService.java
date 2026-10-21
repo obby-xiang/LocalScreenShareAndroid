@@ -1397,6 +1397,10 @@ public class ScreenShareService extends Service {
      * always the one the handshake certificate proves; the material is read from the cache because
      * this runs on the main thread and must not block on the keystore.</p>
      *
+     * <p>The transport fields state the transport, nothing else: {@code secure} is true while TLS is
+     * on and only the hidden plaintext override turns it off. Whether the shared picture is private
+     * is a display protection on the viewer side and travels with the stream descriptor instead
+     * (N1).</p>
      */
     @Nullable
     private Announcement buildAnnouncement() {
@@ -1414,6 +1418,7 @@ public class ScreenShareService extends Service {
         final DeviceIdentity identity = material.toDeviceIdentity();
 
         final DiscoverySettings settings = Preferences.get().getDiscoverySettings();
+        final boolean isSecureTransport = !Preferences.get().isTlsAllowPlaintext();
         final long nowMs = System.currentTimeMillis();
         return Announcement.builder()
             .id(identity.getId())
@@ -1421,8 +1426,8 @@ public class ScreenShareService extends Service {
             .role(DeviceRole.SERVER)
             .state(ShareState.LIVE)
             .join(settings.visibilityPolicy(nowMs).joinPolicy(nowMs))
-            .secure(mIsProjectionSecure)
-            .auth(AuthMode.NONE)
+            .secure(isSecureTransport)
+            .auth(isSecureTransport ? AuthMode.MTLS : AuthMode.NONE)
             .protocolVersion(String.valueOf(ScreenStreamProtoMapper.PROTOCOL_VERSION))
             .metadataVersion(1)
             .capabilities(settings.capabilities())

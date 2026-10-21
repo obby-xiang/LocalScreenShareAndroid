@@ -58,6 +58,7 @@
     <string name="discovery_identity_changed_connect">"该设备的身份与收藏时不一致。仍要连接吗？连接后收藏会更新为新身份。"</string>
     <string name="server_port_setting_label">"服务端口"</string>
     <string name="projection_secure_setting_label">"画面私密"</string>
+    <string name="projection_secure_setting_note">"阻止对端观看窗口被截屏或录屏。它只保护显示，连接本身始终加密。"</string>
     <string name="projection_scale_setting_label">"画面大小"</string>
     <string name="projection_frame_rate_setting_label">"最大帧率"</string>
     <string name="projection_quality_setting_label">"画面质量"</string>
@@ -111,7 +112,8 @@
     <string name="tls_new_device_badge">"新设备：<xliff:g id="id">%1$s</xliff:g>"</string>
     <string name="tls_peer_rejected_toast">"已拒绝来自 <xliff:g id="id">%1$s</xliff:g> 的连接：身份校验失败。"</string>
     <string name="tls_plaintext_warning">"传输加密已关闭（开发调试开关）。"</string>
-    <string name="tls_device_not_encrypted">"该设备不支持加密连接。"</string>
+    <string name="tls_device_not_encrypted">"未加密传输"</string>
+    <string name="tls_device_not_encrypted_message">"该设备只提供未加密连接（由隐藏的明文调试开关启用）。本机要求加密连接，因此无法打开这块屏幕。"</string>
     <string name="device_identity_label">"设备 ID"</string>
     <string name="device_identity_unavailable">"不可用"</string>
     <string name="device_identity_changed">"本机身份已变更，例如从备份恢复或清除应用数据之后。保存过本机的其他设备（包括收藏）需要重新确认。"</string>

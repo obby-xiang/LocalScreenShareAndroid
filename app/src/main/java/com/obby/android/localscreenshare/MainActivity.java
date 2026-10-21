@@ -1033,13 +1033,14 @@ public class MainActivity extends AppCompatActivity {
 
         if (!serviceInfo.isSecure()) {
             // An unencrypted peer is not dialed at all: the fallback would be exactly the state
-            // this change removes, so the row explains the incompatibility instead.
+            // this change removes, so the row explains the incompatibility instead. This flag is
+            // the transport capability of the peer, not its "private screen" setting (N1).
             if (mDialog != null) {
                 mDialog.dismiss();
             }
             mDialog = new MaterialAlertDialogBuilder(this)
                 .setTitle(serviceInfo.displayName())
-                .setMessage(R.string.tls_device_not_encrypted)
+                .setMessage(R.string.tls_device_not_encrypted_message)
                 .setPositiveButton(android.R.string.ok, null)
                 .show();
             return;
