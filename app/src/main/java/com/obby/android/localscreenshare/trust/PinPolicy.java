@@ -64,18 +64,46 @@ public final class PinPolicy {
             throw new IllegalArgumentException("certSpki must not be empty");
         }
 
-        final String certId = SpkiId.deviceId(certSpki);
+        return decide(expectedId, SpkiId.deviceId(certSpki),
+            SpkiId.fingerprint(certSpki), pin);
+    }
+
+    /**
+     * Applies the decision to identities that were already derived, as the viewer does with the
+     * values carried by discovery.
+     *
+     * @param expectedId      id selected in discovery, or null when no expectation exists
+     * @param observedId      id derived from the certificate, or null when the peer presented none
+     * @param observedFingerprint fingerprint derived from the certificate, or null when absent
+     * @param pin             pin of the observed id, or null when the device is new
+     */
+    @NonNull
+    public static Outcome decide(@Nullable final String expectedId,
+                                 @Nullable final String observedId,
+                                 @Nullable final String observedFingerprint,
+                                 @Nullable final TlsPin pin) {
+        final String normalizedObservedId = trimToNull(observedId);
         if (expectedId != null && !expectedId.trim().isEmpty()
-            && !expectedId.trim().equals(certId)) {
+            && !expectedId.trim().equals(normalizedObservedId)) {
             return Outcome.IDENTITY_MISMATCH;
         }
         if (pin == null) {
             return Outcome.UNKNOWN;
         }
-        if (!pin.getId().equals(certId)) {
+        if (normalizedObservedId == null || !pin.getId().equals(normalizedObservedId)) {
             return Outcome.CHANGED;
         }
-        return pin.getFingerprint().trim().equals(SpkiId.fingerprint(certSpki))
+        final String normalizedFingerprint = trimToNull(observedFingerprint);
+        return normalizedFingerprint != null
+            && pin.getFingerprint().trim().equals(normalizedFingerprint)
             ? Outcome.MATCH : Outcome.CHANGED;
+    }
+
+    @Nullable
+    private static String trimToNull(@Nullable final String value) {
+        if (value == null || value.trim().isEmpty()) {
+            return null;
+        }
+        return value.trim();
     }
 }

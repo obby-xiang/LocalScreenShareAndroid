@@ -71,6 +71,34 @@
     <string name="video_settings_codec_locked_note">"当前版本固定使用 H.264。"</string>
     <string name="projection_size_rejected">"该画面大小无法应用，共享画面保持 <xliff:g id="width">%1$d</xliff:g>×<xliff:g id="height">%2$d</xliff:g>。"</string>
     <string name="start_service_failed">"启动共享屏幕服务失败。"</string>
+    <string name="tls_first_connect_message">"密钥指纹（SHA-256）：
+
+<xliff:g id="fingerprint">%1$s</xliff:g>
+
+请与对方设备上显示的指纹逐组比对。确认只是记住该设备使用的密钥；这不是配对，对方仍会决定是否允许观看。"</string>
+    <string name="tls_trust_device">"信任此设备"</string>
+    <string name="tls_copy_fingerprint">"复制指纹"</string>
+    <string name="tls_fingerprint_copied">"指纹已复制。"</string>
+    <string name="tls_address_changed_hint">"该地址上次是另一台设备（ID <xliff:g id="id">%1$s</xliff:g>）。"</string>
+    <string name="tls_identity_changed_title">"设备身份已变更"</string>
+    <string name="tls_identity_changed_message">"已保存的指纹与该设备出示的证书不一致。
+
+已保存：
+<xliff:g id="stored">%1$s</xliff:g>
+
+本次出示：
+<xliff:g id="presented">%2$s</xliff:g>
+
+重装、清除数据或重置身份都会造成这种情况。只有在你预期如此时才连接；否则请取消并检查该设备。"</string>
+    <string name="tls_trust_new_identity">"信任新身份"</string>
+    <string name="tls_identity_mismatch_message">"该设备出示的证书与其设备 ID 不一致，连接已被拒绝。这是安全检查，无法绕过。"</string>
+    <string name="tls_forget_trust">"忘记信任"</string>
+    <string name="tls_forget_trust_done">"已忘记信任。下次连接会重新请求确认。"</string>
+    <string name="tls_local_fingerprint_label">"密钥指纹"</string>
+    <string name="tls_service_notification_fingerprint">"比对指纹：<xliff:g id="fingerprint">%1$s</xliff:g>"</string>
+    <string name="tls_new_device_badge">"新设备：<xliff:g id="id">%1$s</xliff:g>"</string>
+    <string name="tls_plaintext_warning">"传输加密已关闭（开发调试开关）。"</string>
+    <string name="tls_device_not_encrypted">"该设备不支持加密连接。"</string>
     <string name="device_identity_label">"设备 ID"</string>
     <string name="device_identity_unavailable">"不可用"</string>
     <string name="device_identity_changed">"本机身份已变更，例如从备份恢复或清除应用数据之后。保存过本机的其他设备（包括收藏）需要重新确认。"</string>

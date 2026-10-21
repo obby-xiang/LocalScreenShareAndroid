@@ -92,6 +92,22 @@ public class PinPolicyTest {
     }
 
     @Test
+    public void derivedValuesFollowTheSameRules() {
+        final TlsPin pin = new TlsPin("ID-A", "FP-A", 0L);
+
+        assertEquals(PinPolicy.Outcome.MATCH,
+            PinPolicy.decide("ID-A", "ID-A", "FP-A", pin));
+        assertEquals(PinPolicy.Outcome.IDENTITY_MISMATCH,
+            PinPolicy.decide("ID-A", "ID-B", "FP-A", pin));
+        assertEquals(PinPolicy.Outcome.UNKNOWN,
+            PinPolicy.decide("ID-A", "ID-A", "FP-A", null));
+        assertEquals(PinPolicy.Outcome.CHANGED,
+            PinPolicy.decide("ID-A", "ID-A", null, pin));
+        assertEquals(PinPolicy.Outcome.IDENTITY_MISMATCH,
+            PinPolicy.decide("ID-A", null, "FP-A", pin));
+    }
+
+    @Test
     public void rejectsAnEmptySpki() {
         try {
             PinPolicy.decide(null, new byte[0], null);

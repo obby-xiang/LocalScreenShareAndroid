@@ -71,6 +71,34 @@
     <string name="video_settings_codec_locked_note">"This version always uses H.264."</string>
     <string name="projection_size_rejected">"This screen size could not be applied; sharing stays at <xliff:g id="width">%1$d</xliff:g>×<xliff:g id="height">%2$d</xliff:g>."</string>
     <string name="start_service_failed">"Failed to start the screen sharing service."</string>
+    <string name="tls_first_connect_message">"Key fingerprint (SHA-256):
+
+<xliff:g id="fingerprint">%1$s</xliff:g>
+
+Compare it with the fingerprint shown on the other device. Confirming only remembers which key this device uses; it is not pairing, and the other device still decides whether to share its screen."</string>
+    <string name="tls_trust_device">"Trust this device"</string>
+    <string name="tls_copy_fingerprint">"Copy fingerprint"</string>
+    <string name="tls_fingerprint_copied">"Fingerprint copied."</string>
+    <string name="tls_address_changed_hint">"This address was previously used by another device (ID <xliff:g id="id">%1$s</xliff:g>)."</string>
+    <string name="tls_identity_changed_title">"Device identity changed"</string>
+    <string name="tls_identity_changed_message">"The stored fingerprint does not match the certificate this device presented.
+
+Stored:
+<xliff:g id="stored">%1$s</xliff:g>
+
+Presented:
+<xliff:g id="presented">%2$s</xliff:g>
+
+This can happen after a reinstall, a data reset or a key reset. Connect only if you expected it; otherwise cancel and check the device."</string>
+    <string name="tls_trust_new_identity">"Trust the new identity"</string>
+    <string name="tls_identity_mismatch_message">"This device presented a certificate that does not match its device ID, so the connection was refused. This is a security check and cannot be bypassed."</string>
+    <string name="tls_forget_trust">"Forget trust"</string>
+    <string name="tls_forget_trust_done">"Trust removed. The next connection will ask for confirmation."</string>
+    <string name="tls_local_fingerprint_label">"Key fingerprint"</string>
+    <string name="tls_service_notification_fingerprint">"Compare fingerprint: <xliff:g id="fingerprint">%1$s</xliff:g>"</string>
+    <string name="tls_new_device_badge">"New device: <xliff:g id="id">%1$s</xliff:g>"</string>
+    <string name="tls_plaintext_warning">"Transport encryption is off (development override)."</string>
+    <string name="tls_device_not_encrypted">"This device does not support encrypted connections."</string>
     <string name="device_identity_label">"Device ID"</string>
     <string name="device_identity_unavailable">"Unavailable"</string>
     <string name="device_identity_changed">"This device has a new identity, for example after restoring a backup or clearing the app data. Other devices that saved this one, including their favorites, must confirm it again."</string>

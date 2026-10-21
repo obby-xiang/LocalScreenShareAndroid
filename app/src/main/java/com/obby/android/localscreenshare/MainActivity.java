@@ -94,6 +94,11 @@ import com.obby.android.localscreenshare.support.Constants;
 import com.obby.android.localscreenshare.support.IntentUtils;
 import com.obby.android.localscreenshare.support.ServiceProtocol;
 import com.obby.android.localscreenshare.support.WindowUtils;
+import com.obby.android.localscreenshare.trust.FingerprintFormatter;
+import com.obby.android.localscreenshare.trust.PinPolicy;
+import com.obby.android.localscreenshare.trust.TlsPin;
+import com.obby.android.localscreenshare.trust.TlsPinStore;
+import com.obby.android.localscreenshare.trust.TofuPolicy;
 
 import java.text.NumberFormat;
 import java.util.Arrays;
@@ -274,6 +279,10 @@ public class MainActivity extends AppCompatActivity {
     // Device id row inside the settings sheet; null until the sheet is created.
     @Nullable
     private MaterialTextView mDeviceIdSettingView;
+
+    // Key fingerprint row inside the settings sheet; null until the sheet is created.
+    @Nullable
+    private MaterialTextView mDeviceFingerprintSettingView;
 
     private final String mTag = "MainActivity@" + hashCode();
 
@@ -632,9 +641,11 @@ public class MainActivity extends AppCompatActivity {
             .orElseGet(() -> Preferences.get().getServiceName()));
         mServiceNameView.setEnabled(mServiceStatus == SERVICE_STATUS_ONLINE);
 
-        mServiceAddressView.setText(getString(R.string.service_address,
+        final String address = getString(R.string.service_address,
             mServerInfo == null ? Constants.UNKNOWN_HOST_ADDRESS : mServerInfo.getHostAddress(),
-            mServerInfo == null ? Preferences.get().getServerPort() : mServerInfo.getPort()));
+            mServerInfo == null ? Preferences.get().getServerPort() : mServerInfo.getPort());
+        mServiceAddressView.setText(Preferences.get().isTlsAllowPlaintext()
+            ? address + "\n" + getString(R.string.tls_plaintext_warning) : address);
         mServiceAddressView.setEnabled(mServiceStatus == SERVICE_STATUS_ONLINE);
     }
 
@@ -721,13 +732,27 @@ public class MainActivity extends AppCompatActivity {
      */
     private void showDiscoveryItemMenu(@NonNull final DeviceInfo item) {
         final boolean isFavorite = DiscoveryManager.get().isFavorite(item.getId());
-        new MaterialAlertDialogBuilder(this)
+        final MaterialAlertDialogBuilder builder = new MaterialAlertDialogBuilder(this)
             .setTitle(item.displayName())
             .setPositiveButton(isFavorite
                     ? R.string.discovery_remove_favorite : R.string.discovery_add_favorite,
                 (dialog, which) -> toggleFavorite(item))
-            .setNegativeButton(android.R.string.cancel, null)
-            .show();
+            .setNegativeButton(android.R.string.cancel, null);
+        if (TlsPinStore.get().find(item.getId()) != null) {
+            builder.setNeutralButton(R.string.tls_forget_trust,
+                (dialog, which) -> forgetTrust(item));
+        }
+        builder.show();
+    }
+
+    /**
+     * Removes the stored pin of a device; the next connection asks for confirmation again.
+     */
+    private void forgetTrust(@NonNull final DeviceInfo item) {
+        if (!TlsPinStore.get().unpin(item.getId())) {
+            return;
+        }
+        Toast.makeText(this, R.string.tls_forget_trust_done, Toast.LENGTH_SHORT).show();
     }
 
     private void toggleFavorite(@NonNull final DeviceInfo item) {
@@ -829,17 +854,27 @@ public class MainActivity extends AppCompatActivity {
             .show();
     }
 
-    // Renders the current device id; the sheet is reused, so the text is refreshed on every show.
+    // Renders the current device id and key fingerprint; the sheet is reused, so both are
+    // refreshed on every show.
     private void updateDeviceIdentityView() {
         if (mDeviceIdSettingView == null) {
             return;
         }
 
         try {
-            mDeviceIdSettingView.setText(IdentityManager.get().getIdentity().getId());
+            final com.obby.android.localscreenshare.identity.DeviceIdentity identity =
+                IdentityManager.get().getIdentity();
+            mDeviceIdSettingView.setText(identity.getId());
+            if (mDeviceFingerprintSettingView != null) {
+                mDeviceFingerprintSettingView.setText(
+                    FingerprintFormatter.toDisplay(identity.getFingerprint()));
+            }
         } catch (IdentityUnavailableException e) {
             Log.e(mTag, "updateDeviceIdentityView: device identity unavailable", e);
             mDeviceIdSettingView.setText(R.string.device_identity_unavailable);
+            if (mDeviceFingerprintSettingView != null) {
+                mDeviceFingerprintSettingView.setText(R.string.device_identity_unavailable);
+            }
         }
     }
 
@@ -930,6 +965,58 @@ public class MainActivity extends AppCompatActivity {
      * choice (confirmed first, IPv4 before IPv6) is made once, in the store.</p>
      */
     private void startScreenShareViewer(@NonNull final DeviceInfo serviceInfo) {
+        if (Preferences.get().isTlsAllowPlaintext()) {
+            startScreenShareViewerWithFavoriteCheck(serviceInfo);
+            return;
+        }
+
+        if (!serviceInfo.isSecure()) {
+            // An unencrypted peer is not dialed at all: the fallback would be exactly the state
+            // this change removes, so the row explains the incompatibility instead.
+            if (mDialog != null) {
+                mDialog.dismiss();
+            }
+            mDialog = new MaterialAlertDialogBuilder(this)
+                .setTitle(serviceInfo.displayName())
+                .setMessage(R.string.tls_device_not_encrypted)
+                .setPositiveButton(android.R.string.ok, null)
+                .show();
+            return;
+        }
+
+        final String fingerprint = serviceInfo.getFingerprint();
+        if (fingerprint == null || !FingerprintFormatter.isCanonical(fingerprint)) {
+            // A peer without a verifiable certificate identity cannot be pinned; refuse instead of
+            // dialing and letting the transport fail later.
+            showIdentityMismatchDialog(serviceInfo);
+            return;
+        }
+
+        final TlsPin pin = TlsPinStore.get().find(serviceInfo.getId());
+        final PinPolicy.Outcome outcome =
+            PinPolicy.decide(serviceInfo.getId(), serviceInfo.getId(), fingerprint, pin);
+        switch (TofuPolicy.decide(outcome)) {
+            case BLOCK:
+                showIdentityMismatchDialog(serviceInfo);
+                return;
+            case CONFIRM_FIRST:
+                showFirstConnectDialog(serviceInfo, fingerprint);
+                return;
+            case CONFIRM_CHANGE:
+                showIdentityChangedDialog(serviceInfo, pin, fingerprint);
+                return;
+            case PROCEED:
+            default:
+                // The pin is authoritative; a favorite that still carries an older fingerprint is
+                // brought in line without asking again.
+                confirmFavoriteSilently(serviceInfo);
+                startScreenShareViewerConfirmed(serviceInfo);
+                return;
+        }
+    }
+
+    // Plaintext override path: no certificate identity exists, so only the favorite check applies.
+    private void startScreenShareViewerWithFavoriteCheck(@NonNull final DeviceInfo serviceInfo) {
         final FavoriteDevice favorite = FavoriteStore.get().find(serviceInfo.getId());
         if (favorite != null && FavoriteStore.checkIdentity(favorite.getFingerprint(),
             serviceInfo.getFingerprint()) == FavoriteStore.IdentityStatus.CHANGED) {
@@ -948,6 +1035,123 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
         startScreenShareViewerConfirmed(serviceInfo);
+    }
+
+    /**
+     * Confirms the first contact with a device and pins it when the user accepts.
+     *
+     * <p>The dialog shows the full fingerprint and says explicitly that this is not pairing: the
+     * device still decides whether it shares. A different id last seen at the same address is
+     * shown as a hint only, because local networks reuse addresses.</p>
+     */
+    private void showFirstConnectDialog(@NonNull final DeviceInfo serviceInfo,
+                                        @NonNull final String fingerprint) {
+        final String display = FingerprintFormatter.toDisplay(fingerprint);
+        final String message = getString(R.string.tls_first_connect_message, display)
+            + addressChangeHint(serviceInfo);
+
+        if (mDialog != null) {
+            mDialog.dismiss();
+        }
+        mDialog = new MaterialAlertDialogBuilder(this)
+            .setTitle(serviceInfo.displayName())
+            .setMessage(message)
+            .setPositiveButton(R.string.tls_trust_device, (dialog, which) -> {
+                TlsPinStore.get().pin(serviceInfo.getId(), fingerprint);
+                rememberAddress(serviceInfo);
+                confirmFavoriteSilently(serviceInfo);
+                startScreenShareViewerConfirmed(serviceInfo);
+            })
+            .setNeutralButton(R.string.tls_copy_fingerprint,
+                (dialog, which) -> copyFingerprint(display))
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
+    /**
+     * Warns that a pinned device now presents another fingerprint.
+     *
+     * <p>The old and the new value are shown side by side. Leaving the dialog keeps the old pin;
+     * only the explicit action rebinds, and that action is logged as a user decision rather than
+     * treated as a routine update.</p>
+     */
+    private void showIdentityChangedDialog(@NonNull final DeviceInfo serviceInfo,
+                                           @Nullable final TlsPin pin,
+                                           @NonNull final String fingerprint) {
+        final String oldDisplay = pin == null ? "" : FingerprintFormatter.toDisplay(
+            pin.getFingerprint());
+        final String newDisplay = FingerprintFormatter.toDisplay(fingerprint);
+
+        if (mDialog != null) {
+            mDialog.dismiss();
+        }
+        mDialog = new MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.tls_identity_changed_title)
+            .setMessage(getString(R.string.tls_identity_changed_message, oldDisplay, newDisplay))
+            .setPositiveButton(R.string.tls_trust_new_identity, (dialog, which) -> {
+                TlsPinStore.get().pin(serviceInfo.getId(), fingerprint);
+                rememberAddress(serviceInfo);
+                confirmFavoriteSilently(serviceInfo);
+                startScreenShareViewerConfirmed(serviceInfo);
+            })
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
+    private void showIdentityMismatchDialog(@NonNull final DeviceInfo serviceInfo) {
+        if (mDialog != null) {
+            mDialog.dismiss();
+        }
+        mDialog = new MaterialAlertDialogBuilder(this)
+            .setTitle(serviceInfo.displayName())
+            .setMessage(R.string.tls_identity_mismatch_message)
+            .setPositiveButton(android.R.string.ok, null)
+            .show();
+    }
+
+    @NonNull
+    private String addressChangeHint(@NonNull final DeviceInfo serviceInfo) {
+        final com.obby.android.localscreenshare.discovery.model.DeviceAddress address =
+            serviceInfo.primaryAddress();
+        if (address == null) {
+            return "";
+        }
+        final String lastId = TlsPinStore.get().lastDeviceId(address.getHost(), address.getPort());
+        if (!TofuPolicy.isAddressChanged(lastId, serviceInfo.getId())) {
+            return "";
+        }
+        return "\n\n" + getString(R.string.tls_address_changed_hint, lastId.substring(0,
+            Math.min(8, lastId.length())));
+    }
+
+    private void rememberAddress(@NonNull final DeviceInfo serviceInfo) {
+        final com.obby.android.localscreenshare.discovery.model.DeviceAddress address =
+            serviceInfo.primaryAddress();
+        if (address == null) {
+            return;
+        }
+        TlsPinStore.get().rememberAddress(address.getHost(), address.getPort(),
+            serviceInfo.getId());
+    }
+
+    private void confirmFavoriteSilently(@NonNull final DeviceInfo serviceInfo) {
+        final FavoriteDevice favorite = FavoriteStore.get().find(serviceInfo.getId());
+        if (favorite != null && FavoriteStore.checkIdentity(favorite.getFingerprint(),
+            serviceInfo.getFingerprint()) == FavoriteStore.IdentityStatus.CHANGED) {
+            DiscoveryManager.get().confirmFavoriteIdentity(
+                serviceInfo.getId(), serviceInfo.getFingerprint());
+        }
+    }
+
+    private void copyFingerprint(@NonNull final String display) {
+        final android.content.ClipboardManager clipboard =
+            getSystemService(android.content.ClipboardManager.class);
+        if (clipboard == null) {
+            return;
+        }
+        clipboard.setPrimaryClip(android.content.ClipData.newPlainText(
+            getString(R.string.tls_local_fingerprint_label), display));
+        Toast.makeText(this, R.string.tls_fingerprint_copied, Toast.LENGTH_SHORT).show();
     }
 
     private void startScreenShareViewerConfirmed(@NonNull final DeviceInfo serviceInfo) {
@@ -1089,6 +1293,8 @@ public class MainActivity extends AppCompatActivity {
         });
 
         mDeviceIdSettingView = settingsDialog.findViewById(R.id.device_id_setting);
+        mDeviceFingerprintSettingView =
+            settingsDialog.findViewById(R.id.device_fingerprint_setting);
         final MaterialButton resetDeviceIdentityView =
             settingsDialog.findViewById(R.id.identity_reset_setting);
         resetDeviceIdentityView.setOnClickListener(view -> resetDeviceIdentity());
@@ -1657,9 +1863,12 @@ public class MainActivity extends AppCompatActivity {
         public void update(@NonNull final DeviceInfo item) {
             mNameView.setText(item.displayName());
             final DeviceAddress address = item.primaryAddress();
-            mAddressView.setText(address == null ? ""
+            final String addressText = address == null ? ""
                 : mAddressView.getResources().getString(R.string.service_address,
-                    address.getHost(), address.getPort()));
+                    address.getHost(), address.getPort());
+            mAddressView.setText(item.isSecure() ? addressText
+                : addressText + " · " + mAddressView.getResources().getString(
+                    R.string.tls_device_not_encrypted));
 
             mStatusView.setText(statusTextResource(DiscoveryListModel.status(item)));
             // A stale or unreachable device stays visible but is drawn dimmed, which distinguishes

@@ -104,6 +104,7 @@ import com.obby.android.localscreenshare.settings.DiscoverySettings;
 import com.obby.android.localscreenshare.settings.Preferences;
 import com.obby.android.localscreenshare.settings.ProjectionSettings;
 import com.obby.android.localscreenshare.settings.VisibilityPolicy;
+import com.obby.android.localscreenshare.trust.FingerprintFormatter;
 import com.obby.android.localscreenshare.support.DelayedScheduler;
 import com.obby.android.localscreenshare.support.ServiceProtocol;
 import com.obby.android.localscreenshare.support.WindowUtils;
@@ -335,6 +336,10 @@ public class ScreenShareService extends Service {
 
     // Last values rendered into the notification; used to skip redundant notification updates.
     private int mConnectionCount;
+
+    // Badge of the most recent first-contact viewer; cleared when no viewer is connected.
+    @Nullable
+    private String mNewPeerBadge;
 
     private long mOutboundDataRate;
 
@@ -798,6 +803,13 @@ public class ScreenShareService extends Service {
         mServer = new ScreenShareServer(this);
         mServer.setServerInfoListener(mServerInfoListener);
         mServer.setServerStatsListener(mServerStatsListener);
+        mServer.setPeerTrustListener((deviceId, fingerprint) -> mMainHandler.post(() -> {
+            mNewPeerBadge = getString(R.string.tls_new_device_badge,
+                deviceId.substring(0,
+                    Math.min(com.obby.android.localscreenshare.identity.DeviceIdentity
+                        .SHORT_ID_LENGTH, deviceId.length())));
+            updateNotification();
+        }));
         mServer.setStream(mStreamHub, mStreamRuntime);
         mServer.setSecure(mIsProjectionSecure);
         mServer.setDeviceStore(DiscoveryManager.get().getDeviceStore());
@@ -1090,13 +1102,16 @@ public class ScreenShareService extends Service {
         mClientMessengers.forEach(this::notifyServerStatsChanged);
 
         final int connectionCount = mServerStats.getTransports().size();
+        if (connectionCount == 0) {
+            mNewPeerBadge = null;
+        }
         if (mConnectionCount == connectionCount && mOutboundDataRate == mServerStats.getOutboundDataRate()) {
             return;
         }
 
         mConnectionCount = connectionCount;
         mOutboundDataRate = mServerStats.getOutboundDataRate();
-        NotificationManagerCompat.from(this).notify(NOTIFICATION_ID, buildNotification());
+        updateNotification();
     }
 
     /**
@@ -1420,20 +1435,61 @@ public class ScreenShareService extends Service {
 
     @NonNull
     private Notification buildNotification() {
-        return new NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
-            .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle(getString(R.string.service_notification_title))
-            .setContentText(getString(R.string.service_notification_text, mConnectionCount,
-                Formatter.formatFileSize(this, mOutboundDataRate)))
-            .setContentIntent(PendingIntent.getActivity(this, 0, new Intent(this, MainActivity.class),
-                PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT))
-            .addAction(0, getString(R.string.service_stop_notification_action), PendingIntent.getBroadcast(this, 0,
-                new Intent(ServiceProtocol.ACTION_STOP_SERVICE).setPackage(getPackageName()),
-                PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT))
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-            .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .build();
+        final NotificationCompat.Builder builder =
+            new NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
+                .setSmallIcon(R.mipmap.ic_launcher)
+                .setContentTitle(getString(R.string.service_notification_title))
+                .setContentText(getString(R.string.service_notification_text, mConnectionCount,
+                    Formatter.formatFileSize(this, mOutboundDataRate)))
+                .setContentIntent(PendingIntent.getActivity(this, 0,
+                    new Intent(this, MainActivity.class),
+                    PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT))
+                .addAction(0, getString(R.string.service_stop_notification_action),
+                    PendingIntent.getBroadcast(this, 0,
+                        new Intent(ServiceProtocol.ACTION_STOP_SERVICE).setPackage(getPackageName()),
+                        PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT))
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                .setOngoing(true)
+                .setOnlyAlertOnce(true);
+        final String details = notificationSubText();
+        if (details != null) {
+            builder.setSubText(details);
+        }
+        return builder.build();
+    }
+
+    @SuppressLint("MissingPermission")
+    private void updateNotification() {
+        NotificationManagerCompat.from(this).notify(NOTIFICATION_ID, buildNotification());
+    }
+
+    /**
+     * Returns the badge and fingerprint guide, or null when neither is available.
+     */
+    @Nullable
+    private String notificationSubText() {
+        final String fingerprint = localFingerprintText();
+        if (mNewPeerBadge == null) {
+            return fingerprint;
+        }
+        return fingerprint == null ? mNewPeerBadge : mNewPeerBadge + " · " + fingerprint;
+    }
+
+    /**
+     * Returns the fingerprint guide shown in the share notification, or null when unavailable.
+     *
+     * <p>The viewer compares this value with the one in its confirmation dialog, so the guide must
+     * be the canonical identity fingerprint rendered for a person, never a stored announcement.</p>
+     */
+    @Nullable
+    private String localFingerprintText() {
+        try {
+            return getString(R.string.tls_service_notification_fingerprint,
+                FingerprintFormatter.toDisplay(
+                    IdentityManager.get().getIdentity().getFingerprint()));
+        } catch (IdentityUnavailableException e) {
+            return null;
+        }
     }
 
     /**
