@@ -363,14 +363,27 @@ public final class StreamCallHandler {
                         break;
                 }
             }
+            // Reviewed before the join, so a peer that may not watch never gets a session and a
+            // peer whose request is still open is neither joined nor refused. A call that has not
+            // spoken yet has no identity to review, so the check waits for the HELLO.
+            if (pendingClientId != null) {
+                switch (reviewAuthorization()) {
+                    case DENY:
+                        refuseAuthorization(AuthorizationPolicy.REASON_REVOKED);
+                        return false;
+                    case WAITING:
+                        // Waiting for the user: keep the call exactly as it is, attached or not,
+                        // instead of ending it as if the grant had been withdrawn.
+                        return false;
+                    case ALLOW:
+                    default:
+                        break;
+                }
+            }
             if (!attached) {
                 tryJoin();
             }
             if (!attached) {
-                return false;
-            }
-            if (!isStillAllowed()) {
-                refuseAuthorization(AuthorizationPolicy.REASON_REVOKED);
                 return false;
             }
             sessionKey = key;
@@ -592,6 +605,11 @@ public final class StreamCallHandler {
     private AuthorizationGate.State settleApproval() {
         final AuthorizationGate.State state = authorizationGate.poll(approvalRequestId);
         switch (state) {
+            case PENDING:
+                // Still waiting: the call stays parked, so the parked state must not be cleared
+                // here. Falling through to the allowed branch would turn "no answer yet" into
+                // "allowed" and let an unauthorized peer reach the stream hub.
+                return state;
             case DENIED:
                 refuseAuthorization(AuthorizationPolicy.REASON_DENIED);
                 return state;
@@ -613,18 +631,22 @@ public final class StreamCallHandler {
     }
 
     /**
-     * Returns whether this call may still be attached; called under the handler monitor.
+     * Re-checks this call against the approval gate; called under the handler monitor.
      *
      * <p>A one-time grant is never re-checked: it does not live in the durable set, so revoking
-     * another device must not end it. A grant that disappears does: the next drain ends the call,
-     * which is what makes a revocation take effect immediately instead of on the next reconnect.</p>
+     * another device must not end it. Everything else is the gate's three-way answer: a waiting
+     * request keeps the call as it is, and only an identity with no grant and nothing waiting is
+     * refused. That is what makes a revocation take effect on the next pass without turning the
+     * wait for an answer into the same refusal.</p>
      */
-    private boolean isStillAllowed() {
+    @NonNull
+    private AuthorizationGate.Review reviewAuthorization() {
         if (oneTimeGrant) {
-            return true;
+            return AuthorizationGate.Review.ALLOW;
         }
         final AuthorizationGate gate = authorizationGate;
-        return gate == null || gate.isAuthorized(deviceId, fingerprint);
+        return gate == null
+            ? AuthorizationGate.Review.ALLOW : gate.review(deviceId, fingerprint);
     }
 
     // Ends a call whose authorization was refused or withdrawn; called under the handler monitor.
