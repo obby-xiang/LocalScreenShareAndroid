@@ -263,14 +263,31 @@ public final class PipelineMetrics {
         AUDIO_FRAMES,
 
         /**
-         * Audio frames dropped by the send queue, the transport or the jitter buffer.
+         * Audio frames dropped by the arrival queue, the transport or the jitter buffer.
          */
         AUDIO_DROPPED,
 
         /**
-         * Audio underruns that were filled with silence.
+         * Audio playback starvations: the output ran dry and had to be padded with silence or
+         * restarted.
+         *
+         * <p>One count per episode, which is the rate the device report reads as "the buffer never
+         * fills". Separate from {@link #AUDIO_DRIFT_INSERT}: a starvation is the sink running dry, a
+         * drift insert is the guard delaying the audio on purpose. They used to share one counter,
+         * which made "the buffer never fills" and "the guard keeps padding" indistinguishable in the
+         * log.</p>
          */
-        AUDIO_UNDERRUNS
+        AUDIO_STARVED,
+
+        /**
+         * Silence frames the drift guard inserted because the audio ran ahead of the timeline.
+         */
+        AUDIO_DRIFT_INSERT,
+
+        /**
+         * Buffered audio frames the drift guard dropped because the audio ran behind the timeline.
+         */
+        AUDIO_DRIFT_DROP
     }
 
     /**

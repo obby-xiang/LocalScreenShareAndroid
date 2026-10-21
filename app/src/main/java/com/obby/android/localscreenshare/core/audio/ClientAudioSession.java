@@ -38,6 +38,11 @@ public final class ClientAudioSession {
     private static final long UNDERRUN_QUIET_MS = 20L;
 
     /**
+     * Minimum interval between two starvation reports, in milliseconds.
+     */
+    private static final long STARVE_LOG_INTERVAL_MS = 1_000L;
+
+    /**
      * Lifecycle state of the client audio track.
      */
     public enum State {
@@ -91,7 +96,9 @@ public final class ClientAudioSession {
 
     private final PipelineMetrics metrics;
 
-    private final AudioJitterBuffer buffer = new AudioJitterBuffer();
+    private final AudioLog log;
+
+    private final AudioJitterBuffer buffer;
 
     private final Object lock = new Object();
 
@@ -116,6 +123,10 @@ public final class ClientAudioSession {
     private byte[] silenceFrame;
 
     private long starvedSinceMs = Long.MIN_VALUE;
+
+    private long lastStarveLogMs = Long.MIN_VALUE;
+
+    private int suppressedStarves;
 
     private long lastDriftCheckMs = Long.MIN_VALUE;
 
@@ -201,6 +212,29 @@ public final class ClientAudioSession {
     public ClientAudioSession(AudioDecoder decoder, AudioSink sink, Listener listener,
                               NanoClock clock, SessionClock sessionClock, PipelineMetrics metrics,
                               boolean asyncWriter) {
+        this(decoder, sink, listener, clock, sessionClock, metrics, asyncWriter, AudioLog.NONE);
+    }
+
+    /**
+     * Creates a session that also reports its decisions to {@code log}.
+     *
+     * <p>The log is injectable for the same reason the clock is: the audio decisions are worth
+     * reading on a device and worth asserting on the JVM, and the core package has no platform
+     * logger.</p>
+     *
+     * @param decoder      audio decoder; required
+     * @param sink         playback sink; required
+     * @param listener     state listener; may be null
+     * @param clock        clock used by the jitter buffer; required
+     * @param sessionClock shared session timeline, or null for a standalone audio timeline
+     * @param metrics      metric scope of the receiving pipeline; required
+     * @param asyncWriter  true to run a dedicated writer thread
+     * @param log          diagnostic sink; required, may be {@link AudioLog#NONE}
+     * @throws IllegalArgumentException if a required argument is null
+     */
+    public ClientAudioSession(AudioDecoder decoder, AudioSink sink, Listener listener,
+                              NanoClock clock, SessionClock sessionClock, PipelineMetrics metrics,
+                              boolean asyncWriter, AudioLog log) {
         if (decoder == null) {
             throw new IllegalArgumentException("decoder must not be null");
         }
@@ -213,6 +247,9 @@ public final class ClientAudioSession {
         if (metrics == null) {
             throw new IllegalArgumentException("metrics must not be null");
         }
+        if (log == null) {
+            throw new IllegalArgumentException("log must not be null");
+        }
         this.decoder = decoder;
         this.sink = sink;
         this.listener = listener;
@@ -220,6 +257,8 @@ public final class ClientAudioSession {
         this.sessionClock = sessionClock;
         this.metrics = metrics;
         this.asyncWriter = asyncWriter;
+        this.log = log;
+        this.buffer = new AudioJitterBuffer(log);
     }
 
     /**
@@ -349,19 +388,22 @@ public final class ClientAudioSession {
         boolean outputFailed = false;
         boolean startWriter = false;
         boolean notifyPlayback = false;
+        long startDepthMs = 0L;
         synchronized (lock) {
             if (closed || state != State.ACTIVE || descriptor != current) {
                 return;
             }
             outputFailed = !ensureFormatLocked(pcm);
             if (!outputFailed) {
+                final long bufferedUs = bufferedUsLocked(clock.nowNs());
                 final AudioJitterBuffer.Plan plan = buffer.plan(accessUnit.getPtsUs(),
-                        pcm.getDurationUs(), bufferedUsLocked(clock.nowNs()), nowMs());
+                        pcm.getDurationUs(), bufferedUs, nowMs());
                 if (plan.isAccept()) {
                     for (int i = 0; i < plan.getDropOldestFrames(); i++) {
                         if (pending.pollFirst() == null) {
                             break;
                         }
+                        metrics.increment(PipelineMetrics.Counter.AUDIO_DROPPED);
                     }
                     final long ptsUs = accessUnit.getPtsUs();
                     for (int i = 0; i < plan.getSilenceFrames(); i++) {
@@ -378,6 +420,7 @@ public final class ClientAudioSession {
                         playing = true;
                         sink.play();
                         notifyPlayback = true;
+                        startDepthMs = bufferedUs / 1_000L;
                     }
                     if (asyncWriter && writer == null) {
                         startWriter = true;
@@ -393,6 +436,7 @@ public final class ClientAudioSession {
             startWriterThread();
         }
         if (notifyPlayback) {
+            log.info(String.format("playback started, buffered = %d ms", startDepthMs));
             notifyState(State.ACTIVE, null);
         }
         if (!asyncWriter) {
@@ -580,6 +624,8 @@ public final class ClientAudioSession {
         if (correction == 0) {
             return;
         }
+        boolean applied = false;
+        long offsetMs = 0L;
         synchronized (lock) {
             if (closed || state != State.ACTIVE) {
                 return;
@@ -587,11 +633,19 @@ public final class ClientAudioSession {
             if (correction > 0) {
                 if (silenceFrame != null) {
                     pending.addLast(new PcmFrame(silenceFrame, lastWrittenPtsUs, true));
-                    metrics.increment(PipelineMetrics.Counter.AUDIO_UNDERRUNS);
+                    metrics.increment(PipelineMetrics.Counter.AUDIO_DRIFT_INSERT);
+                    applied = true;
+                    offsetMs = lastDriftMs;
                 }
             } else if (pending.pollFirst() != null) {
-                metrics.increment(PipelineMetrics.Counter.AUDIO_DROPPED);
+                metrics.increment(PipelineMetrics.Counter.AUDIO_DRIFT_DROP);
+                applied = true;
+                offsetMs = lastDriftMs;
             }
+        }
+        if (applied) {
+            log.info(String.format("drift guard %s one frame, offset = %d ms",
+                    correction > 0 ? "inserted" : "dropped", offsetMs));
         }
     }
 
@@ -684,7 +738,10 @@ public final class ClientAudioSession {
             return;
         }
         while (pending.size() >= MAX_PENDING_FRAMES) {
-            pending.pollFirst();
+            if (pending.pollFirst() == null) {
+                break;
+            }
+            metrics.increment(PipelineMetrics.Counter.AUDIO_DROPPED);
         }
         pending.addLast(frame);
         // The writer sleeps while the queue is empty, so the enqueue is what has to wake it;
@@ -731,6 +788,7 @@ public final class ClientAudioSession {
             }
             final int fillFrames;
             final boolean restart;
+            long starvedGapMs = 0L;
             synchronized (lock) {
                 if (closed) {
                     return;
@@ -767,13 +825,20 @@ public final class ClientAudioSession {
                     final AudioJitterBuffer.Underrun underrun =
                             buffer.onUnderrun(gapMs, frameDurationUsLocked());
                     starvedSinceMs = Long.MIN_VALUE;
+                    starvedGapMs = gapMs;
                     restart = underrun.isRestart();
                     fillFrames = underrun.getSilenceFrames();
                 }
             }
             if (restart) {
+                metrics.increment(PipelineMetrics.Counter.AUDIO_STARVED);
+                log.warn(String.format("restarting playback after a %d ms gap", starvedGapMs));
                 restartPlayback();
                 continue;
+            }
+            if (fillFrames > 0) {
+                metrics.increment(PipelineMetrics.Counter.AUDIO_STARVED);
+                logStarvation(starvedGapMs, fillFrames);
             }
             for (int i = 0; i < fillFrames; i++) {
                 if (!writeSilence()) {
@@ -781,6 +846,38 @@ public final class ClientAudioSession {
                 }
             }
         }
+    }
+
+    /**
+     * Reports one starvation, at most once per {@link #STARVE_LOG_INTERVAL_MS}.
+     *
+     * <p>The report is what turns "a counter grew" into an event with a time: the pts of the last
+     * written buffer, the measured gap, and how much the writer then padded. Without it a field
+     * report can only reconstruct the timeline from {@code AudioFlinger} logs.</p>
+     */
+    private void logStarvation(long gapMs, int frames) {
+        final long currentMs = nowMs();
+        final int suppressed;
+        final int pendingFrames;
+        final long written;
+        final long ptsUs;
+        synchronized (lock) {
+            if (lastStarveLogMs != Long.MIN_VALUE
+                    && currentMs - lastStarveLogMs < STARVE_LOG_INTERVAL_MS) {
+                suppressedStarves++;
+                return;
+            }
+            suppressed = suppressedStarves;
+            suppressedStarves = 0;
+            lastStarveLogMs = currentMs;
+            pendingFrames = pending.size();
+            written = writtenFrames;
+            ptsUs = lastWrittenPtsUs;
+        }
+        log.warn(String.format(
+                "starved: gap = %d ms, filled = %d frames, pts = %d us, pending = %d,"
+                        + " written = %d, suppressed = %d", gapMs, frames, ptsUs,
+                pendingFrames, written, suppressed));
     }
 
     /**
@@ -821,7 +918,6 @@ public final class ClientAudioSession {
         if (silence == null) {
             return true;
         }
-        metrics.increment(PipelineMetrics.Counter.AUDIO_UNDERRUNS);
         return writeFrame(new PcmFrame(silence, ptsUs, true));
     }
 

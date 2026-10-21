@@ -133,14 +133,24 @@ public final class ClientMetricNames {
     public static final String AUDIO_FRAMES = "audio.frames";
 
     /**
-     * Audio frames dropped by the jitter buffer or the drift guard.
+     * Audio frames dropped by the arrival queue, the transport or the jitter buffer.
      */
     public static final String AUDIO_DROPPED = "audio.dropped";
 
     /**
-     * Audio underruns that were filled with silence.
+     * Audio playback starvations: the output ran dry and had to be padded or restarted.
      */
-    public static final String AUDIO_UNDERRUNS = "audio.underruns";
+    public static final String AUDIO_STARVED = "audio.starved";
+
+    /**
+     * Silence frames the drift guard inserted.
+     */
+    public static final String AUDIO_DRIFT_INSERT = "audio.driftInsert";
+
+    /**
+     * Buffered audio frames the drift guard dropped.
+     */
+    public static final String AUDIO_DRIFT_DROP = "audio.driftDrop";
 
     private ClientMetricNames() {
     }

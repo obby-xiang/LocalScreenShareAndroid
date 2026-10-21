@@ -423,7 +423,7 @@ public final class MetricsFormatter {
      * <p>The line is short on purpose, because the overlay already wraps at the narrowest window
      * width the viewer offers. {@code av} is the absolute audio/video offset against the shared
      * session clock, {@code af} the accepted audio frames, {@code ad} the frames the player dropped
-     * and {@code au} the underruns it filled with silence; a viewer that receives no audio still
+     * and {@code as} the starvations it filled with silence; a viewer that receives no audio still
      * sees the fixed shape with {@code n/a} and zero counters.</p>
      */
     private static String audioHudLine(MetricsSnapshot snapshot) {
@@ -440,7 +440,7 @@ public final class MetricsFormatter {
         }
         audio.append(" | af ").append(snapshot.getCounter(PipelineMetrics.Counter.AUDIO_FRAMES));
         audio.append(" | ad ").append(snapshot.getCounter(PipelineMetrics.Counter.AUDIO_DROPPED));
-        audio.append(" | au ").append(snapshot.getCounter(PipelineMetrics.Counter.AUDIO_UNDERRUNS));
+        audio.append(" | as ").append(snapshot.getCounter(PipelineMetrics.Counter.AUDIO_STARVED));
         return audio.toString();
     }
 
@@ -513,16 +513,35 @@ public final class MetricsFormatter {
      *
      * <p>They are the counter half of the audio block whose offset distribution
      * {@link ClientMetricNames#AV_OFFSET} prints: frames tell whether the client is decoding at all,
-     * drops and underruns tell whether the playback path is keeping up. A viewer that never receives
-     * audio produces the same line it did before the audio track existed.</p>
+     * drops and starvations tell whether the playback path is keeping up, and the two drift counters
+     * tell whether the guard had to move the timeline. Zeros are printed as well once the track is
+     * receiving: a zero starvation count is the answer to "is the buffer holding", and it used to be
+     * invisible because the formatter skipped zero values - which is exactly what made the device
+     * report for this bug unreadable. A viewer that never receives audio keeps the line it had before
+     * the audio track existed.</p>
      */
     private static void appendAudioFields(StringBuilder out, MetricsSnapshot snapshot) {
-        appendCounters(out, snapshot, ClientMetricNames.AUDIO_FRAMES,
-                PipelineMetrics.Counter.AUDIO_FRAMES, null);
-        appendCounters(out, snapshot, ClientMetricNames.AUDIO_DROPPED,
-                PipelineMetrics.Counter.AUDIO_DROPPED, null);
-        appendCounters(out, snapshot, ClientMetricNames.AUDIO_UNDERRUNS,
-                PipelineMetrics.Counter.AUDIO_UNDERRUNS, null);
+        final long frames = snapshot.getCounter(PipelineMetrics.Counter.AUDIO_FRAMES);
+        if (frames == 0L) {
+            return;
+        }
+        out.append(' ').append(ClientMetricNames.AUDIO_FRAMES).append('=').append(frames);
+        appendZeroableCounter(out, snapshot, ClientMetricNames.AUDIO_DROPPED,
+                PipelineMetrics.Counter.AUDIO_DROPPED);
+        appendZeroableCounter(out, snapshot, ClientMetricNames.AUDIO_STARVED,
+                PipelineMetrics.Counter.AUDIO_STARVED);
+        appendZeroableCounter(out, snapshot, ClientMetricNames.AUDIO_DRIFT_INSERT,
+                PipelineMetrics.Counter.AUDIO_DRIFT_INSERT);
+        appendZeroableCounter(out, snapshot, ClientMetricNames.AUDIO_DRIFT_DROP,
+                PipelineMetrics.Counter.AUDIO_DRIFT_DROP);
+    }
+
+    /**
+     * Appends one counter field even when its value is zero.
+     */
+    private static void appendZeroableCounter(StringBuilder out, MetricsSnapshot snapshot,
+                                              String key, PipelineMetrics.Counter counter) {
+        out.append(' ').append(key).append('=').append(snapshot.getCounter(counter));
     }
 
     /**

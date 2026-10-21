@@ -7,6 +7,7 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
+import com.obby.android.localscreenshare.core.metrics.PipelineMetrics;
 import com.obby.android.localscreenshare.core.model.AudioAccessUnit;
 import com.obby.android.localscreenshare.core.model.AudioDescriptor;
 import com.obby.android.localscreenshare.core.model.CodecConfigPart;
@@ -301,6 +302,8 @@ public class ClientAudioSessionTest {
         // Six frames were received, so every frame beyond the sixth is silence the writer produced.
         assertTrue("the writer must keep the track fed",
                 fixture.session.getWrittenFrames() > 6L);
+        // The starvation is counted once per episode, which is the rate the device report reads.
+        assertTrue(fixture.metrics.count(PipelineMetrics.Counter.AUDIO_STARVED) >= 1L);
         fixture.session.close();
     }
 
@@ -348,6 +351,8 @@ public class ClientAudioSessionTest {
 
         private final NanoClock clock;
 
+        private final PipelineMetrics metrics;
+
         private final ClientAudioSession session;
 
         private Fixture() {
@@ -356,7 +361,9 @@ public class ClientAudioSessionTest {
 
         private Fixture(boolean asyncWriter, NanoClock clock) {
             this.clock = clock;
-            session = new ClientAudioSession(decoder, sink, null, clock, asyncWriter);
+            this.metrics = PipelineMetrics.create(clock, 16);
+            session = new ClientAudioSession(decoder, sink, null, clock, null, metrics,
+                    asyncWriter);
         }
 
         private void advanceMs(long deltaMs) {

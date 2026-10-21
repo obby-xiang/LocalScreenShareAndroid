@@ -30,7 +30,12 @@ public final class AudioTrackSink implements AudioSink {
      */
     private static final int BUFFER_MS = 128;
 
-    private static final String TAG = "AudioTrackSink@";
+    /**
+     * Minimum interval between two platform-underrun reports, in milliseconds.
+     */
+    private static final long UNDERRUN_LOG_INTERVAL_MS = 1_000L;
+
+    private final String tag = "AudioTrackSink@" + hashCode();
 
     private final AudioTimestamp timestamp = new AudioTimestamp();
 
@@ -41,6 +46,10 @@ public final class AudioTrackSink implements AudioSink {
     private int channels;
 
     private long writtenBytes;
+
+    private int reportedUnderrunCount;
+
+    private long lastUnderrunLogMs;
 
     @Override
     public void open(int sampleRate, int channels) throws AudioSinkException {
@@ -77,7 +86,9 @@ public final class AudioTrackSink implements AudioSink {
             this.sampleRate = sampleRate;
             this.channels = channels;
             this.writtenBytes = 0L;
-            Log.i(TAG, String.format("open: sampleRate = %d, channels = %d, bufferBytes = %d,"
+            this.reportedUnderrunCount = 0;
+            this.lastUnderrunLogMs = 0L;
+            Log.i(tag, String.format("open: sampleRate = %d, channels = %d, bufferBytes = %d,"
                     + " bufferFrames = %d, bufferMs = %d", sampleRate, channels, bufferSize,
                 track.getBufferSizeInFrames(),
                 sampleRate > 0 ? track.getBufferSizeInFrames() * 1_000L / sampleRate : 0L));
@@ -104,9 +115,42 @@ public final class AudioTrackSink implements AudioSink {
                 throw new AudioSinkException("audio track write failed: " + written);
             }
             writtenBytes += written;
+            reportTrackUnderruns(current);
         } catch (RuntimeException e) {
             throw new AudioSinkException("audio track write failed", e);
         }
+    }
+
+    /**
+     * Reports the platform's own underrun counter when it grows.
+     *
+     * <p>This is the number {@code AudioFlinger} increments when the mixer had to fill with zeros;
+     * on the device that reported this bug it grew at 6.03 events per second while the application
+     * only saw 2.60, which is how the two layers were told apart. Reporting it from the application
+     * means the next field report does not have to reconstruct it from {@code dumpsys} and the
+     * platform log. The report is limited to one line per second.</p>
+     */
+    private void reportTrackUnderruns(AudioTrack current) {
+        final int underruns;
+        try {
+            underruns = current.getUnderrunCount();
+        } catch (RuntimeException ignored) {
+            return;
+        }
+        if (underruns <= reportedUnderrunCount) {
+            return;
+        }
+        final long nowMs = System.nanoTime() / 1_000_000L;
+        if (lastUnderrunLogMs != 0L && nowMs - lastUnderrunLogMs < UNDERRUN_LOG_INTERVAL_MS) {
+            return;
+        }
+        // The delta is measured from the last report, not from the last write, so a burst inside one
+        // second is reported as one number instead of only its last increment.
+        final int delta = underruns - reportedUnderrunCount;
+        reportedUnderrunCount = underruns;
+        lastUnderrunLogMs = nowMs;
+        Log.w(tag, String.format("track underrun: +%d since the last report, total = %d,"
+                + " writtenBytes = %d", delta, underruns, writtenBytes));
     }
 
     @Override

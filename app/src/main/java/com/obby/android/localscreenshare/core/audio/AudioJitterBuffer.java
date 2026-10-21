@@ -88,6 +88,8 @@ public final class AudioJitterBuffer {
 
     private static final int MAX_SILENCE_FRAMES = 25;
 
+    private final AudioLog log;
+
     /**
      * What the session should do with one decoded frame.
      */
@@ -186,6 +188,26 @@ public final class AudioJitterBuffer {
     private long silencedFrames;
 
     /**
+     * Creates a buffer that reports its decisions nowhere.
+     */
+    public AudioJitterBuffer() {
+        this(AudioLog.NONE);
+    }
+
+    /**
+     * Creates a buffer that reports the frames it drops and the gaps it fills.
+     *
+     * @param log diagnostic sink; required, may be {@link AudioLog#NONE}
+     * @throws IllegalArgumentException if {@code log} is null
+     */
+    public AudioJitterBuffer(AudioLog log) {
+        if (log == null) {
+            throw new IllegalArgumentException("log must not be null");
+        }
+        this.log = log;
+    }
+
+    /**
      * Decides what to do with a decoded frame.
      *
      * @param ptsUs           presentation timestamp of the frame
@@ -204,17 +226,23 @@ public final class AudioJitterBuffer {
         if (started && depthMs > MAX_DEPTH_MS) {
             dropOldest = (int) Math.max(1L,
                     (depthMs - RECOVER_DEPTH_MS + frameMs - 1) / frameMs);
+            log.warn(String.format("dropping %d buffered frames, depth = %d ms",
+                    dropOldest, depthMs));
         }
 
         int silence = 0;
         if (lastPtsUs != UNSET) {
             if (ptsUs <= lastPtsUs) {
                 droppedFrames++;
+                log.warn(String.format("dropping a late frame, pts = %d us after %d us",
+                        ptsUs, lastPtsUs));
                 return Plan.rejected();
             }
             final long gapFrames = (ptsUs - lastPtsUs + frameUs / 2) / frameUs;
             if (gapFrames >= 2) {
                 silence = (int) Math.min(gapFrames - 1, MAX_SILENCE_FRAMES);
+                log.warn(String.format("gap: %d silence frames before pts = %d us",
+                        silence, ptsUs));
             }
         }
 

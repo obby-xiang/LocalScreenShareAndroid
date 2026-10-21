@@ -65,6 +65,7 @@ import com.google.android.material.slider.Slider;
 import com.obby.android.localscreenshare.MainActivity;
 import com.obby.android.localscreenshare.ViewerActivity;
 import com.obby.android.localscreenshare.R;
+import com.obby.android.localscreenshare.core.audio.AudioLog;
 import com.obby.android.localscreenshare.core.audio.ClientAudioSession;
 import com.obby.android.localscreenshare.core.audio.SessionClock;
 import com.obby.android.localscreenshare.core.audio.mediacodec.AndroidAudioDecoder;
@@ -864,7 +865,17 @@ public class ScreenViewerService extends Service {
     private ClientAudioSession createAudioSession() {
         return new ClientAudioSession(new AndroidAudioDecoder(), new AudioTrackSink(),
                 (state, reason) -> mMainHandler.post(() -> onAudioStateChanged(state, reason)),
-                NanoClock.MONOTONIC, mSessionClock, mMetrics, true);
+                NanoClock.MONOTONIC, mSessionClock, mMetrics, true, new AudioLog() {
+                    @Override
+                    public void info(@NonNull final String message) {
+                        Log.i(mTag, "audio: " + message);
+                    }
+
+                    @Override
+                    public void warn(@NonNull final String message) {
+                        Log.w(mTag, "audio: " + message);
+                    }
+                });
     }
 
     /**

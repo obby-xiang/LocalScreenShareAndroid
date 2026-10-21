@@ -110,7 +110,7 @@ public class AudioVideoSyncTest {
         }
 
         assertTrue(Math.abs(fixture.session.getLastDriftMs()) <= 1L);
-        assertEquals(0L, fixture.counter(PipelineMetrics.Counter.AUDIO_UNDERRUNS));
+        assertEquals(0L, fixture.counter(PipelineMetrics.Counter.AUDIO_DRIFT_INSERT));
         assertEquals(0L, fixture.counter(PipelineMetrics.Counter.AUDIO_DROPPED));
     }
 
@@ -130,7 +130,7 @@ public class AudioVideoSyncTest {
             assertTrue(Math.abs(fixture.session.getLastDriftMs()) <= 1L);
         }
 
-        assertEquals(0L, fixture.counter(PipelineMetrics.Counter.AUDIO_UNDERRUNS));
+        assertEquals(0L, fixture.counter(PipelineMetrics.Counter.AUDIO_DRIFT_INSERT));
         assertEquals(0L, fixture.counter(PipelineMetrics.Counter.AUDIO_DROPPED));
     }
 
@@ -148,7 +148,7 @@ public class AudioVideoSyncTest {
             fixture.session.onAccessUnit(unit(index * FRAME_US));
         }
 
-        assertEquals(1L, fixture.counter(PipelineMetrics.Counter.AUDIO_UNDERRUNS));
+        assertEquals(1L, fixture.counter(PipelineMetrics.Counter.AUDIO_DRIFT_INSERT));
         assertEquals(0L, fixture.counter(PipelineMetrics.Counter.AUDIO_DROPPED));
         assertTrue(fixture.session.getLastDriftMs() >= 100L);
     }
@@ -168,8 +168,8 @@ public class AudioVideoSyncTest {
         fixture.session.onAccessUnit(unit(5 * FRAME_US));
 
         assertTrue(fixture.session.getLastDriftMs() <= -1_000L);
-        assertEquals(1L, fixture.counter(PipelineMetrics.Counter.AUDIO_DROPPED));
-        assertEquals(0L, fixture.counter(PipelineMetrics.Counter.AUDIO_UNDERRUNS));
+        assertEquals(1L, fixture.counter(PipelineMetrics.Counter.AUDIO_DRIFT_DROP));
+        assertEquals(0L, fixture.counter(PipelineMetrics.Counter.AUDIO_DRIFT_INSERT));
         assertEquals(3, fixture.session.getPendingFrames());
     }
 
@@ -189,7 +189,7 @@ public class AudioVideoSyncTest {
         }
 
         assertTrue(fixture.session.getLastDriftMs() >= 120L);
-        assertEquals(0L, fixture.counter(PipelineMetrics.Counter.AUDIO_UNDERRUNS));
+        assertEquals(0L, fixture.counter(PipelineMetrics.Counter.AUDIO_DRIFT_INSERT));
         assertEquals(0L, fixture.counter(PipelineMetrics.Counter.AUDIO_DROPPED));
     }
 
@@ -205,8 +205,8 @@ public class AudioVideoSyncTest {
             fixture.session.onAccessUnit(unit(index * FRAME_US));
         }
 
-        assertEquals(1L, fixture.counter(PipelineMetrics.Counter.AUDIO_UNDERRUNS)
-                + fixture.counter(PipelineMetrics.Counter.AUDIO_DROPPED));
+        assertEquals(1L, fixture.counter(PipelineMetrics.Counter.AUDIO_DRIFT_INSERT)
+                + fixture.counter(PipelineMetrics.Counter.AUDIO_DRIFT_DROP));
     }
 
     @Test
