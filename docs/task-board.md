@@ -21,6 +21,7 @@
 
 ## 🎯 当前焦点
 
+- 2026-10-21 T6 设备报告的 TLS 阻塞项已修复并取得设备证据：**N-t6-1**（AndroidKeyStore 私钥只授权 SHA-256，Conscrypt 握手要 raw digest → `INCOMPATIBLE_DIGEST`，双向双版本全败）改为授权 `{SHA-256, NONE}` + 旧密钥一次性探针重建；**N-t6-2**（服务启动在主线程做 keystore 工作，失败路径 5.4 s 触发 ANR）把 `ScreenShareServer.start()` 移到 `lss-server-control` 线程并用纯 JVM 状态机裁定启停所有权；**N-t6-3**（重置身份后通知栏指纹不刷新）在重置广播里刷新通知。顺带补上手动探测通道缺失的客户端证书（服务端 `clientAuth=REQUIRE` 下探测必然失败）。全量 **1055 tests / 97 classes / 0 failures / 0 errors / 0 skipped**；真机（API 29）服务端 → 模拟器（API 36）观看端 TLS 1.3 双向握手出画通过，详见 [TB-DISC-010](#tb-disc-010) 与 [TB-DISC-012](#tb-disc-012)。
 - 基线参考：`65a34dc`（TB-ENG-004 完成标记）。
 - 编码框架隔离核心批次（Task 1–9，代码范围 `9f650dc..2a95ab2`）见 [TB-DOC-008](#tb-doc-008) 与 [TB-FW-001](#tb-fw-001)；最近完成的条目见 [TB-ENG-004](#tb-eng-004) 与 [TB-ENG-003](#tb-eng-003)。
 - 媒体路径生产接线（批次 A–H）已完成代码层面：双向流协议、StreamRuntime/StreamHub 服务端接线、H.264 采集直通、客户端 ClientMediaSession/Surface 渲染、JPEG 回退、能力选档与切换编排均已落地；仅经 JVM/fake 与编译验证，详见 [TB-FW-003](#tb-fw-003)。
@@ -185,6 +186,7 @@
 - **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟡 P2 / 2026-10-20 / —
 - **任务**：需第二台真机才能验证的事项：跨机 NSD/组播/分级扫描互见（模拟器 NAT 不转发组播，已实测确认）、双真机完整联机行为（真实 LAN RTT/丢包、双端互操作）、收藏与身份跨机行为、多观看者（依赖 [TB-CLIENT-001](#tb-client-001)）。**TLS 专项**（[计划 9.7 D1–D10](superpowers/plans/2026-10-21-tls-tofu.md)）：AndroidKeyStore 私钥握手、API 25 的 TLS 1.2、证书字段解析、首次确认流程、指纹变更拒绝、首连 MITM 演练、TLS 下的扫描预算、性能 A/B、功耗/温升、备份恢复后身份变化。
 - **交付物 / 验证证据**：交付：第二台真机下的互见与联机证据。验证：待用户提供第二台真机后执行；当前仅真机↔模拟器联机（媒体链路双向跑通，发现跨 NAT 不可用）。
+  - **2026-10-21 进展**：T6 设备棒报出的阻塞项 N-t6-1（AndroidKeyStore 私钥无法签 TLS 摘要）、P1 N-t6-2（主线程 keystore/服务启动触发 ANR）、P3 N-t6-3（重置身份后通知指纹不刷新）已修复并取得设备证据，详见 [TB-DISC-010](#tb-disc-010)：D1（私钥握手）在 API 29 服务端 → API 36 观看端以 TLS 1.3 双向握手出画通过，D4 首次确认框与管理探测链路一并打通。仍待复测：API 25 的 TLS 1.2（D2）、D5 观看端半程、同二层伪造公告拒绝（D6）、TLS 下扫描预算（D7）、TLS 侧性能 A/B（D8）、备份恢复（D10），以及 T6 报告的 B 轮（观看端单帧成本、`rx.catchup` 判据）与 N2 线程尖峰。
 - **关联文档**：[发现调研](discovery-research.md)
 
 </details>
@@ -409,7 +411,13 @@
   - 计划：`docs/superpowers/plans/2026-10-21-tls-tofu.md`（`6d747f3`）。
   - 批次：T1 `0f6e96c`、`9adb207`；T2 `c7cb676`、`503663e`；T3 `7995bcb`；T5 `02261d5`（先于 T4 合入，避免调用尚未实现的签名）；T4 `a2f43b5`、`afa4a9e`；`e5fc715` 修正一处既有的手动探测用例竞态并消除 Lombok 告警。
   - JVM：`./gradlew :app:testDebugUnitTest --offline` = **1041 tests / 95 classes / 0 failures / 0 errors / 0 skipped**；`TlsHandshakeEndToEndTest` 用 OkHttp server/channel 在 loopback 跑真实 TLS 握手，覆盖 pin 正确/缺失/不匹配/id 不一致/无客户端证书/缺 `overrideAuthority` 六类；`:app:assembleDebug --offline` 通过；各批 Build 与 Checks CI 均 success（最终 HEAD 的 Build run [39537903021](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39537903021)）。
-  - 边界：AndroidKeyStore 私钥在 Conscrypt 下的握手可用性、API 25、扫描预算、性能 A/B、功耗/温升与备份恢复均未验证（计划 9.7 D1–D10）；TOFU 不是配对，是否允许观看仍归 [TB-SEC-001](#tb-sec-001)。
+  - **2026-10-21 T6 设备报告缺陷修复（N-t6-1/2/3）**：设备报告把 TB-DISC-010 的全部用户可见能力判为「设备上一次都没真正发生」，根因与修复如下；JVM 全量升至 **1055 tests / 97 classes / 0 failures / 0 errors / 0 skipped**（新增 `IdentityKeyPolicyTest` 6 例、`ServerStartCoordinatorTest` 8 例）。
+    - **N-t6-1（P0，阻断）keystore 私钥无法签 TLS 摘要**：根因是身份密钥只授权 `setDigests(SHA256)`，而 Conscrypt 对非原生 EC 私钥走 `CryptoUpcalls` → `Signature("NONEwithECDSA")`（raw digest，digest id 0），keymaster 在 `begin()` 以 `INCOMPATIBLE_DIGEST` 拒绝（API 29 `-65530`、API 36 `Incompatible digest`），双向、双 API 全败。修复：新增纯 JVM `identity/IdentityKeyPolicy`（授权集 `{SHA-256, NONE}` + raw-digest 探针 + 迁移判据），`AndroidKeystoreKeyStore` 以该授权集生成密钥；读到已有密钥时先探测它能否签 raw digest，不能签的一次性替换。**兼容策略**：授权集生成后不可扩展，旧密钥只能重建；旧密钥在 T6 报告里从未完成过任何一次握手，因此不存在已被 pin 的指纹，重建只改变本机 id/指纹（收藏需重新确认，与既有 `reset()` 语义一致），触发点是进程内首次身份加载而不是随机时刻。**并发纪律**：探针按 SPKI 指纹同进程记忆、密钥加载进程内串行、失败重试一次（100 ms）；首版「每次加载都探测」在扫描的 20 个线程并发下触发 keystore「操作重叠」并把密钥连锁删建（日志可见 20 条 `replacing it` 与 3 次 `del USRPKEY`），该缺陷已在本批修掉。
+    - **N-t6-1 连带（D4/D7 不可达的第二个原因）**：`discovery/register/GrpcRegisterStub` 的 TLS 通道没挂身份 `keyManager`，而服务端 `clientAuth=REQUIRE`，手动添加与扫描探测必然以 `PEER_DID_NOT_RETURN_A_CERTIFICATE` 失败并被上层报成 `UNAVAILABLE`；补挂后探测成功、设备行出现，D4 首次确认框才可达。
+    - **N-t6-2（P1）主线程 keystore/服务启动卡 5.4 s 触发 ANR**：修复是把 `ScreenShareServer.start()` 移到单线程 `lss-server-control`，主线程只保留 `startForeground`、`MediaProjection`、虚拟显示与悬浮条；新增纯 JVM `service/ServerStartCoordinator`（`IDLE/STARTING/RUNNING` + 代次令牌）裁定「谁停服务器」——`STARTING` 期间到达的 stop 由启动任务在 `start()` 返回后自行停止（既不重复 stop 也不漏 stop），启动未完成时到达的 `Register`/`stream` 一律拒绝并记日志，`serverInfo` 回调改为回主线程投递，可见启动顺序与同步启动一致。
+    - **N-t6-3（P3）重置身份后通知栏指纹不刷新**：`ACTION_IDENTITY_RESET` 广播在 `restartAnnouncements()` 之后补 `updateNotification()`。
+    - **设备实证（真机 YAL-AL10 / API 29 服务端 → emulator-5554 / API 36 观看端；两机 logcat 中 `INCOMPATIBLE_DIGEST` 与 `Socket failed to handshake` 计数均为 0）**：① 迁移：用旧构建生成的密钥装新构建后 `isUsableForTls: the stored key cannot sign a raw digest, replacing it` → `keystore: del USRPKEY_lss-device-identity` → `device identity changed`，再次冷启动只有 `device identity loaded`（不重复替换）；② D1：TLS 1.3 双向握手成功（`transportReady … securityLevel=PRIVACY_AND_INTEGRITY`），观看端 `mClientState=STREAMING`、`mOutboundDataRate≈23 KB/s` 并显示对方屏幕，服务端 `1 个连接 | 23.26 KB/s`；③ D4：首次确认框显示完整 32 字节指纹，与服务端通知 `比对指纹：36841B44 … 4C5BB31F` 逐组一致；④ N-t6-3：重置前后 `dumpsys notification` 的 `android.subText` 由 `… 36841B44 …` 变为 `… 7053BB23 …`，与设置页 `device_fingerprint_setting` 同步，未重启共享；⑤ N-t6-2：`onStartCommand`（main）后 79 ms 内 `Registration.register` 已落在 `lss-server-cont` 线程、`startAnnouncements` 回到 main，重启共享与身份重置后共 3 次启动，`Davey!`/`ANR in` 均为 0。
+  - 边界：D1 已有设备证据；API 25（TLS 1.2）、D4 之后的首连流程在真实网络下的完整复测、D5 观看端半程、D6 同二层伪造公告、D7 TLS 扫描预算、D8 性能 A/B、D10 备份恢复仍未验证（计划 9.7 D1–D10），完整 T6 复测由下一轮设备棒执行；TOFU 不是配对，是否允许观看仍归 [TB-SEC-001](#tb-sec-001)。
 - **关联文档**：[实施计划](superpowers/plans/2026-10-21-tls-tofu.md)、[TB-SEC-001](#tb-sec-001)、[TB-DISC-012](#tb-disc-012)、[决策看板](decision-board.md)
 
 </details>
