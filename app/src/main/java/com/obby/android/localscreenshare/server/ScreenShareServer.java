@@ -249,7 +249,6 @@ public final class ScreenShareServer {
     private volatile boolean mSecure;
 
     // Reports a silently pinned viewer so the capture service can badge it; set by ScreenShareService.
-    @Setter
     @Nullable
     private PeerTrustListener mPeerTrustListener;
 

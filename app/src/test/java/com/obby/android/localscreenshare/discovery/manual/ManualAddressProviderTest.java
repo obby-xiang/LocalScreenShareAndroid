@@ -127,8 +127,9 @@ public class ManualAddressProviderTest {
 
         final int callsAfterFirstProbe = mProbe.callCount();
         mProvider.probeManualTargets();
-        waitFor(() -> mProbe.callCount() > callsAfterFirstProbe);
+        waitFor(() -> mSink.confirmations.size() == 2);
 
+        assertTrue(mProbe.callCount() > callsAfterFirstProbe);
         assertTrue(mProbe.hosts().contains("192.168.1.9"));
         assertEquals(2, mSink.confirmations.size());
         assertEquals(DiscoveryChannel.MANUAL, mSink.confirmations.get(1).channel);
