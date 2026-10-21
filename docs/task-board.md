@@ -40,6 +40,7 @@
 - 2026-10-21 设备复测（r3）留下的两个 P3 尾巴已修复：**Q-10** 失败回写只改偏好、开着的视频 sheet 滑杆不刷新 — 投影偏好变化时同步全部控件（拖动中的滑杆跳过），映射抽成纯 JVM `ProjectionControlValues`；**Q-11** 画面大小下限 5% 低于本机硬编最小尺寸 — 新增 `EncoderSizeLimitProbe` + 纯 JVM `ProjectionScalePolicy`，按下限与窗口较短边动态抬高滑杆 `valueFrom`（能力未知仍为 5%）。全量 **812 tests / 0 failures / 0 errors / 0 skipped**（72 个测试类）。模拟器实测两项均生效（证据见 [TB-ENG-005](#tb-eng-005)）；真机只读了下限（176×144 → 17%）并还原偏好，画面回归留给下一轮。
 - 2026-10-21 传输与管线可观测性（[TB-OBS-001](#tb-obs-001) 的 O1–O6）已落地代码层面：指标内核（`core/metrics`）、服务端编码/扇出/发送探针、服务端统计聚合与「观看者 · 队列 · 丢弃 · 重同步」摘要行（并入 [TB-ENG-007](#tb-eng-007)）、客户端到达/解码/呈现探针、Ping/Pong 应用层 RTT 探针、悬浮窗三行调试叠加层与每 10 s 设备状态行；两个开关（`KEY_METRICS_ENABLED`、`KEY_VIEWER_HUD_ENABLED`）默认关闭。全量 **899 tests / 0 failures / 0 errors / 0 skipped**（79 个测试类），各批 Build 与 Checks CI 均 success。O7（基线执行与 [DV-001](decision-board.md) 裁决）仍是后续设备棒，设备实测未执行。
 - 2026-10-21 该轮设备验证首轮被 **D-1（P0，阻断）** 挡住并已修复：两个服务把设备采样器写在字段初始化器里，`Class.newInstance` 期间 `attachBaseContext` 尚未调用 → 采样器构造读 `getApplicationContext()` 得到 null base → `Unable to instantiate service` → App 每次启动 FATAL（真机 API 29 与模拟器 API 36 同栈，与 `metrics_enabled` 无关）。改为首次采样惰性创建（`service/LazyContextValue` + 3 条契约用例），两处服务同步改；全量 **902 tests / 0 failures / 0 errors / 0 skipped**（80 个测试类）。设备复验：两机冷启动进主界面、真机开共享 1080×2340、模拟器手动添加后出画一轮，两机 crash buffer 为空。D-2（滑杆下限 17% vs 推算 14%）已核清为口径差异（声明下限 176×144 与硬编实拒阈 144×144），代码无算错，结论与证据见 [TB-OBS-001](#tb-obs-001)。同类反模式禁令已写入[本计划](superpowers/plans/2026-10-21-transport-observability.md) 8.1。
+- 2026-10-21 设备验证 r2 报告的 3 个仪表缺陷已修复（[TB-OBS-001](#tb-obs-001)）：**I-1** 速率字段改为「差分窗口 ÷ 实测间隔」（新增 `MetricsRate`/`RateSampler`，删掉 `MetricsSnapshot.perSecond`/`bitrateBps`，服务端 5 s 行、观看端 5 s 行与 1 s HUD 各持独立基线）；**I-2** 观看端在 `ClientMediaReceiver` 按收到的 AU 累加 `ACCESS_UNITS`/`ACCESS_UNIT_BYTES`（复用到达侧已反序列化的数据，无新增打点），HUD 首行与新增的 `rx.auRate`/`rx.bitrate` 有数；**I-3** 新增 `StreamHub.snapshotSessionMetrics()` + `MetricsFormatter.toSessionLogLine()`，服务端每 5 s 为每个会话说一行 `sid=… tx.send/tx.qResidency/tx.qDepth`（会话 scope 只读、不注册，热路径锁纪律不变）。**Q-1** 按调研结论实现：`max-fps-to-encoder` 私有/公开键 + 失败回退（`new EncoderFormat(...)` 单构造 + `configureWithFallback`），帧率设置从此进入编码器限帧路径；设备是否真的限帧仍待验证棒实测。**Q-2/Q-3** 登记为 [TB-CLIENT-005](#tb-client-005)（解码队列不收敛）与 [TB-CLIENT-006](#tb-client-006)（小窗 HUD 折行），本棒不修。全量 **928 tests / 0 failures / 0 errors / 0 skipped**（82 个测试类），`assembleDebug` 成功；设备复测未执行。
 - 阶段 0 的仪表部分已就位，但基线报告与 DV-001/DV-018 的实测数值仍缺；阶段 1 之后的代码优化尚未开始，当前没有进行中的代码任务。
 - 下一步：按 [渐进优化路线图](optimization-roadmap.md) 的阶段 0 启动可观测性与基线，落地顺序以 [编码框架](codec-framework.md) 为准。
 - 前置约束：拿到基线前，不预设任何性能、发热或延迟收益。
@@ -73,6 +74,8 @@
 | TB-AUDIO-001 | 📋 待办 | 🟡 P2 | 音频链路 | 2026-10-17 | — | [媒体架构](media-architecture.md) |
 | TB-CLIENT-001 | 📋 待办 | 🟡 P2 | 客户端画质与多客户端 | 2026-10-17 | — | [媒体架构](media-architecture.md) |
 | TB-CLIENT-002 | 📋 待办 | 🟡 P2 | 单流与多档流策略 | 2026-10-17 | — | [媒体架构](media-architecture.md) |
+| TB-CLIENT-005 | 📋 待办 | 🟡 P2 | 观看端解码队列背压与降载 | 2026-10-21 | — | [TB-OBS-001](#tb-obs-001) |
+| TB-CLIENT-006 | 📋 待办 | ⚪ P3 | 小窗 HUD 折行与字号自适应 | 2026-10-21 | — | [TB-OBS-001](#tb-obs-001) |
 | TB-CTRL-001 | 📋 待办 | 🟡 P2 | 单客户端反控 | 2026-10-17 | — | [媒体架构](media-architecture.md) |
 | TB-ENG-001 | 📋 待办 | 🟡 P2 | 测试与发布工程 | 2026-10-17 | — | [项目现状](project-assessment.md) |
 | TB-ENG-002 | 📋 待办 | 🟡 P2 | 发布签名加固 | 2026-10-17 | — | [启动与签名清单](startup-checklist.md) |
@@ -260,6 +263,11 @@
   - **验证**：全量 **899 tests / 0 failures / 0 errors / 0 skipped**（79 个测试类，基线 812，只增不减）；`./gradlew :app:assembleDebug --offline` 成功；`check_strings.py`/`check_cjk.py`/`check_docs.py` 全绿；六批 Build 与 Checks CI 均 success。
   - **2026-10-21 设备验证首轮（D-1，P0，阻断）服务构造期 NPE**：设备报告 `device-test-2026-10-21-metrics/report.md` 显示两台设备每次启动都在 1 s 内 FATAL。根因：`ScreenShareService` 的字段初始化器 `new AndroidDeviceProfileSampler(this)`（第二处为 `ScreenViewerService` 的同款字段）在 `Class.newInstance` 期间执行，此时 `attachBaseContext` 尚未调用 → `ContextWrapper.mBase == null` → 采样器构造函数的 `getApplicationContext()` 抛 NPE → 框架报 `Unable to instantiate service`；由 `MainActivity` 的 `bindService` 触发，所以连主界面都进不去，与 `metrics_enabled` 开关无关。修法（`b6cc960`）：新增 `service/LazyContextValue`（构造期只保存上下文供应器与工厂，首次 `get()` 才解析上下文并创建值），两个服务的字段改为 holder、采样点改为 `get().sample()`；`LazyContextValueTest` 3 条守“构造不触上下文”契约（框架实例化路径在 JVM 无法复现，这是可测的那一半）。同类反模式全仓 grep（字段级 `= new Xxx(this)`）只命中这两处，`App` 与 `MainActivity` 的字段初始化器都是 Handler／集合／匿名类，不触 Context；禁令写入[本计划](superpowers/plans/2026-10-21-transport-observability.md) 8.1 的 Review Focus。设备实证（真机 Android 10 + emulator-5554 Android 16）：`installDebug` 后 `am start -W` 冷启动 `LaunchState: COLD`（0.9 s／2.2 s），日志有 `ScreenShareService.onCreate: service created` 与 `onBind`，主界面可达；真机开共享（1080×2340，`VENC_DRV_CreateChn ... Create Channel Success`），模拟器手动添加真机地址:8080 后卡片显示「直播中」，点开出画（浮窗内可见真机界面，录制计时 01:26→01:37 递增、码率 21.89→1.38 KB/s），`ScreenViewerService.onCreate: service created` 首次拿到设备证据（此前只是代码级预测）；两机 crash buffer 为空、无 `Unable to instantiate`。指标开启时设备块正常产出（`lss.metrics` 5 行、`lss.device` 2 行：`role=server thermal=0 battTempC=34.0 heapMB=71.9 threads=633`），确认惰性创建在真实上下文中取数正常。证据：`d1-fix-*.png`、`d1-fix-*-logcat*.txt`、`d1-fix-prefs-*.xml` 与 `d1-fix-evidence.md`（handoff 目录 `device-test-2026-10-21-metrics/`）。清理：两机偏好逐字节还原、force-stop、模拟器 IME 还原、无 adb forward、真机恢复熄屏。CI：Build [39524308921](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39524308921)/Checks [39524308915](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39524308915) success。
   - **2026-10-21 D-2（P3，口径）滑杆下限 17% 与推算 14% 的差异**：报告按 VENC 的 `should between [144 X 144]` 推算 14%，本机日志是 `17% (encoder minimum 176x144, window 1080x2340)`。取值链核对：`EncoderSizeLimitProbe` 取 `getSupportedWidths().getLower()`=176 与 `getSupportedHeights().getLower()`=144（各按对齐向上取），`ProjectionScalePolicy` 取两边百分比的较大者 = `max(ceil(100·176/1080)=17, ceil(100·144/2340)=7)` = 17，宽边主导；报告的 14% 把高度下限 144 代入宽边，属口径错误，代码没有算错。补充实测：把 `projection_scale` 强写 14%（151 → 对齐 148×324）后编码器直接 `Create Channel Success`、无 `should between` 拒绝，说明本机硬编实拒阈确为 144×144、声明下限 176 更严；策略仍用声明下限（平台 API 唯一可移植来源，超出声明范围的尺寸按 API 定义不受支持），口径写进 `ProjectionScalePolicy` 的 Javadoc（`c10fed9`）并在此登记。
+  - **2026-10-21 设备验证 r2 的三个仪表缺陷（I-1/I-2/I-3）修复**：
+    - **I-1（P2）速率类指标口径错**：根因是 `MetricsSnapshot.perSecond()`/`bitrateBps()` 把**自启动累计**的计数器除以本周期（`PipelineMetrics.snapshot()` 从不清零），于是 `enc.auRate`/`enc.bitrate` 每 25 s 单调膨胀，实测打到 151 Mbps（真实码流 0.1–2 Mbps）。修法：新增 `core/metrics/MetricsRate`（一个已关闭区间的帧率/码率值，`hasInterval()` 区分「未测量」与「真的 0」）与 `core/metrics/RateSampler`（读者自持基线，用 scope 的 `NanoClock` 量**实测**间隔而不是名义周期）；`MetricsSnapshot` 只保留累计计数器并删掉两个派生方法，Javadoc 写死「计数器是累计值、`period=` 只是行框架」。服务端 5 s 行、观看端 5 s 行、1 s HUD 各自持有 sampler——同一 scope 被两个读者以不同节奏读取时，基线不能共享。`enc.auRate`/`enc.bitrate` 在没有测量区间时整字段省略；HUD 首行在无区间时打 `n/a` 而不是伪造 `0.0`。
+    - **I-2（P2）观看端 HUD 首行恒 0**：根因是全仓只有 `StreamRuntime`（服务端）累加 `ACCESS_UNITS`/`ACCESS_UNIT_BYTES`，观看端从不累加。修法：`ClientMediaReceiver` 增加 `PipelineMetrics` 依赖，在 `ACCESS_UNIT` 分支用**已反序列化**的 `EncodedAccessUnit.getPayloadLength()` 计数（无新增时钟读取、无重复反序列化；关闭态只是一次 volatile 读）；观看端 5 s 行同时新增 `rx.auRate`/`rx.bitrate`（`ClientMetricNames`），HUD 首行与日志从此同源。
+    - **I-3（P1，取证缺口）`tx.send`/`tx.qResidency`/`tx.qDepth` 不进服务端日志**：根因是 `StreamHub.join()` 给每个 `ClientSendSession` 发的是 `metrics.newScope()` 返回的**独立实例**，服务端 5 s 行只快照服务自己那份 scope。修法：新增 `core/stream/SessionMetricsSnapshot` 与 `StreamHub.snapshotSessionMetrics(periodMs)`（会话表在锁内拷贝、每个 scope 锁外读取，与既有 `snapshotSessions()` 同一模式），`ClientSendSession.snapshotMetrics()` 直接读自己的 scope；新增 `MetricsFormatter.toSessionLogLine()` 复用同一套键输出 `role=server period=5000 sid=… tx.send.p50/p95/max tx.qResidency.p95/max tx.qDepth.max tx.sent tx.resync`，服务端 5 s 循环为每个会话各打一行（无样本的会话跳过）。会话 scope 的 `SENT_UNITS`/`RESYNCS` 在既有计数点补写，`tx.drop` 仍无来源（丢弃数在队列内部、读取需进同步块，按热路径纪律本棒不加探针）。`sid` 口径抽到 `ClientSessionKey.tailOf()`，两端同一实现。
+    - **验证**：新增 `RateSamplerTest`（差分口径、实测周期、零帧、无区间、关闭态、双读者独立基线）与 `AndroidMediaCodecEncoderBridgeTest`（Q-1 回退）；`MetricsFormatterTest` 覆盖速率省略/零速率/会话行/客户端速率，`StreamHubTest` 覆盖会话指标导出与排序，`ClientMediaReceiverTest` 覆盖计数与关闭态，`ClientSessionKeyTest` 覆盖 sid 尾截取；全量 **928 tests / 0 failures / 0 errors / 0 skipped**（82 个测试类），`:app:assembleDebug` 与 `:app:compileDebugAndroidTestJavaWithJavac` 成功。**设备复测未执行**：真机/模拟器上「速率读数是否回到 <2 Mbps 量级」「HUD 首行是否有数」「服务端日志是否出现 sid 行」三个点位留给验证棒。
   - **未完成（O7）**：基线执行、注入拥塞对照实验、基线报告与 [DV-001](decision-board.md) 裁决全部未做；本节所有指标都没有设备数值。
 - **边界与风险**：`enc.cap2out` 依赖「采集 PTS 与单调钟同基」的假设（已自校准 + 越界停用）；`rx.rowd` 依赖 30 s 滑动最小值抵消时钟差；TCP 上没有丢帧只有晚到，因此 DV-001 的判据是卡顿时长与频率而不是丢包率；`ServerStats` 的 `Parcel` 往返只能在设备上验证。
 - **关联文档**：[本计划](superpowers/plans/2026-10-21-transport-observability.md)、[路线图阶段 0](optimization-roadmap.md)、[项目现状](project-assessment.md)、[DV-001](decision-board.md)、[DV-018](decision-board.md)
@@ -323,6 +331,29 @@
 - **任务**：兼容单流与多档流策略：默认共同能力交集；多档流让高能力客户端用高规格、其他客户端保留 H.264 档；受编码器实例、功耗与热限制；新客户端不得迫使已有客户端无提示降级；小窗/全屏可选不同档位。
 - **交付物 / 验证证据**：交付：选流策略、档位切换与可见回退、多客户端影响评估。验证：多客户端组合下无静默降级；档位切换 configEpoch/IDR 正确；编码器实例与功耗在预算内；无实测收益时保持单流；当前未执行。
 - **关联文档**：[媒体架构兼容单流与多档编码](media-architecture.md)、[决策 DB-MULTI-004](decision-board.md)、[路线图阶段 3](optimization-roadmap.md)
+
+</details>
+
+<a id="tb-client-005"></a>
+<details><summary>TB-CLIENT-005 观看端解码队列背压与降载（📋 待办 · 设备验证 Q-2 登记）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟡 P2 / 2026-10-21 / —
+- **任务**：观看端在 1080p 30 fps 下解码跟不上时，`ScreenShareClient` 的 `LinkedBlockingQueue(256)` 只做「满则丢弃新消息」，已入队的帧不会作废，画面可长期滞后 20–26 s（实测 `rx.qWait.p50` 15–19 s、HUD `q 256`、`rx.shed` > 7 000、同步抓帧滞后 ≈26 s；断开重连后 `qWait` 立刻回到 0.4 ms，说明队列本身不清空就永远追不上）。本条目要做的是**背压与降载策略**：至少包含「解码线程积压时丢弃到最新可解码点（等 IDR/join point）+ 队列水位驱动的降载信号」，并决定是否需要向服务端表达「我处理不过来」（例如请求更低档位的控制消息或降分辨率）。
+- **交付物 / 验证证据**：交付：接收侧的丢弃/追赶策略与状态机（何时清队列、何时等 IDR、何时请求关键帧）、队列水位指标与 HUD 呈现、必要的单测与设备点位。验证：1080p 30 fps 下连续播放 3 min，`rx.qWait.p50` 不超过数百毫秒、同步抓帧滞后 < 1 s、`rx.shed` 不持续增长；链路干净时不得因策略本身丢帧（`rx.seqGap` 与 `pres.drop` 不因策略上升）。
+- **已观察实例**：`device-test-2026-10-21-metrics-r2/report.md` §7（Q-2），证据 `shots/lag-phone.png`、`shots/lag2-*.png`；`ScreenShareClient.DECODE_QUEUE_CAPACITY = 256`。
+- **关联文档**：[TB-OBS-001](#tb-obs-001)、[媒体架构](media-architecture.md)、[决策 DB-OBS-002](decision-board.md)
+
+</details>
+
+<a id="tb-client-006"></a>
+<details><summary>TB-CLIENT-006 小窗 HUD 折行与字号自适应（📋 待办 · 设备验证 Q-3 登记）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：📋 待办 / ⚪ P3 / 2026-10-21 / —
+- **任务**：观看窗缩到 630×1364（显示大小 60%）时，`SurfaceShareViewer` 的 HUD（`11sp` 等宽字体、`WRAP_CONTENT`、内边距 12/8）第三行 `rowd +… | stall … | drop … | kf …` 超出窗口宽度，TextView 自行折行，三行变五行。做**字号按窗口宽度自适应**（或等价的换行策略），保证窗口 ≥60% 时仍是固定三行。
+- **交付物 / 验证证据**：交付：HUD 文本尺寸/布局随窗口宽度的确定性规则（例如可用宽度不足时在 8–11sp 之间降字号，仍不足再退化为允许折行），以及「行数 = 3」的判定方式。验证：在 1080p 与 60% 小窗两档下截图对照，三行完整可读、不遮挡单击/双击/拖拽手势，关闭态仍不刷新。
+- **已观察实例**：`device-test-2026-10-21-metrics-r2/report.md` §7（Q-3），证据 `shots/o6-hud-smallwindow-60.png`。
+- **边界**：纯呈现问题，不影响指标数值与媒体路径；因需要肉眼对照截图，应排在一次设备棒里做，不与媒体路径改动混批。
+- **关联文档**：[TB-OBS-001](#tb-obs-001)、[本计划](superpowers/plans/2026-10-21-transport-observability.md) 6.6
 
 </details>
 
@@ -478,6 +509,7 @@
     ② **顺序（失败=零副作用）**：新增 `service/ProjectionSizeCoordinator`（纯 JVM）固定「先切编码器、成功后才 resize 显示」；编码器拒绝时显示与编码器都留在旧几何。选择这个顺序而不是「先 resize 再失败回滚」的理由：回滚方案在同一个主线程帧内仍会出现短时错配，且需要第二次 resize 才能恢复，而编码器优先在最坏情况下也是零可见变化；代价是切换与 resize 之间最多一两帧按旧尺寸被编码面拉伸，量级远小于整段会话的挤压。`switchEncoderToCurrentSettings()` 拆出带显式尺寸的重载（`buildRequestedDescriptor(epoch, size)`），因为 `mProjectionSize` 在切换成功前仍是旧值。
     ③ **可感知**：拒绝时 `Log.e` 记录请求尺寸/保持尺寸/生效比例，Toast 告知实际保持的尺寸，并把 `projection_scale` 回写为实际生效值（`mAppliedProjectionScale`），不再停留在「已落盘但未生效」。回写的取舍：瞬时资源失败也会让滑杆回到生效值，但比「值看着改了、画面没变」更诚实；切换本身已带一次重试。
     回归：`EncoderSizeAlignmentTest` 6 条（885→884、853→852、16/8 步长、小于一步、非法步长）与 `ProjectionSizeCoordinatorTest` 4 条（先编码器后显示、拒绝时显示不被触碰、无编码器路径、缺失显示端）；全量 **790 tests / 0 failures / 0 errors / 0 skipped**（70 个测试类）。CI：Build [39462172014](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39462172014)/Checks [39462172116](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39462172116) success（`f30249f`）。**仍需设备复测**：82%/79% 应正常出画、画面完整无黑带，且失败路径不再产生错配。
+  - **2026-10-21 「最大帧率」只写 `KEY_FRAME_RATE`、没有提交侧节流（Q-1，P3）**：设备实测把帧率设到 15 后 `enc.outInterval.p50` 仍是 33 ms（≈30 fps），设 40 也一样；`KEY_FRAME_RATE` 对硬编只是码控目标，不构成上限。调研结论（[DV-011](decision-board.md)，含 scrcpy 源码与平台文档）：本项目是 VirtualDisplay → 编码器输入面直通，采集侧没有可插帧的节点，`ImageReader` 中转会把 1080p 变成 CPU 路径；平台自 API 29 起公开 `MediaFormat.KEY_MAX_FPS_TO_ENCODER`（值 `"max-fps-to-encoder"`，float），语义正是「surface-input 编码器丢弃超过该帧率的源帧」，scrcpy 也是唯一用这一把键（其 `SurfaceEncoder` 同时把 `KEY_FRAME_RATE` 固定为 60 并注明它不影响实际帧率）。**低风险 → 本棒实现**：`EncoderFormat` 增加 `maxFpsToEncoder`（单构造，0 = 不请求）并由 `H264Encoder` 传入用户设置的帧率；`AndroidMediaCodecEncoderBridge.configure()` 在请求上限时写入该键，若编码器拒绝（`IllegalArgumentException`/`IllegalStateException`）则 `reset()` 后**去掉该键重配一次**（`configureWithFallback`，包内可见、JVM 可测），因此不认识的厂商编码器最多退化为旧行为，不会让流起不来。测试：`AndroidMediaCodecEncoderBridgeTest` 6 条（接受、回退一次、非上限原因照旧抛出、去键后其余字段不变、0 表示不请求、null 断言）与 `H264EncoderTest` 2 条（提示值即上限、15 fps 传入上限 15）。边界：键名用字符串字面量以兼容 minSdk 25（API 25–28 上该键是私有的，行为取决于厂商）；**编码器是否真的限帧只能设备验证**——真机 YAL-AL10 上 `enc.outInterval.p50` 应从 33 ms 升到约 67 ms（15 fps），若不变则该编码器忽略此键，[DV-011](decision-board.md) 仍维持「不做严格保证」，届时再评估 GPU 上游限帧。
   - 实现细节同步到 [媒体架构 §4.4](media-architecture.md)（对齐在尺寸源头、先编码器后显示、失败可感知）。
 - **关联文档**：[实施计划](superpowers/plans/2026-10-21-viewer-quality-and-settings.md)、[TB-ENG-005](#tb-eng-005)、[决策 DB-CODEC-003](decision-board.md#db-codec-003)
 

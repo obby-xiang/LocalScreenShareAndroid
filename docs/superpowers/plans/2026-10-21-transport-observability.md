@@ -101,15 +101,15 @@ flowchart LR
 | --- | --- | --- | --- | --- |
 | `enc.cap2out` | 采集时间戳 → 编码输出可取出的时长（ms），含编码器排队，p50/p95/max | `H264Encoder.drain`（`:373` 前后） | 🔧 | 第 8 问「编码段耗时」；与客户端 ROWD 对比可区分"编码积压 vs 传输积压" |
 | `enc.outInterval` | 相邻编码输出 PTS 之差（ms），p50/p95 | 同上 | 🔧 | 采集侧帧节奏的替代量（3.5 节） |
-| `enc.auRate` | 每窗口编码 AU 数 / 秒 | `StreamRuntime.onAccessUnit`（`:707`） | 🔧 | 实际编码帧率，对照 `KEY_FRAME_RATE` 提示值（DB-CODEC-004） |
+| `enc.auRate` | 编码 AU 数 / 秒，**按相邻两次快照的实测间隔差分**（不是累计值 ÷ 周期） | `StreamRuntime.onAccessUnit` 计数 + 读者侧 `RateSampler` | 🔧 | 实际编码帧率，对照 `KEY_FRAME_RATE` 提示值与 `max-fps-to-encoder` 上限（DB-CODEC-004、DB-OBS-003） |
 | `enc.auBytes` | AU 大小分布（B），p50/p95/max | 同上（`payload.length`） | 🔧 | 码率尖峰、IDR 大小、队列上限（DV-018）的取值依据 |
-| `enc.bitrate` | 编码输出字节 / 秒 | 同上 | 🔧 | 对照设置值 4 Mbps，验证码率控制是否有效 |
+| `enc.bitrate` | 编码输出字节 / 秒，**按实测间隔差分**（`MetricsRate`） | 同上 | 🔧 | 对照设置值 4 Mbps，验证码率控制是否有效 |
 | `kf.request` | 关键帧请求次数 / 窗口 | `StreamRuntime.requestJoinPoint`（`:438-450`） | 🔧 | 客户端卡顿的间接信号；请求风暴检测 |
 | `kf.joins` | 实际发出的 join point 数 / 窗口 | `StreamRuntime.onAccessUnit` 的 `isJoinPoint` 分支（`:729`） | 🔧 | 与 `kf.request` 对比，可得"请求被限频/被忽略"的比例 |
 | `tx.clients` | 扇出会话数 | `StreamHub.getSessionCount()`（`:373`） | ✅ | 多客户端场景基线 |
 | `tx.qDepth` / `tx.qBytes` | 每客户端发送队列当前深度（units / B），窗口内 max | `ClientSendSession.getStats()`（`:352`） | ✅（峰值聚合属 O2） | 慢客户端识别；DV-018 的队列上限依据 |
 | `tx.qResidency` | AU 从入队到被取走的时长（ms），p50/p95/max | `ClientSendSession.drainOne` + 队列 `enqueuedMs`（`BoundedAccessUnitQueue.java:259-268`） | 🔧 | 发送侧排队延迟；需给 `QueuePollResult` 增加入队时间戳（见 8.3） |
-| `tx.send` | 单次 `sendAccessUnit` 调用耗时（ms），p50/p95/max | `ClientSendSession.drainOne`（`:311`） | 🔧 | **TCP 反压的直接证据**：`onNext` 在流控窗口耗尽时阻塞 |
+| `tx.send` | 单次 `sendAccessUnit` 调用耗时（ms），p50/p95/max；每会话一行 `role=server sid=…`（`toSessionLogLine`） | `ClientSendSession.drainOne`（`:311`） | 🔧 | **TCP 反压的直接证据**：`onNext` 在流控窗口耗尽时阻塞 |
 | `tx.sent` / `tx.drop` / `tx.resync` | 累计发送单元、累计丢弃、重同步次数 | `ClientSendStats` | ✅ | DV-018 的重同步次数 |
 | `tx.wire` | 每远程地址出站字节 / 秒 | `ServerStreamTracer.outboundWireSize`（`ScreenShareServer.java:347`） | ✅ | 已实现，不重复造 |
 | `tx.flowWindow` | gRPC 流控窗口占用估算 = `tx.qBytes` / 1 MiB | 派生 | ⚠️ | 只是近似：真正占用在 gRPC 内部 |
@@ -119,6 +119,7 @@ flowchart LR
 | 键 | 含义（单位） | 采集点 | 类别 | 用途 |
 | --- | --- | --- | --- | --- |
 | `rx.arr` | 相邻 AU 到达间隔（ms），p50/p95/p99 | `ScreenShareClient.onNext`（`:229`）打时间戳 | 🔧 | **DV-001 的"帧到达间隔 p95/p99"** |
+| `rx.auRate` / `rx.bitrate` | 收到 AU 数 / 秒与负载 bit/s，**按实测间隔差分** | `ClientMediaReceiver` 计数（复用已反序列化的 AU）+ `RateSampler` | 🔧 | 观看端 HUD 首行与日志同源；与 `enc.auRate`/`enc.bitrate` 对照可分辨「没发出」与「没收到」（DB-OBS-003） |
 | `rx.rowd` | 相对单向延迟（ms，定义见 6.2），p50/p95/max | 到达时间戳 + AU `ptsUs` | 🔧 | **DV-001 的核心可判决量**：传输造成的延迟增长 |
 | `rx.stall` / `rx.stallMax` | 到达空窗超过阈值的次数 / 最长时长（ms） | 由 `rx.arr` 派生 | 🔧 | **重传拖尾的可观测影子**（TCP 不丢帧，只卡住） |
 | `rx.seqGap` | `AccessUnit.sequence` 不连续次数 | 到达侧按 `(epoch, sequence)` 判重 | 🔧 | 区分"服务端没发"与"路上丢了" |
@@ -210,6 +211,18 @@ W3C 的 `RTCInboundRtpStreamStats` / `RTCOutboundRtpStreamStats` 已经把"投�
 2. **窗口与分位在快照侧算**：环形缓冲固定容量，排序只发生在 1 s 一次的聚合线程上。
 3. **统计必须可关**：关闭时每个探针是一次 `volatile boolean` 读；不允许出现"关不掉"的埋点。
 4. **口径要能对外对齐**：冻结、呈现间隔、解码时延都按 WebRTC 的定义写，便于用第三方工具交叉验证（第 7.2 节的 A/B 验收也依赖这一点）。
+
+### 4.6 编码前限帧：唯一低风险的杠杆（2026-10-21 补充）
+
+设备验证 r2 发现「最大帧率」设 15 后 `enc.outInterval.p50` 仍是 33 ms（见 Q-1）。本架构是 VirtualDisplay → 编码器输入面直通，采集侧没有可插帧的节点，因此比较了三条路：
+
+| 路径 | 证据 | 结论 |
+| --- | --- | --- |
+| `MediaFormat.KEY_FRAME_RATE` | 平台把它定义为码控目标；scrcpy 的 `SurfaceEncoder` 把它**固定为 60** 并注明 "does not impact the actual frame rate, which is variable" | 不是上限，保持现状 |
+| `max-fps-to-encoder`（API 29 公开 `MediaFormat.KEY_MAX_FPS_TO_ENCODER`，float） | 平台文档：*"Instruct the video encoder in surface-input mode to drop excessive frames from the source, so that the input frame rate to the encoder does not exceed the specified fps"*；scrcpy 在 `maxFps > 0` 时写入同一把键（其注释指出该键在 Android 10 之前是私有的） | **低风险、唯一可选项**：不认识的编码器忽略该键，最坏退化为今天的行为 |
+| 采集侧节流（中间 Surface + GL 限帧 / ImageReader 中转） | 需要自建 EGL 管线或把 1080p 拉回 CPU 路径 | 高风险，与 DB-RENDER-002 的 GL 管线评估一起考虑，不在本轮 |
+
+处置：写入该键 + 被拒绝时 `reset()` 后去键重配一次；**是否真的限帧只能设备验证**（设 15 fps 后 `enc.outInterval.p50` 应从 33 ms 升到约 67 ms）。若真机忽略该键，[DV-011](../../decision-board.md) 维持"不做严格保证"，并把 GPU 上游限帧升级为独立设计任务。
 
 ## 5. 架构方案
 
@@ -674,6 +687,10 @@ Review Focus（最容易咬人的失败模式）：
 
 另需在 [决策看板](../../decision-board.md) 的"待决策/待验证"表登记两条 DV：一条是"`rx.stall` 阈值与用户可感知卡顿的对应关系"，一条是"`StreamQueueLimits` 的最终取值"（后者与 DV-018 合并即可，不重复开条目）。
 
+## 10.1 修订记录
+
+- **2026-10-21（设备验证 r2 复盘）**：① 3.2 的 `enc.auRate`/`enc.bitrate` 与 3.3 新增的 `rx.auRate`/`rx.bitrate` 明确为「按实测间隔差分」，并落成 `MetricsRate`/`RateSampler`（[DB-OBS-003](../../decision-board.md)，I-1）；② 3.3 的接收侧计数由 `ClientMediaReceiver` 在已反序列化的 AU 上完成，HUD 首行不再恒为 0（I-2）；③ `tx.send`/`tx.qResidency`/`tx.qDepth` 改为每会话一行 `role=server sid=…`（`StreamHub.snapshotSessionMetrics()` + `MetricsFormatter.toSessionLogLine()`），会话 scope 仍只读不注册（I-3）；④ 新增 4.6「编码前限帧」的调研结论与 `max-fps-to-encoder` 处置（Q-1）。Q-2（观看端解码队列不收敛）与 Q-3（小窗 HUD 折行）不在本轮处理，已登记 [TB-CLIENT-005](../../task-board.md#tb-client-005) 与 [TB-CLIENT-006](../../task-board.md#tb-client-006)。
+
 ## 11. 附录：证据索引
 
 代码（`22c82b8`）：
@@ -708,4 +725,6 @@ Review Focus（最容易咬人的失败模式）：
 - [gRPC Keepalive 指南（HTTP/2 PING 可估 RTT；keepalive 默认与作用域）](https://grpc.io/docs/guides/keepalive/)
 - [Android MediaCodec（`releaseOutputBuffer` 时间戳、输入缓冲超时语义）](https://developer.android.com/reference/android/media/MediaCodec)
 - [Grafika 风格解码时延测量（queueInputBuffer 与 dequeueOutputBuffer 按 PTS 对齐）](https://exchangetuts.com/how-to-reduce-latency-in-mediacodec-videoavc-decoding-1641344283644936)
+- [scrcpy SurfaceEncoder（`max-fps-to-encoder` 的写法与 `KEY_FRAME_RATE` 语义说明）](https://github.com/Genymobile/scrcpy/blob/master/server/src/main/java/com/genymobile/scrcpy/video/SurfaceEncoder.java)
+- [Android MediaFormat（`KEY_MAX_FPS_TO_ENCODER`，API 29，surface-input 编码器丢帧）](https://developer.android.com/reference/android/media/MediaFormat)
 - 项目内原始需求：原始 12 问的第 8/9 问回答（`original-questions-answers.md`，仓库外材料，2026-10-20 由用户提供，不在本仓库内，因此不列入链接校验）
