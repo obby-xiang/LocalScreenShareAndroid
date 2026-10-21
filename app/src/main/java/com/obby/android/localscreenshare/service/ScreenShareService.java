@@ -552,7 +552,12 @@ public class ScreenShareService extends Service {
     private final AuthorizationGate.Listener mApprovalListener = new AuthorizationGate.Listener() {
         @Override
         public void onApprovalRequested(@NonNull final ApprovalRequest request) {
-            mMainHandler.post(() -> onApprovalRequested(request));
+            // Logged here rather than only on the main thread: this is the one point that tells a
+            // prompt the service never showed apart from a prompt the gate never asked for.
+            Log.i(mTag, "mApprovalListener.onApprovalRequested: gate asked for a prompt"
+                + ", requestId = " + request.getRequestId()
+                + ", verifiedIdentity = " + request.hasVerifiedIdentity());
+            mMainHandler.post(() -> ScreenShareService.this.onApprovalRequested(request));
         }
 
         @Override
@@ -2474,7 +2479,9 @@ public class ScreenShareService extends Service {
             Log.w(mTag, "onAuthorizationDecision: ignoring an unusable decision");
             return;
         }
-        gate.resolve(requestId, outcome);
+        final boolean isApplied = gate.resolve(requestId, outcome);
+        Log.i(mTag, "onAuthorizationDecision: outcome = " + outcome + ", requestId = " + requestId
+            + ", applied = " + isApplied);
     }
 
     @NonNull
