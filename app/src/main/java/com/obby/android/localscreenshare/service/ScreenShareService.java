@@ -114,6 +114,8 @@ import com.obby.android.localscreenshare.discovery.udp.SocketMulticastTransport;
 import com.obby.android.localscreenshare.identity.DeviceIdentity;
 import com.obby.android.localscreenshare.identity.IdentityManager;
 import com.obby.android.localscreenshare.identity.IdentityUnavailableException;
+import com.obby.android.localscreenshare.identity.tls.TlsMaterial;
+import com.obby.android.localscreenshare.identity.tls.TlsMaterialHolder;
 import com.obby.android.localscreenshare.server.ScreenShareServer;
 import com.obby.android.localscreenshare.server.ServerInfo;
 import com.obby.android.localscreenshare.server.ServerInfoListener;
@@ -254,6 +256,13 @@ public class ScreenShareService extends Service {
 
     @NonNull
     private final Runnable mVisibilityExpiryRunnable = this::restartAnnouncements;
+
+    // Refreshes everything that names this device when the identity key changes under a running
+    // session; the notification is posted because the listener runs on a keystore thread.
+    @NonNull
+    private final TlsMaterialHolder.IdentityChangeListener mLocalIdentityListener =
+        (previousFingerprint, material) -> mMainHandler.post(
+            () -> onLocalIdentityChanged(previousFingerprint, material));
 
     // Debounced encoder rebuild raised by frame-rate and key-frame-interval changes.
     @NonNull
@@ -636,12 +645,7 @@ public class ScreenShareService extends Service {
             if (ServiceProtocol.ACTION_STOP_SERVICE.equals(intent.getAction())) {
                 stopService();
             } else if (ServiceProtocol.ACTION_IDENTITY_RESET.equals(intent.getAction())) {
-                restartAnnouncements();
-                // The notification carries the fingerprint guide of this device. It has to show the
-                // new identity immediately, because the user may compare the two values right after
-                // the reset (N-t6-3); waiting for the next statistics or peer event left the old
-                // fingerprint there until sharing was restarted.
-                updateNotification();
+                onIdentityResetCommand();
             }
         }
     };
@@ -864,6 +868,7 @@ public class ScreenShareService extends Service {
         intentFilter.addAction(ServiceProtocol.ACTION_STOP_SERVICE);
         intentFilter.addAction(ServiceProtocol.ACTION_IDENTITY_RESET);
         ContextCompat.registerReceiver(this, mBroadcastReceiver, intentFilter, ContextCompat.RECEIVER_NOT_EXPORTED);
+        TlsMaterialHolder.get().addIdentityChangeListener(mLocalIdentityListener);
 
         mIsProjectionSecure = Preferences.get().isProjectionSecure();
         mProjectionScale = Preferences.get().getProjectionScale();
@@ -890,6 +895,7 @@ public class ScreenShareService extends Service {
         Log.i(mTag, "onDestroy: service destroyed");
 
         unregisterReceiver(mBroadcastReceiver);
+        TlsMaterialHolder.get().removeIdentityChangeListener(mLocalIdentityListener);
         Preferences.get().removeObserver(mPreferencesObserver);
         mMainHandler.removeCallbacks(mEncoderRebuildRunnable);
         stopThermalMonitor();
@@ -1320,13 +1326,66 @@ public class ScreenShareService extends Service {
     /**
      * Stops the current announcer and starts a fresh one with the new identity.
      *
-     * <p>Called after {@link IdentityManager#reset()} through the package-scoped reset broadcast.
-     * The capture pipeline and the gRPC server keep running; only the announced identity changes.</p>
+     * <p>Called after {@link IdentityManager#reset()} through the package-scoped reset broadcast, and
+     * after an identity change was detected while the session was running. The capture pipeline and
+     * the gRPC server keep running; only the announced identity changes.</p>
      */
     private void restartAnnouncements() {
-        Log.i(mTag, "restartAnnouncements: restart announcements after identity reset");
+        Log.i(mTag, "restartAnnouncements: restart announcements after an identity change");
         stopAnnouncements();
         startAnnouncements();
+    }
+
+    /**
+     * Applies a user-requested identity reset to the running session.
+     *
+     * <p>The activity already replaced the key; this only re-reads it, because the TLS material of
+     * the session still describes the old one. The read and the certificate signature block, so they
+     * run on the control thread. The identity-change listener refreshes the published server info,
+     * the announcement and the notification from the new material, which is also what keeps the
+     * {@code Register} summary and the handshake certificate on the same identity (N3).</p>
+     */
+    private void onIdentityResetCommand() {
+        try {
+            mServerControlExecutor.execute(() -> {
+                try {
+                    // Detects the replaced key and publishes the new material to the session.
+                    TlsMaterialHolder.get().material();
+                } catch (IdentityUnavailableException e) {
+                    // The old identity stays visible, so the user can still compare fingerprints;
+                    // say so instead of silently keeping a stale value.
+                    Log.e(mTag, "onIdentityResetCommand: TLS material rebuild failed", e);
+                    mMainHandler.post(() -> {
+                        restartAnnouncements();
+                        updateNotification();
+                    });
+                }
+            });
+        } catch (RuntimeException e) {
+            // The executor is shut down during teardown; a reset that late changes nothing.
+            Log.w(mTag, "onIdentityResetCommand: service is stopping, reset not applied", e);
+        }
+    }
+
+    /**
+     * Rebinds the running session to a replaced identity key.
+     *
+     * <p>The key is the identity: the announcement, the {@code Register} summary, the NSD record and
+     * the handshake certificate all name it, and the notification shows its fingerprint. When the
+     * keystore hands out a different key mid-session — a reset, or a replacement the keystore forced
+     * — every one of them has to follow immediately, or peers keep a value that no certificate can
+     * prove any more.</p>
+     */
+    private void onLocalIdentityChanged(@NonNull final String previousFingerprint,
+        @NonNull final TlsMaterial material) {
+        Log.e(mTag, "onLocalIdentityChanged: the identity key changed while running, "
+            + "previousFingerprint = " + previousFingerprint + ", fingerprint = "
+            + material.getFingerprint());
+        if (mServer != null) {
+            mServer.onIdentityChanged(material);
+        }
+        restartAnnouncements();
+        updateNotification();
     }
 
     /**
@@ -1334,7 +1393,10 @@ public class ScreenShareService extends Service {
      *
      * <p>The fingerprint is deliberately absent and the device name is only present when the user
      * enabled name sharing. The port is the bound gRPC port, which is what a peer uses to call
-     * {@code Register}.</p>
+     * {@code Register}. The id comes from the TLS material of the session, so the announced device is
+     * always the one the handshake certificate proves; the material is read from the cache because
+     * this runs on the main thread and must not block on the keystore.</p>
+     *
      */
     @Nullable
     private Announcement buildAnnouncement() {
@@ -1342,13 +1404,14 @@ public class ScreenShareService extends Service {
         if (serverInfo == null || serverInfo.getPort() <= 0) {
             return null;
         }
-        final DeviceIdentity identity;
-        try {
-            identity = IdentityManager.get().getIdentity();
-        } catch (IdentityUnavailableException e) {
-            Log.w(mTag, "buildAnnouncement: device identity unavailable");
+        final TlsMaterial material = TlsMaterialHolder.get().getCachedMaterial();
+        if (material == null) {
+            // The server start builds the material before announcements begin; without it there is no
+            // identity to advertise, and naming a different one would be worse than staying quiet.
+            Log.w(mTag, "buildAnnouncement: TLS material unavailable");
             return null;
         }
+        final DeviceIdentity identity = material.toDeviceIdentity();
 
         final DiscoverySettings settings = Preferences.get().getDiscoverySettings();
         final long nowMs = System.currentTimeMillis();
@@ -2319,11 +2382,18 @@ public class ScreenShareService extends Service {
     /**
      * Returns the fingerprint guide shown in the share notification, or null when unavailable.
      *
-     * <p>The viewer compares this value with the one in its confirmation dialog, so the guide must
-     * be the canonical identity fingerprint rendered for a person, never a stored announcement.</p>
+     * <p>The viewer compares this value with the one in its confirmation dialog, so the guide must be
+     * the fingerprint of the certificate the handshake presents. It comes from the TLS material of
+     * the session; the loaded identity is only a fallback for the moment before the server built its
+     * material.</p>
      */
     @Nullable
     private String localFingerprintText() {
+        final TlsMaterial material = TlsMaterialHolder.get().getCachedMaterial();
+        if (material != null) {
+            return getString(R.string.tls_service_notification_fingerprint,
+                FingerprintFormatter.toDisplay(material.getFingerprint()));
+        }
         try {
             return getString(R.string.tls_service_notification_fingerprint,
                 FingerprintFormatter.toDisplay(

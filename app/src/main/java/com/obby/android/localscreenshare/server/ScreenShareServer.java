@@ -50,7 +50,6 @@ import com.obby.android.localscreenshare.grpc.screenstream.RegisterResponse;
 import com.obby.android.localscreenshare.grpc.screenstream.ScreenStreamServiceGrpc;
 import com.obby.android.localscreenshare.grpc.screenstream.ServerMessage;
 import com.obby.android.localscreenshare.identity.DeviceIdentity;
-import com.obby.android.localscreenshare.identity.IdentityManager;
 import com.obby.android.localscreenshare.identity.IdentityUnavailableException;
 import com.obby.android.localscreenshare.identity.tls.TlsCertificate;
 import com.obby.android.localscreenshare.identity.tls.TlsMaterial;
@@ -740,14 +739,16 @@ public final class ScreenShareServer {
     public void start() throws IOException {
         startGrpcServer();
 
-        // The identity comes from the AndroidKeyStore, never from a stored value; a changed key
-        // shows up as a changed fingerprint on the peers that stored it.
-        final DeviceIdentity identity;
+        // The identity comes from the TLS material of this session — the same key the handshake
+        // certificate is signed with — never from a stored value or a second identity holder: two
+        // sources would let the advertised id and the presented certificate disagree (N3).
+        final TlsMaterial material;
         try {
-            identity = IdentityManager.get().getIdentity();
+            material = TlsMaterialHolder.get().material();
         } catch (IdentityUnavailableException e) {
-            throw new IOException("device identity unavailable", e);
+            throw new IOException("TLS material unavailable", e);
         }
+        final DeviceIdentity identity = material.toDeviceIdentity();
 
         mServerInfo = ServerInfo.builder()
             .id(identity.getId())
@@ -758,23 +759,9 @@ public final class ScreenShareServer {
             .port(grpcServer().getPort())
             .build();
 
-        final DeviceInfo advertisement = buildAdvertisement(mServerInfo);
         // Compatibility mode publishes only the legacy type, so a legacy peer sees this device
         // and this device never advertises a record that requires the new TXT keys.
-        final DiscoverySettings settings = Preferences.get().getDiscoverySettings();
-        mPrimaryRegistration = settings.isCompatOnly() ? null
-            : new Registration(NsdConstants.NSD_SERVICE_TYPE,
-                buildNsdServiceInfo(advertisement, NsdTxtRecord.Namespace.CURRENT), true);
-        mLegacyRegistration = new Registration(NsdConstants.NSD_SERVICE_TYPE_LEGACY,
-            buildNsdServiceInfo(advertisement, NsdTxtRecord.Namespace.LEGACY),
-            settings.isCompatOnly());
-        mNsdServiceInfo = mPrimaryRegistration != null
-            ? mPrimaryRegistration.mServiceInfo : mLegacyRegistration.mServiceInfo;
-
-        if (mPrimaryRegistration != null) {
-            mPrimaryRegistration.register();
-        }
-        mLegacyRegistration.register();
+        republishNsdRegistrations();
         mConnectivityManager.registerDefaultNetworkCallback(mNetworkCallback);
 
         final IntentFilter intentFilter = new IntentFilter();
@@ -826,7 +813,52 @@ public final class ScreenShareServer {
             return;
         }
         Log.i(mTag, "onDiscoverySettingsChanged: re-publish the mDNS record");
+        republishNsdRegistrations();
+    }
 
+    /**
+     * Rebinds the published server info, the {@code Register} summary and the mDNS record to the
+     * identity of {@code material}.
+     *
+     * <p>Called from the capture service when the identity key changed under the running session —
+     * the user reset it, or the keystore replaced it. The media pipeline and the existing clients
+     * keep running: only the id and fingerprint this device publishes change, and without this call
+     * they would keep naming a key that no handshake can prove any more (N3, root cause B).</p>
+     *
+     * <p>Runs on the main thread; the caller has already read the material.</p>
+     *
+     * @param material TLS material of the identity that is now in the keystore
+     */
+    public void onIdentityChanged(@NonNull final TlsMaterial material) {
+        final DeviceIdentity identity = material.toDeviceIdentity();
+        mMainHandler.post(() -> {
+            final ServerInfo current = mServerInfo;
+            if (current == null) {
+                Log.i(mTag, "onIdentityChanged: session already stopped");
+                return;
+            }
+            if (Objects.equals(current.getDeviceId(), identity.getId())
+                && Objects.equals(current.getFingerprint(), identity.getFingerprint())) {
+                return;
+            }
+            Log.i(mTag, "onIdentityChanged: rebinding the published identity");
+            updateServerInfo(current.toBuilder()
+                .id(identity.getId())
+                .deviceId(identity.getId())
+                .fingerprint(identity.getFingerprint())
+                .build());
+            // The instance name and the TXT record carry the device id, so both have to be
+            // published again for the new identity.
+            republishNsdRegistrations();
+        });
+    }
+
+    // Replaces both NSD registrations with records built from the current server info. The old
+    // registrations are released first, so a listener is never registered twice.
+    private void republishNsdRegistrations() {
+        if (mServerInfo == null) {
+            return;
+        }
         if (mPrimaryRegistration != null) {
             mPrimaryRegistration.unregister();
             mPrimaryRegistration = null;

@@ -2,6 +2,8 @@ package com.obby.android.localscreenshare.identity.tls;
 
 import androidx.annotation.NonNull;
 
+import com.obby.android.localscreenshare.identity.DeviceIdentity;
+
 import java.security.GeneralSecurityException;
 import java.security.KeyPair;
 
@@ -83,5 +85,18 @@ public final class TlsMaterial {
     @NonNull
     public String getFingerprint() {
         return mCertificate.getFingerprint();
+    }
+
+    /**
+     * Returns the device identity this material presents in a handshake.
+     *
+     * <p>Derived from the same SPKI the certificate carries, so a caller that announces, publishes
+     * or registers an identity through this method can never name a key other than the one the
+     * handshake proves. This is the value the announcement, the {@code ServerInfo}, the {@code
+     * Register} self summary and the viewer {@code HELLO} have to use.</p>
+     */
+    @NonNull
+    public DeviceIdentity toDeviceIdentity() {
+        return DeviceIdentity.fromSpki(mCertificate.getSpki(), null);
     }
 }

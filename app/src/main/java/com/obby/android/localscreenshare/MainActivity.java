@@ -81,6 +81,8 @@ import com.obby.android.localscreenshare.discovery.ui.DiscoveryListModel;
 import com.obby.android.localscreenshare.grpc.screenstream.DeviceSummary;
 import com.obby.android.localscreenshare.identity.IdentityManager;
 import com.obby.android.localscreenshare.identity.IdentityUnavailableException;
+import com.obby.android.localscreenshare.identity.tls.TlsMaterial;
+import com.obby.android.localscreenshare.identity.tls.TlsMaterialHolder;
 import com.obby.android.localscreenshare.server.ServerInfo;
 import com.obby.android.localscreenshare.server.ServerStats;
 import com.obby.android.localscreenshare.service.ScreenShareService;
@@ -891,9 +893,21 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // Renders the current device id and key fingerprint; the sheet is reused, so both are
-    // refreshed on every show.
+    // refreshed on every show. The running session's TLS material is preferred: while a share is
+    // running, the values a peer can verify are the ones its certificate carries, and a key that was
+    // replaced under the session would otherwise be shown as the one that was loaded at startup.
     private void updateDeviceIdentityView() {
         if (mDeviceIdSettingView == null) {
+            return;
+        }
+
+        final TlsMaterial material = TlsMaterialHolder.get().getCachedMaterial();
+        if (material != null) {
+            mDeviceIdSettingView.setText(material.getDeviceId());
+            if (mDeviceFingerprintSettingView != null) {
+                mDeviceFingerprintSettingView.setText(
+                    FingerprintFormatter.toDisplay(material.getFingerprint()));
+            }
             return;
         }
 
@@ -918,8 +932,9 @@ public class MainActivity extends AppCompatActivity {
      * Asks for confirmation and then replaces the identity key.
      *
      * <p>Every peer that stored this device keeps the old fingerprint, so the discovered list is
-     * cleared and the user is told that favorites must be confirmed again. A running share keeps
-     * advertising the identity it started with until it is restarted.</p>
+     * cleared and the user is told that favorites must be confirmed again. A running share is not
+     * restarted: the reset broadcast makes the service rebuild its TLS material, and the server info,
+     * the announcement and the notification follow the new identity from there.</p>
      */
     private void resetDeviceIdentity() {
         if (mDialog != null) {

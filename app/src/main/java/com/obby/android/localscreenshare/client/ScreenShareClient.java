@@ -20,9 +20,8 @@ import com.obby.android.localscreenshare.grpc.screenstream.Ping;
 import com.obby.android.localscreenshare.grpc.screenstream.RequestKeyframe;
 import com.obby.android.localscreenshare.grpc.screenstream.ScreenStreamServiceGrpc;
 import com.obby.android.localscreenshare.grpc.screenstream.ServerMessage;
-import com.obby.android.localscreenshare.identity.DeviceIdentity;
-import com.obby.android.localscreenshare.identity.IdentityManager;
 import com.obby.android.localscreenshare.identity.IdentityUnavailableException;
+import com.obby.android.localscreenshare.identity.tls.TlsMaterial;
 import com.obby.android.localscreenshare.identity.tls.TlsMaterialHolder;
 import com.obby.android.localscreenshare.identity.tls.TlsNames;
 import com.obby.android.localscreenshare.settings.Preferences;
@@ -497,10 +496,11 @@ public final class ScreenShareClient {
                 CodecCapabilityProbe.probeClientDecoders()));
         // The discovery identity binds this session to the device entry peers already know. The
         // client id above stays the stream hub's session key, so a reconnect of the same device is
-        // still a new session.
+        // still a new session. The id comes from the TLS material, because the server compares it
+        // with the certificate of this very handshake and refuses the stream when the two disagree.
         try {
-            final DeviceIdentity identity = IdentityManager.get().getIdentity();
-            hello.setDeviceId(identity.getId()).setFingerprint(identity.getFingerprint());
+            final TlsMaterial material = TlsMaterialHolder.get().material();
+            hello.setDeviceId(material.getDeviceId()).setFingerprint(material.getFingerprint());
         } catch (IdentityUnavailableException e) {
             Log.w(mTag, "start: device identity unavailable, HELLO carries no discovery key");
         }

@@ -29,6 +29,13 @@ import java.util.concurrent.atomic.AtomicInteger;
  * returns what it has. {@link #cancel()} is idempotent and stops dispatch immediately; probes that
  * are already in flight finish and their late answers are ignored.</p>
  *
+ * <p><b>Cancellation is cooperative.</b> Cancelling used to shut the workers down with an interrupt,
+ * which reached into whatever the probe thread was doing — including an AndroidKeyStore read — and
+ * made a cancelled scan look like a broken identity key on the probe path (device test 2026-10-21,
+ * N3). A cancelled scan now stops dispatching, checks the token again before every probe, and waits
+ * a bounded time for the probes in flight; it never interrupts them. A probe is bounded by its own
+ * deadline, so the workers end on their own.</p>
+ *
  * <p>A scan never confirms anything by itself: it returns the peers that answered so the caller
  * can feed the normal observation and confirmation path of the store. Probes are issued with
  * {@code announces=false}, so scanning a subnet cannot amplify into reverse handshakes.</p>
@@ -57,6 +64,15 @@ public final class AddressScanner {
      * Candidates that may wait for a worker before dispatch blocks.
      */
     public static final int QUEUE_CAPACITY = 128;
+
+    /**
+     * How long a finished scan waits for the probes still in flight, in milliseconds.
+     *
+     * <p>Long enough for a probe that started before the deadline to report itself, short enough to
+     * keep a cancelled scan from holding its caller. The workers are not interrupted when the wait
+     * expires: they are daemons and their probes have their own deadline.</p>
+     */
+    public static final long WORKER_DRAIN_TIMEOUT_MS = PROBE_TIMEOUT_MS + 200L;
 
     private static final AtomicInteger THREAD_IDS = new AtomicInteger();
 
@@ -161,7 +177,11 @@ public final class AddressScanner {
                 final Runnable task = () -> {
                     try {
                         final long remaining = deadlineMs - mTimeSource.nowMs();
-                        if (cancelled.get() || remaining <= 0L) {
+                        // The token and the interrupt flag are both checked here, right before the
+                        // probe: a cancelled scan or an already interrupted worker must not open a
+                        // handshake that could reach the identity key.
+                        if (cancelled.get() || Thread.currentThread().isInterrupted()
+                            || remaining <= 0L) {
                             return;
                         }
                         final ProbeResult result = mProbe.probe(host, port,
@@ -182,7 +202,7 @@ public final class AddressScanner {
 
             awaitCompletion(finished, deadlineMs, cancelled);
         } finally {
-            executor.shutdownNow();
+            finishWorkers(executor);
             clearActiveScan(cancelled);
         }
 
@@ -245,6 +265,26 @@ public final class AddressScanner {
             if (mActiveScan == token) {
                 mActiveScan = null;
             }
+        }
+    }
+
+    /**
+     * Stops the worker pool without interrupting the probes that are still running.
+     *
+     * <p>A probe that is cut off mid-call leaves its transport in an undefined state, and on this
+     * path a probe may be inside an identity read; the interrupt then surfaces far away as a failed
+     * keystore load. The wait is bounded so a scan always returns to its caller, and an expired wait
+     * is not an error: the workers are daemons and their probes have their own deadline, so they end
+     * on their own. The class deliberately does not log here — it is exercised by JVM tests that
+     * have no Android log — the scan result already reports {@link ScanResult#isCancelled()}.</p>
+     */
+    private void finishWorkers(@NonNull final ThreadPoolExecutor executor) {
+        executor.shutdown();
+        try {
+            executor.awaitTermination(WORKER_DRAIN_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            // The caller was interrupted, not the workers; they keep finishing on their own.
+            Thread.currentThread().interrupt();
         }
     }
 

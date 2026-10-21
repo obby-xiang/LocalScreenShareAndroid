@@ -12,6 +12,7 @@ import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -148,6 +149,34 @@ public class AddressScannerTest {
 
         assertEquals(0, result.getScanned());
         assertEquals(0, result.getConfirmedCount());
+    }
+
+    @Test
+    public void cancelDoesNotInterruptTheProbesInFlight() {
+        final AtomicBoolean sawInterrupt = new AtomicBoolean();
+        final AtomicReference<AddressScanner> scanner = new AtomicReference<>();
+        mProbe = new FakeProbe((host, port) -> {
+            // FakeProbe sleeps before the responder and restores the flag on interruption, so this
+            // sees whether the worker was interrupted while its probe was running.
+            sawInterrupt.compareAndSet(false, Thread.currentThread().isInterrupted());
+            return ProbeResult.failed(host, port, "no_answer");
+        });
+        mProbe.setDelayMs(20L);
+        mProbe.setOnProbe(() -> {
+            final AddressScanner current = scanner.get();
+            if (current != null) {
+                current.cancel();
+            }
+        });
+        scanner.set(new AddressScanner(mProbe, 2, 8_000L, mClock));
+
+        final AddressScanner.ScanResult result = scanner.get().scan(hosts("10.0.6.", 100), 8080,
+            false);
+
+        // An interrupted probe used to reach into whatever the probe thread was doing, including an
+        // identity read; a cancelled scan has to leave the probes in flight alone (N3).
+        assertFalse("a cancelled scan interrupted a probe in flight", sawInterrupt.get());
+        assertTrue(result.isCancelled());
     }
 
     private static ProbeResult confirmed(final String host, final int port) {

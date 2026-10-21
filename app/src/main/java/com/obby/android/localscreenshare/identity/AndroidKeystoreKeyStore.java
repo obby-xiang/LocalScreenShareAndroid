@@ -31,16 +31,18 @@ import java.security.spec.ECGenParameterSpec;
  * the entry, but the identity is derived from the public key itself, so a certificate replacement
  * would not change it.</p>
  *
- * <p>An entry created before {@code NONE} was authorized cannot sign a handshake at all, and an
- * authorization set cannot be extended afterwards. {@link IdentityKeyPolicy} probes the stored key
- * and such an entry is replaced once; the caller learns about the new identity through
- * {@link DeviceIdentity#isChanged()}. A missing, unreadable or invalidated entry is regenerated the
- * same way; only a keystore that cannot create a key at all raises an exception.</p>
+ * <p><b>Replacement.</b> An entry created before {@code NONE} was authorized cannot sign a
+ * handshake, and an authorization set cannot be extended afterwards; such an entry is replaced once
+ * and the caller learns about the new identity through {@link DeviceIdentity#isChanged()}. Every
+ * other failure keeps the key: {@link IdentityKeyEntryLoader} decides that, so an interrupted or
+ * overlapping keystore read cannot silently delete the identity key (N3). A replacement is logged
+ * at error level with its reason and both fingerprints, because it is a security event: every peer
+ * that stored the old fingerprint has to confirm the device again.</p>
  *
- * <p>Loading is serialized across the process and a verified key is remembered, because the two
- * holders that read this key — the identity and the TLS material — are reached from many threads
- * and the keystore refuses two operations on one key at the same time. Replacement therefore
- * happens at most once per process, and never because of an overlapping operation.</p>
+ * <p><b>Threading.</b> All keystore work runs on {@link KeystoreExecutor}, which serializes it with
+ * the certificate signature of the TLS material. A verified key is remembered for the process,
+ * because the probe costs one keystore signature and the answer cannot change for an existing
+ * entry.</p>
  */
 public final class AndroidKeystoreKeyStore implements IdentityKeyStore {
 
@@ -69,52 +71,110 @@ public final class AndroidKeystoreKeyStore implements IdentityKeyStore {
     // Pause between two probe attempts, in milliseconds.
     private static final long PROBE_RETRY_DELAY_MS = 100L;
 
-    // Serializes key loading across the process. Both the identity holder and the TLS material
-    // holder read the same alias, and the keystore rejects overlapping operations on one key, so
-    // concurrent loads have to wait instead of probing the same entry at the same time.
-    @NonNull
-    private static final Object KEY_LOCK = new Object();
-
-    // Fingerprint of the key this process verified; guarded by KEY_LOCK. An authorization set never
-    // changes for an existing entry, so a verified key is not probed again: the probe costs one
-    // keystore signature and would otherwise run on every handshake attempt.
+    // Fingerprint of the key this process verified. An authorization set never changes for an
+    // existing entry, so a verified key is not probed again: the probe costs one keystore signature
+    // and would otherwise run on every handshake attempt. Only written on the keystore thread.
     @Nullable
     private static String sVerifiedFingerprint;
 
     @NonNull
-    @Override
-    public KeyPair loadOrCreate() throws GeneralSecurityException, IOException {
-        synchronized (KEY_LOCK) {
-            final KeyStore keyStore = openKeyStore();
-            final KeyPair existing = readKeyPair(keyStore);
-            if (existing != null && isUsableForTls(existing)) {
-                return existing;
+    private static final IdentityKeyEntryLoader LOADER = new IdentityKeyEntryLoader(
+        new IdentityKeyEntryLoader.EntryStore() {
+            @Nullable
+            @Override
+            public KeyPair read() throws GeneralSecurityException, IOException {
+                return readStoredKeyPair();
             }
 
-            if (keyStore.containsAlias(KEY_ALIAS)) {
-                // The entry is unusable (unreadable key, missing certificate, permanently
-                // invalidated) or was generated with an authorization set that cannot sign a TLS
-                // handshake: drop it so a fresh key can take its place.
-                keyStore.deleteEntry(KEY_ALIAS);
+            @Override
+            public void delete() throws GeneralSecurityException, IOException {
+                deleteStoredEntry();
             }
-            final KeyPair generated = generateKeyPair();
-            sVerifiedFingerprint = fingerprintOf(generated);
-            return generated;
+
+            @NonNull
+            @Override
+            public KeyPair create() throws GeneralSecurityException, IOException {
+                return generateStoredKeyPair();
+            }
+        }, AndroidKeystoreKeyStore::isUsableForTls);
+
+    @NonNull
+    @Override
+    public KeyPair loadOrCreate() throws GeneralSecurityException, IOException {
+        final IdentityKeyEntryLoader.LoadResult result;
+        try {
+            result = KeystoreExecutor.get().call(LOADER::loadOrCreate);
+        } catch (InterruptedException e) {
+            // The key was not touched: the caller was interrupted before or while waiting.
+            Thread.currentThread().interrupt();
+            throw new GeneralSecurityException("identity key load interrupted", e);
         }
+
+        if (result.isReplaced()) {
+            Log.e(TAG, String.format("loadOrCreate: identity key replaced, reason = %s, "
+                    + "previousFingerprint = %s, fingerprint = %s", result.getReplacementReason(),
+                result.getPreviousFingerprint(), fingerprintOf(result.getKeyPair())));
+        }
+        return result.getKeyPair();
     }
 
     @NonNull
     @Override
     public KeyPair reset() throws GeneralSecurityException, IOException {
-        synchronized (KEY_LOCK) {
-            final KeyStore keyStore = openKeyStore();
-            if (keyStore.containsAlias(KEY_ALIAS)) {
-                keyStore.deleteEntry(KEY_ALIAS);
-            }
-            final KeyPair generated = generateKeyPair();
-            sVerifiedFingerprint = fingerprintOf(generated);
-            return generated;
+        try {
+            return KeystoreExecutor.get().call(() -> {
+                final KeyPair generated = generateStoredKeyPair();
+                sVerifiedFingerprint = fingerprintOf(generated);
+                Log.i(TAG, "reset: identity key replaced on request, fingerprint = "
+                    + fingerprintOf(generated));
+                return generated;
+            });
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new GeneralSecurityException("identity reset interrupted", e);
         }
+    }
+
+    /**
+     * Returns the stored key pair, or null when the entry is missing or incomplete.
+     */
+    @Nullable
+    private static KeyPair readStoredKeyPair() throws GeneralSecurityException, IOException {
+        final KeyStore keyStore = openKeyStore();
+        if (!keyStore.containsAlias(KEY_ALIAS)) {
+            return null;
+        }
+        final Certificate certificate = keyStore.getCertificate(KEY_ALIAS);
+        final Key key = keyStore.getKey(KEY_ALIAS, null);
+        if (certificate == null || !(key instanceof PrivateKey)) {
+            return null;
+        }
+        final PublicKey publicKey = certificate.getPublicKey();
+        if (publicKey == null || publicKey.getEncoded() == null) {
+            return null;
+        }
+        return new KeyPair(publicKey, (PrivateKey) key);
+    }
+
+    private static void deleteStoredEntry() throws GeneralSecurityException, IOException {
+        final KeyStore keyStore = openKeyStore();
+        if (keyStore.containsAlias(KEY_ALIAS)) {
+            keyStore.deleteEntry(KEY_ALIAS);
+        }
+        sVerifiedFingerprint = null;
+    }
+
+    // Generates the identity key under the identity alias; an incomplete entry that occupies the
+    // alias is released first, so creation never has to reason about what was there.
+    @NonNull
+    private static KeyPair generateStoredKeyPair() throws GeneralSecurityException, IOException {
+        final KeyStore keyStore = openKeyStore();
+        if (keyStore.containsAlias(KEY_ALIAS)) {
+            keyStore.deleteEntry(KEY_ALIAS);
+        }
+        final KeyPair generated = generateKeyPair();
+        sVerifiedFingerprint = fingerprintOf(generated);
+        return generated;
     }
 
     @NonNull
@@ -122,32 +182,6 @@ public final class AndroidKeystoreKeyStore implements IdentityKeyStore {
         final KeyStore keyStore = KeyStore.getInstance(KEYSTORE_PROVIDER);
         keyStore.load(null);
         return keyStore;
-    }
-
-    /**
-     * Returns the stored key pair, or null when the entry is missing or cannot be read.
-     */
-    @Nullable
-    private static KeyPair readKeyPair(@NonNull final KeyStore keyStore) throws GeneralSecurityException {
-        if (!keyStore.containsAlias(KEY_ALIAS)) {
-            return null;
-        }
-
-        try {
-            final Certificate certificate = keyStore.getCertificate(KEY_ALIAS);
-            final Key key = keyStore.getKey(KEY_ALIAS, null);
-            if (certificate == null || !(key instanceof PrivateKey)) {
-                return null;
-            }
-            final PublicKey publicKey = certificate.getPublicKey();
-            if (publicKey == null || publicKey.getEncoded() == null) {
-                return null;
-            }
-            return new KeyPair(publicKey, (PrivateKey) key);
-        } catch (GeneralSecurityException e) {
-            // Unrecoverable or permanently invalidated entries are replaced by loadOrCreate().
-            return null;
-        }
     }
 
     /**
@@ -166,7 +200,7 @@ public final class AndroidKeystoreKeyStore implements IdentityKeyStore {
      */
     private static boolean isUsableForTls(@NonNull final KeyPair keyPair) {
         final String fingerprint = fingerprintOf(keyPair);
-        if (fingerprint.equals(sVerifiedFingerprint)) {
+        if (!fingerprint.isEmpty() && fingerprint.equals(sVerifiedFingerprint)) {
             return true;
         }
 
@@ -190,7 +224,8 @@ public final class AndroidKeystoreKeyStore implements IdentityKeyStore {
         return true;
     }
 
-    // Waits between two probe attempts; interrupted waits only shorten the pause.
+    // Waits between two probe attempts; interrupted waits only shorten the pause. The caller checks
+    // the interrupt flag at the entry points, so a probe never starts on an interrupted thread.
     private static void sleepBeforeProbeRetry(final int attempt) {
         if (attempt >= PROBE_ATTEMPTS) {
             return;
@@ -208,7 +243,7 @@ public final class AndroidKeystoreKeyStore implements IdentityKeyStore {
      */
     @NonNull
     private static String fingerprintOf(@NonNull final KeyPair keyPair) {
-        final byte[] spki = keyPair.getPublic().getEncoded();
+        final byte[] spki = keyPair.getPublic() == null ? null : keyPair.getPublic().getEncoded();
         return spki == null ? "" : SpkiId.fingerprint(spki);
     }
 

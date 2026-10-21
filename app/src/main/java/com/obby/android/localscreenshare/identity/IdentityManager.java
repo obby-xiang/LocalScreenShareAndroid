@@ -22,6 +22,13 @@ import com.obby.android.localscreenshare.settings.Preferences;
  *
  * <p>Thread-safe: the provider and the cached value are guarded by the instance monitor. Callers on
  * the main thread pay the keystore load once per process.</p>
+ *
+ * <p>The identity a peer can verify is always {@link
+ * com.obby.android.localscreenshare.identity.tls.TlsMaterialHolder}, not this cache: the holder
+ * reads the key again and follows a replacement. Callers that must agree with the certificate of
+ * the running session — the announcement, the server info, the {@code Register} self summary and
+ * the viewer {@code HELLO} — take their id and fingerprint from the material; this holder answers
+ * what was loaded, which is what the change detection and the settings sheet need.</p>
  */
 public final class IdentityManager {
     private static final String TAG = "IdentityManager";

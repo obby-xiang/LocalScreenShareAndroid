@@ -91,6 +91,12 @@ public final class RegisterAddressProbe implements AddressProbe {
 
     @NonNull
     private ProbeResult probeOnce(@NonNull final String host, final int port, final long timeoutMs) {
+        // A cancelled scan leaves interrupted workers behind; a probe started on one of them would
+        // read the identity key through an interrupted thread, and the keystore answers that with a
+        // failure that says nothing about the key. Report it instead of touching the keystore.
+        if (Thread.currentThread().isInterrupted()) {
+            return ProbeResult.failed(host, port, "interrupted");
+        }
         final DeviceSummary self = mSelfSummarySupplier.get();
         if (self == null) {
             return ProbeResult.failed(host, port, "identity_unavailable");

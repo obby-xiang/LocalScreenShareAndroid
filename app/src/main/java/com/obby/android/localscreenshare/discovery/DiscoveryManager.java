@@ -45,9 +45,10 @@ import com.obby.android.localscreenshare.discovery.udp.PerInterfaceMulticastSock
 import com.obby.android.localscreenshare.discovery.udp.SocketMulticastTransport;
 import com.obby.android.localscreenshare.discovery.udp.UdpMulticastDiscoveryProvider;
 import com.obby.android.localscreenshare.grpc.screenstream.DeviceSummary;
-import com.obby.android.localscreenshare.identity.DeviceIdentity;
 import com.obby.android.localscreenshare.identity.IdentityManager;
 import com.obby.android.localscreenshare.identity.IdentityUnavailableException;
+import com.obby.android.localscreenshare.identity.tls.TlsMaterial;
+import com.obby.android.localscreenshare.identity.tls.TlsMaterialHolder;
 import com.obby.android.localscreenshare.settings.DiscoverySettings;
 import com.obby.android.localscreenshare.settings.Preferences;
 import com.obby.android.localscreenshare.support.DelayedScheduler;
@@ -648,16 +649,18 @@ public final class DiscoveryManager {
      * Builds this device's Register summary, or null when the identity is unavailable.
      *
      * <p>A viewer device has no server address, so the summary carries an empty address list; the
-     * responding server still learns the caller's identity from it.</p>
+     * responding server still learns the caller's identity from it. The id and fingerprint come from
+     * the TLS material, because the peer compares them with the certificate of the handshake that
+     * carries this request — a stored or separately cached identity could name another key (N3).</p>
      */
     @Nullable
     private DeviceSummary selfSummary() {
         try {
-            final DeviceIdentity identity = IdentityManager.get().getIdentity();
+            final TlsMaterial material = TlsMaterialHolder.get().material();
             final boolean isSecureTransport = !Preferences.get().isTlsAllowPlaintext();
             final DeviceInfo self = DeviceInfo.builder()
-                .id(identity.getId())
-                .fingerprint(identity.getFingerprint())
+                .id(material.getDeviceId())
+                .fingerprint(material.getFingerprint())
                 .role(DeviceRole.BOTH)
                 .state(ShareState.IDLE)
                 .join(JoinPolicy.UNKNOWN)
@@ -887,6 +890,10 @@ public final class DiscoveryManager {
      * loaded, nothing is filtered — a duplicated self entry is preferable to hiding every peer.</p>
      */
     private boolean isSelfDeviceId(@NonNull final String id) {
+        final TlsMaterial material = TlsMaterialHolder.get().getCachedMaterial();
+        if (material != null && Objects.equals(id, material.getDeviceId())) {
+            return true;
+        }
         try {
             return Objects.equals(id, IdentityManager.get().getIdentity().getId());
         } catch (IdentityUnavailableException e) {
