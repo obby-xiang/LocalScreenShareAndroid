@@ -1,5 +1,7 @@
 package com.obby.android.localscreenshare.discovery.register;
 
+import android.util.Log;
+
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
@@ -8,7 +10,9 @@ import com.obby.android.localscreenshare.grpc.screenstream.DeviceSummary;
 import com.obby.android.localscreenshare.grpc.screenstream.RegisterRequest;
 import com.obby.android.localscreenshare.grpc.screenstream.RegisterResponse;
 import com.obby.android.localscreenshare.grpc.screenstream.ScreenStreamServiceGrpc;
+import com.obby.android.localscreenshare.identity.IdentityUnavailableException;
 import com.obby.android.localscreenshare.identity.tls.TlsCertificate;
+import com.obby.android.localscreenshare.identity.tls.TlsMaterialHolder;
 import com.obby.android.localscreenshare.identity.tls.TlsNames;
 import com.obby.android.localscreenshare.settings.Preferences;
 import com.obby.android.localscreenshare.trust.DiscoveryTrustManager;
@@ -30,16 +34,19 @@ import io.grpc.stub.StreamObserver;
  *
  * <p>A channel is created per call and shut down when the call completes, which keeps discovery
  * free of long-lived connections to devices that may never be contacted again. The handshake is
- * encrypted with the same authority as the media channel, but it does not pin: discovery runs
- * before the user selects a device, so there is nothing to compare yet. Instead the certificate is
- * observed, and an accepted answer is only returned when the certificate's SPKI id equals the id
- * the peer claimed; the fingerprint of that certificate then replaces the one in the response
- * body, because only the certificate value is cryptographically bound to the key that answered.</p>
+ * encrypted with the same authority as the media channel and presents this device's identity
+ * certificate, because the peer requires mutual TLS, but it does not pin: discovery runs before the
+ * user selects a device, so there is nothing to compare yet. Instead the certificate is observed,
+ * and an accepted answer is only returned when the certificate's SPKI id equals the id the peer
+ * claimed; the fingerprint of that certificate then replaces the one in the response body, because
+ * only the certificate value is cryptographically bound to the key that answered.</p>
  *
  * <p>When the hidden plaintext override is on, the channel falls back to plaintext and no
  * certificate is observed.</p>
  */
 public final class GrpcRegisterStub implements RegisterStub {
+
+    private static final String TAG = "GrpcRegisterStub";
 
     @NonNull
     @Override
@@ -106,11 +113,22 @@ public final class GrpcRegisterStub implements RegisterStub {
     private static ManagedChannel buildChannel(@NonNull final DeviceAddress address,
                                                @NonNull final AtomicReference<TlsCertificate> peer) {
         final boolean isPlaintext = Preferences.get().isTlsAllowPlaintext();
-        final ChannelCredentials credentials = isPlaintext
-            ? InsecureChannelCredentials.create()
-            : TlsChannelCredentials.newBuilder()
-                .trustManager(new DiscoveryTrustManager(peer::set))
-                .build();
+        final ChannelCredentials credentials;
+        if (isPlaintext) {
+            credentials = InsecureChannelCredentials.create();
+        } else {
+            final TlsChannelCredentials.Builder tls = TlsChannelCredentials.newBuilder()
+                .trustManager(new DiscoveryTrustManager(peer::set));
+            try {
+                // The peer requires a client certificate, so the probe presents this device's
+                // identity; without it the handshake ends with PEER_DID_NOT_RETURN_A_CERTIFICATE
+                // and every probe is answered UNAVAILABLE.
+                tls.keyManager(TlsMaterialHolder.get().material().getKeyManager());
+            } catch (IdentityUnavailableException e) {
+                Log.w(TAG, "buildChannel: identity unavailable, the peer will reject the probe", e);
+            }
+            credentials = tls.build();
+        }
         final OkHttpChannelBuilder builder =
             OkHttpChannelBuilder.forAddress(unbracket(address.getHost()), address.getPort(),
                 credentials);
