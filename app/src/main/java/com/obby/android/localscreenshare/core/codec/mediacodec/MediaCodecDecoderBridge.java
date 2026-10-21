@@ -74,4 +74,13 @@ public interface MediaCodecDecoderBridge {
      * Releases output buffer {@code index} without rendering it.
      */
     void discard(int index);
+
+    /**
+     * Discards every buffer the codec still holds, input and output.
+     *
+     * <p>Used after the receiver skipped ahead: the codec keeps its configuration and stays
+     * started, but the frames buffered before the skip are gone, so decoding resumes cleanly on the
+     * next random-access point. Implementations must tolerate a codec that was never started.</p>
+     */
+    void flush();
 }

@@ -432,6 +432,35 @@ public class H264DecoderTest {
     }
 
     @Test
+    public void flush_discardsBufferedStateAndWaitsForTheNextIdr() {
+        decoder.configure(descriptor(CONFIG_EPOCH, CodecIds.H264, validConfigParts()));
+        bridge.enqueueOutput(new DecodedOutput(10, PTS_US, false, false));
+        decoder.decode(joinAccessUnit(CONFIG_EPOCH, 0, idrPayload()));
+        assertEquals(1, bridge.getQueuedInputData().size());
+
+        decoder.flush();
+
+        assertEquals(1, bridge.getFlushCount());
+        // A reference frame that follows the skip is not decoded: its references were discarded.
+        decoder.decode(accessUnit(CONFIG_EPOCH, 1, PTS_US + 33_000L,
+                H264Fixtures.annexB(H264Fixtures.pSlice())));
+        assertEquals(1, bridge.getQueuedInputData().size());
+        // The next IDR re-anchors the timeline and decodes again.
+        bridge.enqueueOutput(new DecodedOutput(11, PTS_US + 66_000L, false, false));
+        decoder.decode(joinAccessUnit(CONFIG_EPOCH, 2, idrPayload()));
+        assertEquals(2, bridge.getQueuedInputData().size());
+        assertEquals(Arrays.asList(10, 11), bridge.getPresentedIndices());
+    }
+
+    @Test
+    public void flush_beforeConfigure_doesNotTouchTheBridge() {
+        decoder.flush();
+
+        assertEquals(0, bridge.getFlushCount());
+        assertEquals(0, bridge.getStartCount());
+    }
+
+    @Test
     public void close_isIdempotentReleasesOnceAndDoesNotCloseRenderTarget() {
         decoder.configure(descriptor(CONFIG_EPOCH, CodecIds.H264, validConfigParts()));
 
@@ -673,6 +702,11 @@ public class H264DecoderTest {
         @Override
         public void discard(int index) {
             throw new AssertionError("no output buffer is produced by this bridge");
+        }
+
+        @Override
+        public void flush() {
+            queued.clear();
         }
 
         int getDequeueInputCalls() {

@@ -69,6 +69,15 @@ public final class JpegDecoder implements Decoder {
         }
     }
 
+    /**
+     * Forwards complete frames immediately, so there is no buffered state to discard; the call is a
+     * no-op that keeps the {@link Decoder} contract uniform across codecs.
+     */
+    @Override
+    public void flush() {
+        // Nothing is buffered: every unit is rendered as it arrives.
+    }
+
     @Override
     public void close() {
         configured = false;

@@ -152,6 +152,19 @@ public final class AndroidMediaCodecDecoderBridge implements MediaCodecDecoderBr
         codec.releaseOutputBuffer(index, false);
     }
 
+    /**
+     * Flushes the codec when it is started; a codec that never started holds no buffers, so the
+     * call is a no-op there. Configuration survives, which is what lets the caller resume on a
+     * random-access point without rebuilding the decoder.
+     */
+    @Override
+    public void flush() {
+        if (!started || released) {
+            return;
+        }
+        codec.flush();
+    }
+
     private static void setCsd(MediaFormat format, String key, byte[] csd) {
         if (csd != null) {
             format.setByteBuffer(key, ByteBuffer.wrap(csd));

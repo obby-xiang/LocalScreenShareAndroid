@@ -23,7 +23,8 @@ import com.obby.android.localscreenshare.core.stream.ClientCapabilities;
  * enters {@link ClientState#RESYNCING}. Units are decoded only in {@code STREAMING}, which is
  * entered from {@code WAIT_RANDOM_ACCESS} or {@code RESYNCING} on a validated join point of the
  * current epoch; units before that point are dropped. A unit from a future epoch, a decode
- * failure, or a decoder configuration failure moves the session to {@code RESYNCING}, while a
+ * failure, a decoder configuration failure or an explicit catch-up moves the session to
+ * {@code RESYNCING}, while a
  * unit from an older epoch is dropped without a state change. {@link ClientState#CLOSED} is
  * terminal and is reached through an unsupported codec or an explicit close.</p>
  *
@@ -92,7 +93,13 @@ public final class ClientMediaSession {
         /**
          * The render target had no surface for a codec that requires one.
          */
-        MISSING_SURFACE
+        MISSING_SURFACE,
+
+        /**
+         * The viewer discarded its decode backlog on purpose and is waiting for a fresh join
+         * point; see {@link #onCatchUp()}.
+         */
+        CATCH_UP
     }
 
     /**
@@ -297,6 +304,31 @@ public final class ClientMediaSession {
             return false;
         }
         return decode(accessUnit);
+    }
+
+    /**
+     * Drops everything the decoder still holds and waits for a fresh join point.
+     *
+     * <p>Used by the viewer when it decided to give up a decode backlog: the decoder is flushed so
+     * no frame from before the skip can surface, and the session enters
+     * {@link ClientState#RESYNCING} with {@link ResyncReason#CATCH_UP}, which is the same gate a
+     * decode failure uses - only a validated join point of the current epoch is accepted
+     * afterwards, so a dropped P frame can never reach the decoder. The request for the IDR itself
+     * belongs to the caller, which owns the transport; doing it here would give this class two
+     * responsibilities.</p>
+     *
+     * <p>A session without a decoder (no descriptor yet, or a closed session) has nothing to flush
+     * and reports false, so a catch-up that raced a teardown is not counted twice.</p>
+     *
+     * @return true when the decoder was flushed and the session now waits for a join point
+     */
+    public synchronized boolean onCatchUp() {
+        if (closed || decoder == null) {
+            return false;
+        }
+        decoder.flush();
+        enterResync(ResyncReason.CATCH_UP);
+        return true;
     }
 
     /**

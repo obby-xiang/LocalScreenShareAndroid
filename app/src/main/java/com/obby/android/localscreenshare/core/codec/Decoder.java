@@ -45,6 +45,21 @@ public interface Decoder {
     void decode(EncodedAccessUnit accessUnit) throws DecoderException;
 
     /**
+     * Discards everything that belongs to the frames already submitted.
+     *
+     * <p>Called by the owning session when the receiver intentionally skips ahead: buffered input
+     * and undisplayed output must not surface after the stream resumes, and the decoder must not
+     * continue a reference chain that started before the skip. After this call the decoder stays
+     * configured but expects a random-access point before ordinary frames, so the next picture it
+     * shows is a complete one.</p>
+     *
+     * <p>Implementations that hold no such state implement this as a no-op. Failures are contained
+     * by the implementation, like {@link #close()}: a decoder that cannot flush is not a reason to
+     * abandon the recovery.</p>
+     */
+    void flush();
+
+    /**
      * Releases codec resources.
      *
      * <p>Idempotent, does not close the render target, and renders nothing after it returns.

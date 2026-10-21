@@ -557,6 +557,35 @@ public final class H264Decoder implements Decoder {
     }
 
     /**
+     * Discards buffered input, undisplayed output and the stream-timeline anchor.
+     *
+     * <p>Used when the receiver skips ahead: the frames already handed to the codec belong to a
+     * picture the viewer decided not to show, and the codec must not continue their reference
+     * chain. The decoder stays configured and started, but {@code firstFrameSeen} is cleared so a
+     * reference frame that is not an IDR is dropped instead of decoded, and the timeline anchor is
+     * cleared so the join point re-anchors the mapping between stream time and the monotonic
+     * clock. A bridge that cannot flush is treated like a bridge that cannot stop: the recovery
+     * still proceeds.</p>
+     */
+    @Override
+    public void flush() {
+        if (!configured || closed) {
+            return;
+        }
+        if (bridge != null && started) {
+            try {
+                bridge.flush();
+            } catch (RuntimeException ignored) {
+                // A failing flush leaves the old frames in the codec, not a broken decoder.
+            }
+        }
+        pendingCount = 0;
+        firstFrameSeen = false;
+        ptsAnchorUs = PresentationPacer.UNSET;
+        timeAnchorNs = PresentationPacer.UNSET;
+    }
+
+    /**
      * Releases the bridge exactly once and never throws. The render target is not closed: it is a
      * caller-owned resource whose lifetime outlives any single decoder.
      */

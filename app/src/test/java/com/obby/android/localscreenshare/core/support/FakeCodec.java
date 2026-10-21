@@ -408,6 +408,8 @@ public final class FakeCodec {
 
         private int closeCount;
 
+        private int flushCount;
+
         private FakeDecoder(StreamKey streamKey, StreamDescriptor descriptor,
                             RenderTarget renderTarget) {
             this.streamKey = streamKey;
@@ -431,6 +433,11 @@ public final class FakeCodec {
             decoded.add(accessUnit);
             renderTarget.renderEncodedImage(new EncodedImageFrame(accessUnit.getPayload(),
                     accessUnit.getPtsUs(), descriptor.getCodedWidth(), descriptor.getCodedHeight()));
+        }
+
+        @Override
+        public void flush() {
+            flushCount++;
         }
 
         @Override
@@ -465,6 +472,10 @@ public final class FakeCodec {
 
         public int getCloseCount() {
             return closeCount;
+        }
+
+        public int getFlushCount() {
+            return flushCount;
         }
 
         public boolean isClosed() {

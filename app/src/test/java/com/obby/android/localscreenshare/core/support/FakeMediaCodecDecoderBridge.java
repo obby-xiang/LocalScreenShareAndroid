@@ -47,6 +47,7 @@ public final class FakeMediaCodecDecoderBridge implements MediaCodecDecoderBridg
     private final AtomicInteger stopCount = new AtomicInteger();
     private final AtomicInteger releaseCount = new AtomicInteger();
     private final AtomicInteger dequeueInputCount = new AtomicInteger();
+    private final AtomicInteger flushCount = new AtomicInteger();
     private final AtomicInteger nextInputIndex = new AtomicInteger();
 
     private final AtomicReference<RuntimeException> nextConfigureFailure = new AtomicReference<>();
@@ -144,6 +145,15 @@ public final class FakeMediaCodecDecoderBridge implements MediaCodecDecoderBridg
         discardedIndices.add(index);
     }
 
+    /**
+     * Drops outputs that were never dequeued, mirroring a platform flush, and counts the call.
+     */
+    @Override
+    public void flush() {
+        outputs.clear();
+        flushCount.incrementAndGet();
+    }
+
     public DecoderFormat getLastConfigureFormat() {
         return lastConfigureFormat;
     }
@@ -162,6 +172,10 @@ public final class FakeMediaCodecDecoderBridge implements MediaCodecDecoderBridg
 
     public int getReleaseCount() {
         return releaseCount.get();
+    }
+
+    public int getFlushCount() {
+        return flushCount.get();
     }
 
     public int getDequeueInputCount() {
