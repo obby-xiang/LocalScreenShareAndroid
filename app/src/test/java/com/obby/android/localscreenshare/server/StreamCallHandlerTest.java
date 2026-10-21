@@ -30,9 +30,14 @@ import com.obby.android.localscreenshare.grpc.screenstream.CodecCapability;
 import com.obby.android.localscreenshare.grpc.screenstream.Hello;
 import com.obby.android.localscreenshare.grpc.screenstream.Ping;
 import com.obby.android.localscreenshare.grpc.screenstream.RequestKeyframe;
+import com.obby.android.localscreenshare.identity.tls.TlsCertificate;
+import com.obby.android.localscreenshare.identity.tls.TlsMaterial;
 
 import org.junit.Test;
 
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
+import java.security.spec.ECGenParameterSpec;
 import java.util.Collections;
 
 /**
@@ -299,6 +304,85 @@ public class StreamCallHandlerTest {
     }
 
     @Test
+    public void certificateBindsTheHelloIdentity() throws Exception {
+        Fixture fixture = fixture(FakeCodec.DEFAULT_CODEC_ID);
+        TlsCertificate certificate = certificate();
+        StreamCallHandler handler = new StreamCallHandler(fixture.hub, fixture.runtime,
+                new FakeTransport(), StreamCallListener.NO_OP, null, PongTarget.NO_OP,
+                certificate);
+
+        handler.onClientMessage(ClientMessage.newBuilder()
+                .setHello(Hello.newBuilder()
+                        .setClientId("client-1")
+                        .setDeviceId(certificate.getDeviceId())
+                        .setFingerprint(certificate.getFingerprint())
+                        .setCapabilities(capabilities(FakeCodec.DEFAULT_CODEC_ID))
+                        .build())
+                .build());
+
+        assertEquals(certificate.getDeviceId(), handler.getDeviceId());
+        assertEquals(certificate.getFingerprint(), handler.getFingerprint());
+        assertFalse(handler.isClosed());
+    }
+
+    @Test
+    public void helloWithoutIdentityJoinsUnderTheCertificateIdentity() throws Exception {
+        Fixture fixture = fixture(FakeCodec.DEFAULT_CODEC_ID);
+        TlsCertificate certificate = certificate();
+        StreamCallHandler handler = new StreamCallHandler(fixture.hub, fixture.runtime,
+                new FakeTransport(), StreamCallListener.NO_OP, null, PongTarget.NO_OP,
+                certificate);
+
+        handler.onClientMessage(hello(FakeCodec.DEFAULT_CODEC_ID));
+
+        assertEquals(certificate.getDeviceId(), handler.getDeviceId());
+        assertEquals(certificate.getFingerprint(), handler.getFingerprint());
+    }
+
+    @Test
+    public void helloWithAnotherDeviceIdIsRejected() throws Exception {
+        Fixture fixture = fixture(FakeCodec.DEFAULT_CODEC_ID);
+        TlsCertificate certificate = certificate();
+        StreamCallHandler handler = new StreamCallHandler(fixture.hub, fixture.runtime,
+                new FakeTransport(), StreamCallListener.NO_OP, null, PongTarget.NO_OP,
+                certificate);
+
+        handler.onClientMessage(ClientMessage.newBuilder()
+                .setHello(Hello.newBuilder()
+                        .setClientId("client-1")
+                        .setDeviceId(certificate().getDeviceId())
+                        .setCapabilities(capabilities(FakeCodec.DEFAULT_CODEC_ID))
+                        .build())
+                .build());
+
+        assertTrue(handler.isClosed());
+        assertEquals("identity_mismatch", handler.getJoinFailure());
+        assertNull(handler.getAttachedKey());
+        assertFalse(handler.drainOnce());
+    }
+
+    @Test
+    public void helloWithAnotherFingerprintIsRejected() throws Exception {
+        Fixture fixture = fixture(FakeCodec.DEFAULT_CODEC_ID);
+        TlsCertificate certificate = certificate();
+        StreamCallHandler handler = new StreamCallHandler(fixture.hub, fixture.runtime,
+                new FakeTransport(), StreamCallListener.NO_OP, null, PongTarget.NO_OP,
+                certificate);
+
+        handler.onClientMessage(ClientMessage.newBuilder()
+                .setHello(Hello.newBuilder()
+                        .setClientId("client-1")
+                        .setDeviceId(certificate.getDeviceId())
+                        .setFingerprint(certificate().getFingerprint())
+                        .setCapabilities(capabilities(FakeCodec.DEFAULT_CODEC_ID))
+                        .build())
+                .build());
+
+        assertTrue(handler.isClosed());
+        assertEquals("identity_mismatch", handler.getJoinFailure());
+    }
+
+    @Test
     public void helloWithoutIdentityLeavesTheBindingEmpty() {
         Fixture fixture = fixture(FakeCodec.DEFAULT_CODEC_ID);
         StreamCallHandler handler = new StreamCallHandler(fixture.hub, fixture.runtime,
@@ -308,6 +392,13 @@ public class StreamCallHandlerTest {
 
         assertNull(handler.getDeviceId());
         assertNull(handler.getFingerprint());
+    }
+
+    private static TlsCertificate certificate() throws Exception {
+        KeyPairGenerator generator = KeyPairGenerator.getInstance("EC");
+        generator.initialize(new ECGenParameterSpec("secp256r1"));
+        KeyPair keyPair = generator.generateKeyPair();
+        return TlsMaterial.fromKeyPair(keyPair).getCertificate();
     }
 
     private static Capabilities capabilities(String codecId) {

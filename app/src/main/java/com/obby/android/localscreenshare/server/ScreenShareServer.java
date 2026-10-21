@@ -51,9 +51,16 @@ import com.obby.android.localscreenshare.grpc.screenstream.ServerMessage;
 import com.obby.android.localscreenshare.identity.DeviceIdentity;
 import com.obby.android.localscreenshare.identity.IdentityManager;
 import com.obby.android.localscreenshare.identity.IdentityUnavailableException;
+import com.obby.android.localscreenshare.identity.tls.TlsCertificate;
+import com.obby.android.localscreenshare.identity.tls.TlsMaterial;
 import com.obby.android.localscreenshare.identity.tls.TlsMaterialHolder;
 import com.obby.android.localscreenshare.settings.DiscoverySettings;
 import com.obby.android.localscreenshare.settings.Preferences;
+import com.obby.android.localscreenshare.trust.PeerIdentityMapper;
+import com.obby.android.localscreenshare.trust.PinPolicy;
+import com.obby.android.localscreenshare.trust.PinningTrustManager;
+import com.obby.android.localscreenshare.trust.TlsPin;
+import com.obby.android.localscreenshare.trust.TlsPinStore;
 import com.obby.android.localscreenshare.settings.VisibilityPolicy;
 import com.obby.android.localscreenshare.support.BackoffPolicy;
 import com.obby.android.localscreenshare.support.Constants;
@@ -629,8 +636,12 @@ public final class ScreenShareServer {
             credentials = InsecureServerCredentials.create();
         } else {
             try {
+                final TlsMaterial material = TlsMaterialHolder.get().material();
                 credentials = TlsServerCredentials.newBuilder()
-                    .keyManager(TlsMaterialHolder.get().material().getKeyManager())
+                    .keyManager(material.getKeyManager())
+                    .trustManager(new PinningTrustManager(null, TlsPinStore.get(), true,
+                        PinningTrustManager.Role.SERVER))
+                    .clientAuth(TlsServerCredentials.ClientAuth.REQUIRE)
                     .build();
             } catch (IdentityUnavailableException e) {
                 throw new IOException("TLS material unavailable", e);
@@ -645,6 +656,7 @@ public final class ScreenShareServer {
             .addTransportFilter(mServerTransportFilter)
             .addStreamTracerFactory(mServerStreamTracerFactory)
             .intercept(REMOTE_ADDRESS_INTERCEPTOR)
+            .intercept(new TlsSessionInterceptor())
             .addService(mStreamService)
             .build();
         mTransportSecure = !isPlaintext;
@@ -1016,6 +1028,44 @@ public final class ScreenShareServer {
         return nsdServiceInfo;
     }
 
+    // Certificate identity of the current call, or null on a plaintext call.
+    @Nullable
+    private static TlsCertificate peerCertificate() {
+        return PeerIdentityMapper.fromSession(TlsSessionInterceptor.currentSession());
+    }
+
+    /**
+     * Applies the server-side trust policy to a streaming peer.
+     *
+     * <p>A device seen for the first time is pinned silently: the peer may be locked and cannot
+     * answer a prompt, and whether it may watch is a separate authorization question. A known id
+     * with another fingerprint is rejected; there is no automatic rebind.</p>
+     *
+     * @return the rejection reason, or null when the peer is trusted
+     */
+    @Nullable
+    private String acceptPeer(@NonNull final TlsCertificate peer) {
+        final TlsPinStore pins = TlsPinStore.get();
+        final TlsPin pin = pins.find(peer.getDeviceId());
+        final PinPolicy.Outcome outcome =
+            PinPolicy.decide(peer.getDeviceId(), peer.getSpki(), pin);
+        switch (outcome) {
+            case MATCH:
+                return null;
+            case UNKNOWN:
+                pins.pin(peer.getDeviceId(), peer.getFingerprint());
+                Log.i(mTag, "acceptPeer: new device pinned");
+                return null;
+            case CHANGED:
+                Log.w(mTag, "acceptPeer: peer fingerprint changed, rejecting");
+                return PinningTrustManager.REASON_IDENTITY_CHANGED;
+            case IDENTITY_MISMATCH:
+            default:
+                Log.w(mTag, "acceptPeer: peer certificate does not match its id, rejecting");
+                return PinningTrustManager.REASON_IDENTITY_MISMATCH;
+        }
+    }
+
     /**
      * gRPC service implementation for the media stream and the discovery handshake.
      *
@@ -1044,8 +1094,9 @@ public final class ScreenShareServer {
                 return;
             }
 
+            final TlsCertificate peer = peerCertificate();
             try {
-                handler.handle(request, remoteHost(), response -> {
+                handler.handle(request, remoteHost(), peer, response -> {
                     responseObserver.onNext(response);
                     responseObserver.onCompleted();
                 });
@@ -1066,10 +1117,24 @@ public final class ScreenShareServer {
                 responseObserver.onCompleted();
                 return new NoopClientObserver();
             }
+            final TlsCertificate peer = peerCertificate();
+            if (!Preferences.get().isTlsAllowPlaintext() && peer == null) {
+                responseObserver.onError(Status.UNAUTHENTICATED
+                    .withDescription("peer_certificate_missing")
+                    .asRuntimeException());
+                return new NoopClientObserver();
+            }
+            final String rejection = peer == null ? null : acceptPeer(peer);
+            if (rejection != null) {
+                responseObserver.onError(Status.PERMISSION_DENIED
+                    .withDescription(rejection)
+                    .asRuntimeException());
+                return new NoopClientObserver();
+            }
             final InetSocketAddress remoteAddress = REMOTE_ADDRESS.get();
             final GrpcMediaTransport transport = new GrpcMediaTransport(responseObserver, mSecure);
             final StreamCallHandler handler = new StreamCallHandler(mStreamHub, mStreamRuntime,
-                    transport, mStreamCallListener, remoteAddress, transport::sendPong);
+                    transport, mStreamCallListener, remoteAddress, transport::sendPong, peer);
             mStreamCallHandlers.add(handler);
             final Thread drain = new Thread(() -> drainLoop(handler, responseObserver),
                     "lss-stream-drain-" + handler.hashCode());

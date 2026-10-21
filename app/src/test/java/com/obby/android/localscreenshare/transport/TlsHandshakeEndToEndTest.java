@@ -8,6 +8,10 @@ import com.obby.android.localscreenshare.identity.SpkiId;
 import com.obby.android.localscreenshare.identity.tls.TlsCertificate;
 import com.obby.android.localscreenshare.identity.tls.TlsMaterial;
 import com.obby.android.localscreenshare.identity.tls.TlsNames;
+import com.obby.android.localscreenshare.core.util.TimeSource;
+import com.obby.android.localscreenshare.server.RegisterCallHandler;
+import com.obby.android.localscreenshare.server.TlsSessionInterceptor;
+import com.obby.android.localscreenshare.trust.PeerIdentityMapper;
 import com.obby.android.localscreenshare.trust.PinningTrustManager;
 import com.obby.android.localscreenshare.trust.TlsPin;
 import com.obby.android.localscreenshare.trust.TlsPinLookup;
@@ -29,6 +33,7 @@ import io.grpc.Server;
 import io.grpc.StatusRuntimeException;
 import io.grpc.TlsServerCredentials;
 import io.grpc.okhttp.OkHttpChannelBuilder;
+import io.grpc.TlsChannelCredentials;
 import io.grpc.okhttp.OkHttpServerBuilder;
 import io.grpc.stub.StreamObserver;
 
@@ -137,12 +142,107 @@ public class TlsHandshakeEndToEndTest {
             .iterator().next().get(1));
     }
 
+    @Test
+    public void mutualTlsWithAClientCertificateCompletesTheHandshake() throws Exception {
+        final TlsMaterial server = material();
+        final TlsMaterial client = material();
+        final int port = startMutualServer(server);
+
+        final RegisterResponse response = register(channel(port, server.getDeviceId(),
+            pin(server), true, client.getKeyManager()));
+
+        assertTrue(response.getAccepted());
+    }
+
+    @Test
+    public void clientWithoutACertificateIsRejected() throws Exception {
+        final TlsMaterial server = material();
+        final int port = startMutualServer(server);
+
+        try {
+            register(channel(port, server.getDeviceId(), pin(server), true));
+            fail("the server requires a client certificate");
+        } catch (StatusRuntimeException e) {
+            // The server aborts the handshake and the client sees the transport reset rather than
+            // the alert text; UNAVAILABLE (not the call deadline) is the observable contract.
+            assertEquals(io.grpc.Status.Code.UNAVAILABLE, e.getStatus().getCode());
+        }
+    }
+
+    @Test
+    public void claimedIdOfAnotherKeyIsRejectedByTheServer() throws Exception {
+        final TlsMaterial server = material();
+        final TlsMaterial first = material();
+        final TlsMaterial second = material();
+        final int port = startBoundMutualServer(server);
+
+        final RegisterResponse firstResponse = register(channel(port, server.getDeviceId(),
+            pin(server), true, first.getKeyManager()), first.getDeviceId(), first.getFingerprint());
+        final RegisterResponse secondResponse = register(channel(port, server.getDeviceId(),
+            pin(server), true, second.getKeyManager()), first.getDeviceId(),
+            first.getFingerprint());
+
+        assertTrue(firstResponse.getAccepted());
+        assertTrue(!secondResponse.getAccepted());
+        assertEquals(RegisterCallHandler.REASON_IDENTITY_MISMATCH,
+            secondResponse.getRejectReason());
+    }
+
+    @Test
+    public void matchingIdsOverMutualTlsAreAccepted() throws Exception {
+        final TlsMaterial server = material();
+        final TlsMaterial client = material();
+        final int port = startBoundMutualServer(server);
+
+        final RegisterResponse response = register(channel(port, server.getDeviceId(),
+            pin(server), true, client.getKeyManager()), client.getDeviceId(),
+            client.getFingerprint());
+
+        assertTrue(response.getAccepted());
+    }
+
+    private static RegisterResponse register(final ManagedChannel channel,
+                                             final String deviceId,
+                                             final String fingerprint) {
+        return ScreenStreamServiceGrpc.newBlockingStub(channel)
+            .withDeadlineAfter(DEADLINE_SECONDS, TimeUnit.SECONDS)
+            .register(RegisterRequest.newBuilder()
+                .setProtocolVersion(ScreenStreamProtoMapper.PROTOCOL_VERSION)
+                .setAnnounces(false)
+                .setSelf(DeviceSummary.newBuilder()
+                    .setDeviceId(deviceId)
+                    .setFingerprint(fingerprint)
+                    .build())
+                .build());
+    }
+
     private int startServer(final TlsMaterial material) throws IOException {
+        return startServer(material, false, new EchoRegisterService(material));
+    }
+
+    private int startMutualServer(final TlsMaterial material) throws IOException {
+        return startServer(material, true, new EchoRegisterService(material));
+    }
+
+    private int startBoundMutualServer(final TlsMaterial material) throws IOException {
+        return startServer(material, true, new BoundRegisterService(material));
+    }
+
+    private int startServer(final TlsMaterial material, final boolean mutual,
+                            final ScreenStreamServiceGrpc.ScreenStreamServiceImplBase service)
+        throws IOException {
+        final TlsServerCredentials.Builder credentials = TlsServerCredentials.newBuilder()
+            .keyManager(material.getKeyManager());
+        if (mutual) {
+            credentials
+                .trustManager(new PinningTrustManager(null, id -> null, true,
+                    PinningTrustManager.Role.SERVER))
+                .clientAuth(TlsServerCredentials.ClientAuth.REQUIRE);
+        }
         mServer = OkHttpServerBuilder
-            .forPort(0, TlsServerCredentials.newBuilder()
-                .keyManager(material.getKeyManager())
-                .build())
-            .addService(new EchoRegisterService(material))
+            .forPort(0, credentials.build())
+            .intercept(new TlsSessionInterceptor())
+            .addService(service)
             .build()
             .start();
         return mServer.getPort();
@@ -150,11 +250,21 @@ public class TlsHandshakeEndToEndTest {
 
     private ManagedChannel channel(final int port, final String expectedDeviceId,
                                    final TlsPinLookup pins, final boolean overrideAuthority) {
-        final OkHttpChannelBuilder builder = OkHttpChannelBuilder.forAddress(HOST, port,
-            io.grpc.TlsChannelCredentials.newBuilder()
-                .trustManager(new PinningTrustManager(expectedDeviceId, pins, true,
-                    PinningTrustManager.Role.CLIENT))
-                .build());
+        return channel(port, expectedDeviceId, pins, overrideAuthority, null);
+    }
+
+    private ManagedChannel channel(final int port, final String expectedDeviceId,
+                                   final TlsPinLookup pins, final boolean overrideAuthority,
+                                   final com.obby.android.localscreenshare.identity.tls
+                                       .IdentityKeyAdapter keyManager) {
+        final TlsChannelCredentials.Builder credentials = TlsChannelCredentials.newBuilder()
+            .trustManager(new PinningTrustManager(expectedDeviceId, pins, true,
+                PinningTrustManager.Role.CLIENT));
+        if (keyManager != null) {
+            credentials.keyManager(keyManager);
+        }
+        final OkHttpChannelBuilder builder =
+            OkHttpChannelBuilder.forAddress(HOST, port, credentials.build());
         if (overrideAuthority) {
             builder.overrideAuthority(TlsNames.AUTHORITY);
         }
@@ -207,6 +317,31 @@ public class TlsHandshakeEndToEndTest {
 
     private interface ThrowingRunnable {
         void run() throws Exception;
+    }
+
+    private static final class BoundRegisterService
+        extends ScreenStreamServiceGrpc.ScreenStreamServiceImplBase {
+        private final RegisterCallHandler mHandler;
+
+        private BoundRegisterService(final TlsMaterial self) {
+            mHandler = new RegisterCallHandler(
+                () -> DeviceSummary.newBuilder()
+                    .setDeviceId(self.getDeviceId())
+                    .setFingerprint(self.getFingerprint())
+                    .build(),
+                null, Runnable::run, TimeSource.MONOTONIC);
+        }
+
+        @Override
+        public void register(final RegisterRequest request,
+                             final StreamObserver<RegisterResponse> responseObserver) {
+            final com.obby.android.localscreenshare.identity.tls.TlsCertificate peer =
+                PeerIdentityMapper.fromSession(TlsSessionInterceptor.currentSession());
+            mHandler.handle(request, HOST, peer, response -> {
+                responseObserver.onNext(response);
+                responseObserver.onCompleted();
+            });
+        }
     }
 
     private static final class EchoRegisterService

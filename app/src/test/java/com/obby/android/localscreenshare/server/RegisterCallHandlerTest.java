@@ -10,6 +10,8 @@ import com.obby.android.localscreenshare.discovery.store.DeviceStore;
 import com.obby.android.localscreenshare.discovery.support.FakeDelayedScheduler;
 import com.obby.android.localscreenshare.grpc.screenstream.DeviceSummary;
 import com.obby.android.localscreenshare.grpc.screenstream.RegisterRequest;
+import com.obby.android.localscreenshare.identity.tls.TlsCertificate;
+import com.obby.android.localscreenshare.identity.tls.TlsMaterial;
 import com.obby.android.localscreenshare.grpc.screenstream.RegisterResponse;
 
 import org.junit.Before;
@@ -276,6 +278,56 @@ public class RegisterCallHandlerTest {
         assertNotNull(response.get());
         assertTrue(response.get().getAccepted());
         assertEquals(0, mStore.size());
+    }
+
+    @Test
+    public void certificateOfAnotherIdIsRejected() throws Exception {
+        TlsCertificate certificate = certificate();
+        AtomicReference<RegisterResponse> response = new AtomicReference<>();
+
+        mHandler.handle(request(true), REMOTE_HOST, certificate, response::set);
+
+        assertNotNull(response.get());
+        assertFalse(response.get().getAccepted());
+        assertEquals(RegisterCallHandler.REASON_IDENTITY_MISMATCH,
+            response.get().getRejectReason());
+        assertNull(mStore.device(PEER_ID));
+    }
+
+    @Test
+    public void certificateFingerprintOverridesTheBodyFingerprint() throws Exception {
+        TlsCertificate certificate = certificate();
+        RegisterRequest request = requestBuilder()
+            .setSelf(peerSummary(certificate.getDeviceId(), "body-fingerprint"))
+            .build();
+        AtomicReference<RegisterResponse> response = new AtomicReference<>();
+
+        mHandler.handle(request, REMOTE_HOST, certificate, response::set);
+
+        assertNotNull(response.get());
+        assertTrue(response.get().getAccepted());
+        DeviceInfo device = mStore.device(certificate.getDeviceId());
+        assertNotNull(device);
+        assertEquals(certificate.getFingerprint(), device.getFingerprint());
+    }
+
+    private static DeviceSummary peerSummary(final String deviceId, final String fingerprint) {
+        return DeviceSummary.newBuilder()
+            .setDeviceId(deviceId)
+            .setFingerprint(fingerprint)
+            .addAddresses(com.obby.android.localscreenshare.grpc.screenstream.DeviceAddress.newBuilder()
+                .setHost(REMOTE_HOST)
+                .setPort(8080)
+                .setFamily(4)
+                .build())
+            .build();
+    }
+
+    private static TlsCertificate certificate() throws Exception {
+        java.security.KeyPairGenerator generator = java.security.KeyPairGenerator.getInstance("EC");
+        generator.initialize(new java.security.spec.ECGenParameterSpec("secp256r1"));
+        java.security.KeyPair keyPair = generator.generateKeyPair();
+        return TlsMaterial.fromKeyPair(keyPair).getCertificate();
     }
 
     private RegisterCallHandler filteredHandler(java.util.function.Predicate<String> filter) {

@@ -13,6 +13,7 @@ import com.obby.android.localscreenshare.discovery.store.DeviceStore;
 import com.obby.android.localscreenshare.grpc.screenstream.DeviceSummary;
 import com.obby.android.localscreenshare.grpc.screenstream.RegisterRequest;
 import com.obby.android.localscreenshare.grpc.screenstream.RegisterResponse;
+import com.obby.android.localscreenshare.identity.tls.TlsCertificate;
 import com.obby.android.localscreenshare.support.DelayedScheduler;
 import com.obby.android.localscreenshare.transport.ScreenStreamProtoMapper;
 
@@ -73,6 +74,11 @@ public final class RegisterCallHandler {
      * The caller exceeded its request quota.
      */
     public static final String REASON_RATE_LIMITED = "rate_limited";
+
+    /**
+     * The caller's claimed device id does not match the certificate that answered the handshake.
+     */
+    public static final String REASON_IDENTITY_MISMATCH = "identity_mismatch";
 
     /**
      * This server is stopping and cannot answer discovery requests.
@@ -242,6 +248,20 @@ public final class RegisterCallHandler {
      */
     public void handle(@NonNull final RegisterRequest request, @NonNull final String remoteHost,
         @NonNull final Replier replier) {
+        handle(request, remoteHost, null, replier);
+    }
+
+    /**
+     * Handles one Register request answered over TLS.
+     *
+     * <p>The certificate is the authoritative identity: the claimed device id must equal the id
+     * derived from it, and the fingerprint written to the store is always the certificate's. The
+     * body fingerprint is only a declaration and is never trusted over the handshake.</p>
+     *
+     * @param peerCertificate certificate observed in the handshake, or null on a plaintext call
+     */
+    public void handle(@NonNull final RegisterRequest request, @NonNull final String remoteHost,
+        @Nullable final TlsCertificate peerCertificate, @NonNull final Replier replier) {
         final long nowMs = mTimeSource.nowMs();
         if (!mGlobalLimiter.allow("", nowMs) || !mAddressLimiter.allow(remoteHost, nowMs)) {
             reply(replier, false, REASON_RATE_LIMITED, null);
@@ -260,7 +280,13 @@ public final class RegisterCallHandler {
             return;
         }
 
-        final DeviceSummary caller = request.getSelf();
+        final DeviceSummary declared = request.getSelf();
+        if (peerCertificate != null
+            && !peerCertificate.getDeviceId().equals(declared.getDeviceId())) {
+            reply(replier, false, REASON_IDENTITY_MISMATCH, null);
+            return;
+        }
+        final DeviceSummary caller = withPeerFingerprint(declared, peerCertificate);
         final Predicate<String> callerFilter = mCallerFilter;
         if (callerFilter != null && !callerFilter.test(caller.getDeviceId())) {
             reply(replier, false, REASON_NOT_VISIBLE, null);
@@ -315,6 +341,16 @@ public final class RegisterCallHandler {
             }
         }
         return null;
+    }
+
+    @NonNull
+    private static DeviceSummary withPeerFingerprint(@NonNull final DeviceSummary caller,
+        @Nullable final TlsCertificate peerCertificate) {
+        if (peerCertificate == null
+            || peerCertificate.getFingerprint().equals(caller.getFingerprint())) {
+            return caller;
+        }
+        return caller.toBuilder().setFingerprint(peerCertificate.getFingerprint()).build();
     }
 
     private void learn(@NonNull final DeviceSummary caller, @NonNull final String remoteHost) {

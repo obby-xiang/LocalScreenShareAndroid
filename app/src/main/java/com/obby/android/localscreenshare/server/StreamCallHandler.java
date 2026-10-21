@@ -9,6 +9,7 @@ import com.obby.android.localscreenshare.core.stream.StreamHub;
 import com.obby.android.localscreenshare.core.stream.StreamRuntime;
 import com.obby.android.localscreenshare.grpc.screenstream.ClientMessage;
 import com.obby.android.localscreenshare.grpc.screenstream.Hello;
+import com.obby.android.localscreenshare.identity.tls.TlsCertificate;
 import com.obby.android.localscreenshare.transport.ScreenStreamProtoMapper;
 
 import java.io.IOException;
@@ -52,6 +53,9 @@ public final class StreamCallHandler {
 
     // Echo target for round-trip probes; NO_OP when the caller does not measure round trips.
     private final PongTarget pongTarget;
+
+    // Certificate identity of the transport, or null on a plaintext call or in a test.
+    private final TlsCertificate peerCertificate;
 
     private ClientSessionKey key;
 
@@ -130,6 +134,29 @@ public final class StreamCallHandler {
     public StreamCallHandler(StreamHub hub, StreamRuntime runtime, MediaTransport transport,
                              StreamCallListener listener, InetSocketAddress remoteAddress,
                              PongTarget pongTarget) {
+        this(hub, runtime, transport, listener, remoteAddress, pongTarget, null);
+    }
+
+    /**
+     * Creates a handler bound to the certificate identity of the TLS session.
+     *
+     * <p>When a certificate is present, it is the authoritative identity: a HELLO that declares a
+     * different device id or fingerprint is rejected instead of joined, and a HELLO that declares
+     * nothing still joins under the certificate identity. A null certificate keeps the legacy
+     * plaintext behaviour, where the HELLO is taken at face value.</p>
+     *
+     * @param hub             stream hub the client joins; required
+     * @param runtime         active stream runtime; required
+     * @param transport       transport owned by this call; required
+     * @param listener        receiver of call events; required
+     * @param remoteAddress   address the call arrived on, or null when unknown
+     * @param pongTarget      echo target for round-trip probes; required
+     * @param peerCertificate identity proven by the handshake, or null when unverified
+     * @throws IllegalArgumentException if any required argument is null
+     */
+    public StreamCallHandler(StreamHub hub, StreamRuntime runtime, MediaTransport transport,
+                             StreamCallListener listener, InetSocketAddress remoteAddress,
+                             PongTarget pongTarget, TlsCertificate peerCertificate) {
         if (hub == null) {
             throw new IllegalArgumentException("hub must not be null");
         }
@@ -151,6 +178,7 @@ public final class StreamCallHandler {
         this.listener = listener;
         this.remoteAddress = remoteAddress;
         this.pongTarget = pongTarget;
+        this.peerCertificate = peerCertificate;
     }
 
     /**
@@ -314,8 +342,9 @@ public final class StreamCallHandler {
             clientId = "client-" + UUID.randomUUID();
         }
         pendingClientId = clientId;
-        deviceId = emptyToNull(hello.getDeviceId());
-        fingerprint = emptyToNull(hello.getFingerprint());
+        if (!bindDeclaredIdentity(hello)) {
+            return;
+        }
         pendingCapabilities = ScreenStreamProtoMapper.toClientCapabilities(hello.getCapabilities());
         if (pendingCapabilities.getCodecIds().isEmpty()) {
             // Old clients that declare nothing are assumed to support the H.264 baseline.
@@ -324,6 +353,40 @@ public final class StreamCallHandler {
         }
         pendingJoin = true;
         tryJoin();
+    }
+
+    /**
+     * Binds the declared HELLO identity to the certificate, or rejects the call.
+     *
+     * @return true when the HELLO may proceed
+     */
+    private boolean bindDeclaredIdentity(final Hello hello) {
+        final String declaredId = emptyToNull(hello.getDeviceId());
+        final String declaredFingerprint = emptyToNull(hello.getFingerprint());
+        if (peerCertificate == null) {
+            deviceId = declaredId;
+            fingerprint = declaredFingerprint;
+            return true;
+        }
+        if (declaredId != null && !declaredId.equals(peerCertificate.getDeviceId())) {
+            rejectIdentity();
+            return false;
+        }
+        if (declaredFingerprint != null
+            && !declaredFingerprint.equals(peerCertificate.getFingerprint())) {
+            rejectIdentity();
+            return false;
+        }
+        deviceId = peerCertificate.getDeviceId();
+        fingerprint = peerCertificate.getFingerprint();
+        return true;
+    }
+
+    // Ends a call whose HELLO contradicts the certificate; the drain loop reports the failure.
+    private void rejectIdentity() {
+        pendingJoin = false;
+        joinFailure = "identity_mismatch";
+        close();
     }
 
     // Called under the handler monitor from onHello or drainOnce; never called directly.

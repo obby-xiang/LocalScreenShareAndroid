@@ -23,6 +23,7 @@ import com.obby.android.localscreenshare.grpc.screenstream.ServerMessage;
 import com.obby.android.localscreenshare.identity.DeviceIdentity;
 import com.obby.android.localscreenshare.identity.IdentityManager;
 import com.obby.android.localscreenshare.identity.IdentityUnavailableException;
+import com.obby.android.localscreenshare.identity.tls.TlsMaterialHolder;
 import com.obby.android.localscreenshare.identity.tls.TlsNames;
 import com.obby.android.localscreenshare.settings.Preferences;
 import com.obby.android.localscreenshare.support.Constants;
@@ -318,11 +319,18 @@ public final class ScreenShareClient {
         mMetrics = metrics;
         mRttEstimator = new RttEstimator(metrics, metrics.getClock());
         final boolean isPlaintext = Preferences.get().isTlsAllowPlaintext();
-        final ChannelCredentials credentials = isPlaintext
-            ? InsecureChannelCredentials.create()
-            : TlsChannelCredentials.newBuilder()
-                .trustManager(new PinningTrustManager(expectedDeviceId, TlsPinStore.get()))
-                .build();
+        ChannelCredentials credentials = InsecureChannelCredentials.create();
+        if (!isPlaintext) {
+            final TlsChannelCredentials.Builder tls = TlsChannelCredentials.newBuilder()
+                .trustManager(new PinningTrustManager(expectedDeviceId, TlsPinStore.get()));
+            try {
+                // The server requires a client certificate; the identity key signs the handshake.
+                tls.keyManager(TlsMaterialHolder.get().material().getKeyManager());
+            } catch (IdentityUnavailableException e) {
+                Log.w(mTag, "constructor: identity unavailable, the peer will reject the call");
+            }
+            credentials = tls.build();
+        }
         final OkHttpChannelBuilder builder = OkHttpChannelBuilder.forAddress(host, port, credentials)
             .flowControlWindow(GrpcConstants.GRPC_FLOW_CONTROL_WINDOW)
             .maxInboundMessageSize(GrpcConstants.GRPC_MAX_INBOUND_MESSAGE_SIZE)
