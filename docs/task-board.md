@@ -24,7 +24,7 @@
 - 基线参考：`65a34dc`（TB-ENG-004 完成标记）。
 - 编码框架隔离核心批次（Task 1–9，代码范围 `9f650dc..2a95ab2`）见 [TB-DOC-008](#tb-doc-008) 与 [TB-FW-001](#tb-fw-001)；最近完成的条目见 [TB-ENG-004](#tb-eng-004) 与 [TB-ENG-003](#tb-eng-003)。
 - 媒体路径生产接线（批次 A–H）已完成代码层面：双向流协议、StreamRuntime/StreamHub 服务端接线、H.264 采集直通、客户端 ClientMediaSession/Surface 渲染、JPEG 回退、能力选档与切换编排均已落地；仅经 JVM/fake 与编译验证，详见 [TB-FW-003](#tb-fw-003)。
-- 问题 3 代码层面已收官（批次 A–H），边角项 [TB-ENG-005](#tb-eng-005) 已完成（视频设置界面），[TB-ENG-006](#tb-eng-006)、[TB-ENG-007](#tb-eng-007) 仍为遗留；下一步等用户准备好设备后进入设备实测（设备验证未解禁）；问题 3 仍未关闭。
+- 问题 3 代码层面已收官（批次 A–H），边角项 [TB-ENG-005](#tb-eng-005) 已完成（视频设置界面），[TB-ENG-007](#tb-eng-007) 已随可观测性 O3 完成（2026-10-21），[TB-ENG-006](#tb-eng-006) 仍为遗留；下一步等用户准备好设备后进入设备实测（设备验证未解禁）；问题 3 仍未关闭。
 - 未做设备/真机/模拟器验证：全程未运行 adb、`connectedAndroidTest`、安装或启动 App；编码切换、Surface 恢复与多客户端行为均无实测数据。
 - 编码框架隔离核心（契约、StreamHub、有界队列、六状态机、JPEG 参考适配）已完成并通过 JVM 验证，见 [TB-FW-001](#tb-fw-001)、[TB-FW-004](#tb-fw-004)、[TB-FW-005](#tb-fw-005)、[TB-FW-002](#tb-fw-002)。
 - 问题 3 尚未由用户明确关闭，不能标记完成；代码完成 ≠ 问题关闭，API 25 只是兼容下限，能力按运行时探测分档。
@@ -38,7 +38,8 @@
 - 2026-10-21 查看器画质与设置真机验证（真机服务端 + 模拟器查看器；几何、三档缩放、181 s 呈现调度通过）发现 2 个 P1 与 4 个次级问题，已在本轮修复：流中切换编码器因「持状态锁 stop、drain 线程等同一把锁」互等至 1 s join 超时，且失败后采集永久损坏（`dequeueBuffer -19` 刷屏、0 B/s），改为锁外预热/停止 + 切换锁串行化 + 失败提交自愈 + 重建显示输出面；会话中分辨率变化后查看器只剩左下窄带，改为 `RenderTarget.setContentSize` → `SurfaceTexture.setDefaultBufferSize` 并在旋转时 resize VirtualDisplay；另有缩放菜单档位去重与比例标注、设置摘要随参数生效刷新、拖拽越过 touch slop 即生效。全量 **774 tests / 0 failures / 0 errors / 0 skipped**（67 个测试类）。缺陷根因与修复分别补记在 [TB-ENG-012](#tb-eng-012)、[TB-CLIENT-003](#tb-client-003)、[TB-ENG-005](#tb-eng-005)；修复后的设备复测未执行。
 - 2026-10-21 设备复测（r2）新发现 3 个问题，已在代码层面修复：**Q-07（P1）** 画面大小落到奇数编码尺寸时硬编必拒绝、失败后画面被挤压出黑带 — 改为采集尺寸按编码器对齐步长向下取偶（与能力探测同源）、尺寸切换先编码器后显示（失败零副作用）、失败回写实际生效比例并提示（提交 `08ae680`，详见 [TB-ENG-012](#tb-eng-012)）；**Q-08（P2）** 缩放菜单选中态只存在于无障碍树 — 当前档位文案前置勾选标记；**Q-09（P3）** 观看比例无 UI 入口 — 双击菜单新增「显示大小」子菜单（60%/80%/100% 与当前值）（后两项提交 `3fb9d9e`，详见 [TB-CLIENT-003](#tb-client-003)）。全量 **790 tests / 0 failures / 0 errors / 0 skipped**（70 个测试类）。三项均**未做设备实测**，复测点位见条目详情。
 - 2026-10-21 设备复测（r3）留下的两个 P3 尾巴已修复：**Q-10** 失败回写只改偏好、开着的视频 sheet 滑杆不刷新 — 投影偏好变化时同步全部控件（拖动中的滑杆跳过），映射抽成纯 JVM `ProjectionControlValues`；**Q-11** 画面大小下限 5% 低于本机硬编最小尺寸 — 新增 `EncoderSizeLimitProbe` + 纯 JVM `ProjectionScalePolicy`，按下限与窗口较短边动态抬高滑杆 `valueFrom`（能力未知仍为 5%）。全量 **812 tests / 0 failures / 0 errors / 0 skipped**（72 个测试类）。模拟器实测两项均生效（证据见 [TB-ENG-005](#tb-eng-005)）；真机只读了下限（176×144 → 17%）并还原偏好，画面回归留给下一轮。
-- 阶段 0/1 的代码优化尚未开始，当前没有进行中的代码任务。
+- 2026-10-21 传输与管线可观测性（[TB-OBS-001](#tb-obs-001) 的 O1–O6）已落地代码层面：指标内核（`core/metrics`）、服务端编码/扇出/发送探针、服务端统计聚合与「观看者 · 队列 · 丢弃 · 重同步」摘要行（并入 [TB-ENG-007](#tb-eng-007)）、客户端到达/解码/呈现探针、Ping/Pong 应用层 RTT 探针、悬浮窗三行调试叠加层与每 10 s 设备状态行；两个开关（`KEY_METRICS_ENABLED`、`KEY_VIEWER_HUD_ENABLED`）默认关闭。全量 **899 tests / 0 failures / 0 errors / 0 skipped**（79 个测试类），各批 Build 与 Checks CI 均 success。O7（基线执行与 [DV-001](decision-board.md) 裁决）仍是后续设备棒，设备实测未执行。
+- 阶段 0 的仪表部分已就位，但基线报告与 DV-001/DV-018 的实测数值仍缺；阶段 1 之后的代码优化尚未开始，当前没有进行中的代码任务。
 - 下一步：按 [渐进优化路线图](optimization-roadmap.md) 的阶段 0 启动可观测性与基线，落地顺序以 [编码框架](codec-framework.md) 为准。
 - 前置约束：拿到基线前，不预设任何性能、发热或延迟收益。
 - 设备验证未解禁：双语资源与系统语言跟随仅经构建、单测与代码审查确认。
@@ -62,10 +63,9 @@
 | TB-MEDIA-004 | 📋 待办 | 🟡 P3 | 首帧绿色花屏自愈 | 2026-10-20 | — | [媒体架构](media-architecture.md) |
 | TB-MEDIA-005 | 📋 待办 | 🟢 P3 | 停止共享时编码器输入面 abandoned 噪声（良性） | 2026-10-20 | — | [媒体架构](media-architecture.md) |
 | TB-ENG-006 | 📋 待办 | 🟡 P2 | JPEG 降级客户端查看器接回 | 2026-10-19 | — | [问题3接线计划](superpowers/plans/2026-10-19-media-path-wiring.md) |
-| TB-ENG-007 | 📋 待办 | 🟡 P2 | 客户端发送统计并入服务端统计 | 2026-10-19 | — | [问题3接线计划](superpowers/plans/2026-10-19-media-path-wiring.md) |
 | TB-CORE-001 | 📋 待办 | 🔴 P0 | 正确性与资源清理 | 2026-10-17 | — | [路线图阶段 1](optimization-roadmap.md) |
 | TB-CORE-002 | 📋 待办 | 🔴 P0 | 会话与渲染目标解耦 | 2026-10-17 | — | [窗口与会话设计](windowing-session-design.md) |
-| TB-OBS-001 | 📋 待办 | 🔴 P0 | 可观测性与基线 | 2026-10-17 | — | [路线图阶段 0](optimization-roadmap.md) |
+| TB-OBS-001 | 🔶 部分完成 | 🔴 P0 | 可观测性与基线（O1–O6 已落地，O7 待设备） | 2026-10-17 | — | [本计划](superpowers/plans/2026-10-21-transport-observability.md) |
 | TB-FW-002 | 🔶 部分完成 | 🟠 P1 | JPEG 适配 | 2026-10-17 | — | [编码框架设计](codec-framework.md) |
 | TB-SEC-001 | 📋 待办 | 🟠 P1 | 配对与传输加密 | 2026-10-17 | — | [媒体架构](media-architecture.md) |
 | TB-WIN-001 | 📋 待办 | 🟠 P1 | 窗口切换 | 2026-10-17 | — | [窗口与会话设计](windowing-session-design.md) |
@@ -85,6 +85,8 @@
 | ID | 状态 | 优先级 | 标题 | 创建 | 完成 | 关联 |
 | --- | --- | --- | --- | --- | --- | --- |
 | TB-CLIENT-003 | ✅ 已完成 | 🟠 P1 | 查看器宽高比与缩放质量 | 2026-10-20 | 2026-10-20 | [实施计划](superpowers/plans/2026-10-21-viewer-quality-and-settings.md) |
+| TB-OBS-002 | ✅ 已完成 | 🟠 P1 | RTT 探针（Ping/Pong）与估计器 | 2026-10-21 | 2026-10-21 | [本计划](superpowers/plans/2026-10-21-transport-observability.md) |
+| TB-ENG-007 | ✅ 已完成 | 🟡 P2 | 客户端发送统计并入服务端统计（已并入 TB-OBS-001 O3） | 2026-10-19 | 2026-10-21 | [本计划](superpowers/plans/2026-10-21-transport-observability.md) |
 | TB-CLIENT-004 | ✅ 已完成 | 🟡 P2 | 客户端呈现调度与关键帧恢复 | 2026-10-20 | 2026-10-20 | [实施计划](superpowers/plans/2026-10-21-viewer-quality-and-settings.md) |
 | TB-ENG-005 | ✅ 已完成 | 🟡 P2 | 新视频设置界面（码率/IDR 可写，编码格式只读） | 2026-10-19 | 2026-10-20 | [实施计划](superpowers/plans/2026-10-21-viewer-quality-and-settings.md) |
 | TB-ENG-012 | ✅ 已完成 | 🟡 P2 | 编码参数生效编排（帧率/IDR 重建） | 2026-10-20 | 2026-10-20 | [实施计划](superpowers/plans/2026-10-21-viewer-quality-and-settings.md) |
@@ -215,12 +217,9 @@
 </details>
 
 <a id="tb-eng-007"></a>
-<details><summary>TB-ENG-007 客户端发送统计并入服务端统计（📋 待办）</summary>
+<details><summary>TB-ENG-007 客户端发送统计并入服务端统计（已并入 TB-OBS-001 O3，见已完成条目）</summary>
 
-- **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟡 P2 / 2026-10-19 / —
-- **任务**：`ClientSendSession.getStats()` 产出队列深度、丢弃与重同步计数，但未聚合进 `LssServerStats`，UI 与通知不可见。需把 `ClientSendStats` 并入服务端统计输出。
-- **交付物 / 验证证据**：交付：统计聚合、UI/通知展示与单测。验证：服务端统计包含每客户端队列深度、丢弃与重同步计数；当前未实施，设备验证未解禁。
-- **关联文档**：[问题3接线计划](superpowers/plans/2026-10-19-media-path-wiring.md)
+本条目已按 [本计划](superpowers/plans/2026-10-21-transport-observability.md) 8.4 并入 [TB-OBS-001](#tb-obs-001) 的 O3 并已完成；详情见「✅ 已完成条目」中的同名块。
 
 </details>
 
@@ -246,12 +245,21 @@
 </details>
 
 <a id="tb-obs-001"></a>
-<details><summary>TB-OBS-001 可观测性与基线（📋 待办）</summary>
+<details><summary>TB-OBS-001 可观测性与基线（🔶 部分完成 · O1–O6 已落地，O7 待设备）</summary>
 
-- **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🔴 P0 / 2026-10-17 / —
-- **任务**：可观测性与基线：统一指标接口，覆盖服务端采集/编码/发送、客户端接收/解码/渲染、网络与设备状态；建立测试矩阵并记录当前 JPEG 路径基线。
-- **交付物 / 验证证据**：交付：指标定义、调试导出、基线报告。验证：阶段 0 的“指标可用、隐私、开销可控、基线完整、无行为变化”全部满足；当前未执行。
-- **关联文档**：[路线图阶段 0](optimization-roadmap.md)、[项目现状](project-assessment.md)
+- **状态 / 优先级 / 创建 / 完成**：🔶 部分完成 / 🔴 P0 / 2026-10-17 / —
+- **任务**：可观测性与基线：统一指标接口，覆盖服务端采集/编码/发送、客户端接收/解码/渲染、网络与设备状态；建立测试矩阵并记录基线。范围按 [本计划](superpowers/plans/2026-10-21-transport-observability.md) 第 10 章细化为 O1–O7，交付物为「指标定义 + 结构化日志 + HUD + 基线报告」，验收沿用阶段 0 五项并补「关闭态零开销」。
+- **交付物 / 验证证据**：
+  - **O1 指标内核**（`74eb2b6`）：`core/util/NanoClock`、`core/metrics`（`LatencyWindow` 无锁环形缓冲 + 最近秩分位、`PipelineMetrics` 关闭态零样本零分配、`MetricsSnapshot`、`MetricsFormatter` 单行 KV 与 HUD 三行、按域拆分的四组键名常量类）。
+  - **O2 服务端探针**（`c6ab4dd`）：`enc.cap2out`（自校准，连续 3 个越界即停用并置抑制标记）、`enc.outInterval`、`enc.auBytes`、`enc.auRate`、`enc.bitrate`、`kf.request`、`kf.joins`、`tx.send`（锁外计时）、`tx.qDepth`、`tx.qResidency`（`QueuePollResult` 带入队时刻）、`StreamHub.snapshotSessions()`。
+  - **O3 服务端聚合**（`8b4c72e`）：`ServerStatsMapper` + `ServerStats.TransportStats` 客户端块 + 摘要行，见 [TB-ENG-007](#tb-eng-007)。
+  - **O4 客户端探针**（`fcce4b8`）：`ArrivalTracker`（`rx.arr`/`rx.rowd`/`rx.stall`/`rx.seqGap`）、`dec.lat`/`dec.merged`/`dec.shed`/`dec.deadlineMiss`、`pres.interval`/`pres.late`/`pres.drop`/`freeze`、`switch.blackout`、`rx.qDepth`/`rx.qWait`/`rx.shed`、重同步原因（解码/配置/未来 epoch/无 Surface）、`ClientStats` 新增四项派生值。
+  - **O5 RTT 探针**（`1ac3a9c`）：见 [TB-OBS-002](#tb-obs-002)。
+  - **O6 呈现与开关**（`433fde9`）：`SurfaceShareViewer` 改为 `FrameLayout` 根 + `TextureView` + 叠加层（outline/clip/transform 仍在 `TextureView`，窗口参数移到根视图），叠加层 1 s 三行、默认关闭且关闭时不取快照；双击菜单新增「显示调试信息」；`KEY_METRICS_ENABLED`/`KEY_VIEWER_HUD_ENABLED` 默认关；两端每 10 s 输出一行 `lss.device`（热状态 API 29+、电池温度、堆、线程数，缺失值 `n/a`）。
+  - **验证**：全量 **899 tests / 0 failures / 0 errors / 0 skipped**（79 个测试类，基线 812，只增不减）；`./gradlew :app:assembleDebug --offline` 成功；`check_strings.py`/`check_cjk.py`/`check_docs.py` 全绿；六批 Build 与 Checks CI 均 success。
+  - **未完成（O7）**：基线执行、注入拥塞对照实验、基线报告与 [DV-001](decision-board.md) 裁决全部未做；本节所有指标都没有设备数值。
+- **边界与风险**：`enc.cap2out` 依赖「采集 PTS 与单调钟同基」的假设（已自校准 + 越界停用）；`rx.rowd` 依赖 30 s 滑动最小值抵消时钟差；TCP 上没有丢帧只有晚到，因此 DV-001 的判据是卡顿时长与频率而不是丢包率；`ServerStats` 的 `Parcel` 往返只能在设备上验证。
+- **关联文档**：[本计划](superpowers/plans/2026-10-21-transport-observability.md)、[路线图阶段 0](optimization-roadmap.md)、[项目现状](project-assessment.md)、[DV-001](decision-board.md)、[DV-018](decision-board.md)
 
 </details>
 
@@ -366,6 +374,36 @@
 </details>
 
 ### ✅ 已完成条目
+
+<a id="tb-obs-002"></a>
+<details><summary>TB-OBS-002 RTT 探针（Ping/Pong）与估计器（✅ 2026-10-21）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：✅ 已完成 / 🟠 P1 / 2026-10-21 / 2026-10-21
+- **任务**：补上 [DV-001](decision-board.md) 判据里唯一缺失的量：应用层往返时延。gRPC 不向应用暴露 HTTP/2 PING 的 RTT，因此新增一对最小协议消息，客户端每秒发一次探针，服务端原样回显，客户端据本地时间戳算往返。
+- **交付物 / 验证证据**：交付（O5 `1ac3a9c`）：
+  - proto 向后兼容增量：`ClientMessage.ping = 4`、`ServerMessage.pong = 3`，消息体只有 `seq` 与回显的 `client_uptime_ms`；不回传服务端时间，因此不需要时钟同步。旧对端把未知 oneof 字段当作 `PAYLOAD_NOT_SET` 忽略，两端退化为「没有 RTT 样本」而不报错。
+  - `server/PongTarget`（窄回调，`NO_OP` 默认）避免扩宽 `MediaTransport`；`GrpcMediaTransport.sendPong` 与媒体发送共用 `sendLock` 且**不经过** `ClientSendSession` 队列，测到的是路径而不是队列。
+  - `StreamCallHandler` 在处理器监视器外回显，关闭后不再应答；`core/metrics/RttEstimator` 维护容量 8 的发送时刻表、2 s 超时判丢、1/8 权重的 EWMA，输出 `rtt.p50/p95/ewma/lost` 与 `rtt.kind=ping_pong`。
+  - `ScreenShareClient` 每秒一次探针（估算 < 40 B/s），回包在 gRPC 回调线程直接喂估计器，不进解码队列。
+- **验证**：`RttEstimatorTest`（匹配、去重、超时、EWMA、序号回绕、关闭态零样本）、`StreamCallHandlerTest`（回显不改变 attach 状态、关闭后静默）、`ScreenStreamProtoMapperTest`（Ping/Pong 线格式往返、未知 payload 仍被忽略）、`GrpcMediaTransportTest`（回显字段与关闭态静默）；全量 **899 tests / 0 failures**，Build 与 Checks CI success。设备实测未执行：真实 RTT 数值、丢样率与「是否 1 s 足够灵敏」都还没有数据。
+- **关联文档**：[本计划](superpowers/plans/2026-10-21-transport-observability.md) 5.6、8.6；[DV-001](decision-board.md)
+
+</details>
+
+<a id="tb-eng-007"></a>
+<details><summary>TB-ENG-007 客户端发送统计并入服务端统计（✅ 2026-10-21，已并入 TB-OBS-001 O3）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：✅ 已完成 / 🟡 P2 / 2026-10-19 / 2026-10-21
+- **任务**：`ClientSendSession.getStats()` 产出队列深度、丢弃与重同步计数，但没有出口。按 [本计划](superpowers/plans/2026-10-21-transport-observability.md) 8.4 的决定，本条目并入 TB-OBS-001 的 O3 一起做，避免重复实现。
+- **交付物 / 验证证据**：交付（O3 `8b4c72e`）：
+  - `server/ServerStatsMapper` 纯函数把「每地址字节」与「每会话快照」合成一行；`ServerStats.TransportStats` 增加客户端块（clientId、状态、队列深度/字节、丢弃、重同步、已发送、发送 p95），`writeToParcel`/读取构造与比较器同步更新。
+  - `StreamCallHandler` 接收并暴露调用来源地址，`ScreenShareServer` 维护存活调用列表做会话↔地址关联并在采集时剪除已关闭调用。
+  - `MainActivity` 摘要增加一行「观看者 · 队列 · 丢弃 · 重同步」，`strings` 同步 `values-zh`。
+  - 同一地址多会话时字节只落在地址首行，其余会话行不编造分配；地址缺失的会话单独成行。
+- **验证**：`ServerStatsMapperTest`（零/单/双会话、地址缺失、字节归属、排序、速率）、`ServerStatsTest`（字段与 Parcel 顺序护栏）；全量 JVM 通过，Build 与 Checks CI success。**未做设备实测**：`Parcel` 真机往返与界面刷新仍待设备棒（JVM 单测环境为 mockable android.jar，`Parcel.obtain()` 直接抛异常，无法在此验证）。
+- **关联文档**：[本计划](superpowers/plans/2026-10-21-transport-observability.md) 8.4；[TB-OBS-001](#tb-obs-001)
+
+</details>
 
 <a id="tb-client-003"></a>
 <details><summary>TB-CLIENT-003 查看器宽高比与缩放质量（✅ 2026-10-20）</summary>
