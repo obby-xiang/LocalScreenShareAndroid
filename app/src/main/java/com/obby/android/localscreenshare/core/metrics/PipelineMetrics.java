@@ -1,0 +1,450 @@
+package com.obby.android.localscreenshare.core.metrics;
+
+import com.obby.android.localscreenshare.core.util.NanoClock;
+
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicLongArray;
+import java.util.concurrent.atomic.AtomicReferenceArray;
+import java.util.concurrent.atomic.LongAdder;
+
+/**
+ * Metric holder for one measurement scope: one encoder, one client send session, one client
+ * receive session.
+ *
+ * <p><b>Scopes, not singletons.</b> A process-wide registry would mix a server's encoder with
+ * every client session, so each scope owns its own instance. {@link #NONE} is the shared disabled
+ * instance: every recording method returns on its first check, so a pipeline that is not measured
+ * pays one volatile read per probe and allocates nothing.</p>
+ *
+ * <p><b>Hot path contract.</b> {@link #record(Window, long)} and the counter methods are
+ * allocation free and lock free: a window is created on first use, counters are
+ * {@link LongAdder} instances created eagerly, and gauges are a fixed array. A probe may call
+ * {@link #nowNs()} once instead of reading {@link System#nanoTime()} directly, which keeps the
+ * clock injectable for tests.</p>
+ *
+ * <p><b>Reading.</b> {@link #snapshot(long)} copies every used window into an immutable
+ * {@link MetricsSnapshot}; percentiles are computed there, never on a probe. A scope whose
+ * {@link #isEnabled()} is false always reports empty windows and zero counters.</p>
+ *
+ * <p><b>Units.</b> Latency windows store nanoseconds, {@link Window#AU_BYTES} stores payload bytes
+ * and {@link Window#QUEUE_DEPTH} stores queued units. Counters store plain counts, except
+ * {@link Counter#ACCESS_UNIT_BYTES}, which accumulates payload bytes so a bitrate can be derived
+ * from a snapshot.</p>
+ */
+public final class PipelineMetrics {
+
+    /**
+     * Shared disabled instance; recording on it does nothing.
+     */
+    public static final PipelineMetrics NONE = new PipelineMetrics(false, NanoClock.MONOTONIC,
+            LatencyWindow.DEFAULT_CAPACITY);
+
+    /**
+     * {@link Gauge#RTT_KIND} value for samples taken from an echoed ping message.
+     */
+    public static final long RTT_KIND_PING_PONG = 0L;
+
+    /**
+     * {@link Gauge#RTT_KIND} value for samples taken from a key-frame request round trip, which
+     * includes encoding latency and is therefore an upper bound rather than a path round trip.
+     */
+    public static final long RTT_KIND_KEYFRAME_UPPER = 1L;
+
+    /**
+     * Sample windows, one per measured latency or size distribution.
+     */
+    public enum Window {
+
+        /**
+         * Capture timestamp to retrievable encoder output, in nanoseconds.
+         */
+        CAP_TO_OUT,
+
+        /**
+         * Difference between two consecutive encoder output timestamps, in nanoseconds.
+         */
+        OUT_INTERVAL,
+
+        /**
+         * Encoded access-unit payload size, in bytes.
+         */
+        AU_BYTES,
+
+        /**
+         * Sending queue depth observed by the drain loop, in units.
+         */
+        QUEUE_DEPTH,
+
+        /**
+         * Duration of one transport send call, in nanoseconds.
+         */
+        SEND,
+
+        /**
+         * Time an access unit spent queued before it was polled, in nanoseconds.
+         */
+        QUEUE_RESIDENCY,
+
+        /**
+         * Interval between two consecutive received access units, in nanoseconds.
+         */
+        ARRIVAL,
+
+        /**
+         * Relative one-way delay of a received access unit against the window minimum, in
+         * nanoseconds.
+         */
+        ROWD,
+
+        /**
+         * Time a message waited between decode-queue submission and decode start, in nanoseconds.
+         */
+        QUEUE_WAIT,
+
+        /**
+         * Decoder input submission to retrievable decoder output, in nanoseconds.
+         */
+        DECODE_LATENCY,
+
+        /**
+         * Interval between two consecutive presented frames, in nanoseconds.
+         */
+        PRESENT_INTERVAL,
+
+        /**
+         * Lateness of a presented frame against its own target time, in nanoseconds.
+         */
+        PRESENT_LATE,
+
+        /**
+         * Duration of an arrival gap that exceeded the stall threshold, in nanoseconds.
+         */
+        STALL_DURATION,
+
+        /**
+         * Key-frame request to first join point arrival, in nanoseconds.
+         */
+        JOIN_LATENCY,
+
+        /**
+         * New descriptor arrival to first presented frame, in nanoseconds.
+         */
+        SWITCH_BLACKOUT,
+
+        /**
+         * Application-level round-trip time, in nanoseconds.
+         */
+        RTT
+    }
+
+    /**
+     * Monotonic counters, one per measured event or accumulation.
+     */
+    public enum Counter {
+
+        /**
+         * Access units produced or received, depending on the scope.
+         */
+        ACCESS_UNITS,
+
+        /**
+         * Payload bytes carried by {@link #ACCESS_UNITS}.
+         */
+        ACCESS_UNIT_BYTES,
+
+        /**
+         * Join points forwarded by the runtime.
+         */
+        JOIN_POINTS,
+
+        /**
+         * Join-point requests that reached the encoder.
+         */
+        JOIN_REQUESTS,
+
+        /**
+         * Access units successfully sent by a send session.
+         */
+        SENT_UNITS,
+
+        /**
+         * Access units dropped by a send queue.
+         */
+        DROPPED_UNITS,
+
+        /**
+         * Send-session resynchronization episodes.
+         */
+        RESYNCS,
+
+        /**
+         * Messages dropped because the decode queue was full.
+         */
+        ARRIVAL_SHEDS,
+
+        /**
+         * Arrival gaps that exceeded the stall threshold.
+         */
+        STALLS,
+
+        /**
+         * Non-contiguous access-unit sequences.
+         */
+        SEQUENCE_GAPS,
+
+        /**
+         * Frames dropped because the decoder input budget was exhausted.
+         */
+        DECODE_SHEDS,
+
+        /**
+         * Decoded outputs discarded because a newer one was already available.
+         */
+        DECODE_MERGED,
+
+        /**
+         * Frames the presentation pacer decided to drop.
+         */
+        PRESENT_DROPS,
+
+        /**
+         * Frames whose output became available after their presentation target.
+         */
+        DEADLINE_MISSES,
+
+        /**
+         * Presentation freezes, following the WebRTC freeze definition.
+         */
+        FREEZES,
+
+        /**
+         * Key-frame requests issued by the client.
+         */
+        KEYFRAME_REQUESTS,
+
+        /**
+         * Round-trip samples received.
+         */
+        RTT_SAMPLES,
+
+        /**
+         * Round-trip samples that timed out.
+         */
+        RTT_LOST
+    }
+
+    /**
+     * Instantaneous values that are not a distribution.
+     */
+    public enum Gauge {
+
+        /**
+         * Exponentially weighted moving average of the round-trip samples, in nanoseconds.
+         */
+        RTT_EWMA,
+
+        /**
+         * Source of the round-trip samples; see {@link RttMetricNames}.
+         */
+        RTT_KIND,
+
+        /**
+         * Number of attached peers at snapshot time.
+         */
+        PEER_COUNT
+    }
+
+    private final boolean enabled;
+
+    private final NanoClock clock;
+
+    private final int windowCapacity;
+
+    // Null elements are created on first use, so a scope only pays for the metrics it records.
+    private final AtomicReferenceArray<LatencyWindow> windows =
+            new AtomicReferenceArray<>(Window.values().length);
+
+    private final LongAdder[] counters = new LongAdder[Counter.values().length];
+
+    private final AtomicLongArray gauges = new AtomicLongArray(Gauge.values().length);
+
+    private PipelineMetrics(boolean enabled, NanoClock clock, int windowCapacity) {
+        this.enabled = enabled;
+        this.clock = clock;
+        this.windowCapacity = windowCapacity;
+        for (int i = 0; i < counters.length; i++) {
+            counters[i] = new LongAdder();
+        }
+    }
+
+    /**
+     * Creates an enabled scope with the default window capacity.
+     *
+     * @param clock clock used by {@link #nowNs()}; must not be null
+     * @throws IllegalArgumentException if {@code clock} is null
+     */
+    public static PipelineMetrics create(NanoClock clock) {
+        return create(clock, LatencyWindow.DEFAULT_CAPACITY);
+    }
+
+    /**
+     * Creates an enabled scope with an explicit window capacity.
+     *
+     * <p>A dedicated snapshot cadence uses a smaller window: one second at sixty frames per
+     * second fits in 128 samples, while five seconds keeps the default of 512.</p>
+     *
+     * @param clock           clock used by {@link #nowNs()}; must not be null
+     * @param windowCapacity  samples retained per window; must be positive
+     * @throws IllegalArgumentException if {@code clock} is null or the capacity is not positive
+     */
+    public static PipelineMetrics create(NanoClock clock, int windowCapacity) {
+        if (clock == null) {
+            throw new IllegalArgumentException("clock must not be null");
+        }
+        if (windowCapacity <= 0) {
+            throw new IllegalArgumentException("windowCapacity must be positive");
+        }
+        return new PipelineMetrics(true, clock, windowCapacity);
+    }
+
+    /**
+     * Returns whether this scope records anything.
+     */
+    public boolean isEnabled() {
+        return enabled;
+    }
+
+    /**
+     * Returns the injected clock's current value, so a probe reads the clock once per timestamp.
+     */
+    public long nowNs() {
+        return clock.nowNs();
+    }
+
+    /**
+     * Returns the clock used by this scope.
+     */
+    public NanoClock getClock() {
+        return clock;
+    }
+
+    /**
+     * Records one sample into a window, creating that window on first use.
+     *
+     * @param window window to write; must not be null
+     * @param sample value in the unit documented by the window
+     */
+    public void record(Window window, long sample) {
+        if (!enabled) {
+            return;
+        }
+        LatencyWindow target = windows.get(window.ordinal());
+        if (target == null) {
+            target = createWindow(window);
+        }
+        target.record(sample);
+    }
+
+    /**
+     * Increments one counter by one.
+     */
+    public void increment(Counter counter) {
+        if (!enabled) {
+            return;
+        }
+        counters[counter.ordinal()].increment();
+    }
+
+    /**
+     * Adds {@code delta} to one counter.
+     */
+    public void add(Counter counter, long delta) {
+        if (!enabled) {
+            return;
+        }
+        counters[counter.ordinal()].add(delta);
+    }
+
+    /**
+     * Sets an instantaneous value.
+     */
+    public void setGauge(Gauge gauge, long value) {
+        if (!enabled) {
+            return;
+        }
+        gauges.set(gauge.ordinal(), value);
+    }
+
+    /**
+     * Returns how many samples a window recorded since the scope was created.
+     */
+    public long getRecordedCount(Window window) {
+        LatencyWindow target = enabled ? windows.get(window.ordinal()) : null;
+        return target == null ? 0L : target.getRecordedCount();
+    }
+
+    /**
+     * Returns a window's current summary; {@link LatencyWindow.Stats#EMPTY} when unused.
+     */
+    public LatencyWindow.Stats stats(Window window) {
+        LatencyWindow target = enabled ? windows.get(window.ordinal()) : null;
+        return target == null ? LatencyWindow.Stats.EMPTY : target.snapshot();
+    }
+
+    /**
+     * Returns a counter's current value; zero when the scope is disabled.
+     */
+    public long count(Counter counter) {
+        return enabled ? counters[counter.ordinal()].sum() : 0L;
+    }
+
+    /**
+     * Returns a gauge's current value; zero when the scope is disabled.
+     */
+    public long getGauge(Gauge gauge) {
+        return enabled ? gauges.get(gauge.ordinal()) : 0L;
+    }
+
+    /**
+     * Copies every window, counter and gauge into an immutable snapshot.
+     *
+     * <p>Allocates; intended for the aggregation thread.</p>
+     *
+     * @param periodMs duration the counters accumulated over, used by rate derivations
+     * @return an immutable snapshot, never null
+     */
+    public MetricsSnapshot snapshot(long periodMs) {
+        LatencyWindow.Stats[] windowStats = new LatencyWindow.Stats[Window.values().length];
+        long[] counterValues = new long[Counter.values().length];
+        long[] gaugeValues = new long[Gauge.values().length];
+        if (enabled) {
+            for (int i = 0; i < windowStats.length; i++) {
+                LatencyWindow target = windows.get(i);
+                windowStats[i] = target == null ? LatencyWindow.Stats.EMPTY : target.snapshot();
+            }
+            for (int i = 0; i < counterValues.length; i++) {
+                counterValues[i] = counters[i].sum();
+            }
+            for (int i = 0; i < gaugeValues.length; i++) {
+                gaugeValues[i] = gauges.get(i);
+            }
+        } else {
+            for (int i = 0; i < windowStats.length; i++) {
+                windowStats[i] = LatencyWindow.Stats.EMPTY;
+            }
+        }
+        return new MetricsSnapshot(periodMs, windowStats, counterValues, gaugeValues);
+    }
+
+    /**
+     * Creates a window once per kind; concurrent first users race benignly on the array slot.
+     */
+    private LatencyWindow createWindow(Window window) {
+        int index = window.ordinal();
+        LatencyWindow created = new LatencyWindow(windowCapacity);
+        if (windows.compareAndSet(index, null, created)) {
+            return created;
+        }
+        return windows.get(index);
+    }
+}
