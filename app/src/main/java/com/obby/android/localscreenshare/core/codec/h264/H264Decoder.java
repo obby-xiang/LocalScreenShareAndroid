@@ -10,12 +10,14 @@ import com.obby.android.localscreenshare.core.codec.mediacodec.DecodedOutput;
 import com.obby.android.localscreenshare.core.codec.mediacodec.DecoderFormat;
 import com.obby.android.localscreenshare.core.codec.mediacodec.MediaCodecBridgeFactory;
 import com.obby.android.localscreenshare.core.codec.mediacodec.MediaCodecDecoderBridge;
+import com.obby.android.localscreenshare.core.metrics.PipelineMetrics;
 import com.obby.android.localscreenshare.core.model.CodecConfigPart;
 import com.obby.android.localscreenshare.core.model.EncodedAccessUnit;
 import com.obby.android.localscreenshare.core.model.StreamDescriptor;
 import com.obby.android.localscreenshare.core.model.StreamKey;
 import com.obby.android.localscreenshare.core.render.PresentationPacer;
 import com.obby.android.localscreenshare.core.render.RenderTarget;
+import com.obby.android.localscreenshare.core.util.NanoClock;
 
 import java.util.List;
 
@@ -68,11 +70,47 @@ public final class H264Decoder implements Decoder {
      */
     private static final long MIN_PRESENT_INTERVAL_NANOS = 0L;
 
+    /**
+     * Number of recently queued decodes whose timestamps are kept for latency matching.
+     */
+    private static final int DECODE_SAMPLE_CAPACITY = 8;
+
+    /**
+     * Number of presentation intervals the freeze threshold is averaged over.
+     */
+    private static final int PRESENT_INTERVAL_WINDOW = 30;
+
+    /**
+     * Floor of the freeze threshold, in nanoseconds, mirroring the arrival stall floor.
+     */
+    private static final long FREEZE_FLOOR_NS = 150_000_000L;
+
+    private static final long UNSET = Long.MIN_VALUE;
+
     private final StreamKey streamKey;
     private final RenderTarget renderTarget;
     private final MediaCodecBridgeFactory bridgeFactory;
     private final KeyFrameRequester keyFrameRequester;
     private final PresentationPacer pacer = new PresentationPacer();
+    private final PipelineMetrics metrics;
+    private final NanoClock clock;
+
+    // Timestamps of the most recent input submissions, keyed by presentation time, used to match a
+    // dequeued output with the moment its frame was handed to the decoder.
+    private final long[] pendingPtsUs = new long[DECODE_SAMPLE_CAPACITY];
+    private final long[] pendingAtNs = new long[DECODE_SAMPLE_CAPACITY];
+    private int pendingCount;
+
+    // Presentation cadence state for the interval and freeze metrics, on the hand-off clock.
+    private final long[] presentIntervals = new long[PRESENT_INTERVAL_WINDOW];
+    private int presentIntervalCount;
+    private int presentIntervalCursor;
+    private long lastHandOffNs = UNSET;
+
+    // Moment the current configuration was applied; the first presented frame afterwards reports
+    // the switch blackout.
+    private long configuredAtNs = UNSET;
+    private boolean blackoutPending;
 
     private StreamDescriptor descriptor;
     private int configEpoch;
@@ -110,6 +148,31 @@ public final class H264Decoder implements Decoder {
     public H264Decoder(StreamKey streamKey, StreamDescriptor descriptor,
                        RenderTarget renderTarget, MediaCodecBridgeFactory bridgeFactory,
                        KeyFrameRequester keyFrameRequester) {
+        this(streamKey, descriptor, renderTarget, bridgeFactory, keyFrameRequester,
+                PipelineMetrics.NONE, NanoClock.MONOTONIC);
+    }
+
+    /**
+     * Creates a decoder that reports its decode and presentation metrics.
+     *
+     * <p>The scope receives the decode latency (matched by presentation timestamp), the number of
+     * frames that missed their own presentation target, the merged and shed frames, and the
+     * presentation cadence, lateness, drops and freezes. A disabled scope keeps every probe a
+     * single volatile read and allocates nothing.</p>
+     *
+     * @param streamKey         identity of the stream being decoded
+     * @param descriptor        descriptor used before {@link #configure(StreamDescriptor)} is called
+     * @param renderTarget      output target; owned by the caller
+     * @param bridgeFactory     creates the platform decoder bridge
+     * @param keyFrameRequester notified when frames were dropped inside the decoder; not null
+     * @param metrics           metric scope of the receiving pipeline; required
+     * @param clock             clock used by the decode and presentation probes; required
+     * @throws IllegalArgumentException if a required argument is null
+     */
+    public H264Decoder(StreamKey streamKey, StreamDescriptor descriptor,
+                       RenderTarget renderTarget, MediaCodecBridgeFactory bridgeFactory,
+                       KeyFrameRequester keyFrameRequester, PipelineMetrics metrics,
+                       NanoClock clock) {
         if (streamKey == null) {
             throw new IllegalArgumentException("streamKey must not be null");
         }
@@ -122,11 +185,19 @@ public final class H264Decoder implements Decoder {
         if (keyFrameRequester == null) {
             throw new IllegalArgumentException("keyFrameRequester must not be null");
         }
+        if (metrics == null) {
+            throw new IllegalArgumentException("metrics must not be null");
+        }
+        if (clock == null) {
+            throw new IllegalArgumentException("clock must not be null");
+        }
         this.streamKey = streamKey;
         this.descriptor = descriptor;
         this.renderTarget = renderTarget;
         this.bridgeFactory = bridgeFactory;
         this.keyFrameRequester = keyFrameRequester;
+        this.metrics = metrics;
+        this.clock = clock;
     }
 
     /**
@@ -180,6 +251,14 @@ public final class H264Decoder implements Decoder {
         this.ptsAnchorUs = PresentationPacer.UNSET;
         this.timeAnchorNs = PresentationPacer.UNSET;
         this.lastPresentedNs = PresentationPacer.UNSET;
+        this.pendingCount = 0;
+        this.lastHandOffNs = UNSET;
+        this.presentIntervalCount = 0;
+        this.presentIntervalCursor = 0;
+        if (metrics.isEnabled()) {
+            this.configuredAtNs = clock.nowNs();
+            this.blackoutPending = true;
+        }
     }
 
     @Override
@@ -249,6 +328,7 @@ public final class H264Decoder implements Decoder {
                 }
                 // The frame is gone: the reference chain now has a gap, so the next frame can only
                 // be decoded cleanly from a new random-access point.
+                metrics.increment(PipelineMetrics.Counter.DECODE_SHEDS);
                 keyFrameRequester.requestKeyFrame();
                 return;
             }
@@ -266,6 +346,7 @@ public final class H264Decoder implements Decoder {
             throw new DecoderException("failed to queue input buffer", e);
         }
         firstFrameSeen = true;
+        rememberQueued(accessUnit.getPtsUs());
 
         // Drain every immediately available output and keep only the newest: the older ones are
         // released without rendering, so the displayed frame never lags by more than one frame.
@@ -297,6 +378,7 @@ public final class H264Decoder implements Decoder {
                     continue;
                 }
                 if (newest != null) {
+                    metrics.increment(PipelineMetrics.Counter.DECODE_MERGED);
                     bridge.discard(newest.getBufferIndex());
                 }
                 newest = output;
@@ -323,9 +405,13 @@ public final class H264Decoder implements Decoder {
      * Presents one output at its mapped timestamp, or discards it when the pacer rejects it.
      */
     private void present(DecodedOutput output) {
-        long nowNs = System.nanoTime();
+        long nowNs = clock.nowNs();
+        recordDecodeLatency(output.getPtsUs(), nowNs);
         long targetNs = toDeviceTimeNs(output.getPtsUs(), nowNs);
-        switch (pacer.decide(nowNs, targetNs, lastPresentedNs, MIN_PRESENT_INTERVAL_NANOS)) {
+        PresentationPacer.Decision decision =
+                pacer.decide(nowNs, targetNs, lastPresentedNs, MIN_PRESENT_INTERVAL_NANOS);
+        recordPresentationMetrics(nowNs, targetNs, decision);
+        switch (decision) {
             case PRESENT_NOW:
                 bridge.present(output.getBufferIndex(), nowNs);
                 lastPresentedNs = nowNs;
@@ -339,6 +425,104 @@ public final class H264Decoder implements Decoder {
                 bridge.discard(output.getBufferIndex());
                 break;
         }
+    }
+
+    /**
+     * Remembers the moment a frame was handed to the decoder so its output can be matched later.
+     *
+     * <p>The table is a fixed ring of eight entries: frames beyond that depth were never going to
+     * be measured accurately, so an unmatched output simply produces no sample instead of a
+     * growing map.</p>
+     */
+    private void rememberQueued(long ptsUs) {
+        if (!metrics.isEnabled()) {
+            return;
+        }
+        int index = pendingCount % DECODE_SAMPLE_CAPACITY;
+        pendingPtsUs[index] = ptsUs;
+        pendingAtNs[index] = clock.nowNs();
+        pendingCount++;
+    }
+
+    /**
+     * Records the decode latency of an output whose frame was seen by {@link #rememberQueued}.
+     */
+    private void recordDecodeLatency(long ptsUs, long nowNs) {
+        if (!metrics.isEnabled()) {
+            return;
+        }
+        int size = Math.min(pendingCount, DECODE_SAMPLE_CAPACITY);
+        for (int i = 0; i < size; i++) {
+            if (pendingPtsUs[i] == ptsUs) {
+                long queuedAtNs = pendingAtNs[i];
+                pendingPtsUs[i] = UNSET;
+                if (nowNs >= queuedAtNs) {
+                    metrics.record(PipelineMetrics.Window.DECODE_LATENCY, nowNs - queuedAtNs);
+                }
+                return;
+            }
+        }
+    }
+
+    /**
+     * Records the presentation cadence, lateness and deadline misses of one output.
+     *
+     * <p>Lateness is measured only when the frame is handed off late: a frame scheduled ahead is
+     * not late by definition. A deadline miss is the same comparison taken at the moment the output
+     * became retrievable, which is exactly "the decoder did not catch up with the frame's own
+     * presentation time".</p>
+     */
+    private void recordPresentationMetrics(long nowNs, long targetNs,
+                                           PresentationPacer.Decision decision) {
+        if (!metrics.isEnabled()) {
+            return;
+        }
+        if (blackoutPending && configuredAtNs != UNSET && decision != PresentationPacer.Decision.DROP) {
+            blackoutPending = false;
+            if (nowNs >= configuredAtNs) {
+                metrics.record(PipelineMetrics.Window.SWITCH_BLACKOUT, nowNs - configuredAtNs);
+            }
+        }
+        if (lastHandOffNs != UNSET && nowNs >= lastHandOffNs) {
+            long interval = nowNs - lastHandOffNs;
+            long threshold = freezeThresholdNs();
+            metrics.record(PipelineMetrics.Window.PRESENT_INTERVAL, interval);
+            if (interval > threshold) {
+                metrics.increment(PipelineMetrics.Counter.FREEZES);
+            }
+            presentIntervals[presentIntervalCursor] = interval;
+            presentIntervalCursor = (presentIntervalCursor + 1) % PRESENT_INTERVAL_WINDOW;
+            if (presentIntervalCount < PRESENT_INTERVAL_WINDOW) {
+                presentIntervalCount++;
+            }
+        }
+        lastHandOffNs = nowNs;
+
+        if (decision == PresentationPacer.Decision.DROP) {
+            metrics.increment(PipelineMetrics.Counter.PRESENT_DROPS);
+            return;
+        }
+        if (nowNs > targetNs) {
+            metrics.record(PipelineMetrics.Window.PRESENT_LATE, nowNs - targetNs);
+            metrics.increment(PipelineMetrics.Counter.DEADLINE_MISSES);
+        } else {
+            metrics.record(PipelineMetrics.Window.PRESENT_LATE, 0L);
+        }
+    }
+
+    /**
+     * Returns the freeze threshold: three times the mean of the last thirty presentation
+     * intervals, floored at 150 ms.
+     */
+    private long freezeThresholdNs() {
+        if (presentIntervalCount == 0) {
+            return FREEZE_FLOOR_NS;
+        }
+        long sum = 0L;
+        for (int i = 0; i < presentIntervalCount; i++) {
+            sum += presentIntervals[i];
+        }
+        return Math.max(FREEZE_FLOOR_NS, 3L * (sum / presentIntervalCount));
     }
 
     /**

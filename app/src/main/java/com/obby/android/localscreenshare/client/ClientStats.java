@@ -25,4 +25,24 @@ public class ClientStats {
      * Inbound wire bytes per second over the collection interval.
      */
     private final long mInboundDataRate;
+
+    /**
+     * 95th percentile decode latency in milliseconds, zero when metrics are disabled.
+     */
+    private final long mDecodeLatencyP95Ms;
+
+    /**
+     * 95th percentile presentation lateness in milliseconds, zero when metrics are disabled.
+     */
+    private final long mPresentLateP95Ms;
+
+    /**
+     * Median application-level round trip in milliseconds, zero before the first sample.
+     */
+    private final long mRoundTripP95Ms;
+
+    /**
+     * Arrival stalls counted over the collection interval, zero when metrics are disabled.
+     */
+    private final long mArrivalStalls;
 }

@@ -8,6 +8,7 @@ import com.obby.android.localscreenshare.core.codec.DecoderException;
 import com.obby.android.localscreenshare.core.model.ClientSessionKey;
 import com.obby.android.localscreenshare.core.model.ClientState;
 import com.obby.android.localscreenshare.core.model.EncodedAccessUnit;
+import com.obby.android.localscreenshare.core.metrics.PipelineMetrics;
 import com.obby.android.localscreenshare.core.model.StreamDescriptor;
 import com.obby.android.localscreenshare.core.render.RenderTarget;
 import com.obby.android.localscreenshare.core.stream.ClientCapabilities;
@@ -55,12 +56,44 @@ public final class ClientMediaSession {
     private final ClientCapabilities capabilities;
     private final RenderTarget renderTarget;
     private final ClientStateListener listener;
+    private final PipelineMetrics metrics;
 
     private ClientState state = ClientState.NEGOTIATING;
     private StreamDescriptor currentDescriptor;
     private Decoder decoder;
     private CodecPolicy policy;
     private boolean closed;
+    private ResyncReason lastResyncReason;
+
+    /**
+     * Why the session entered {@link ClientState#RESYNCING}; the latest episode wins.
+     *
+     * <p>The counters distinguish "the network delivered something the decoder could not use" from
+     * "there was no surface to decode onto", which is the difference between asking the server for
+     * a new join point and waiting for the window to come back.</p>
+     */
+    public enum ResyncReason {
+
+        /**
+         * The decoder rejected the frame or failed while draining.
+         */
+        DECODE_FAILURE,
+
+        /**
+         * The decoder could not be configured for the descriptor.
+         */
+        CONFIG_FAILURE,
+
+        /**
+         * A unit arrived for an epoch whose descriptor was not applied yet.
+         */
+        FUTURE_EPOCH,
+
+        /**
+         * The render target had no surface for a codec that requires one.
+         */
+        MISSING_SURFACE
+    }
 
     /**
      * Creates a session that has not received a descriptor yet.
@@ -75,6 +108,28 @@ public final class ClientMediaSession {
     public ClientMediaSession(ClientSessionKey key, CodecRegistry registry,
                               ClientCapabilities capabilities, RenderTarget renderTarget,
                               ClientStateListener listener) {
+        this(key, registry, capabilities, renderTarget, listener, PipelineMetrics.NONE);
+    }
+
+    /**
+     * Creates a session that counts its resynchronization episodes into {@code metrics}.
+     *
+     * <p>The scope receives one counter per transition into {@link ClientState#RESYNCING}; the
+     * reason of the latest episode is exposed through {@link #getLastResyncReason()} so a log line
+     * can tell a decode failure from a missing surface. The decoder created by the same
+     * registration reports its own decode and presentation metrics into the same scope.</p>
+     *
+     * @param key          client and stream identity; required
+     * @param registry     codec registry used to resolve decoder factories and policies; required
+     * @param capabilities codecs this client can decode; required
+     * @param renderTarget output target, owned by the caller; required
+     * @param listener     optional state listener; may be null
+     * @param metrics      metric scope of the receiving pipeline; required
+     * @throws IllegalArgumentException if any required argument is null
+     */
+    public ClientMediaSession(ClientSessionKey key, CodecRegistry registry,
+                              ClientCapabilities capabilities, RenderTarget renderTarget,
+                              ClientStateListener listener, PipelineMetrics metrics) {
         if (key == null) {
             throw new IllegalArgumentException("key must not be null");
         }
@@ -87,11 +142,15 @@ public final class ClientMediaSession {
         if (renderTarget == null) {
             throw new IllegalArgumentException("renderTarget must not be null");
         }
+        if (metrics == null) {
+            throw new IllegalArgumentException("metrics must not be null");
+        }
         this.key = key;
         this.registry = registry;
         this.capabilities = capabilities;
         this.renderTarget = renderTarget;
         this.listener = listener;
+        this.metrics = metrics;
     }
 
     /**
@@ -113,6 +172,13 @@ public final class ClientMediaSession {
      */
     public synchronized boolean isClosed() {
         return closed;
+    }
+
+    /**
+     * Returns why the session last entered {@link ClientState#RESYNCING}, or null when it never did.
+     */
+    public synchronized ResyncReason getLastResyncReason() {
+        return lastResyncReason;
     }
 
     /**
@@ -175,7 +241,7 @@ public final class ClientMediaSession {
 
         if (registration.getDescriptor().isSurfaceOutputRequired()
                 && renderTarget.getSurface() == null) {
-            setState(ClientState.RESYNCING);
+            enterResync(ResyncReason.MISSING_SURFACE);
             return false;
         }
 
@@ -210,7 +276,7 @@ public final class ClientMediaSession {
             return false;
         }
         if (auEpoch > currentEpoch) {
-            setState(ClientState.RESYNCING);
+            enterResync(ResyncReason.FUTURE_EPOCH);
             return false;
         }
         if (decoder == null) {
@@ -305,7 +371,7 @@ public final class ClientMediaSession {
             currentDescriptor = descriptor;
             policy = registration.getPolicy();
             decoder = null;
-            setState(ClientState.RESYNCING);
+            enterResync(ResyncReason.CONFIG_FAILURE);
             return false;
         }
         currentDescriptor = descriptor;
@@ -324,9 +390,24 @@ public final class ClientMediaSession {
             decoder.decode(accessUnit);
             return true;
         } catch (DecoderException e) {
-            setState(ClientState.RESYNCING);
+            enterResync(ResyncReason.DECODE_FAILURE);
             return false;
         }
+    }
+
+    /**
+     * Counts one resynchronization episode and records why it happened.
+     *
+     * <p>The counter counts episodes, not frames: a session that already waits for a random-access
+     * point can report further decode failures, and each one is worth knowing because it means the
+     * recovery attempt itself failed.</p>
+     *
+     * @param reason why the session needs a new random-access point
+     */
+    private void enterResync(ResyncReason reason) {
+        lastResyncReason = reason;
+        metrics.increment(PipelineMetrics.Counter.RESYNCS);
+        setState(ClientState.RESYNCING);
     }
 
     /**

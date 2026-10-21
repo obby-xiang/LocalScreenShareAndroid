@@ -101,7 +101,7 @@ public final class H264Codec {
                 BitstreamFormat.ANNEX_B, true, true, true);
         return new CodecRegistration(descriptor,
                 new H264EncoderFactory(bridgeFactory, metrics, clock),
-                new H264DecoderFactory(bridgeFactory, keyFrameRequester),
+                new H264DecoderFactory(bridgeFactory, keyFrameRequester, metrics, clock),
                 new H264CodecPolicy(), 10);
     }
 
@@ -133,6 +133,24 @@ public final class H264Codec {
                                                         NanoClock clock) {
         return registration(new AndroidMediaCodecBridgeFactory(), KeyFrameRequester.NONE,
                 metrics, clock);
+    }
+
+    /**
+     * Builds the Android-backed H.264 registration with both a key-frame requester and metrics.
+     *
+     * <p>Used by the viewer: the decoder reports its decode and presentation windows into the
+     * receiving pipeline's scope and asks for a fresh join point when it had to shed a frame.</p>
+     *
+     * @param keyFrameRequester notified when a decoder had to shed a frame; required
+     * @param metrics           metric scope of the receiving pipeline; required
+     * @param clock             clock used by the probes; required
+     * @throws IllegalArgumentException if any argument is null
+     */
+    public static CodecRegistration androidRegistration(KeyFrameRequester keyFrameRequester,
+                                                        PipelineMetrics metrics,
+                                                        NanoClock clock) {
+        return registration(new AndroidMediaCodecBridgeFactory(), keyFrameRequester, metrics,
+                clock);
     }
 
     /**

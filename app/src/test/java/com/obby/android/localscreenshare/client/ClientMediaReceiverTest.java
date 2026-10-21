@@ -7,6 +7,8 @@ import static org.junit.Assert.assertTrue;
 
 import com.obby.android.localscreenshare.core.client.ClientMediaSession;
 import com.obby.android.localscreenshare.core.codec.CodecRegistry;
+import com.obby.android.localscreenshare.core.metrics.ArrivalTracker;
+import com.obby.android.localscreenshare.core.metrics.PipelineMetrics;
 import com.obby.android.localscreenshare.core.model.AccessUnitFlags;
 import com.obby.android.localscreenshare.core.model.BitstreamFormat;
 import com.obby.android.localscreenshare.core.model.ClientSessionKey;
@@ -18,6 +20,7 @@ import com.obby.android.localscreenshare.core.model.StreamKey;
 import com.obby.android.localscreenshare.core.stream.ClientCapabilities;
 import com.obby.android.localscreenshare.core.support.FakeCodec;
 import com.obby.android.localscreenshare.core.support.FakeRenderTarget;
+import com.obby.android.localscreenshare.core.support.MutableNanoClock;
 import com.obby.android.localscreenshare.grpc.screenstream.ServerMessage;
 import com.obby.android.localscreenshare.transport.ScreenStreamProtoMapper;
 
@@ -58,6 +61,35 @@ public class ClientMediaReceiverTest {
                 new ClientCapabilities(Collections.singleton(FakeCodec.DEFAULT_CODEC_ID)),
                 renderTarget, null);
         secureChanges = new ArrayList<>();
+    }
+
+    @Test
+    public void arrivalTimestampIsForwardedToTheTracker() {
+        PipelineMetrics metrics = PipelineMetrics.create(new MutableNanoClock(), 8);
+        ArrivalTracker tracker = new ArrivalTracker(metrics);
+        ClientMediaReceiver receiver = new ClientMediaReceiver(STREAM_KEY, session,
+                secureChanges::add, null, tracker);
+
+        receiver.onServerMessage(descriptorMessage(1, true));
+        receiver.onServerMessage(accessUnitMessage(1, 0L, true), 1_000_000L);
+        receiver.onServerMessage(accessUnitMessage(1, 1L, true), 1_033_000_000L);
+
+        assertEquals(1L, metrics.getRecordedCount(PipelineMetrics.Window.ARRIVAL));
+        assertEquals(ClientState.STREAMING, session.getState());
+    }
+
+    @Test
+    public void messageWithoutArrivalTimestamp_stillReachesTheSession() {
+        PipelineMetrics metrics = PipelineMetrics.create(new MutableNanoClock(), 8);
+        ArrivalTracker tracker = new ArrivalTracker(metrics);
+        ClientMediaReceiver receiver = new ClientMediaReceiver(STREAM_KEY, session,
+                secureChanges::add, null, tracker);
+
+        receiver.onServerMessage(descriptorMessage(1, true));
+        receiver.onServerMessage(accessUnitMessage(1, 0L, true));
+
+        assertEquals(ClientState.STREAMING, session.getState());
+        assertEquals(0L, metrics.getRecordedCount(PipelineMetrics.Window.ARRIVAL));
     }
 
     @Test

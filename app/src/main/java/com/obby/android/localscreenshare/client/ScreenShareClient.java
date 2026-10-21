@@ -9,6 +9,7 @@ import android.util.Log;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
+import com.obby.android.localscreenshare.core.metrics.PipelineMetrics;
 import com.obby.android.localscreenshare.grpc.screenstream.ClientMessage;
 import com.obby.android.localscreenshare.grpc.screenstream.Hello;
 import com.obby.android.localscreenshare.grpc.screenstream.RequestKeyframe;
@@ -67,6 +68,9 @@ import lombok.experimental.Accessors;
 public final class ScreenShareClient {
     private static final long UPDATE_CLIENT_STATS_INTERVAL_MS = 3000L;
 
+    // Number of client-id characters kept for log correlation.
+    private static final int SESSION_ID_TAIL_LENGTH = 8;
+
     // Bounds the decode queue so a catastrophically slow decoder cannot grow it without limit;
     // a rejected message is dropped and the session recovers on the next join point.
     private static final int DECODE_QUEUE_CAPACITY = 256;
@@ -86,6 +90,14 @@ public final class ScreenShareClient {
     // Last sampled value; used to suppress duplicate listener calls.
     @Nullable
     private ClientStats mClientStats;
+
+    // Metric scope of the receiving pipeline; NONE when the preference is off.
+    @NonNull
+    private final PipelineMetrics mMetrics;
+
+    // Random per-run session id announced in the HELLO; logs print its tail only.
+    @Nullable
+    private String mClientId;
 
     // Invoked on the main thread by mUpdateClientStatsRunnable.
     @Setter
@@ -116,9 +128,10 @@ public final class ScreenShareClient {
         })
         .build(), new ThreadPoolExecutor.AbortPolicy());
 
-    // Dedicated single thread that drives the media session; serializes all decoding.
+    // Dedicated single thread that drives the media session; serializes all decoding. Typed as a
+    // pool executor so the receive probe can sample its queue depth.
     @NonNull
-    private final ExecutorService mDecodeExecutor = new ThreadPoolExecutor(1, 1, 30L,
+    private final ThreadPoolExecutor mDecodeExecutor = new ThreadPoolExecutor(1, 1, 30L,
         TimeUnit.SECONDS, new LinkedBlockingQueue<>(DECODE_QUEUE_CAPACITY),
         new BasicThreadFactory.Builder().namingPattern("lss-client-decode-%d")
             .wrappedFactory(runnable -> new Thread(runnable) {
@@ -196,6 +209,27 @@ public final class ScreenShareClient {
      * @param port remote gRPC port
      */
     public ScreenShareClient(@NonNull final String host, final int port) {
+        this(host, port, PipelineMetrics.NONE);
+    }
+
+    /**
+     * Creates the gRPC channel and binds the receive probes to {@code metrics}.
+     *
+     * <p>The scope receives the arrival cadence and relative delay of the wire messages, the decode
+     * queue depth and wait, and the number of messages dropped because the decode queue was full.
+     * A disabled scope keeps every probe a single volatile read.</p>
+     *
+     * @param host    remote host address
+     * @param port    remote gRPC port
+     * @param metrics metric scope of the receiving pipeline; required
+     * @throws IllegalArgumentException if {@code metrics} is null
+     */
+    public ScreenShareClient(@NonNull final String host, final int port,
+                             @NonNull final PipelineMetrics metrics) {
+        if (metrics == null) {
+            throw new IllegalArgumentException("metrics must not be null");
+        }
+        mMetrics = metrics;
         mGrpcChannel = OkHttpChannelBuilder.forAddress(host, port, InsecureChannelCredentials.create())
             .flowControlWindow(GrpcConstants.GRPC_FLOW_CONTROL_WINDOW)
             .maxInboundMessageSize(GrpcConstants.GRPC_MAX_INBOUND_MESSAGE_SIZE)
@@ -230,17 +264,24 @@ public final class ScreenShareClient {
                     if (mIsStopped) {
                         return;
                     }
+                    // One clock read marks the arrival; everything downstream measures from it.
+                    final long arrivalNs = mMetrics.nowNs();
                     // Decoding runs on the dedicated decode thread, never on the gRPC executor.
                     try {
                         mDecodeExecutor.execute(() -> {
                             if (!mIsStopped) {
-                                receiver.onServerMessage(value);
+                                mMetrics.record(PipelineMetrics.Window.QUEUE_WAIT,
+                                    mMetrics.nowNs() - arrivalNs);
+                                receiver.onServerMessage(value, arrivalNs);
                             }
                         });
+                        mMetrics.record(PipelineMetrics.Window.QUEUE_DEPTH,
+                            mDecodeExecutor.getQueue().size());
                     } catch (RejectedExecutionException e) {
                         // The dropped message was an encoded access unit: the reference chain now
                         // has a gap, so ask for a fresh join point instead of waiting for the next
                         // periodic key frame.
+                        mMetrics.increment(PipelineMetrics.Counter.ARRIVAL_SHEDS);
                         Log.w(mTag, "onNext: decode queue full, dropping a message");
                         requestKeyFrameThrottled();
                     }
@@ -273,9 +314,10 @@ public final class ScreenShareClient {
                 }
             });
 
+        mClientId = "client-" + UUID.randomUUID();
         final Hello.Builder hello = Hello.newBuilder()
             .setProtocolVersion(ScreenStreamProtoMapper.PROTOCOL_VERSION)
-            .setClientId("client-" + UUID.randomUUID())
+            .setClientId(mClientId)
             .setCapabilities(ScreenStreamProtoMapper.toProtoCapabilities(
                 CodecCapabilityProbe.probeClientDecoders()));
         // The discovery identity binds this session to the device entry peers already know. The
@@ -292,8 +334,26 @@ public final class ScreenShareClient {
             .setHello(hello.build())
             .build());
 
-        mClientProfile = new ClientProfile();
+        mClientProfile = new ClientProfile(mMetrics);
         mMainHandler.postDelayed(mUpdateClientStatsRunnable, UPDATE_CLIENT_STATS_INTERVAL_MS);
+    }
+
+    /**
+     * Returns the tail of the random client id announced in the HELLO, or null before start.
+     *
+     * <p>Only the last eight characters are meant for logs: the id is a per-run random value, not a
+     * device identity, and it is what lets a client log line be correlated with the server's
+     * session row.</p>
+     */
+    @Nullable
+    public String getClientIdTail() {
+        final String clientId = mClientId;
+        if (clientId == null) {
+            return null;
+        }
+        return clientId.length() <= SESSION_ID_TAIL_LENGTH
+            ? clientId
+            : clientId.substring(clientId.length() - SESSION_ID_TAIL_LENGTH);
     }
 
     /**
@@ -351,13 +411,24 @@ public final class ScreenShareClient {
         private final Object mLock = new Object();
 
         @NonNull
+        private final PipelineMetrics mMetrics;
+
+        @NonNull
         private final AtomicLong mCollectionTimestamp = new AtomicLong(SystemClock.elapsedRealtimeNanos());
 
         @NonNull
         private final AtomicLong mInboundDataSize = new AtomicLong();
 
+        ClientProfile(@NonNull final PipelineMetrics metrics) {
+            mMetrics = metrics;
+        }
+
         public void addInboundDataSize(final long size) {
             mInboundDataSize.addAndGet(size);
+        }
+
+        private static long toMillis(final long nanos) {
+            return Math.round(nanos / 1_000_000d);
         }
 
         @NonNull
@@ -372,6 +443,13 @@ public final class ScreenShareClient {
                 return ClientStats.builder()
                     .inboundDataSize(inboundDataSize)
                     .inboundDataRate(inboundDataRate)
+                    .decodeLatencyP95Ms(toMillis(mMetrics.stats(
+                        PipelineMetrics.Window.DECODE_LATENCY).getP95()))
+                    .presentLateP95Ms(toMillis(mMetrics.stats(
+                        PipelineMetrics.Window.PRESENT_LATE).getP95()))
+                    .roundTripP95Ms(toMillis(mMetrics.stats(
+                        PipelineMetrics.Window.RTT).getP95()))
+                    .arrivalStalls(mMetrics.count(PipelineMetrics.Counter.STALLS))
                     .build();
             }
         }

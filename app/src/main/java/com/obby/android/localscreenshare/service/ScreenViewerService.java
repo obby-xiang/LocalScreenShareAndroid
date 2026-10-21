@@ -77,10 +77,14 @@ import com.obby.android.localscreenshare.core.client.ClientStateListener;
 import com.obby.android.localscreenshare.core.codec.CodecIds;
 import com.obby.android.localscreenshare.core.codec.CodecRegistry;
 import com.obby.android.localscreenshare.core.codec.h264.H264Codec;
+import com.obby.android.localscreenshare.core.metrics.ArrivalTracker;
+import com.obby.android.localscreenshare.core.metrics.MetricsFormatter;
+import com.obby.android.localscreenshare.core.metrics.PipelineMetrics;
 import com.obby.android.localscreenshare.core.model.ClientSessionKey;
 import com.obby.android.localscreenshare.core.model.ClientState;
 import com.obby.android.localscreenshare.core.model.StreamKey;
 import com.obby.android.localscreenshare.core.stream.ClientCapabilities;
+import com.obby.android.localscreenshare.core.util.NanoClock;
 import com.obby.android.localscreenshare.core.util.TimeSource;
 import com.obby.android.localscreenshare.discovery.favorite.FavoriteStore;
 import com.obby.android.localscreenshare.discovery.model.DeviceAddress;
@@ -137,6 +141,9 @@ public class ScreenViewerService extends Service {
 
     private static final int NOTIFICATION_ID = 2;
 
+    // Cadence of the structured metric log line; slower than the three-second UI statistics.
+    private static final long UPDATE_METRICS_INTERVAL_MS = 5000L;
+
     // Target of the current session; null while stopped.
     @Nullable
     private DeviceInfo mServiceInfo;
@@ -188,6 +195,18 @@ public class ScreenViewerService extends Service {
 
     // Last rate rendered into the notification; the notification is rebuilt only on change.
     private long mInboundDataRate;
+
+    // Metric scope of the receiving pipeline; only created when the preference is on. The receive
+    // tracker is recreated per session because its baseline belongs to one stream.
+    @Nullable
+    private PipelineMetrics mMetrics;
+
+    @NonNull
+    private final Runnable mMetricsLogRunnable = this::logMetrics;
+
+    // Last resynchronization reason rendered, so the reason is logged once per change.
+    @Nullable
+    private ClientMediaSession.ResyncReason mLoggedResyncReason;
 
     private final String mTag = "ScreenViewerService@" + hashCode();
 
@@ -258,7 +277,7 @@ public class ScreenViewerService extends Service {
                     HtmlCompat.FROM_HTML_MODE_LEGACY))
                 .setPositiveButton(android.R.string.ok, (dialog, which) -> {
                     final ClientMediaReceiver receiver = startMediaSession();
-                    mClient = new ScreenShareClient(hostOf(mServiceInfo), portOf(mServiceInfo));
+                    mClient = new ScreenShareClient(hostOf(mServiceInfo), portOf(mServiceInfo), viewerMetrics());
                     mClient.setClientStatsListener(mClientStatsListener);
                     mScreenShareLoading.show();
                     mClient.start(mClientObserver, receiver);
@@ -333,6 +352,10 @@ public class ScreenViewerService extends Service {
         final IntentFilter intentFilter = new IntentFilter();
         intentFilter.addAction(ServiceProtocol.ACTION_STOP_CLIENT_SERVICE);
         ContextCompat.registerReceiver(this, mBroadcastReceiver, intentFilter, ContextCompat.RECEIVER_NOT_EXPORTED);
+
+        mMetrics = Preferences.get().isMetricsEnabled()
+            ? PipelineMetrics.create(NanoClock.MONOTONIC)
+            : PipelineMetrics.NONE;
     }
 
     /**
@@ -430,7 +453,7 @@ public class ScreenViewerService extends Service {
         }
 
         final ClientMediaReceiver receiver = startMediaSession();
-        mClient = new ScreenShareClient(hostOf(mServiceInfo), portOf(mServiceInfo));
+        mClient = new ScreenShareClient(hostOf(mServiceInfo), portOf(mServiceInfo), viewerMetrics());
         mClient.setClientStatsListener(mClientStatsListener);
         mScreenShareLoading = new ScreenShareLoading(this, mServiceInfo);
         mScreenShareLoading.show();
@@ -494,6 +517,10 @@ public class ScreenViewerService extends Service {
         mClientStats = null;
         mInboundDataRate = 0L;
 
+        mMainHandler.removeCallbacks(mMetricsLogRunnable);
+        mMetrics = null;
+        mLoggedResyncReason = null;
+
         if (mDialog != null) {
             mDialog.dismiss();
             mDialog = null;
@@ -550,10 +577,15 @@ public class ScreenViewerService extends Service {
      */
     @NonNull
     private ClientMediaReceiver startMediaSession() {
+        if (mMetrics == null) {
+            mMetrics = Preferences.get().isMetricsEnabled()
+                ? PipelineMetrics.create(NanoClock.MONOTONIC)
+                : PipelineMetrics.NONE;
+        }
         if (mCodecRegistry == null) {
             mCodecRegistry = CodecRegistry.withDefaults();
             mCodecRegistry.register(H264Codec.androidRegistration(
-                () -> mMainHandler.post(this::requestKeyFrame)));
+                () -> mMainHandler.post(this::requestKeyFrame), mMetrics, NanoClock.MONOTONIC));
         }
         if (mStreamKey == null) {
             mStreamKey = new StreamKey("remote", "screen");
@@ -572,7 +604,7 @@ public class ScreenViewerService extends Service {
         final ClientMediaSession session = new ClientMediaSession(
                 new ClientSessionKey(mStreamKey, "local"), mCodecRegistry,
                 new ClientCapabilities(Collections.singleton(CodecIds.H264)),
-                mSurfaceRenderTarget, mClientStateListener);
+                mSurfaceRenderTarget, mClientStateListener, mMetrics);
         mClientMediaSession = session;
         mClientMediaReceiver = new ClientMediaReceiver(mStreamKey, session, mClientSecureListener,
             (visibleWidth, visibleHeight, rotationDegrees) -> mMainHandler.post(() -> {
@@ -581,14 +613,65 @@ public class ScreenViewerService extends Service {
                     mSurfaceShareViewer.setContentGeometry(visibleWidth, visibleHeight,
                         rotationDegrees);
                 }
-            }));
+            }), new ArrivalTracker(mMetrics));
 
         // Mount the surface viewer now so its texture view acquires a surface; the H.264 decoder
         // cannot be created until a surface exists, and STREAMING (which used to trigger the mount)
         // is only reached once the decoder starts producing frames.
         mSurfaceShareViewer.show();
 
+        mMainHandler.removeCallbacks(mMetricsLogRunnable);
+        if (mMetrics.isEnabled()) {
+            mMainHandler.postDelayed(mMetricsLogRunnable, UPDATE_METRICS_INTERVAL_MS);
+        }
+
         return mClientMediaReceiver;
+    }
+
+    /**
+     * Returns the viewer's metric scope, creating it on first use.
+     *
+     * <p>The scope lives as long as the service, so a reconnect keeps the same windows; the arrival
+     * tracker is recreated per session because its baseline belongs to one stream.</p>
+     */
+    @NonNull
+    private PipelineMetrics viewerMetrics() {
+        if (mMetrics == null) {
+            mMetrics = Preferences.get().isMetricsEnabled()
+                ? PipelineMetrics.create(NanoClock.MONOTONIC)
+                : PipelineMetrics.NONE;
+        }
+        return mMetrics;
+    }
+
+    /**
+     * Writes one structured client metric line and the current resynchronization reason.
+     *
+     * <p>Runs on the main thread next to the three-second statistics sample, so no extra thread is
+     * created. The identifier is the tail of the random per-run client id, which is what lets this
+     * line be matched with the server's session row.</p>
+     */
+    private void logMetrics() {
+        mMainHandler.removeCallbacks(mMetricsLogRunnable);
+
+        final PipelineMetrics metrics = mMetrics;
+        if (metrics == null || !metrics.isEnabled()) {
+            return;
+        }
+        final ScreenShareClient client = mClient;
+        Log.i(mTag, MetricsFormatter.toLogLine(MetricsFormatter.Role.CLIENT,
+            metrics.snapshot(UPDATE_METRICS_INTERVAL_MS),
+            client == null ? null : client.getClientIdTail()));
+
+        final ClientMediaSession session = mClientMediaSession;
+        final ClientMediaSession.ResyncReason reason =
+            session == null ? null : session.getLastResyncReason();
+        if (reason != null && reason != mLoggedResyncReason) {
+            mLoggedResyncReason = reason;
+            Log.i(mTag, "logMetrics: resync reason " + reason.name());
+        }
+
+        mMainHandler.postDelayed(mMetricsLogRunnable, UPDATE_METRICS_INTERVAL_MS);
     }
 
     /**

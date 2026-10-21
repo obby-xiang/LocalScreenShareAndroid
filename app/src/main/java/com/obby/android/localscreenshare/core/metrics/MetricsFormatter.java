@@ -167,6 +167,22 @@ public final class MetricsFormatter {
      * @throws IllegalArgumentException if an argument is null
      */
     public static String toLogLine(Role role, MetricsSnapshot snapshot) {
+        return toLogLine(role, snapshot, null);
+    }
+
+    /**
+     * Renders one single-line structured log record with a session identifier.
+     *
+     * <p>The identifier is the tail of the sender's random per-run client id; it is not a device
+     * identity, and it is what lets the two ends of one session be matched in a log capture.</p>
+     *
+     * @param role       pipeline the snapshot describes; must not be null
+     * @param snapshot   snapshot to render; must not be null
+     * @param sessionId  session identifier to append, or null to omit the field
+     * @return one line starting with {@link MetricNames#PREFIX}, without a trailing newline
+     * @throws IllegalArgumentException if an argument is null
+     */
+    public static String toLogLine(Role role, MetricsSnapshot snapshot, String sessionId) {
         if (role == null) {
             throw new IllegalArgumentException("role must not be null");
         }
@@ -179,6 +195,9 @@ public final class MetricsFormatter {
                 .append(role == Role.SERVER ? "server" : "client")
                 .append(' ').append(MetricNames.KEY_PERIOD).append('=')
                 .append(snapshot.getPeriodMs());
+        if (sessionId != null) {
+            out.append(' ').append(MetricNames.KEY_SESSION_ID).append('=').append(sessionId);
+        }
         if (role == Role.SERVER) {
             appendServerFields(out, snapshot);
         } else {

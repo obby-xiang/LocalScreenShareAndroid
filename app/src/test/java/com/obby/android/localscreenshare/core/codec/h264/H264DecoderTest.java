@@ -10,6 +10,7 @@ import com.obby.android.localscreenshare.core.codec.mediacodec.DecoderFormat;
 import com.obby.android.localscreenshare.core.codec.mediacodec.MediaCodecBridgeFactory;
 import com.obby.android.localscreenshare.core.codec.mediacodec.MediaCodecDecoderBridge;
 import com.obby.android.localscreenshare.core.codec.mediacodec.MediaCodecEncoderBridge;
+import com.obby.android.localscreenshare.core.metrics.PipelineMetrics;
 import com.obby.android.localscreenshare.core.model.AccessUnitFlags;
 import com.obby.android.localscreenshare.core.model.BitstreamFormat;
 import com.obby.android.localscreenshare.core.model.CodecConfigPart;
@@ -22,6 +23,8 @@ import com.obby.android.localscreenshare.core.render.RenderTarget;
 import com.obby.android.localscreenshare.core.support.FakeMediaCodecDecoderBridge;
 import com.obby.android.localscreenshare.core.support.FakeRenderTarget;
 import com.obby.android.localscreenshare.core.support.H264Fixtures;
+import com.obby.android.localscreenshare.core.support.MutableNanoClock;
+import com.obby.android.localscreenshare.core.util.NanoClock;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -343,6 +346,75 @@ public class H264DecoderTest {
     }
 
     @Test
+    public void metrics_matchDecodeLatencyByPresentationTimestamp() {
+        MutableNanoClock clock = new MutableNanoClock();
+        PipelineMetrics metrics = PipelineMetrics.create(clock, 8);
+        H264Decoder measured = newMeasuredDecoder(metrics, clock);
+        measured.configure(descriptor(CONFIG_EPOCH, CodecIds.H264, validConfigParts()));
+
+        measured.decode(accessUnit(CONFIG_EPOCH, 0, PTS_US, idrPayload()));
+        assertEquals("no output yet", 0L, metrics.getRecordedCount(
+                PipelineMetrics.Window.DECODE_LATENCY));
+
+        clock.advance(5_000_000L);
+        bridge.enqueueOutput(new DecodedOutput(10, PTS_US, false, false));
+        measured.decode(accessUnit(CONFIG_EPOCH, 1, PTS_US * 2, idrPayload()));
+
+        assertEquals(5_000_000L, metrics.stats(PipelineMetrics.Window.DECODE_LATENCY).getP50());
+    }
+
+    @Test
+    public void metrics_countMergedOutputs() {
+        MutableNanoClock clock = new MutableNanoClock();
+        PipelineMetrics metrics = PipelineMetrics.create(clock, 8);
+        H264Decoder measured = newMeasuredDecoder(metrics, clock);
+        measured.configure(descriptor(CONFIG_EPOCH, CodecIds.H264, validConfigParts()));
+        bridge.enqueueOutput(new DecodedOutput(10, 0L, false, false));
+        bridge.enqueueOutput(new DecodedOutput(11, 33_000L, false, false));
+
+        measured.decode(accessUnit(CONFIG_EPOCH, 0, PTS_US, idrPayload()));
+
+        assertEquals(1L, metrics.count(PipelineMetrics.Counter.DECODE_MERGED));
+        assertEquals(Collections.singletonList(11), bridge.getPresentedIndices());
+    }
+
+    @Test
+    public void metrics_reportLatePresentationAndDeadlineMiss() {
+        MutableNanoClock clock = new MutableNanoClock();
+        PipelineMetrics metrics = PipelineMetrics.create(clock, 8);
+        H264Decoder measured = newMeasuredDecoder(metrics, clock);
+        measured.configure(descriptor(CONFIG_EPOCH, CodecIds.H264, validConfigParts()));
+
+        // The first output anchors the stream timeline at the current time, so it is on time.
+        bridge.enqueueOutput(new DecodedOutput(10, PTS_US, false, false));
+        measured.decode(accessUnit(CONFIG_EPOCH, 0, PTS_US, idrPayload()));
+        assertEquals(0L, metrics.count(PipelineMetrics.Counter.DEADLINE_MISSES));
+
+        // The next frame's own target is one frame after the anchor, but it becomes available
+        // 100ms later: it is 67ms late and misses its decode deadline.
+        clock.advance(100_000_000L);
+        bridge.enqueueOutput(new DecodedOutput(11, PTS_US + 33_000L, false, false));
+        measured.decode(accessUnit(CONFIG_EPOCH, 1, PTS_US + 33_000L, idrPayload()));
+
+        assertEquals(67_000_000L, metrics.stats(PipelineMetrics.Window.PRESENT_LATE).getMax());
+        assertEquals(1L, metrics.count(PipelineMetrics.Counter.DEADLINE_MISSES));
+    }
+
+    @Test
+    public void metrics_reportSwitchBlackoutFromConfigurationToFirstFrame() {
+        MutableNanoClock clock = new MutableNanoClock();
+        PipelineMetrics metrics = PipelineMetrics.create(clock, 8);
+        H264Decoder measured = newMeasuredDecoder(metrics, clock);
+        measured.configure(descriptor(CONFIG_EPOCH, CodecIds.H264, validConfigParts()));
+
+        clock.advance(40_000_000L);
+        bridge.enqueueOutput(new DecodedOutput(10, PTS_US, false, false));
+        measured.decode(accessUnit(CONFIG_EPOCH, 0, PTS_US, idrPayload()));
+
+        assertEquals(40_000_000L, metrics.stats(PipelineMetrics.Window.SWITCH_BLACKOUT).getMax());
+    }
+
+    @Test
     public void backwardPts_isDroppedAsStale() {
         decoder.configure(descriptor(CONFIG_EPOCH, CodecIds.H264, validConfigParts()));
         bridge.enqueueOutput(new DecodedOutput(20, 100_000L, false, false));
@@ -380,6 +452,18 @@ public class H264DecoderTest {
                                    KeyFrameRequester keyFrameRequester) {
         return new H264Decoder(STREAM_KEY, descriptor(CONFIG_EPOCH, CodecIds.H264,
                 validConfigParts()), target, factory, keyFrameRequester);
+    }
+
+    private H264Decoder newMeasuredDecoder(PipelineMetrics metrics, NanoClock clock) {
+        return new H264Decoder(STREAM_KEY, descriptor(CONFIG_EPOCH, CodecIds.H264,
+                validConfigParts()), renderTarget, bridgeFactory, KeyFrameRequester.NONE, metrics,
+                clock);
+    }
+
+    private static EncodedAccessUnit accessUnit(int configEpoch, long sequence, long ptsUs,
+                                                byte[] payload) {
+        return new EncodedAccessUnit(STREAM_KEY, configEpoch, sequence, ptsUs,
+                EncodedAccessUnit.DTS_UNSET, AccessUnitFlags.none(), null, null, payload);
     }
 
     private void assertConfigureRejected(List<CodecConfigPart> parts) {

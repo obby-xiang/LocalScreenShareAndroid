@@ -114,6 +114,15 @@ public class MetricsFormatterTest {
     }
 
     @Test
+    public void logLine_includesTheSessionIdentifierOnlyWhenGiven() {
+        MetricsSnapshot snapshot = PipelineMetrics.NONE.snapshot(1000L);
+
+        assertTrue(MetricsFormatter.toLogLine(Role.CLIENT, snapshot, "1a2b3c4d")
+                .contains(" sid=1a2b3c4d"));
+        assertFalse(MetricsFormatter.toLogLine(Role.CLIENT, snapshot).contains("sid="));
+    }
+
+    @Test
     public void hud_hasThreeStableLines() {
         PipelineMetrics metrics = PipelineMetrics.create(new MutableNanoClock(), 16);
         metrics.add(PipelineMetrics.Counter.ACCESS_UNITS, 30L);

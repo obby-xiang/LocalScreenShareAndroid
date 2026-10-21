@@ -4,9 +4,11 @@ import com.obby.android.localscreenshare.core.codec.Decoder;
 import com.obby.android.localscreenshare.core.codec.DecoderFactory;
 import com.obby.android.localscreenshare.core.codec.KeyFrameRequester;
 import com.obby.android.localscreenshare.core.codec.mediacodec.MediaCodecBridgeFactory;
+import com.obby.android.localscreenshare.core.metrics.PipelineMetrics;
 import com.obby.android.localscreenshare.core.model.StreamDescriptor;
 import com.obby.android.localscreenshare.core.model.StreamKey;
 import com.obby.android.localscreenshare.core.render.RenderTarget;
+import com.obby.android.localscreenshare.core.util.NanoClock;
 
 /**
  * Creates {@link H264Decoder} instances backed by a {@link MediaCodecBridgeFactory}.
@@ -22,6 +24,10 @@ public final class H264DecoderFactory implements DecoderFactory {
 
     private final KeyFrameRequester keyFrameRequester;
 
+    private final PipelineMetrics metrics;
+
+    private final NanoClock clock;
+
     /**
      * Creates a factory whose decoders do not report key-frame needs.
      */
@@ -34,20 +40,47 @@ public final class H264DecoderFactory implements DecoderFactory {
      */
     public H264DecoderFactory(MediaCodecBridgeFactory bridgeFactory,
                               KeyFrameRequester keyFrameRequester) {
+        this(bridgeFactory, keyFrameRequester, PipelineMetrics.NONE, NanoClock.MONOTONIC);
+    }
+
+    /**
+     * Creates a factory whose decoders report decode and presentation metrics.
+     *
+     * <p>The scope and clock travel with the factory because decoders are created by the client
+     * session through the codec registration; one scope therefore describes the single active
+     * decoder of the receiving pipeline and survives a reconfiguration.</p>
+     *
+     * @param bridgeFactory     creates platform decoder bridges; required
+     * @param keyFrameRequester notified when a decoder had to shed a frame; required
+     * @param metrics           metric scope of the receiving pipeline; required
+     * @param clock             clock used by the decode and presentation probes; required
+     * @throws IllegalArgumentException if any argument is null
+     */
+    public H264DecoderFactory(MediaCodecBridgeFactory bridgeFactory,
+                              KeyFrameRequester keyFrameRequester, PipelineMetrics metrics,
+                              NanoClock clock) {
         if (bridgeFactory == null) {
             throw new IllegalArgumentException("bridgeFactory must not be null");
         }
         if (keyFrameRequester == null) {
             throw new IllegalArgumentException("keyFrameRequester must not be null");
         }
+        if (metrics == null) {
+            throw new IllegalArgumentException("metrics must not be null");
+        }
+        if (clock == null) {
+            throw new IllegalArgumentException("clock must not be null");
+        }
         this.bridgeFactory = bridgeFactory;
         this.keyFrameRequester = keyFrameRequester;
+        this.metrics = metrics;
+        this.clock = clock;
     }
 
     @Override
     public Decoder create(StreamKey streamKey, StreamDescriptor descriptor,
                           RenderTarget renderTarget) {
         return new H264Decoder(streamKey, descriptor, renderTarget, bridgeFactory,
-                keyFrameRequester);
+                keyFrameRequester, metrics, clock);
     }
 }

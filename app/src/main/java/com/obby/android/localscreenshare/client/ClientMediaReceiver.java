@@ -1,6 +1,8 @@
 package com.obby.android.localscreenshare.client;
 
 import com.obby.android.localscreenshare.core.client.ClientMediaSession;
+import com.obby.android.localscreenshare.core.metrics.ArrivalTracker;
+import com.obby.android.localscreenshare.core.model.EncodedAccessUnit;
 import com.obby.android.localscreenshare.core.model.StreamDescriptor;
 import com.obby.android.localscreenshare.core.model.StreamKey;
 import com.obby.android.localscreenshare.grpc.screenstream.ServerMessage;
@@ -18,6 +20,11 @@ import com.obby.android.localscreenshare.transport.ScreenStreamProtoMapper;
  */
 public final class ClientMediaReceiver {
 
+    /**
+     * Arrival marker for a message whose arrival time was not measured.
+     */
+    private static final long UNKNOWN_ARRIVAL_NS = Long.MIN_VALUE;
+
     private final StreamKey streamKey;
 
     private final ClientMediaSession session;
@@ -25,6 +32,8 @@ public final class ClientMediaReceiver {
     private final ClientSecureListener secureListener;
 
     private final StreamGeometryListener geometryListener;
+
+    private final ArrivalTracker arrivalTracker;
 
     private Boolean lastSecure;
 
@@ -53,6 +62,26 @@ public final class ClientMediaReceiver {
     public ClientMediaReceiver(StreamKey streamKey, ClientMediaSession session,
                                ClientSecureListener secureListener,
                                StreamGeometryListener geometryListener) {
+        this(streamKey, session, secureListener, geometryListener, null);
+    }
+
+    /**
+     * Creates a receiver that also feeds arrival probes.
+     *
+     * <p>The tracker is fed from the same single decode thread that drives the session, so its
+     * intervals follow wire order and never need locking.</p>
+     *
+     * @param streamKey        stream identity used to rebuild descriptors and access units
+     * @param session          the session driven by this receiver
+     * @param secureListener   optional listener for secure-flag changes; may be null
+     * @param geometryListener optional listener for stream geometry changes; may be null
+     * @param arrivalTracker   optional receiver of arrival statistics; may be null
+     * @throws IllegalArgumentException if {@code streamKey} or {@code session} is null
+     */
+    public ClientMediaReceiver(StreamKey streamKey, ClientMediaSession session,
+                               ClientSecureListener secureListener,
+                               StreamGeometryListener geometryListener,
+                               ArrivalTracker arrivalTracker) {
         if (streamKey == null) {
             throw new IllegalArgumentException("streamKey must not be null");
         }
@@ -63,6 +92,7 @@ public final class ClientMediaReceiver {
         this.session = session;
         this.secureListener = secureListener;
         this.geometryListener = geometryListener;
+        this.arrivalTracker = arrivalTracker;
     }
 
     /**
@@ -78,6 +108,20 @@ public final class ClientMediaReceiver {
      * its state incorrectly.</p>
      */
     public void onServerMessage(ServerMessage message) {
+        onServerMessage(message, UNKNOWN_ARRIVAL_NS);
+    }
+
+    /**
+     * Applies one server message and records its arrival time.
+     *
+     * <p>The arrival timestamp is the moment the gRPC callback saw the message; it is what turns a
+     * sequence of access units into an arrival cadence and a relative one-way delay. A message
+     * whose arrival was not measured is applied exactly as before and contributes no sample.</p>
+     *
+     * @param message   server message to apply; may be null
+     * @param arrivalNs local monotonic arrival time in nanoseconds, or an unmeasured marker
+     */
+    public void onServerMessage(ServerMessage message, long arrivalNs) {
         if (message == null || session.isClosed()) {
             return;
         }
@@ -103,10 +147,16 @@ public final class ClientMediaReceiver {
                 session.onDescriptor(streamDescriptor);
                 break;
             }
-            case ACCESS_UNIT:
-                session.onAccessUnit(ScreenStreamProtoMapper.toAccessUnit(streamKey,
-                        message.getAccessUnit()));
+            case ACCESS_UNIT: {
+                final EncodedAccessUnit accessUnit = ScreenStreamProtoMapper.toAccessUnit(streamKey,
+                        message.getAccessUnit());
+                if (arrivalTracker != null && arrivalNs != UNKNOWN_ARRIVAL_NS) {
+                    arrivalTracker.feed(accessUnit.getConfigEpoch(), accessUnit.getSequence(),
+                            accessUnit.getPtsUs(), arrivalNs);
+                }
+                session.onAccessUnit(accessUnit);
                 break;
+            }
             case PAYLOAD_NOT_SET:
             default:
                 break;
