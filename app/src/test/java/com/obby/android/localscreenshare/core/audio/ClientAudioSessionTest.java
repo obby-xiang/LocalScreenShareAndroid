@@ -269,6 +269,33 @@ public class ClientAudioSessionTest {
         assertNotNull(fixture.session.getDescriptor());
     }
 
+    @Test
+    public void anIdleWriterWaitsForTheNextEnqueueInsteadOfPolling() throws Exception {
+        Fixture fixture = new Fixture(true);
+        fixture.session.onDescriptor(descriptor(1));
+
+        fixture.session.onAccessUnit(unit(1, 0, 0L));
+
+        // The frame reaches the sink on the writer thread, and an idle writer has to be waiting on
+        // the session lock: a timed poll would leave it in TIMED_WAITING and add the poll interval
+        // to every frame that arrives while it sleeps.
+        assertTrue(awaitWriterState(fixture.session, Thread.State.WAITING));
+        assertEquals(1L, fixture.session.getWrittenFrames());
+        fixture.session.close();
+    }
+
+    private static boolean awaitWriterState(ClientAudioSession session, Thread.State expected)
+            throws InterruptedException {
+        final long deadlineNs = System.nanoTime() + 2_000_000_000L;
+        while (System.nanoTime() < deadlineNs) {
+            if (session.getWriterState() == expected) {
+                return true;
+            }
+            Thread.sleep(1L);
+        }
+        return false;
+    }
+
     private static AudioDescriptor descriptor(int epoch) {
         return AudioDescriptor.builder(epoch, AudioCodecIds.AAC, AudioCodecIds.AAC_MIME, 48_000,
                         2, 128_000)
@@ -290,10 +317,14 @@ public class ClientAudioSessionTest {
 
         private final MutableAudioClock clock = new MutableAudioClock(0L);
 
-        private final ClientAudioSession session =
-                new ClientAudioSession(decoder, sink, null, clock, false);
+        private final ClientAudioSession session;
 
         private Fixture() {
+            this(false);
+        }
+
+        private Fixture(boolean asyncWriter) {
+            session = new ClientAudioSession(decoder, sink, null, clock, asyncWriter);
         }
     }
 }

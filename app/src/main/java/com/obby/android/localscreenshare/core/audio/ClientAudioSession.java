@@ -38,7 +38,7 @@ public final class ClientAudioSession {
     private static final long UNDERRUN_QUIET_MS = 40L;
 
     /**
-     * Writer wait between two empty polls, in milliseconds.
+     * Writer wait while a starvation is being timed, in milliseconds.
      */
     private static final long WRITER_WAIT_MS = 20L;
 
@@ -690,6 +690,10 @@ public final class ClientAudioSession {
             pending.pollFirst();
         }
         pending.addLast(frame);
+        // The writer sleeps while the queue is empty, so the enqueue is what has to wake it;
+        // without this the writer only noticed a new frame on its next poll, and the poll interval
+        // was a hole in the output buffer at every frame.
+        lock.notifyAll();
     }
 
     private void startWriterThread() {
@@ -703,20 +707,35 @@ public final class ClientAudioSession {
         }
     }
 
+    /**
+     * Writes buffered frames until the queue is empty, then sleeps until an enqueue wakes it.
+     *
+     * <p>The wait happens under the same lock that made the queue look empty, so an enqueue that
+     * lands between the poll and the wait cannot leave a frame behind a sleeping writer. Only the
+     * starvation check needs a timer, because it is the one decision that time alone changes.</p>
+     */
     private void writerLoop() {
         while (true) {
+            final PcmFrame frame;
             synchronized (lock) {
                 if (closed) {
                     return;
                 }
+                frame = pending.pollFirst();
             }
-            if (drainOnce()) {
+            if (frame != null) {
+                if (!writeFrame(frame)) {
+                    return;
+                }
                 continue;
             }
             boolean underrun = false;
             synchronized (lock) {
                 if (closed) {
                     return;
+                }
+                if (!pending.isEmpty()) {
+                    continue;
                 }
                 final long currentMs = nowMs();
                 underrun = playing && silenceFrame != null && lastEnqueuedMs != Long.MIN_VALUE
@@ -725,7 +744,11 @@ public final class ClientAudioSession {
                     buffer.onUnderrun(frameDurationUsLocked());
                 }
                 try {
-                    lock.wait(WRITER_WAIT_MS);
+                    if (underrun) {
+                        lock.wait(WRITER_WAIT_MS);
+                    } else {
+                        lock.wait();
+                    }
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     return;
@@ -733,15 +756,15 @@ public final class ClientAudioSession {
             }
             if (underrun) {
                 // Silence keeps the output fed; dropping samples instead would speed the track up.
-                final byte[] frame;
+                final byte[] silence;
                 final long ptsUs;
                 synchronized (lock) {
-                    frame = silenceFrame;
+                    silence = silenceFrame;
                     ptsUs = lastWrittenPtsUs;
                 }
-                if (frame != null) {
+                if (silence != null) {
                     metrics.increment(PipelineMetrics.Counter.AUDIO_UNDERRUNS);
-                    if (!writeFrame(new PcmFrame(frame, ptsUs, true))) {
+                    if (!writeFrame(new PcmFrame(silence, ptsUs, true))) {
                         return;
                     }
                 }
@@ -826,6 +849,19 @@ public final class ClientAudioSession {
     public int getSilenceFrameLength() {
         synchronized (lock) {
             return silenceFrame == null ? 0 : silenceFrame.length;
+        }
+    }
+
+    /**
+     * Returns the state of the writer thread, or null when none is running.
+     *
+     * <p>Test and diagnostics helper: an idle writer has to be {@code WAITING} on the session lock,
+     * because that is how "sleeps until the next enqueue" is observable without a timing
+     * assertion.</p>
+     */
+    Thread.State getWriterState() {
+        synchronized (lock) {
+            return writer == null ? null : writer.getState();
         }
     }
 
