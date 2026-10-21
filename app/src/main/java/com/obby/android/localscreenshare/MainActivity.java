@@ -30,6 +30,7 @@ import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.EditText;
+import android.widget.LinearLayout;
 import android.widget.FrameLayout;
 import android.widget.NumberPicker;
 import android.widget.Toast;
@@ -66,6 +67,9 @@ import com.google.android.material.materialswitch.MaterialSwitch;
 import com.google.android.material.slider.LabelFormatter;
 import com.google.android.material.slider.Slider;
 import com.google.android.material.textview.MaterialTextView;
+import com.obby.android.localscreenshare.authorization.ApprovalOutcome;
+import com.obby.android.localscreenshare.authorization.store.AuthorizationEntry;
+import com.obby.android.localscreenshare.authorization.store.AuthorizationStore;
 import com.obby.android.localscreenshare.core.audio.AudioAvailability;
 import com.obby.android.localscreenshare.core.codec.h264.H264Codec;
 import com.obby.android.localscreenshare.core.codec.mediacodec.EncoderSizeLimitProbe;
@@ -76,6 +80,7 @@ import com.obby.android.localscreenshare.discovery.manual.ManualAddressProvider;
 import com.obby.android.localscreenshare.discovery.model.DeviceAddress;
 import com.obby.android.localscreenshare.discovery.model.DeviceInfo;
 import com.obby.android.localscreenshare.discovery.scan.ScanConstants;
+import com.obby.android.localscreenshare.identity.DeviceIdentity;
 import com.obby.android.localscreenshare.discovery.store.DeviceStoreListener;
 import com.obby.android.localscreenshare.discovery.ui.DiscoveryListModel;
 import com.obby.android.localscreenshare.grpc.screenstream.DeviceSummary;
@@ -103,8 +108,10 @@ import com.obby.android.localscreenshare.trust.TlsPin;
 import com.obby.android.localscreenshare.trust.TlsPinStore;
 import com.obby.android.localscreenshare.trust.TofuPolicy;
 
+import java.text.DateFormat;
 import java.text.NumberFormat;
 import java.util.Arrays;
+import java.util.Date;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
@@ -195,6 +202,26 @@ public class MainActivity extends AppCompatActivity {
     // settings sheet is created.
     @Nullable
     private MaterialTextView mVideoSettingsSummaryView;
+
+    // Note under the authorization switch, rewritten when the switch is off to spell out the risk.
+    @Nullable
+    private MaterialTextView mAuthorizationSettingNoteView;
+
+    // Summary next to the allowed-devices entry row; null until the sheet is created.
+    @Nullable
+    private MaterialTextView mAuthorizationDevicesSummaryView;
+
+    // Viewing request the dialog below belongs to, or 0 when no request is being shown.
+    private long mAuthorizationRequestId;
+
+    // Blocking dialog of one viewing request; separate from mDialog because a request may arrive
+    // while a discovery confirmation is on screen.
+    @Nullable
+    private AlertDialog mAuthorizationDialog;
+
+    // Allowed-devices dialog; rebuilt after every revocation so the list never shows a stale row.
+    @Nullable
+    private AlertDialog mAuthorizedDevicesDialog;
 
     // Controls of the video settings sheet; null until the sheet is created. They are kept so a
     // preference written by the service while the sheet is open refreshes the control that shows
@@ -377,6 +404,12 @@ public class MainActivity extends AppCompatActivity {
                 return true;
             case ServiceProtocol.MSG_SERVER_STATS_CHANGED:
                 onServerStatsChanged((ServerStats) msg.obj);
+                return true;
+            case ServiceProtocol.MSG_AUTHORIZATION_REQUEST:
+                onAuthorizationRequested(msg.getData());
+                return true;
+            case ServiceProtocol.MSG_AUTHORIZATION_FINISHED:
+                onAuthorizationFinished(msg.arg1);
                 return true;
             default:
                 return false;
@@ -626,6 +659,16 @@ public class MainActivity extends AppCompatActivity {
         if (mVideoSettingsDialog != null) {
             mVideoSettingsDialog.dismiss();
             mVideoSettingsDialog = null;
+        }
+
+        if (mAuthorizationDialog != null) {
+            mAuthorizationDialog.dismiss();
+            mAuthorizationDialog = null;
+        }
+
+        if (mAuthorizedDevicesDialog != null) {
+            mAuthorizedDevicesDialog.dismiss();
+            mAuthorizedDevicesDialog = null;
         }
     }
 
@@ -1469,6 +1512,23 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
+        final MaterialSwitch authorizationSettingView =
+            settingsDialog.findViewById(R.id.authorization_setting);
+        mAuthorizationSettingNoteView =
+            settingsDialog.findViewById(R.id.authorization_setting_note);
+        authorizationSettingView.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            if (Preferences.get().isAuthorizationEnabled() != isChecked) {
+                Preferences.get().setAuthorizationEnabled(isChecked);
+                updateAuthorizationSettingNote();
+            }
+        });
+
+        mAuthorizationDevicesSummaryView =
+            settingsDialog.findViewById(R.id.authorization_devices_summary);
+        settingsDialog.findViewById(R.id.authorization_devices_entry)
+            .setOnClickListener(view -> showAuthorizedDevicesDialog());
+        updateAuthorizationDevicesSummary();
+
         final NumberPicker portSettingView = settingsDialog.findViewById(R.id.port_setting);
         portSettingView.setValue(MIN_SERVER_PORT);
         portSettingView.setMinValue(MIN_SERVER_PORT);
@@ -1569,6 +1629,10 @@ public class MainActivity extends AppCompatActivity {
             audioSettingView.setChecked(audioSupported && Preferences.get().isAudioEnabled());
             audioSettingView.jumpDrawablesToCurrentState();
             portSettingView.setValue(Preferences.get().getServerPort());
+            authorizationSettingView.setChecked(Preferences.get().isAuthorizationEnabled());
+            authorizationSettingView.jumpDrawablesToCurrentState();
+            updateAuthorizationSettingNote();
+            updateAuthorizationDevicesSummary();
             updateDeviceIdentityView();
 
             final DiscoverySettings settings = Preferences.get().getDiscoverySettings();
@@ -1890,6 +1954,171 @@ public class MainActivity extends AppCompatActivity {
             settings.getFrameRate(),
             getString(R.string.projection_bitrate_value_label,
                 formatNumber(settings.getBitrateBps() / 1_000_000d, 1))));
+    }
+
+    /**
+     * Rewrites the note under the authorization switch.
+     *
+     * <p>With the feature off the note states the risk plainly instead of describing the feature:
+     * the switch is the only thing standing between the network and the screen, so turning it off
+     * has to read as a decision, not as a preference.</p>
+     */
+    private void updateAuthorizationSettingNote() {
+        if (mAuthorizationSettingNoteView == null) {
+            return;
+        }
+        mAuthorizationSettingNoteView.setText(Preferences.get().isAuthorizationEnabled()
+            ? R.string.authorization_setting_note
+            : R.string.authorization_setting_note_off);
+    }
+
+    /**
+     * Renders how many devices may watch without asking.
+     */
+    private void updateAuthorizationDevicesSummary() {
+        if (mAuthorizationDevicesSummaryView == null) {
+            return;
+        }
+        mAuthorizationDevicesSummaryView.setText(
+            getString(R.string.authorization_devices_summary,
+                AuthorizationStore.get().entries().size()));
+    }
+
+    /**
+     * Shows the three answers to one waiting viewing request.
+     *
+     * <p>The service posts the request from its gate; the same answers are on the approval
+     * notification, so a request is actionable whether the activity is in front or the phone is
+     * locked. Answering sends one message back; the service owns the gate and the notification.</p>
+     */
+    private void onAuthorizationRequested(@NonNull final Bundle data) {
+        final long requestId = data.getLong(ServiceProtocol.EXTRA_AUTHORIZATION_REQUEST_ID, -1L);
+        if (requestId < 0L) {
+            return;
+        }
+        final String name = data.getString(ServiceProtocol.EXTRA_AUTHORIZATION_DEVICE_NAME,
+            getString(R.string.authorization_unknown_device));
+        final String deviceId = data.getString(ServiceProtocol.EXTRA_AUTHORIZATION_DEVICE_ID, "");
+        final String fingerprint = data.getString(
+            ServiceProtocol.EXTRA_AUTHORIZATION_FINGERPRINT, "");
+
+        if (mAuthorizationDialog != null) {
+            mAuthorizationDialog.dismiss();
+            mAuthorizationDialog = null;
+        }
+        mAuthorizationRequestId = requestId;
+        mAuthorizationDialog = new MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.authorization_dialog_title)
+            .setMessage(HtmlCompat.fromHtml(getString(R.string.authorization_dialog_message,
+                name, deviceId, fingerprint), HtmlCompat.FROM_HTML_MODE_LEGACY))
+            .setPositiveButton(R.string.authorization_action_allow_once,
+                (dialog, which) -> sendAuthorizationDecision(requestId, ApprovalOutcome.ALLOW_ONCE))
+            .setNeutralButton(R.string.authorization_action_allow_always,
+                (dialog, which) -> sendAuthorizationDecision(requestId, ApprovalOutcome.ALLOW_ALWAYS))
+            .setNegativeButton(R.string.authorization_action_deny,
+                (dialog, which) -> sendAuthorizationDecision(requestId, ApprovalOutcome.DENY))
+            .setCancelable(false)
+            .show();
+    }
+
+    /**
+     * Drops the request dialog once its request was answered, expired or cancelled.
+     */
+    private void onAuthorizationFinished(final int requestId) {
+        if (mAuthorizationDialog != null && mAuthorizationRequestId == requestId) {
+            mAuthorizationDialog.dismiss();
+            mAuthorizationDialog = null;
+            mAuthorizationRequestId = 0L;
+        }
+        // "Always allow" writes the store from the service, so the count may have changed.
+        updateAuthorizationDevicesSummary();
+    }
+
+    /**
+     * Sends one answer to the service that owns the approval gate.
+     */
+    private void sendAuthorizationDecision(final long requestId,
+                                          @NonNull final ApprovalOutcome outcome) {
+        if (mAuthorizationDialog != null) {
+            mAuthorizationDialog.dismiss();
+            mAuthorizationDialog = null;
+        }
+        mAuthorizationRequestId = 0L;
+        if (mServiceMessenger == null) {
+            // Without a binding the notification buttons are still available; nothing is decided
+            // here so the request is not lost.
+            Log.w(mTag, "sendAuthorizationDecision: service is not bound");
+            return;
+        }
+        final Message message = Message.obtain(null, ServiceProtocol.MSG_AUTHORIZATION_DECISION);
+        message.arg1 = (int) requestId;
+        message.arg2 = outcome.ordinal();
+        try {
+            mServiceMessenger.send(message);
+        } catch (RemoteException e) {
+            Log.w(mTag, "sendAuthorizationDecision: send failed", e);
+        }
+    }
+
+    /**
+     * Lists the devices that may watch without asking and revokes them one at a time.
+     *
+     * <p>A revocation is immediate: the running stream of that device ends on its next drain, which
+     * is a few milliseconds away, because the gate is consulted there and not on reconnect only.</p>
+     */
+    private void showAuthorizedDevicesDialog() {
+        if (mAuthorizedDevicesDialog != null) {
+            mAuthorizedDevicesDialog.dismiss();
+            mAuthorizedDevicesDialog = null;
+        }
+        final View content = getLayoutInflater().inflate(R.layout.dialog_authorized_devices, null);
+        final LinearLayout container = content.findViewById(R.id.authorized_devices_container);
+        final View emptyView = content.findViewById(R.id.authorized_devices_empty);
+        final List<AuthorizationEntry> entries = AuthorizationStore.get().entries();
+        emptyView.setVisibility(entries.isEmpty() ? View.VISIBLE : View.GONE);
+
+        for (final AuthorizationEntry entry : entries) {
+            final View row = getLayoutInflater().inflate(R.layout.item_authorized_device, container,
+                false);
+            final MaterialTextView nameView = row.findViewById(R.id.authorized_device_name);
+            final MaterialTextView detailsView = row.findViewById(R.id.authorized_device_details);
+            final String name = entry.getDeviceName().isEmpty()
+                ? getString(R.string.authorization_unknown_device) : entry.getDeviceName();
+            nameView.setText(name);
+            detailsView.setText(getString(R.string.authorization_device_details,
+                entry.getDeviceId().substring(0,
+                    Math.min(DeviceIdentity.SHORT_ID_LENGTH, entry.getDeviceId().length())),
+                DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
+                    .format(new Date(entry.getGrantedAtMs()))));
+            row.findViewById(R.id.authorized_device_revoke).setOnClickListener(
+                view -> confirmRevokeAuthorization(entry, name));
+            container.addView(row);
+        }
+
+        mAuthorizedDevicesDialog = new MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.authorization_devices_title)
+            .setView(content)
+            .setPositiveButton(android.R.string.ok, null)
+            .create();
+        mAuthorizedDevicesDialog.show();
+    }
+
+    /**
+     * Confirms and applies one revocation, then rebuilds the list so the row disappears at once.
+     */
+    private void confirmRevokeAuthorization(@NonNull final AuthorizationEntry entry,
+                                            @NonNull final String name) {
+        new MaterialAlertDialogBuilder(this)
+            .setMessage(getString(R.string.authorization_revoke_confirm, name))
+            .setPositiveButton(R.string.authorization_revoke_action, (dialog, which) -> {
+                AuthorizationStore.get().revoke(entry.getDeviceId());
+                Toast.makeText(this, getString(R.string.authorization_revoked_toast, name),
+                    Toast.LENGTH_LONG).show();
+                updateAuthorizationDevicesSummary();
+                showAuthorizedDevicesDialog();
+            })
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
     }
 
     /**

@@ -176,7 +176,7 @@
     <string name="authorization_setting_note">"未获批准的设备会停在这里等你决定：你回答之后才放行，不回答则自动拒绝。"</string>
     <string name="authorization_setting_note_off">"任何能连上本机的设备都可以直接观看、无需询问。关闭这一保护并不推荐。"</string>
     <string name="authorization_devices_entry_label">"已授权设备"</string>
-    <string name="authorization_devices_summary">"已授权 <xliff:g id="count">%1$d</xliff:g> 台"</string>
+    <string name="authorization_devices_summary">"已授权：<xliff:g id="count">%1$d</xliff:g> 台"</string>
     <string name="authorization_devices_title">"已授权设备"</string>
     <string name="authorization_devices_empty">"还没有任何设备被允许免批准观看。"</string>
     <string name="authorization_device_details">"ID <xliff:g id="id">%1$s</xliff:g> · 授权于 <xliff:g id="time">%2$s</xliff:g>"</string>

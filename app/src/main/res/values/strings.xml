@@ -176,7 +176,7 @@ This can happen after a reinstall, a data reset or a key reset. Connect only if 
     <string name="authorization_setting_note">"A device you have not allowed waits until you approve it here. It is let in only after you answer, and it is refused automatically if you do not."</string>
     <string name="authorization_setting_note_off">"Any device that can reach this phone may watch without asking. Turning this off removes that protection and is not recommended."</string>
     <string name="authorization_devices_entry_label">"Allowed devices"</string>
-    <string name="authorization_devices_summary">"<xliff:g id="count">%1$d</xliff:g> allowed"</string>
+    <string name="authorization_devices_summary">"Allowed: <xliff:g id="count">%1$d</xliff:g>"</string>
     <string name="authorization_devices_title">"Allowed devices"</string>
     <string name="authorization_devices_empty">"No device is allowed to watch without asking yet."</string>
     <string name="authorization_device_details">"ID <xliff:g id="id">%1$s</xliff:g> · allowed <xliff:g id="time">%2$s</xliff:g>"</string>
