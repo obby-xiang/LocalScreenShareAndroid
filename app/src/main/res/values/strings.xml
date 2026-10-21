@@ -137,4 +137,18 @@ This can happen after a reinstall, a data reset or a key reset. Connect only if 
     <string name="discovery_status_needs_approval">"Needs approval"</string>
     <string name="discovery_status_closed">"Can\'t join"</string>
     <string name="discovery_status_unreachable">"Unreachable"</string>
+    <string name="audio_setting_label">"Share device sound"</string>
+    <string name="audio_setting_disabled_label">"Share device sound (Android 10+ only)"</string>
+    <string name="audio_permission_denied">"Sharing device sound needs the recording permission. The screen is shared without sound."</string>
+    <string name="audio_unavailable_api_unsupported">"This Android version cannot capture playback audio."</string>
+    <string name="audio_unavailable_permission_denied">"Recording permission was denied; the screen is shared without sound."</string>
+    <string name="audio_unavailable_capture_failed">"Device sound could not be captured; the screen is shared without sound."</string>
+    <string name="audio_unavailable_encoder_failed">"The audio encoder failed; the screen is shared without sound."</string>
+    <string name="audio_status_no_viewers">"No viewer is connected, so audio capture is paused."</string>
+    <string name="audio_status_client_unsupported">"The viewer cannot play AAC audio."</string>
+    <string name="viewer_audio_mute_action">"Mute sound"</string>
+    <string name="viewer_audio_unmute_action">"Unmute sound"</string>
+    <string name="viewer_audio_hud_receiving">"Sound: receiving"</string>
+    <string name="viewer_audio_hud_muted">"Sound: muted"</string>
+    <string name="viewer_audio_hud_unavailable">"Sound: unavailable"</string>
 </resources>

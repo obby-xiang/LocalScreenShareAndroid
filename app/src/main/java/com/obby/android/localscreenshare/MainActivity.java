@@ -66,6 +66,7 @@ import com.google.android.material.materialswitch.MaterialSwitch;
 import com.google.android.material.slider.LabelFormatter;
 import com.google.android.material.slider.Slider;
 import com.google.android.material.textview.MaterialTextView;
+import com.obby.android.localscreenshare.core.audio.AudioAvailability;
 import com.obby.android.localscreenshare.core.codec.h264.H264Codec;
 import com.obby.android.localscreenshare.core.codec.mediacodec.EncoderSizeLimitProbe;
 import com.obby.android.localscreenshare.discovery.DiscoveryManager;
@@ -284,6 +285,10 @@ public class MainActivity extends AppCompatActivity {
     @Nullable
     private MaterialTextView mDeviceFingerprintSettingView;
 
+    // Sound-sharing switch inside the settings sheet; null until the sheet is created.
+    @Nullable
+    private MaterialSwitch mAudioSettingView;
+
     private final String mTag = "MainActivity@" + hashCode();
 
     // Latest store snapshot; the adapter renders it through DiscoveryListModel.
@@ -428,6 +433,21 @@ public class MainActivity extends AppCompatActivity {
             }
         }
     );
+
+    // Recording permission for playback capture. The switch reflects the outcome, so a denial never
+    // leaves the UI claiming audio is shared; the microphone is never requested as a substitute.
+    @NonNull
+    private final ActivityResultLauncher<String> mRecordAudioPermissionLauncher =
+        registerForActivityResult(new ActivityResultContracts.RequestPermission(), isGranted -> {
+            Preferences.get().setAudioEnabled(isGranted);
+            if (mAudioSettingView != null) {
+                mAudioSettingView.setChecked(isGranted);
+                mAudioSettingView.jumpDrawablesToCurrentState();
+            }
+            if (!isGranted) {
+                Toast.makeText(this, R.string.audio_permission_denied, Toast.LENGTH_LONG).show();
+            }
+        });
 
     /**
      * Inflates the layout, wires the toolbars and the discovery list and renders the initial
@@ -1297,6 +1317,37 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
+        // Sound sharing: the switch is the single source of intent, the permission is requested on
+        // the way in, and an unsupported API level disables the row instead of pretending to work.
+        final boolean audioSupported = AudioAvailability.forApiLevel(Build.VERSION.SDK_INT)
+            == AudioAvailability.AVAILABLE;
+        final MaterialSwitch audioSettingView = settingsDialog.findViewById(R.id.audio_setting);
+        final MaterialTextView audioStatusView =
+            settingsDialog.findViewById(R.id.audio_status_setting);
+        mAudioSettingView = audioSettingView;
+        audioSettingView.setEnabled(audioSupported);
+        if (!audioSupported) {
+            audioSettingView.setText(R.string.audio_setting_disabled_label);
+            audioStatusView.setText(R.string.audio_unavailable_api_unsupported);
+            audioStatusView.setVisibility(View.VISIBLE);
+        }
+        audioSettingView.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            if (!isChecked) {
+                Preferences.get().setAudioEnabled(false);
+                return;
+            }
+            if (!audioSupported) {
+                buttonView.setChecked(false);
+                return;
+            }
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+                == PackageManager.PERMISSION_GRANTED) {
+                Preferences.get().setAudioEnabled(true);
+            } else {
+                mRecordAudioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO);
+            }
+        });
+
         final NumberPicker portSettingView = settingsDialog.findViewById(R.id.port_setting);
         portSettingView.setValue(MIN_SERVER_PORT);
         portSettingView.setMinValue(MIN_SERVER_PORT);
@@ -1394,6 +1445,8 @@ public class MainActivity extends AppCompatActivity {
             keepScreenOnSettingView.jumpDrawablesToCurrentState();
             secureSettingView.setChecked(Preferences.get().isProjectionSecure());
             secureSettingView.jumpDrawablesToCurrentState();
+            audioSettingView.setChecked(audioSupported && Preferences.get().isAudioEnabled());
+            audioSettingView.jumpDrawablesToCurrentState();
             portSettingView.setValue(Preferences.get().getServerPort());
             updateDeviceIdentityView();
 

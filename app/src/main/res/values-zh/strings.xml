@@ -137,4 +137,18 @@
     <string name="discovery_status_needs_approval">"需确认"</string>
     <string name="discovery_status_closed">"不可加入"</string>
     <string name="discovery_status_unreachable">"不可达"</string>
+    <string name="audio_setting_label">"共享设备声音"</string>
+    <string name="audio_setting_disabled_label">"共享设备声音（仅 Android 10 及以上）"</string>
+    <string name="audio_permission_denied">"共享设备声音需要录音权限。屏幕仍会共享，但没有声音。"</string>
+    <string name="audio_unavailable_api_unsupported">"当前 Android 版本不支持采集设备播放的声音。"</string>
+    <string name="audio_unavailable_permission_denied">"录音权限被拒绝；屏幕继续共享，但没有声音。"</string>
+    <string name="audio_unavailable_capture_failed">"无法采集设备声音；屏幕继续共享，但没有声音。"</string>
+    <string name="audio_unavailable_encoder_failed">"音频编码器不可用；屏幕继续共享，但没有声音。"</string>
+    <string name="audio_status_no_viewers">"当前没有观看者，音频采集已暂停。"</string>
+    <string name="audio_status_client_unsupported">"观看端无法播放 AAC 音频。"</string>
+    <string name="viewer_audio_mute_action">"静音"</string>
+    <string name="viewer_audio_unmute_action">"取消静音"</string>
+    <string name="viewer_audio_hud_receiving">"声音：接收中"</string>
+    <string name="viewer_audio_hud_muted">"声音：已静音"</string>
+    <string name="viewer_audio_hud_unavailable">"声音：不可用"</string>
 </resources>

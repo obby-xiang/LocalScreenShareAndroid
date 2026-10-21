@@ -180,6 +180,17 @@ public final class Preferences {
     public static final String KEY_VIEWER_HUD_ENABLED = "viewer_hud_enabled";
 
     /**
+     * Whether the shared stream carries the device's playback audio; see {@link #isAudioEnabled()}.
+     */
+    public static final String KEY_AUDIO_ENABLED = "audio_enabled";
+
+    private static final String KEY_AUDIO_CHANNELS = "audio_channels";
+
+    private static final String KEY_AUDIO_BITRATE = "audio_bitrate";
+
+    private static final String KEY_AUDIO_BUFFER_MS = "audio_buffer_ms";
+
+    /**
      * Hidden plaintext-transport override; see {@link #isTlsAllowPlaintext()}.
      */
     public static final String KEY_TLS_ALLOW_PLAINTEXT = "tls_allow_plaintext";
@@ -191,6 +202,21 @@ public final class Preferences {
     private static final String KEY_LEGACY_SERVICE_ID = "identity_legacy_service_id";
 
     private static final int DEFAULT_SERVER_PORT = 8080;
+
+    /**
+     * Default audio channel count: stereo, the screen-share convention for music and video.
+     */
+    public static final int DEFAULT_AUDIO_CHANNELS = 2;
+
+    /**
+     * Default audio bitrate in bits per second: the same 128 kbps a desktop screen-share tool uses.
+     */
+    public static final int DEFAULT_AUDIO_BITRATE = 128_000;
+
+    /**
+     * Default client audio buffer target in milliseconds.
+     */
+    public static final int DEFAULT_AUDIO_BUFFER_MS = 60;
 
     private static final int DEFAULT_PROJECTION_SCALE = 100;
 
@@ -382,6 +408,46 @@ public final class Preferences {
      */
     public void setViewerHudEnabled(final boolean isEnabled) {
         mPreferences.edit().putBoolean(KEY_VIEWER_HUD_ENABLED, isEnabled).commit();
+    }
+
+    /**
+     * Whether the shared stream carries the device's playback audio; defaults to false.
+     *
+     * <p>Off by default: capturing what the device plays is a privacy-relevant decision, so it is
+     * always an explicit choice and never a side effect of starting a share. The value only
+     * describes intent; whether capture is possible is decided at runtime (API level, permission,
+     * device support), and every failure keeps video running.</p>
+     */
+    public boolean isAudioEnabled() {
+        return mPreferences.getBoolean(KEY_AUDIO_ENABLED, false);
+    }
+
+    /**
+     * Persists the audio-sharing intent; a running share starts or stops capture immediately.
+     */
+    public void setAudioEnabled(final boolean isEnabled) {
+        mPreferences.edit().putBoolean(KEY_AUDIO_ENABLED, isEnabled).commit();
+    }
+
+    /**
+     * Returns the configured audio channel count, one or two.
+     */
+    public int getAudioChannels() {
+        return mPreferences.getInt(KEY_AUDIO_CHANNELS, DEFAULT_AUDIO_CHANNELS);
+    }
+
+    /**
+     * Returns the configured audio bitrate in bits per second.
+     */
+    public int getAudioBitrate() {
+        return mPreferences.getInt(KEY_AUDIO_BITRATE, DEFAULT_AUDIO_BITRATE);
+    }
+
+    /**
+     * Returns the configured client buffer target in milliseconds.
+     */
+    public int getAudioBufferMs() {
+        return mPreferences.getInt(KEY_AUDIO_BUFFER_MS, DEFAULT_AUDIO_BUFFER_MS);
     }
 
     /**

@@ -57,6 +57,15 @@ public final class ViewerMenuFactory {
         void onHudEnabledSelected(boolean enabled);
 
         /**
+         * Toggles the viewer's audio mute.
+         *
+         * <p>A default no-op keeps hosts that do not expose the audio row (the full-screen
+         * activity) source-compatible.</p>
+         */
+        default void onAudioMuteToggled() {
+        }
+
+        /**
          * Runs the host's trailing action row.
          */
         void onActionSelected();
@@ -84,8 +93,40 @@ public final class ViewerMenuFactory {
                                                @StringRes int actionLabelResId,
                                                boolean floatingWindow,
                                                Listener listener) {
+        return createZoomDialog(context, entries, scalePercent, 0, actionLabelResId,
+                floatingWindow, listener);
+    }
+
+    /**
+     * Builds the display-mode menu with an optional audio-mute row.
+     *
+     * <p>The audio row sits between the last display row and the host's action row. It is a plain
+     * item rather than a checked one: muting is an action on the playback, not a display mode, and
+     * marking a row would compete with the zoom selection.</p>
+     *
+     * @param context          context that owns the dialog; required
+     * @param entries          zoom rows from {@link ViewerZoomMenuModel}; required
+     * @param scalePercent     applied viewing percentage, used by the display-size row
+     * @param audioLabelResId  label of the audio row, or zero to omit it
+     * @param actionLabelResId label of the trailing action row, or zero for none
+     * @param floatingWindow   whether the dialog must be a floating window
+     * @param listener         receiver of the chosen row; required
+     * @return a dialog that the caller shows; never null
+     */
+    public static AlertDialog createZoomDialog(Context context,
+                                               List<ViewerZoomMenuModel.Entry> entries,
+                                               int scalePercent,
+                                               @StringRes int audioLabelResId,
+                                               @StringRes int actionLabelResId,
+                                               boolean floatingWindow,
+                                               Listener listener) {
         final boolean hasAction = actionLabelResId != 0;
-        final CharSequence[] labels = new CharSequence[entries.size() + (hasAction ? 2 : 1)];
+        final boolean hasAudio = audioLabelResId != 0;
+        final int scaleIndex = entries.size();
+        final int audioIndex = scaleIndex + 1;
+        final int actionIndex = audioIndex + (hasAudio ? 1 : 0);
+        final CharSequence[] labels = new CharSequence[scaleIndex + 1
+                + (hasAudio ? 1 : 0) + (hasAction ? 1 : 0)];
         int checked = 0;
         for (int i = 0; i < entries.size(); i++) {
             final ViewerZoomMenuModel.Entry entry = entries.get(i);
@@ -94,21 +135,28 @@ public final class ViewerMenuFactory {
                 checked = i;
             }
         }
-        labels[entries.size()] = context.getString(R.string.viewer_scale_menu_entry_percent,
+        labels[scaleIndex] = context.getString(R.string.viewer_scale_menu_entry_percent,
             context.getString(R.string.viewer_scale_setting_label), scalePercent);
+        if (hasAudio) {
+            labels[audioIndex] = context.getString(audioLabelResId);
+        }
         if (hasAction) {
-            labels[entries.size() + 1] = context.getString(actionLabelResId);
+            labels[actionIndex] = context.getString(actionLabelResId);
         }
 
         final AlertDialog dialog = new MaterialAlertDialogBuilder(context)
             .setTitle(R.string.viewer_zoom_mode_title)
             .setSingleChoiceItems(labels, checked, (target, which) -> {
                 target.dismiss();
-                if (which == entries.size()) {
+                if (which == scaleIndex) {
                     createScaleDialog(context, scalePercent, floatingWindow, listener).show();
                     return;
                 }
-                if (which > entries.size()) {
+                if (hasAudio && which == audioIndex) {
+                    listener.onAudioMuteToggled();
+                    return;
+                }
+                if (hasAction && which == actionIndex) {
                     listener.onActionSelected();
                     return;
                 }

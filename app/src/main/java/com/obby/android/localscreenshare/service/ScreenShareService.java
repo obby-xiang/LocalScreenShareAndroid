@@ -1,5 +1,6 @@
 package com.obby.android.localscreenshare.service;
 
+import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Notification;
 import android.app.PendingIntent;
@@ -8,6 +9,7 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.pm.PackageManager;
 import android.content.pm.ServiceInfo;
 import android.content.res.Configuration;
 import android.graphics.Bitmap;
@@ -17,6 +19,7 @@ import android.graphics.PointF;
 import android.graphics.Rect;
 import android.hardware.display.DisplayManager;
 import android.hardware.display.VirtualDisplay;
+import android.media.AudioManager;
 import android.media.Image;
 import android.media.ImageReader;
 import android.media.projection.MediaProjection;
@@ -61,7 +64,15 @@ import com.google.android.material.color.MaterialColors;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.obby.android.localscreenshare.MainActivity;
 import com.obby.android.localscreenshare.R;
+import com.obby.android.localscreenshare.core.audio.AacEncoder;
+import com.obby.android.localscreenshare.core.audio.AudioAvailability;
+import com.obby.android.localscreenshare.core.audio.AudioCaptureException;
 import com.obby.android.localscreenshare.core.audio.AudioHub;
+import com.obby.android.localscreenshare.core.audio.AudioPipeline;
+import com.obby.android.localscreenshare.core.model.AudioAccessUnit;
+import com.obby.android.localscreenshare.core.model.AudioDescriptor;
+import com.obby.android.localscreenshare.core.audio.mediacodec.AndroidAudioEncoderBridge;
+import com.obby.android.localscreenshare.core.audio.mediacodec.PlaybackCaptureSource;
 import com.obby.android.localscreenshare.core.codec.CodecIds;
 import com.obby.android.localscreenshare.core.codec.CodecRegistry;
 import com.obby.android.localscreenshare.core.codec.EncoderSizeAlignment;
@@ -277,6 +288,14 @@ public class ScreenShareService extends Service {
     // with it. Null means this session carries no audio.
     @Nullable
     private AudioHub mAudioHub;
+
+    // Capture pipeline of the shared sound; null while audio is off or unavailable.
+    @Nullable
+    private AudioPipeline mAudioPipeline;
+
+    // Why sound is not being shared, for the notification; AVAILABLE while it is.
+    @NonNull
+    private AudioAvailability mAudioAvailability = AudioAvailability.AVAILABLE;
 
     @Nullable
     private StreamKey mStreamKey;
@@ -607,6 +626,19 @@ public class ScreenShareService extends Service {
                     mServer.onDiscoverySettingsChanged();
                 }
                 break;
+            case Preferences.KEY_AUDIO_ENABLED:
+                // The switch is the single source of intent: turning it on starts capture now,
+                // turning it off stops it and releases the recorder.
+                stopAudioPipeline();
+                mAudioAvailability = AudioAvailability.AVAILABLE;
+                if (Preferences.get().isAudioEnabled()) {
+                    startAudioPipeline();
+                } else {
+                    updateNotification();
+                }
+                break;
+            case Preferences.KEY_METRICS_ENABLED:
+                break;
             default:
                 break;
         }
@@ -922,6 +954,10 @@ public class ScreenShareService extends Service {
 
         startAnnouncements();
 
+        // Audio is the optional track: it starts after the video pipeline is complete and never
+        // prevents the share from running.
+        startAudioPipeline();
+
         // The virtual display renders the captured screen into the codec's input: the encoder
         // surface for H.264, or an image reader feeding the frame-input JPEG path.
         final Surface displaySurface;
@@ -985,6 +1021,10 @@ public class ScreenShareService extends Service {
         mMetrics = null;
         mRateSampler = null;
         mMetricsLogCount = 0;
+
+        // Audio stops before the projection it borrows is released.
+        stopAudioPipeline();
+        mAudioAvailability = AudioAvailability.AVAILABLE;
 
         // Stop producing UI first so the chip never outlives the running session.
         if (mScreenShareChip != null) {
@@ -1483,6 +1523,126 @@ public class ScreenShareService extends Service {
     }
 
     /**
+     * Starts playback-audio capture when the user asked for it and the device can.
+     *
+     * <p>Every precondition failure is recorded as an {@link AudioAvailability} instead of an
+     * exception: the share keeps running without sound and the notification explains why. The
+     * capture reuses the projection that was already granted, so enabling sound never shows a
+     * second consent dialog; the only extra requirement is the recording permission.</p>
+     *
+     * <p>Sample rate negotiation follows the platform's own advice: the device's native output rate
+     * first, then 48 kHz, then 44.1 kHz, which is the only rate the platform guarantees. A failed
+     * attempt releases its recorder before the next one starts.</p>
+     */
+    private void startAudioPipeline() {
+        if (mAudioPipeline != null || mAudioHub == null || mMediaProjection == null) {
+            return;
+        }
+        if (!Preferences.get().isAudioEnabled()) {
+            mAudioAvailability = AudioAvailability.AVAILABLE;
+            return;
+        }
+        final AudioAvailability supported =
+                AudioAvailability.forApiLevel(Build.VERSION.SDK_INT);
+        if (supported != AudioAvailability.AVAILABLE) {
+            markAudioUnavailable(supported);
+            return;
+        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+                != PackageManager.PERMISSION_GRANTED) {
+            markAudioUnavailable(AudioAvailability.PERMISSION_DENIED);
+            return;
+        }
+        final AudioHub hub = mAudioHub;
+        final AudioPipeline.Listener listener = new AudioPipeline.Listener() {
+            @Override
+            public void onDescriptor(final AudioDescriptor descriptor) {
+                hub.onDescriptor(descriptor);
+            }
+
+            @Override
+            public void onAccessUnit(final AudioAccessUnit accessUnit) {
+                hub.onAccessUnit(accessUnit);
+            }
+
+            @Override
+            public void onUnavailable(final AudioCaptureException failure) {
+                mMainHandler.post(() -> {
+                    stopAudioPipeline();
+                    markAudioUnavailable(AudioAvailability.fromFailure(failure.getReason()));
+                });
+            }
+        };
+        final int channels = Preferences.get().getAudioChannels();
+        final int bitrate = Preferences.get().getAudioBitrate();
+        for (final int sampleRate : outputSampleRates()) {
+            final AudioPipeline pipeline = new AudioPipeline(
+                    new PlaybackCaptureSource(mMediaProjection),
+                    new AacEncoder(new AndroidAudioEncoderBridge()), listener);
+            try {
+                pipeline.start(1, sampleRate, channels, bitrate);
+                mAudioPipeline = pipeline;
+                mAudioAvailability = AudioAvailability.AVAILABLE;
+                Log.i(mTag, "startAudioPipeline: capturing at " + sampleRate + " Hz, "
+                        + channels + " ch, " + bitrate + " bps");
+                updateNotification();
+                return;
+            } catch (AudioCaptureException | RuntimeException e) {
+                pipeline.stop();
+                Log.w(mTag, "startAudioPipeline: " + sampleRate + " Hz failed", e);
+            }
+        }
+        markAudioUnavailable(AudioAvailability.CAPTURE_FAILED);
+    }
+
+    /**
+     * Stops the capture pipeline and releases the recorder; idempotent.
+     */
+    private void stopAudioPipeline() {
+        final AudioPipeline pipeline = mAudioPipeline;
+        mAudioPipeline = null;
+        if (pipeline != null) {
+            pipeline.stop();
+        }
+    }
+
+    /**
+     * Returns the sample rates to try, most preferred first, without duplicates.
+     */
+    @NonNull
+    private int[] outputSampleRates() {
+        final int nativeRate;
+        try {
+            final AudioManager manager = getSystemService(AudioManager.class);
+            final String value = manager == null
+                    ? null : manager.getProperty(AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE);
+            nativeRate = value == null ? 0 : Integer.parseInt(value);
+        } catch (RuntimeException e) {
+            return new int[]{48_000, 44_100};
+        }
+        if (nativeRate == 44_100) {
+            return new int[]{44_100, 48_000};
+        }
+        if (nativeRate > 0 && nativeRate != 48_000) {
+            return new int[]{nativeRate, 48_000, 44_100};
+        }
+        return new int[]{48_000, 44_100};
+    }
+
+    /**
+     * Records why sound is unavailable and publishes it in the notification.
+     *
+     * <p>Audio degradation never stops the service: the screen keeps being shared, and the reason
+     * stays visible until the user changes the switch.</p>
+     */
+    private void markAudioUnavailable(@NonNull final AudioAvailability availability) {
+        mAudioAvailability = availability;
+        Log.w(mTag, "audio unavailable: " + availability + " (retryable = "
+                + availability.isRetryable() + ")");
+        updateNotification();
+    }
+
+    /**
      * Returns the validated projection settings snapshot read from the preferences.
      */
     @NonNull
@@ -1592,10 +1752,47 @@ public class ScreenShareService extends Service {
     @Nullable
     private String notificationSubText() {
         final String fingerprint = localFingerprintText();
+        final String details;
         if (mNewPeerBadge == null) {
-            return fingerprint;
+            details = fingerprint;
+        } else {
+            details = fingerprint == null ? mNewPeerBadge : mNewPeerBadge + " · " + fingerprint;
         }
-        return fingerprint == null ? mNewPeerBadge : mNewPeerBadge + " · " + fingerprint;
+        if (mAudioAvailability == AudioAvailability.AVAILABLE) {
+            return details;
+        }
+        final String audio = audioReasonText(mAudioAvailability);
+        if (audio == null) {
+            return details;
+        }
+        return details == null ? audio : audio + " · " + details;
+    }
+
+    /**
+     * Resolves the explanation of an unavailable audio state to a resource.
+     *
+     * <p>The enum lives in {@code core/audio} and therefore cannot reference {@code R}; this method
+     * is the single place that binds its reasons to the localized strings.</p>
+     */
+    @Nullable
+    private String audioReasonText(@NonNull final AudioAvailability availability) {
+        switch (availability) {
+            case API_UNSUPPORTED:
+                return getString(R.string.audio_unavailable_api_unsupported);
+            case PERMISSION_DENIED:
+                return getString(R.string.audio_unavailable_permission_denied);
+            case CAPTURE_FAILED:
+                return getString(R.string.audio_unavailable_capture_failed);
+            case ENCODER_FAILED:
+                return getString(R.string.audio_unavailable_encoder_failed);
+            case NO_VIEWERS:
+                return getString(R.string.audio_status_no_viewers);
+            case CLIENT_UNSUPPORTED:
+                return getString(R.string.audio_status_client_unsupported);
+            case AVAILABLE:
+            default:
+                return null;
+        }
     }
 
     /**

@@ -114,9 +114,11 @@ import org.apache.commons.lang3.math.NumberUtils;
 import org.apache.commons.lang3.mutable.MutableBoolean;
 
 import java.text.NumberFormat;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.BooleanSupplier;
 
 /**
  * Foreground service that connects to one discovered server and shows the received frames in a
@@ -234,6 +236,9 @@ public class ScreenViewerService extends Service {
     // Why the viewer has no sound, or null while it is fine; shown in the overlay in A6.
     @Nullable
     private String mAudioUnavailableReason;
+
+    // Local mute of the audio track; the stream keeps arriving, only the volume changes.
+    private boolean mAudioMuted;
 
     // One timeline for audio and video of the current viewing session. Reset when a new media
     // session starts; every other reset (video flush, audio reconfiguration) is deliberately not
@@ -808,7 +813,8 @@ public class ScreenViewerService extends Service {
         }
         if (mSurfaceShareViewer == null) {
             mSurfaceShareViewer = new SurfaceShareViewer(this, mServiceInfo,
-                this::syncHudLoop, this::expandToActivity);
+                this::syncHudLoop, this::expandToActivity, this::toggleAudioMuted,
+                this::isAudioMuted);
         }
         mOverlayRenderTarget = new SurfaceRenderTarget(mSurfaceShareViewer.getTextureView(),
             () -> onHostSurfaceAvailable(mOverlayRenderTarget));
@@ -873,6 +879,58 @@ public class ScreenViewerService extends Service {
         if (state == ClientAudioSession.State.UNAVAILABLE) {
             mAudioUnavailableReason = reason;
         }
+        if (Preferences.get().isViewerHudEnabled()) {
+            updateHud();
+        }
+    }
+
+    /**
+     * Mutes or unmutes the audio track without touching the stream.
+     *
+     * <p>Muting is local playback only: decoding and buffering continue, so unmuting resumes at the
+     * current position instead of restarting or jumping.</p>
+     */
+    public void setAudioMuted(final boolean isMuted) {
+        mAudioMuted = isMuted;
+        final ClientAudioSession session = mClientAudioSession;
+        if (session != null) {
+            session.setVolume(isMuted ? 0f : 1f);
+        }
+        if (Preferences.get().isViewerHudEnabled()) {
+            updateHud();
+        }
+    }
+
+    /**
+     * Returns whether the viewer's audio is muted locally.
+     */
+    public boolean isAudioMuted() {
+        return mAudioMuted;
+    }
+
+    /**
+     * Flips the local mute state; the audio row of the display menu calls this.
+     */
+    private void toggleAudioMuted() {
+        setAudioMuted(!mAudioMuted);
+    }
+
+    /**
+     * Returns the overlay line that describes the audio track.
+     */
+    @NonNull
+    private String audioHudLine() {
+        if (mAudioUnavailableReason != null) {
+            return getString(R.string.viewer_audio_hud_unavailable);
+        }
+        final ClientAudioSession session = mClientAudioSession;
+        if (session == null || session.getState() == ClientAudioSession.State.IDLE) {
+            return getString(R.string.viewer_audio_hud_unavailable);
+        }
+        if (mAudioMuted) {
+            return getString(R.string.viewer_audio_hud_muted);
+        }
+        return getString(R.string.viewer_audio_hud_receiving);
     }
 
     /**
@@ -926,10 +984,17 @@ public class ScreenViewerService extends Service {
      * Stores the debug overlay lines and forwards them to the host that currently owns the output.
      */
     private void applyHudLines(@NonNull final List<String> lines) {
-        mHudLines = lines;
+        final List<String> effective;
+        if (lines.isEmpty()) {
+            effective = lines;
+        } else {
+            effective = new ArrayList<>(lines);
+            effective.add(audioHudLine());
+        }
+        mHudLines = effective;
         final ViewerHost host = activeHost();
         if (host != null) {
-            host.setHudLines(lines);
+            host.setHudLines(effective);
         }
     }
 
@@ -1373,6 +1438,25 @@ public class ScreenViewerService extends Service {
         public void refreshHud() {
             syncHudLoop();
         }
+
+        /**
+         * Mutes or unmutes the audio track; playback and buffering continue either way.
+         *
+         * <p>Exposed on the binder so the full-screen activity can offer the same control as the
+         * floating window without touching the session, the decoder or the stream.</p>
+         *
+         * @param isMuted whether the viewer should be silent
+         */
+        public void setAudioMuted(final boolean isMuted) {
+            ScreenViewerService.this.setAudioMuted(isMuted);
+        }
+
+        /**
+         * Returns whether the viewer's audio is muted.
+         */
+        public boolean isAudioMuted() {
+            return ScreenViewerService.this.isAudioMuted();
+        }
     }
 
     /**
@@ -1549,6 +1633,10 @@ public class ScreenViewerService extends Service {
         @NonNull
         private final Runnable onHudPreferenceChanged;
 
+        private final Runnable onAudioMuteToggled;
+
+        private final BooleanSupplier isAudioMuted;
+
         // Invoked when the user chooses the expand row of the display menu.
         @NonNull
         private final Runnable onExpandRequested;
@@ -1570,6 +1658,11 @@ public class ScreenViewerService extends Service {
                 @Override
                 public void onHudEnabledSelected(final boolean enabled) {
                     setHudEnabled(enabled);
+                }
+
+                @Override
+                public void onAudioMuteToggled() {
+                    onAudioMuteToggled.run();
                 }
 
                 @Override
@@ -1618,11 +1711,15 @@ public class ScreenViewerService extends Service {
         private SurfaceShareViewer(@NonNull final Context context,
                                    @NonNull final DeviceInfo serviceInfo,
                                    @NonNull final Runnable onHudPreferenceChanged,
-                                   @NonNull final Runnable onExpandRequested) {
+                                   @NonNull final Runnable onExpandRequested,
+                                   @NonNull final Runnable onAudioMuteToggled,
+                                   @NonNull final BooleanSupplier isAudioMuted) {
             mContext = new ContextThemeWrapper(context, R.style.Theme_ScreenShare);
             mServiceInfo = serviceInfo;
             this.onHudPreferenceChanged = onHudPreferenceChanged;
             this.onExpandRequested = onExpandRequested;
+            this.onAudioMuteToggled = onAudioMuteToggled;
+            this.isAudioMuted = isAudioMuted;
             mWindowManager = mContext.getSystemService(WindowManager.class);
             mTouchSlop = ViewConfiguration.get(mContext).getScaledTouchSlop();
             mPanelView = new ViewerPanelView(mContext);
@@ -1968,6 +2065,9 @@ public class ScreenViewerService extends Service {
                 mContentWidth, mContentHeight, mRotationDegrees, mBounds.width(), mBounds.height(),
                 mScale, minSize, mZoomMode, Preferences.get().isViewerHudEnabled());
             ViewerMenuFactory.createZoomDialog(mContext, entries, mScale,
+                isAudioMuted.getAsBoolean()
+                    ? R.string.viewer_audio_unmute_action
+                    : R.string.viewer_audio_mute_action,
                 R.string.viewer_action_expand_full_screen, true, mMenuListener).show();
         }
 
