@@ -330,6 +330,9 @@ public final class ViewerPanelView extends FrameLayout {
             hideSnapshot();
             return;
         }
+        // A show can replace a running transition animation (a fast back-and-forth keeps the old
+        // end action alive), so the previous animation is stopped before the transform is reset.
+        snapshotView.animate().cancel();
         snapshotView.setImageBitmap(snapshot);
         snapshotView.setAlpha(1f);
         snapshotView.setScaleX(1f);
