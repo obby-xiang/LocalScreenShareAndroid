@@ -80,6 +80,8 @@
 | DB-OBS-003 | ✔️ 已裁决·当前实现符合 | 可观测性 | 速率只能由已关闭区间导出 | 2026-10-21 | — | [任务看板](task-board.md#tb-obs-001) |
 | DB-POWER-001 | 🔶 已裁决·代码已实施 | 功耗与热 | 热降档是临时覆盖，不写回用户设置 | 2026-10-21 | — | [任务看板](task-board.md#tb-power-001) |
 | DB-POWER-002 | 🔶 已裁决·代码已实施 | 功耗与热 | 无观看者暂停采集，首个配置前不暂停 | 2026-10-21 | — | [任务看板](task-board.md#tb-power-001) |
+| DB-SEC-002 | ✔️ 已裁决·当前实现符合 | 平台安全 | 「画面私密」只保护显示，公告 secure/auth 恒表示传输能力 | 2026-10-21 | — | [任务看板](task-board.md#tb-sec-003) |
+| DB-SEC-003 | 🔶 已裁决·代码已实施 | 平台安全 | 身份密钥只在密钥本身永久不可用时才替换 | 2026-10-21 | — | [任务看板](task-board.md#tb-sec-002) |
 | DB-RENDER-001 | ✔️ 已裁决·当前实现符合 | 渲染显示 | 客户端保持内容宽高比 | 2026-10-20 | 2026-10-20 | [任务看板](task-board.md#tb-client-003) |
 | DB-RENDER-002 | ✔️ 已裁决·当前实现符合 | 渲染显示 | 抗锯齿上限由渲染路径决定 | 2026-10-20 | 2026-10-20 | [任务看板](task-board.md#tb-client-003) |
 | DB-RENDER-003 | ✔️ 已裁决·当前实现符合 | 渲染显示 | 限帧与合并在两端分工 | 2026-10-20 | 2026-10-20 | [任务看板](task-board.md#tb-client-004) |
@@ -637,6 +639,30 @@
 - **理由**：同一网络内可达客户端可尝试拉流，内容可被窃听或篡改；“局域网”不能替代认证与加密；窗口防截取不保护网络。
 - **重新评估条件 / 验证证据**：产品是否接受“仅可信局域网”的边界；配对体验与凭据存储方案；TLS/DTLS 在目标设备与网络上的成本、兼容性与性能；需安全评审与渗透测试。传输加密侧证据见 [TB-DISC-010 实施计划](superpowers/plans/2026-10-21-tls-tofu.md) 与任务看板证据（2026-10-21：1069 tests / 98 classes 全绿，含真实 TLS 握手 E2E；设备端 D1/D4/D6/D8 与 D5 实测语义已验证，D2 出画、D7 NSD/组播、D9 30 min 基线、D10 备份恢复仍缺）。
 - **关联文档**：[项目现状安全边界](project-assessment.md)、[媒体架构安全模型](media-architecture.md)、[路线图阶段 2](optimization-roadmap.md)
+
+</details>
+
+<a id="db-sec-002"></a>
+<details><summary>DB-SEC-002 「画面私密」只保护显示，公告 secure/auth 恒表示传输能力（✔️ 已裁决·当前实现符合 · 2026-10-21）</summary>
+
+- **状态 / 主题 / 裁决日期 / 验证日期**：✔️ 已裁决·当前实现符合（代码与 JVM 用例已落地，提交 `27f991a`）/ 平台安全 / 2026-10-21 / —
+- **备注**：2026-10-21 双真机首测（N1）暴露实现与裁决不一致：公告把「画面私密」当成了传输能力；本裁决记录用户确认的语义，代码已按此改正
+- **当前裁决**：`sec` 语义一分为二、互不替代。**「画面私密」= 观看端窗口 `FLAG_SECURE`**（客户端截图 / 录屏截不到服务端画面），纯显示保护，**不是连接门槛**；它只走 `Descriptor.secure` → `WindowManager.LayoutParams.FLAG_SECURE` 这条路径。**传输能力**由另一组字段表达：公告的 `secure`/`auth`、`DeviceInfo.secure`/`auth`、`Register` 摘要与握手证书，恒表示"对端能不能建立加密连接"（TLS 上线后 `secure` 恒 `true`，只有隐藏的 `tls_allow_plaintext` 才 `false`）。连接拒绝逻辑只认传输能力字段；显示保护与传输保护互不推断。
+- **理由**：两个开关保护的是两件不同的事——一个防截屏、一个防窃听。用私密开关推断"是否支持加密"会让默认配置（私密关）被判定为明文设备，实测两台全新真机无法连接任何设备，且提示文案（"该设备不支持加密连接"）与事实相反。反过来，用传输状态推断"画面是否私密"会让用户以为加密等于防截屏，而 `FLAG_SECURE` 从来不是加密。
+- **重新评估条件 / 验证证据**：若将来引入"仅私密模式才允许连接"的产品规则，需要新增一个显式字段并在公告里声明，不得复用 `secure`。设备判据（待验证棒）：两台默认配置的设备可连接；打开私密后观看端 `screencap` 为空且连接不受影响；组播报文 `sec` 恒 `true`；打开明文调试开关后 `sec=false` 且对端按新文案拒绝。代码证据：`ScreenShareService.buildAnnouncement`、`Announcement.secure` Javadoc、`MainActivity.startScreenShareViewer`、双语文案 `tls_device_not_encrypted*` 与 `projection_secure_setting_note`；实施证据见任务看板 [TB-SEC-003](task-board.md#tb-sec-003)。
+- **关联文档**：[TB-SEC-003](task-board.md#tb-sec-003)、[TB-DISC-010](task-board.md#tb-disc-010)、[DB-SEC-001](#db-sec-001)、[媒体架构安全模型](media-architecture.md)
+
+</details>
+
+<a id="db-sec-003"></a>
+<details><summary>DB-SEC-003 身份密钥只在密钥本身永久不可用时才替换（🔶 已裁决·代码已实施 · 2026-10-21）</summary>
+
+- **状态 / 主题 / 裁决日期 / 验证日期**：🔶 已裁决·代码已实施（代码与 JVM 用例已落地，提交 `8bdd113`、`76ba8a9`）/ 平台安全 / 2026-10-21 / —
+- **备注**：设备侧"扫描取消后零删键"与"重置身份后不重启共享即刷新对端"未验证
+- **当前裁决**：身份密钥是本机身份的全部来源（对端 pin 的指纹、收藏、公告 id、握手证书都由它派生），因此**删除重建只在密钥本身永久不可用时允许**，且必须满足四条：① 分类闸门——只有 `KeyPermanentlyInvalidatedException`、`UnrecoverableKeyException`、证书 / 私钥缺失判为 `UNUSABLE`；中断、IO、无法归类的失败一律 `TRANSIENT`，保留密钥并把失败报给调用方。② 二次确认——删除前再读一次条目，第二次可用则保留。③ 每进程最多替换一次，第二次不可用只报错（用户可手动「重置设备身份」）。④ 被中断的线程不碰 keystore，keystore 操作（含证书自签）串到单线程 `lss-keystore`，避免重叠签名假失败。替换是安全事件：`Log.e` 打出原因与新旧指纹，并向运行中的会话发身份变更事件。**身份口径唯一**：公告、`ServerInfo`、`Register` self summary、观看端 `HELLO`、通知与设置页都从 `TlsMaterialHolder` 当前材料派生，对外口径恒等于握手证书。
+- **理由**：一次误删的代价不是"重连一次"，而是本机在网络上变成另一台设备——所有 pin 失效、收藏全部要重新确认、运行中的会话继续用旧身份对外，而对端只会看到 `identity_mismatch`，用户没有任何可操作提示（2026-10-21 双真机首测 N3 现场）。保留一把可能坏掉的密钥，最坏是一次握手失败；删掉一把好密钥，最坏是身份被静默替换。
+- **重新评估条件 / 验证证据**：若设备上观察到"条目确实损坏但错误类型不在允许清单里"，需要按实测异常类型扩展清单，而不是放宽默认值。设备判据（待验证棒）：扫描 / 网络切换期间 `del USRPKEY` 计数为 0；同一会话内通知、设置页、对端弹框、`Register` 应答四处身份一致；手动重置后不重启共享即生效。代码证据：`identity/KeyEntryFailurePolicy`、`identity/IdentityKeyEntryLoader`、`identity/KeystoreExecutor`、`TlsMaterialHolder`（变更事件）、`ScreenShareService.onLocalIdentityChanged`、`ScreenShareServer.onIdentityChanged`；JVM 证据见任务看板 [TB-SEC-002](task-board.md#tb-sec-002)（`KeyEntryFailurePolicyTest`、`IdentityKeyEntryLoaderTest`、`TlsMaterialHolderTest`、`IdentityCoherenceTest`）。
+- **关联文档**：[TB-SEC-002](task-board.md#tb-sec-002)、[DB-SEC-001](#db-sec-001)、[TB-DISC-010](task-board.md#tb-disc-010)
 
 </details>
 

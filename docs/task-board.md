@@ -21,6 +21,7 @@
 
 ## 🎯 当前焦点
 
+- 2026-10-21 **双真机首测的 onboarding/身份三问（N3/N2/N1）代码修复**（来源 handoff `device-test-2026-10-21-dual/report.md` §1.1/§5 与派发方诊断 F1–F4）：**N3（P0）** 扫描取消用 `shutdownNow()` 打断 keystore 读 → 被 `catch (GeneralSecurityException) → null` 误判为密钥不可读 → 静默删键重建（1.4 s 内 14 次），叠加公告/`ServerInfo`/握手证书三份快照，双向 `identity_mismatch`；修法为纯 JVM `KeyEntryFailurePolicy`（瞬时故障保留键）+ `IdentityKeyEntryLoader`（二次确认、每进程一次、被中断不碰 keystore）+ `KeystoreExecutor`（keystore 单线程）+ 身份统一由 `TlsMaterialHolder` 派生并播发变更事件，`ACTION_IDENTITY_RESET` 一并重建 `ServerInfo`，`AddressScanner` 改温和取消，观看端 HELLO 改用建通道时的材料（`8bdd113`、`76ba8a9`）。**N2（P1）** 公告不带指纹时点行直接报"证书与设备 ID 不一致"（把信息不足说成疑似攻击）；改为先直连握手取指纹再进既有首连确认，失败按原因分流（`3b5ad60`）。**N1（P1）** 公告 `sec` 把「画面私密」当成传输能力，导致默认配置下任何跨机连接都被拒；`secure`/`auth` 改回恒表示传输能力，私密开关只管 `Descriptor.secure`/FLAG_SECURE，文案全面校订（`27f991a`）。全量 **1313 tests / 128 classes / 0 failures / 0 errors / 0 skipped**（基线 1283/124，只增不减），`assembleDebug`、`:app:lintDebug`（0 errors / 146 warnings）与 checks 三件套通过。**本棒不碰设备**，判据与点位见 [TB-SEC-002](#tb-sec-002)、[TB-DISC-013](#tb-disc-013)、[TB-SEC-003](#tb-sec-003)。
 - 2026-10-21 **观看端音频周期性「咔」修复（[TB-AUDIO-003](#tb-audio-003)，P0×3 + P1×2 + P2×1）**（来源 handoff `device-test-2026-10-21-dual/audio-noise/report.md` 的诊断，238 s 真机数据 + 代码级定位）：确认脉冲不是网络抖动、不是漂移守卫、不是 jitter buffer 丢帧，而是**播放缓冲永远填不满**导致的反复欠载，每次欠载被应用补成一整帧 21.3 ms 数字静音（`audio.underruns` **2.60 次/s ⇒ 每 0.38 s 一次**，与用户听感吻合；平台侧 AudioFlinger `tallyUnderrunFrames` **6.03 次/s**、`FrmRdy` 常年 2.7–42 ms、`Server FrmCnt=3072`）。根因四条：① `ClientAudioSession` 传给 `plan()` 的是**累计收帧数**而非队列深度（第 3 帧即开播、第 8 帧起每帧都请求丢弃，三档水位成死代码）；② 写线程 20 ms 轮询且入队不 `notify`；③ 音频与 1080p60 视频同一条解码线程（`pres.drop` r=0.94）；④ 轨道 64 ms + 低时延模式。修法：深度改为「已写媒体时间 − 已呈现时间 + 待写帧」（120/250/150 ms，预填到轨道真有 120 ms 才 `play()`）、入队 `notifyAll` 唤醒（仅欠载计时短 wait）、音频改走独立 `lss-client-audio` 单线程 + 32 帧小队列、轨道 64→128 ms 去低时延、欠载按实测缺口补静音且 >100 ms 改「暂停 + 重新锚定」、计数拆 `audio.starved/driftInsert/driftDrop` 且 0 值也打印、新增 `core/audio/AudioLog` 给音频路径补限流日志与平台欠载增量。提交 `76a3be4`、`5343d07`、`c364d9d`、`6ced8e0`、`a520545`、`4cfb75f`；全量 **1283 tests / 124 classes / 0 failures / 0 errors / 0 skipped**（基线 1275/124，只增不减），`assembleDebug`、`:app:lintDebug` 与三项 checks 通过。**本棒不碰设备**，判据与点位见 [TB-AUDIO-003](#tb-audio-003)。
 - 2026-10-21 **第 8 问剩余部分：无观看者懒停 + 热降档（[TB-POWER-001](#tb-power-001)）**：核查确认视频侧此前**完全不看观看者数量**（服务一端启动即持续合成 + 编码，0 观看者与有人观看功耗相同；音频侧早已按 `AudioCapturePolicy` 懒停）。新增纯决策 `core/stream/ViewerCapturePolicy`（0 观看者且运行时 `READY` → 摘下 `VirtualDisplay` 输出面，编码器保持分配；首个观看者 → 重新绑面 + 请求关键帧；未 `READY` 不暂停，否则 H.264 的 SPS/PPS 永远发不出、客户端只会收到 `NOT_READY`），服务端用独立 1 s 轮询执行；新增纯决策 `core/stream/ThermalThrottlePolicy`（`LIGHT`/`MODERATE` 不动 → `SEVERE` 帧率 30 → `CRITICAL`+ 帧率 30 + 采集 50%，未知值按不动）与 `service/ThermalMonitor`（API 29 显式门控，注册后补发当前状态），降档只改**生效值**、不写偏好，回落/关开关即恢复；通知副标题显示「过热降档」，视频设置 sheet 新增「过热时自动降档」开关（默认开，中英双语）。提交 `377e581`（懒停）、`00ee006`（档位策略）、`68bfd5e`（接线 + 开关 + 通知）、`45ed888`（启动前已过热时同步应用）及本条目的文档登记；全量 **1275 tests / 124 classes / 0 failures / 0 errors / 0 skipped**（基线 1262/122，只增不减），`assembleDebug` 与 `:app:lintDebug`（0 errors / 146 warnings）通过，三项 checks 通过。**设备验证未执行**，点位见 [TB-POWER-001](#tb-power-001)。
 - 2026-10-21 **Build CI 红灯修复（`5d186c6`，lint `NewApi`）**（[TB-AUDIO-001](#tb-audio-001)）：`6210a0b` 把 `startAudioPipeline` 的 API 29 显式门控换成 `AudioAvailability.forCaptureStart(SDK_INT, ...)` 后，lint 无法穿透该分类器判断 SDK 版本，`:app:lintDebug` 重新报 `ScreenShareService.java:1682` 的 `new PlaybackCaptureSource(...)`「Call requires API level 29 (current min is 25): PlaybackCaptureSource [NewApi]」；`f968b5f` 的 Build run [39586027806](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39586027806) 因此在 `Build with Gradle` 失败（Checks 一直 success）。修法：构造采集源之前恢复 `Build.VERSION.SDK_INT < Q` 提前返回，降级原因仍由 `AudioAvailability.forApiLevel` 产出，权限与 app-op 判定不变。全量 **1262 tests / 122 classes / 0 failures / 0 errors / 0 skipped**；`assembleDebug`、`lintDebug`（0 errors / 146 warnings）与三项 checks 通过；`5d186c6` 的 Build run [39586878963](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39586878963) 与 Checks run [39586878970](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39586878970) 双绿。
@@ -71,6 +72,9 @@
 
 | ID | 状态 | 优先级 | 标题 | 创建 | 完成 | 关联 |
 | --- | --- | --- | --- | --- | --- | --- |
+| TB-SEC-002 | 🔶 部分完成 | 🔴 P0 | 身份密钥瞬时故障静默删键与三份身份快照（N3；代码完成，设备复测待棒） | 2026-10-21 | — | [决策 DB-SEC-003](decision-board.md#db-sec-003) |
+| TB-DISC-013 | 🔶 部分完成 | 🟠 P1 | 发现行首连的证书指纹引导（N2；代码完成，设备复测待棒） | 2026-10-21 | — | [TB-DISC-012](#tb-disc-012) |
+| TB-SEC-003 | 🔶 部分完成 | 🟠 P1 | 公告传输安全字段与「画面私密」分离（N1；代码完成，设备复测待棒） | 2026-10-21 | — | [决策 DB-SEC-002](decision-board.md#db-sec-002) |
 | TB-POWER-001 | 🔶 部分完成 | 🟠 P1 | 无观看者懒停与热降档（代码完成，设备验证待棒） | 2026-10-21 | — | [决策 DB-POWER-001](decision-board.md#db-power-001) |
 | TB-ENG-013 | 📋 待办 | 🟡 P2 | 统一回归：稳定性/长时测试清单（功能全部完成后执行） | 2026-10-21 | — | [TB-WIN-001](#tb-win-001) |
 | TB-DISC-012 | 📋 待办 | 🟡 P2 | 双真机联机验证 | 2026-10-20 | — | [发现调研](discovery-research.md) |
@@ -173,6 +177,53 @@
 ### 📋 待办条目
 
 
+
+<a id="tb-sec-002"></a>
+<details><summary>TB-SEC-002 身份密钥瞬时故障静默删键与三份身份快照（🔶 部分完成 · N3）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：🔶 部分完成（代码 + JVM 用例完成，设备复测待棒）/ 🔴 P0 / 2026-10-21 / —
+- **来源**：双真机首测交接 `device-test-2026-10-21-dual/report.md` §1.1 与 §5 的 **N3**（仓库外交接目录，2026-10-21），以及派发方转述的权威诊断结论 **F1–F4**。
+- **现场**：两台真机能互相发现（组播 0.336 s 互见），但双向手动添加都被拒：`RegisterAddressProbe: probe: address did not answer, reason = identity_mismatch`（232 ms / 152 ms），而 TLS 握手本身成功（`transportReady: securityLevel=PRIVACY_AND_INTEGRITY`）。服务端公告与设置页身份 `8GW5VX7BPW1ED9FDAQ1XHZM0ZR` / `44385DF4…CFCB33C6` 彼此自洽（可用指纹反算 id），但都不是握手证书的那把密钥；只能手动「重置设备身份」恢复。
+- **根因 A（瞬时错误 → 静默删键）**：`AddressScanner.scan()` 在 finally 里用 `executor.shutdownNow()` 取消，打断在飞探测线程；keystore 读被 `InterruptedException` 打断后，`AndroidKeystoreKeyStore.readKeyPair()` 的 `catch (GeneralSecurityException) → null` 把"这次读失败"与"密钥不可读"混为一谈，`loadOrCreate()` 随即 `deleteEntry` 重建密钥（实测 1.4 s 内 14 次）。已运行的共享会话仍按旧身份对外。
+- **根因 B（三份快照）**：公告 id 取自 `IdentityManager` 的内存缓存、`ServerInfo` 在 `start()` 时另取一次、握手证书来自 `TlsMaterialHolder`；三者互不同步，一旦密钥被替换就永久错位，对端 `GrpcRegisterStub.withObservedFingerprint` 判 `self.device_id != cert.device_id`。
+- **修法**（提交 `8bdd113` 与 `76ba8a9`，F1–F4）：
+  - **F1 替换策略**：新增纯 JVM `identity/KeyEntryFailurePolicy`（`TRANSIENT`：中断 / IO / 无法归类 → 保留键；`UNUSABLE`：`KeyPermanentlyInvalidatedException`、`UnrecoverableKeyException`、证书缺失 → 才可替换）；新增 `identity/IdentityKeyEntryLoader`（删除前二次读取确认、每进程最多替换一次、线程已中断时不碰 keystore、回报替换原因与新旧指纹）；新增 `identity/KeystoreExecutor`（全部 keystore 操作含证书自签串到单线程 `lss-keystore`，被中断的等待者只放弃等待、不打断正在执行的 keystore 操作）；`AndroidKeystoreKeyStore` 改为委托 loader，替换记 `Log.e`（原因 + 新旧指纹）。
+  - **F2 身份口径**：`TlsMaterial.toDeviceIdentity()`；公告、`ServerInfo`、`Register` self summary、观看端 `HELLO`（改用建通道时保留的材料，保证与本次握手证书同源）、通知与设置页指纹全部改从 `TlsMaterialHolder` 当前材料派生（对外口径恒等于握手证书）；材料随密钥重建时发出身份变更事件，`ScreenShareService` 据此刷新 `ServerInfo`、公告与通知。
+  - **F3 重置身份**：`ACTION_IDENTITY_RESET` 分支改为在 `lss-server-control` 线程重读材料并触发上述事件；`ScreenShareServer.onIdentityChanged()` 重建 `ServerInfo` 并重发 NSD 记录（实例名与 TXT 里的 id 都跟着变）；修正 `MainActivity` 里说反的注释（原写"重置后共享会一直播旧身份直到重启"）。
+  - **F4 温和取消**：`AddressScanner` 取消改为 token → `shutdown()` → 有界等待（`WORKER_DRAIN_TIMEOUT_MS`），不再 `shutdownNow()` 打断在飞探测；探测发起前再查 token 与中断标记；`RegisterAddressProbe` 在已中断线程上直接失败、不读身份。
+- **JVM 证据**：`KeyEntryFailurePolicyTest`（9 例）、`IdentityKeyEntryLoaderTest`（10 例，`aTransientReadFailureNeverDeletesTheKey` 与 `aTransientFailureDuringTheSecondConfirmationAlsoKeepsTheKey` 为"瞬时故障零删键"锁定用例，`aSecondReplacementInTheSameProcessIsRefused` 锁"每进程一次"）、`TlsMaterialHolderTest`（7 例，含换钥后材料/证书/事件）、`IdentityCoherenceTest`（3 例：公告 id == 证书 id == register self id，且换钥后三者一起跟随）、`AddressScannerTest` +1（取消不打断在飞探测）。全量 **1313 tests / 128 classes / 0 failures / 0 errors / 0 skipped**。
+- **设备判据（待验证棒）**：① 共享进行中触发一次扫描 / 网络切换重扫，`adb logcat | grep -c "del USRPKEY"` 与 `logcat -b events | grep -c USRPKEY` 均为 **0**，且无 `identity key replaced` 的 error 行；② 同一会话内四处口径逐字符一致：服务端通知 `比对指纹`、设置页「密钥指纹」、对端首连弹框指纹、`Register` 应答里的 `self.device_id`；③ 手动「重置设备身份」后**不重启共享**，对端应收到身份变更而不是 `identity_mismatch`，且服务端通知里的指纹随即更新；④ 扫描取消期间 `keystore` 无 `InterruptedException` 相关告警。
+- **遗留风险**：`AndroidKeystoreKeyStore.sVerifiedFingerprint` 仍是进程内记忆（同进程内不会再探针）；"每进程最多一次替换"意味着同进程内第二次真实不可用会持续报 `identity_unavailable`，需要用户手动重置——这是刻意的（避免反复换身份）。`KeystoreExecutor` 是单线程，keystore 卡住时所有握手都会排队等待其失败。
+- **关联文档**：[决策 DB-SEC-003](decision-board.md#db-sec-003)、[TB-DISC-010](#tb-disc-010)（身份与 pin 的既有合同）、[TB-DISC-012](#tb-disc-012)
+
+</details>
+
+<a id="tb-disc-013"></a>
+<details><summary>TB-DISC-013 发现行首连的证书指纹引导（🔶 部分完成 · N2）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：🔶 部分完成（代码完成，设备复测待棒）/ 🟠 P1 / 2026-10-21 / —
+- **来源**：双真机首测交接 `device-test-2026-10-21-dual/report.md` §1.1(b) 与 §5 的 **N2**。
+- **现场**：组播发现到的行点击后直接弹「该设备出示的证书与其设备 ID 不一致…这是安全检查，无法绕过」。公告按设计不带指纹，未做过 `Register` 探测的行因此没有可校验值，`MainActivity` 落到 `identity_mismatch` 分支——把"信息不足"说成了"疑似攻击"，而且首次使用只能手动输入 IP，与"不再依赖手动 IP"的目标相反。
+- **修法**（提交 `3b5ad60`）：新增 `DiscoveryManager.probeIdentity(DeviceInfo, callback)` 与 `ManualAddressProvider.probeIdentity(host, port, callback)`，对已发现的行做**一次直连 `Register`**（TLS 握手本身就能拿到证书指纹），成功后按既有确认路径写回 store（该行照常可用），不把地址记进手动目标表；`MainActivity.startScreenShareViewer()` 在指纹缺失时改走 `resolveDeviceIdentityThenConnect()`：先弹"正在读取该设备的证书…"说明框，成功后用 store 里的新行重新进入既有 TOFU/pin 判定（首连确认、变更确认、静默放行）。用 `mFingerprintProbeId` 丢弃取消或换选设备后的迟到回调。
+- **失败分流**：真正的 `identity_mismatch`（证书不属于所报 id）仍走既有安全文案；超时 / 不可达 / 无地址走新的中性文案 `tls_identity_probe_failed`（"未能读取该设备的证书…它的身份没有得到任何确认"）。新增双语 `tls_identity_probe_message` / `tls_identity_probe_failed`。
+- **设备判据（待验证棒）**：① 全新安装、只靠组播发现，点对方行 → 先出现"正在读取证书"，随后弹首连确认框，指纹与对端通知栏一致 → 点「信任此设备」出画；② 未被发现的设备（关机）点行 → 中性失败文案，不再出现"身份不一致"；③ 真实不一致（同地址另一把密钥的端点）仍报 `identity_mismatch`；④ 探测期间按返回/取消，不弹任何后续框。
+- **关联文档**：[TB-DISC-012](#tb-disc-012)、[TB-DISC-010](#tb-disc-010)
+
+</details>
+
+<a id="tb-sec-003"></a>
+<details><summary>TB-SEC-003 公告传输安全字段与「画面私密」分离（🔶 部分完成 · N1）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：🔶 部分完成（代码完成，设备复测待棒）/ 🟠 P1 / 2026-10-21 / —
+- **来源**：双真机首测交接 `device-test-2026-10-21-dual/report.md` §1.1(a) 与 §5 的 **N1**。
+- **现场**：全新设备默认配置（画面私密关）下，观看端点任何跨机行都弹「该设备不支持加密连接。」；把被看方「画面私密」打开后公告 `sec` 由 `false` 变 `true`，拦截才消失。而传输层一直是 mTLS。
+- **根因**：`ScreenShareService` 把「画面私密」（`projection_secure`，FLAG_SECURE 语义）写进公告的 `sec`，观看端 `MainActivity` 又用它判断"对端是否支持加密传输"，服务端 `Register` 摘要与握手证书用的却是 `mTransportSecure`——同一字段三种含义。
+- **设计意图（用户已确认）**：「画面私密」= 观看端窗口 `FLAG_SECURE`（客户端截图 / 录屏截不到服务端画面），纯显示保护，不是连接门槛。
+- **修法**（提交 `27f991a`）：公告的 `secure` / `auth` 恒表示传输能力（TLS 上线后恒 `true`，只有隐藏的 `tls_allow_plaintext` 才 `false`），与私密开关彻底解耦；私密开关只影响 `Descriptor.secure` / FLAG_SECURE 路径；连接拒绝逻辑仍然只认传输安全字段（`DeviceInfo.secure`，语义现在正确）。文案：`tls_device_not_encrypted` 改为行内短标签「未加密传输」，新增 `tls_device_not_encrypted_message` 说明真实原因（该设备只提供未加密连接，由隐藏的明文调试开关启用），「画面私密」开关下新增 `projection_secure_setting_note`（只保护显示、连接本身始终加密）；`Announcement.secure` 的 Javadoc 写明该字段只描述传输。中英双语同步。
+- **设备判据（待验证棒）**：① 两台全新设备都保持默认（画面私密关）→ 点行不再被拒，首连确认后可出画；② 打开被看方「画面私密」→ 观看端窗口仍是 `FLAG_SECURE`（`adb exec-out screencap` 为空即证），且不影响连接；③ 组播报文里 `sec` 恒为 `true`（明文调试开关关闭时），与私密开关无关；④ 打开隐藏的明文调试开关后，`sec=false` 且对端按 `tls_device_not_encrypted_message` 文案拒绝。
+- **关联文档**：[决策 DB-SEC-002](decision-board.md#db-sec-002)、[TB-SEC-001](#tb-sec-001)、[TB-DISC-010](#tb-disc-010)
+
+</details>
 
 <a id="tb-disc-011"></a>
 <details><summary>TB-DISC-011 手动添加条目跨重启持久化（📋 待办）</summary>
