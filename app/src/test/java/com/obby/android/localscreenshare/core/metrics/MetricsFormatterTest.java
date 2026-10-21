@@ -181,6 +181,36 @@ public class MetricsFormatterTest {
     }
 
     @Test
+    public void clientLine_printsTheAudioBlockAfterTheVideoFields() {
+        PipelineMetrics metrics = PipelineMetrics.create(new MutableNanoClock(), 16);
+        metrics.record(PipelineMetrics.Window.AV_OFFSET, 3_100_000L);
+        metrics.record(PipelineMetrics.Window.AV_OFFSET, 12_400_000L);
+        metrics.add(PipelineMetrics.Counter.AUDIO_FRAMES, 2_530L);
+        metrics.add(PipelineMetrics.Counter.AUDIO_DROPPED, 7L);
+        metrics.add(PipelineMetrics.Counter.AUDIO_UNDERRUNS, 3L);
+
+        String line = MetricsFormatter.toLogLine(Role.CLIENT, metrics.snapshot(5000L));
+
+        assertTrue(line.startsWith("lss.metrics role=client period=5000"));
+        assertTrue(line.contains(" av.offset.p50=3.1"));
+        assertTrue(line.contains(" av.offset.p95=12.4"));
+        assertTrue(line.contains(" audio.frames=2530"));
+        assertTrue(line.contains(" audio.dropped=7"));
+        assertTrue(line.contains(" audio.underruns=3"));
+        assertTrue(line.indexOf("audio.frames") > line.indexOf("av.offset"));
+    }
+
+    @Test
+    public void clientLine_omitsTheAudioBlockWithoutAudio() {
+        String line = MetricsFormatter.toLogLine(Role.CLIENT,
+                PipelineMetrics.NONE.snapshot(5000L));
+
+        assertEquals("lss.metrics role=client period=5000", line);
+        assertFalse(line.contains("av.offset"));
+        assertFalse(line.contains("audio."));
+    }
+
+    @Test
     public void clientLine_defaultsToPingPongKind() {
         PipelineMetrics metrics = PipelineMetrics.create(new MutableNanoClock(), 16);
         metrics.increment(PipelineMetrics.Counter.RTT_SAMPLES);
@@ -200,7 +230,7 @@ public class MetricsFormatterTest {
     }
 
     @Test
-    public void hud_hasThreeStableLines() {
+    public void hud_hasFourStableLines() {
         PipelineMetrics metrics = PipelineMetrics.create(new MutableNanoClock(), 16);
         metrics.add(PipelineMetrics.Counter.ACCESS_UNITS, 30L);
         metrics.add(PipelineMetrics.Counter.ACCESS_UNIT_BYTES, 475_000L);
@@ -211,24 +241,30 @@ public class MetricsFormatterTest {
         metrics.record(PipelineMetrics.Window.PRESENT_LATE, 0L);
         metrics.record(PipelineMetrics.Window.ROWD, 8_000_000L);
         metrics.add(PipelineMetrics.Counter.STALLS, 1L);
+        metrics.record(PipelineMetrics.Window.AV_OFFSET, 3_100_000L);
+        metrics.record(PipelineMetrics.Window.AV_OFFSET, 12_400_000L);
+        metrics.add(PipelineMetrics.Counter.AUDIO_FRAMES, 2_530L);
+        metrics.add(PipelineMetrics.Counter.AUDIO_UNDERRUNS, 3L);
 
         List<String> lines = MetricsFormatter.toHud(metrics.snapshot(1000L),
                 new MetricsRate(1000L, 30L, 475_000L));
 
-        assertEquals(3, lines.size());
+        assertEquals(4, lines.size());
         assertEquals("30.0 fps | 3.8 Mbps | RTT 4.2 ms", lines.get(0));
         assertEquals("q 2 | dec 12.0 ms (p95 31.0) | late 0.0", lines.get(1));
         assertEquals("rowd +8.0 | stall 1 | drop 0 | cu 0 | kf 0", lines.get(2));
+        assertEquals("av 3.1 ms (p95 12.4) | af 2530 | ad 0 | au 3", lines.get(3));
     }
 
     @Test
     public void hud_ofEmptySnapshot_keepsTheShape() {
         List<String> lines = MetricsFormatter.toHud(PipelineMetrics.NONE.snapshot(1000L));
 
-        assertEquals(3, lines.size());
+        assertEquals(4, lines.size());
         assertEquals("n/a fps | n/a Mbps | RTT n/a", lines.get(0));
         assertEquals("q 0 | dec n/a | late 0.0", lines.get(1));
         assertEquals("rowd +0.0 | stall 0 | drop 0 | cu 0 | kf 0", lines.get(2));
+        assertEquals("av n/a | af 0 | ad 0 | au 0", lines.get(3));
     }
 
     @Test

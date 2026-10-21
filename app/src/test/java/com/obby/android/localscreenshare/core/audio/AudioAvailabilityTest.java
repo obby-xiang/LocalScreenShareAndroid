@@ -40,6 +40,20 @@ public class AudioAvailabilityTest {
     }
 
     @Test
+    public void captureStartChecksBothPermissionGates() {
+        assertEquals(AudioAvailability.AVAILABLE,
+                AudioAvailability.forCaptureStart(29, true, false));
+        assertEquals(AudioAvailability.PERMISSION_DENIED,
+                AudioAvailability.forCaptureStart(29, false, false));
+        assertEquals(AudioAvailability.PERMISSION_DENIED,
+                AudioAvailability.forCaptureStart(29, true, true));
+        assertEquals(AudioAvailability.API_UNSUPPORTED,
+                AudioAvailability.forCaptureStart(28, true, false));
+        assertEquals(AudioAvailability.API_UNSUPPORTED,
+                AudioAvailability.forCaptureStart(25, false, true));
+    }
+
+    @Test
     public void onlyTheRecoverableReasonsAreRetryable() {
         assertTrue(AudioAvailability.PERMISSION_DENIED.isRetryable());
         assertTrue(AudioAvailability.CAPTURE_FAILED.isRetryable());

@@ -2,6 +2,7 @@ package com.obby.android.localscreenshare.service;
 
 import android.Manifest;
 import android.annotation.SuppressLint;
+import android.app.AppOpsManager;
 import android.app.Notification;
 import android.app.PendingIntent;
 import android.app.Service;
@@ -67,6 +68,7 @@ import com.obby.android.localscreenshare.R;
 import com.obby.android.localscreenshare.core.audio.AacEncoder;
 import com.obby.android.localscreenshare.core.audio.AudioAvailability;
 import com.obby.android.localscreenshare.core.audio.AudioCaptureException;
+import com.obby.android.localscreenshare.core.audio.AudioCapturePolicy;
 import com.obby.android.localscreenshare.core.audio.AudioHub;
 import com.obby.android.localscreenshare.core.audio.AudioPipeline;
 import com.obby.android.localscreenshare.core.audio.AudioSendStats;
@@ -208,6 +210,11 @@ public class ScreenShareService extends Service {
     // without turning a permanently invalid request into an endless rebuild loop.
     private static final int ENCODER_SWITCH_MAX_ATTEMPTS = 2;
 
+    // Cadence of the viewer watch that pauses and resumes audio capture. One second is far below
+    // the time a viewer needs to receive and play its first audio frame, and it avoids a new
+    // session callback inside StreamHub, which the audio plan keeps unchanged.
+    private static final long AUDIO_VIEWER_WATCH_INTERVAL_MS = 1000L;
+
     // Main-thread state; non-null only between a successful start and stopService().
     @Nullable
     private ScreenShareServer mServer;
@@ -273,6 +280,23 @@ public class ScreenShareService extends Service {
                     mDeviceProfileSampler.get().sample()));
             }
             mMainHandler.postDelayed(mMetricsLogRunnable, UPDATE_METRICS_INTERVAL_MS);
+        }
+    };
+
+    // Keeps audio capture in step with the viewer count: the first viewer starts it and the last
+    // one releases the recorder, so a share nobody watches does not hold the capture device.
+    @NonNull
+    private final Runnable mAudioViewerWatchRunnable = new Runnable() {
+        @Override
+        public void run() {
+            mMainHandler.removeCallbacks(mAudioViewerWatchRunnable);
+
+            if (mAudioHub == null || !Preferences.get().isAudioEnabled()) {
+                return;
+            }
+
+            syncAudioCapture();
+            mMainHandler.postDelayed(mAudioViewerWatchRunnable, AUDIO_VIEWER_WATCH_INTERVAL_MS);
         }
     };
 
@@ -634,13 +658,16 @@ public class ScreenShareService extends Service {
                 }
                 break;
             case Preferences.KEY_AUDIO_ENABLED:
-                // The switch is the single source of intent: turning it on starts capture now,
-                // turning it off stops it and releases the recorder.
+                // The switch is the single source of intent: turning it on makes capture possible,
+                // turning it off stops it and releases the recorder. Whether capture actually runs
+                // is decided by the presence of a viewer, so a share nobody watches stays silent
+                // and reports that reason instead of holding the capture device.
                 stopAudioPipeline();
                 mAudioAvailability = AudioAvailability.AVAILABLE;
                 if (Preferences.get().isAudioEnabled()) {
-                    startAudioPipeline();
+                    startAudioViewerWatch();
                 } else {
+                    stopAudioViewerWatch();
                     updateNotification();
                 }
                 break;
@@ -961,9 +988,9 @@ public class ScreenShareService extends Service {
 
         startAnnouncements();
 
-        // Audio is the optional track: it starts after the video pipeline is complete and never
-        // prevents the share from running.
-        startAudioPipeline();
+        // Audio is the optional track: it follows the viewer count, so it starts with the first
+        // viewer and never prevents the share from running.
+        startAudioViewerWatch();
 
         // The virtual display renders the captured screen into the codec's input: the encoder
         // surface for H.264, or an image reader feeding the frame-input JPEG path.
@@ -1030,6 +1057,7 @@ public class ScreenShareService extends Service {
         mMetricsLogCount = 0;
 
         // Audio stops before the projection it borrows is released.
+        stopAudioViewerWatch();
         stopAudioPipeline();
         mAudioAvailability = AudioAvailability.AVAILABLE;
 
@@ -1530,6 +1558,71 @@ public class ScreenShareService extends Service {
     }
 
     /**
+     * Starts the viewer watch that pauses and resumes audio capture; idempotent.
+     *
+     * <p>It runs immediately so turning the switch on starts capture within the same loop turn, then
+     * once per second while the switch is on. A poll keeps the audio plan's promise that
+     * {@code StreamHub} stays unchanged: the hub has no session-count callback, and the existing
+     * statistics listener fires only when the byte counters change, which is not a viewer change.</p>
+     *
+     * <p>Below API 29 nothing can be captured, so the watch is not started and the start path
+     * publishes that reason once instead; watching a viewer count there would only blame the
+     * viewer.</p>
+     */
+    private void startAudioViewerWatch() {
+        mMainHandler.removeCallbacks(mAudioViewerWatchRunnable);
+        if (AudioAvailability.forApiLevel(Build.VERSION.SDK_INT) != AudioAvailability.AVAILABLE) {
+            startAudioPipeline();
+            return;
+        }
+        mMainHandler.post(mAudioViewerWatchRunnable);
+    }
+
+    /**
+     * Stops the viewer watch; idempotent.
+     */
+    private void stopAudioViewerWatch() {
+        mMainHandler.removeCallbacks(mAudioViewerWatchRunnable);
+    }
+
+    /**
+     * Applies the viewer rule to audio capture: no viewer means no capture, the first viewer starts
+     * it again.
+     *
+     * <p>Runs on the main thread, from the switch path and from the viewer check, so the decision,
+     * the recorder it controls and the notification it publishes never interleave. The decision
+     * itself is {@link AudioCapturePolicy}, which keeps the rule covered by JVM tests; this method
+     * only performs it and publishes the reason that matches what the recorder is doing.</p>
+     */
+    private void syncAudioCapture() {
+        if (mAudioHub == null || mMediaProjection == null) {
+            return;
+        }
+        final int viewers = mStreamHub != null ? mStreamHub.getSessionCount() : 0;
+        switch (AudioCapturePolicy.decide(viewers, Preferences.get().isAudioEnabled(),
+                mAudioSessionState, mAudioAvailability)) {
+            case START:
+                mAudioAvailability = AudioAvailability.AVAILABLE;
+                startAudioPipeline();
+                break;
+            case STOP:
+                stopAudioPipeline();
+                mAudioAvailability = AudioAvailability.NO_VIEWERS;
+                Log.i(mTag, "syncAudioCapture: audio capture paused, no viewer is connected");
+                updateNotification();
+                break;
+            case PAUSED:
+                mAudioAvailability = AudioAvailability.NO_VIEWERS;
+                Log.i(mTag, "syncAudioCapture: audio is waiting for a viewer");
+                updateNotification();
+                break;
+            case NONE:
+            default:
+                break;
+        }
+    }
+
+    /**
      * Starts playback-audio capture when the user asked for it and the device can.
      *
      * <p>Every precondition failure is recorded as an {@link AudioAvailability} instead of an
@@ -1550,14 +1643,16 @@ public class ScreenShareService extends Service {
             return;
         }
         transitionAudioState(AudioSessionState.STARTING);
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-            // Playback capture exists from Q onwards; the classifier owns the user-facing reason.
-            markAudioUnavailable(AudioAvailability.forApiLevel(Build.VERSION.SDK_INT));
-            return;
-        }
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
-                != PackageManager.PERMISSION_GRANTED) {
-            markAudioUnavailable(AudioAvailability.PERMISSION_DENIED);
+        final boolean isPermissionGranted =
+                ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+                        == PackageManager.PERMISSION_GRANTED;
+        final AudioAvailability startable = AudioAvailability.forCaptureStart(
+                Build.VERSION.SDK_INT, isPermissionGranted, isRecordAudioAppOpIgnored());
+        if (startable != AudioAvailability.AVAILABLE) {
+            // Playback capture exists from Q onwards, and a granted permission whose app-op is
+            // still ignored (adb revoke followed by grant) records nothing; both are published as
+            // the reason they really are instead of as a device failure.
+            markAudioUnavailable(startable);
             return;
         }
         final AudioHub hub = mAudioHub;
@@ -1601,6 +1696,33 @@ public class ScreenShareService extends Service {
             }
         }
         markAudioUnavailable(AudioAvailability.CAPTURE_FAILED);
+    }
+
+    /**
+     * Returns whether the platform currently ignores the recording permission at the app-op level.
+     *
+     * <p>A runtime permission and the app-op are two gates: {@code adb shell pm revoke} followed by
+     * {@code pm grant} leaves the permission granted while the app-op stays {@code ignore}, and a
+     * playback capture opened in that state records silence or fails to initialize. Only the mode
+     * is read - {@code noteOp} would itself record usage and can throw - and any failure is treated
+     * as "not ignored", so an OEM that hides the mode keeps the previous behaviour.</p>
+     *
+     * <p>Read-only and side-effect free, called on the main thread before a capture attempt.</p>
+     */
+    private boolean isRecordAudioAppOpIgnored() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            return false;
+        }
+        try {
+            final AppOpsManager appOps = getSystemService(AppOpsManager.class);
+            if (appOps == null) {
+                return false;
+            }
+            return appOps.unsafeCheckOpNoThrow(AppOpsManager.OPSTR_RECORD_AUDIO,
+                    Process.myUid(), getPackageName()) == AppOpsManager.MODE_IGNORED;
+        } catch (RuntimeException e) {
+            return false;
+        }
     }
 
     /**

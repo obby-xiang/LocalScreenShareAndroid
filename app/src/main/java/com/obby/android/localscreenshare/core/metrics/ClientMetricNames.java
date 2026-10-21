@@ -6,7 +6,9 @@ package com.obby.android.localscreenshare.core.metrics;
  * <p>The keys answer two questions separately: whether frames arrived on time from the network
  * ({@code rx.*}) and whether the client managed to decode and present them on time
  * ({@code dec.*}, {@code pres.*}). Freeze counting follows the WebRTC definition so the numbers
- * can be compared with an external tool.</p>
+ * can be compared with an external tool. The audio track adds its own block ({@code av.*},
+ * {@code audio.*}) so lip-sync and playback health can be read from the same line as the video
+ * pipeline that they share a clock with.</p>
  */
 public final class ClientMetricNames {
 
@@ -119,6 +121,26 @@ public final class ClientMetricNames {
      * Key-frame requests issued by the client.
      */
     public static final String KEYFRAME_SENT = "kf.sent";
+
+    /**
+     * Absolute audio/video offset observed by the audio drift guard.
+     */
+    public static final String AV_OFFSET = "av.offset";
+
+    /**
+     * Audio frames received and accepted by the audio session.
+     */
+    public static final String AUDIO_FRAMES = "audio.frames";
+
+    /**
+     * Audio frames dropped by the jitter buffer or the drift guard.
+     */
+    public static final String AUDIO_DROPPED = "audio.dropped";
+
+    /**
+     * Audio underruns that were filled with silence.
+     */
+    public static final String AUDIO_UNDERRUNS = "audio.underruns";
 
     private ClientMetricNames() {
     }

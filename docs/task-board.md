@@ -21,6 +21,7 @@
 
 ## 🎯 当前焦点
 
+- 2026-10-21 **音频设备验证 N1/N2/N4 修复**（[TB-AUDIO-001](#tb-audio-001)/[TB-AUDIO-003](#tb-audio-003)，来源 `device-test-2026-10-21-audio/report.md`）：N1 把已埋点但从未输出的客户端音频指标接到 `lss.metrics role=client` 与 HUD（`av.offset.p50/p95`、`audio.frames/dropped/underruns`，HUD 第 4 行）；N2 按 D9 实现无观看者懒停采（新增纯决策 `core/audio/AudioCapturePolicy`，`ScreenShareService` 用 1 s 观看者轮询驱动，0 观看者 → `ACTIVE→OFF` + `AudioAvailability.NO_VIEWERS`，首个观看者 ≈0.5 s 内恢复）；N4 采集启动前补 `AppOpsManager.unsafeCheckOpNoThrow` 只读检查（不调 `noteOp`），`adb revoke`+`grant` 留下的 uid-mode `ignore` 归为 `PERMISSION_DENIED`。全量 **1248 tests / 121 classes / 0 failures / 0 errors**；`assembleDebug` 与三项 checks 通过；真机 + 模拟器快验通过（停采/恢复、日志与 HUD 音频行、app-op 降级）。**N3 仍待真机听感复核**；**新发现 N6**：`AV_OFFSET` 量纲不成立（实测 ≈21 h，`AudioTrackSink.getPlayheadNs()` 与 `SessionClock.map()` 不同基）且有约一个输出缓冲的系统偏差，需按 D10 重新裁决。
 - 2026-10-21 **服务端声音传输 A1–A7 落地**（[TB-AUDIO-001](#tb-audio-001)，按[音频计划](superpowers/plans/2026-10-21-audio.md)与第 10.1 章裁决）：新增 `core/audio` 并列契约（描述符/帧/能力/采集/编码/扇出/jitter buffer/会话时钟/状态机），协议只做纯增量（`Capabilities.audio_codecs=2`、`ServerMessage.audio_descriptor=4`/`audio_access_unit=5`），**不改 `StreamHub`、不新增 RPC/端口、不新增依赖**；服务端内录 → AAC-LC → 每客户端独立有界队列 → 同一 `Stream` RPC，客户端解码 → jitter buffer → `AudioTrack`，音视频共用 `SessionClock` 单锚点（目标 |Δ|≤40 ms，帧级丢/补，2 s 冷却）。音频默认关、API 25–28 纯无声（D1 麦克风降级不做，`TB-AUDIO-002` 未激活）。全量 **1236 tests / 120 classes / 0 failures / 0 errors**；`assembleDebug` 与三项 checks 通过；**设备验证未执行**，短期功能点位见 [TB-AUDIO-003](#tb-audio-003)，长时/压力项并入 [TB-ENG-013](#tb-eng-013)。[DB-AUDIO-001](decision-board.md#db-audio-001) 转为“已裁决·代码已实施”，[DV-005](decision-board.md) 补范围结论。
 
 - 2026-10-21 **测试分层裁决**：功能做完只跑对应的短小功能测试；稳定性/长时/耐力类一律先登记、不逐棒穿插，统一到全部功能完成后执行。被延后的项（TB-WIN-001 ⑨ 连切 20 次与全项点位、Q-2 1080p 观看端终验、DV-001 全量基线、N1 过载掉线、N2 线程尖峰、TLS D9 30 min 功耗/D10 备份恢复、API 25 出画）已收口到 [TB-ENG-013](#tb-eng-013)，各项写明来源与阻塞条件。
@@ -330,6 +331,8 @@
 - **任务**：音频：API 29+ 使用 `AudioPlaybackCapture`；API 25–28 默认无声（D1=不做麦克风）；AAC-LC 兼容优先；统一会话单调时钟与客户端 jitter buffer。
 - **实施范围（A1–A7，按 [音频计划](superpowers/plans/2026-10-21-audio.md)）**：A1 音频契约与 proto 增量（`audio_descriptor=4`/`audio_access_unit=5`/`Capabilities.audio_codecs=2`）；A2 服务端内录 + AAC-LC 编码水线；A3 `AudioHub` 每客户端有界队列与同 RPC 传输；A4 客户端 AAC 解码、jitter buffer 与 `AudioTrack`；A5 `SessionClock` 音画同轴 + 漂移守卫；A6 开关/权限/通知/静音/HUD；A7 状态机与降级矩阵。**A7b 麦克风降级取消**（D1）。**不改 `StreamHub`、不新增 RPC/端口**。
 - **验证证据（JVM）**：`rm -rf app/build/test-results/testDebugUnitTest` 后 `./gradlew :app:testDebugUnitTest --offline` **1236 tests / 120 classes / 0 failures / 0 errors**（基线 1098/103，只增不减）；`./gradlew :app:assembleDebug --offline` 通过；`check_strings.py`、`check_cjk.py`、`check_docs.py` 通过。协议兼容：旧客户端把新消息当 `PAYLOAD_NOT_SET` 忽略，新客户端对旧服务端永不收到音频。
+- **设备验证修复（N1/N2/N4，2026-10-21）**：N1 客户端日志行补音频区块（`av.offset.p50/p95` + `audio.frames/dropped/underruns`），HUD 增第 4 行 `av … | af … | ad … | au …`（`MetricsFormatter`/`ClientMetricNames`）；N2 新增纯决策 `core/audio/AudioCapturePolicy`（`START`/`STOP`/`PAUSED`/`NONE`），`ScreenShareService` 以 1 s 观看者轮询执行「0 观看者停采、首个观看者恢复」，D9 文案 `audio_status_no_viewers` 首次可达且与行为一致；N4 新增 `AudioAvailability.forCaptureStart`（API 门槛 + 权限 + app-op 三合一）与 `AppOpsManager.unsafeCheckOpNoThrow` 只读检查。全量 **1248 tests / 121 classes / 0 failures / 0 errors / 0 skipped**；`assembleDebug` 与三项 checks 通过；设备快验见 [TB-AUDIO-003](#tb-audio-003)。
+- **未覆盖 / 遗留**：N3（观看端 `AudioTrack` 欠载，原报告 12.5%）仍待真机 + 听感复核，本批只让 `audio.underruns` 变得可读；N6（新发现：`AV_OFFSET` 量纲不成立 与 漂移守卫的缓冲系统偏差、`uid-mode default` 仍被平台拒绝时再落 `CAPTURE_FAILED`）见 [TB-AUDIO-003](#tb-audio-003)，需按 [D10](superpowers/plans/2026-10-21-audio.md) 重新裁决后再动 A5。
 - **设备验证**：见 [TB-AUDIO-003](#tb-audio-003) 与计划 6.10；本条目在设备点位通过前不转 ✅。
 - **关联文档**：[音频计划](superpowers/plans/2026-10-21-audio.md)、[路线图阶段 4](optimization-roadmap.md)、[媒体架构音频](media-architecture.md)、[DB-AUDIO-001](decision-board.md#db-audio-001)
 
@@ -352,6 +355,8 @@
 - **任务**：短小功能口径：能采、能传、能播、音画同步观感、降级路径（计划 6.10 的 1–3、5、7 项）。长时/压力/功耗/回声项并入 [TB-ENG-013](#tb-eng-013)。
 - **前置**：设备验证解禁；一台 API 29+ 服务端与一台观看端。
 - **判据**：开启后 5 s 内出声且通知显示采集；关闭/撤销投影后立即停止；拒绝录音权限时开关回弹且视频继续；API 28 设备开关置灰、无声音、无崩溃；观看端静音/取消静音不重启音频。
+- **设备快验（N1/N2 修复后，2026-10-21）**：真机 API 29 服务端 + 模拟器 API 36 观看端，两机 `adb install -r`。① **N2 停采 ✅**：共享启动即 `audio: state = OFF, reason = NO_VIEWERS`、AudioFlinger 三条 Input thread `No active record clients`、通知副标题「当前没有观看者，音频采集已暂停。」；观看端断开后 `18:05:34.950 ACTIVE -> OFF`（录音轨随即拆除）；观看端回来 `18:06:38.997 OFF -> STARTING`、`18:06:39.327 STARTING -> ACTIVE`（≈0.52 s）。② **N1 输出 ✅**：`lss.metrics role=client` 行出现 `av.offset.p50/p95`、`audio.frames`、`audio.underruns`，HUD 第 4 行为 `av … ms (p95 …) | af … | ad … | au …`。③ **N4 ✅**：uid-mode `ignore` 时开关回弹为 `PERMISSION_DENIED`（1 ms 内，无 `playback capture record is not initialized`），`cmd appops set --uid … allow` 后恢复 `ACTIVE`。证据：handoff 目录 `device-test-2026-10-21-audio/fix-n1n2/`（`README.md`、`logs/`、`shots/`）。
+- **未覆盖 / 遗留**：**音画同步仍不能签字** —— `AV_OFFSET` 实测 ≈ 76 289 000 ms（21 h），根因是 `AudioTrackSink.getPlayheadNs()` 返回音轨内纳秒而 `SessionClock.map()` 返回开机单调时钟（量纲不一致）；即使对齐量纲，比较对象「最后写入帧 vs 当前可闻位置」仍含约一个输出缓冲（64 ms）的系统偏差，守卫会在每个 2 s 冷却期补一帧静音。N3（欠载）仍待真机 + 听感复核，现在可通过 `audio.underruns` 读数观察；`pm grant` 后 uid-mode 仍为 `default` 时平台 `AudioPolicyService` 依旧拒绝录音，应用仍落 `CAPTURE_FAILED`（仅 adb 可达）。
 - **关联文档**：[音频计划 6.10](superpowers/plans/2026-10-21-audio.md)、[DB-AUDIO-001](decision-board.md#db-audio-001)
 
 </details>
@@ -390,6 +395,7 @@
 - **任务**：观看窗缩到 630×1364（显示大小 60%）时，`SurfaceShareViewer` 的 HUD（`11sp` 等宽字体、`WRAP_CONTENT`、内边距 12/8）第三行 `rowd +… | stall … | drop … | kf …` 超出窗口宽度，TextView 自行折行，三行变五行。做**字号按窗口宽度自适应**（或等价的换行策略），保证窗口 ≥60% 时仍是固定三行。
 - **交付物 / 验证证据**：交付：HUD 文本尺寸/布局随窗口宽度的确定性规则（例如可用宽度不足时在 8–11sp 之间降字号，仍不足再退化为允许折行），以及「行数 = 3」的判定方式。验证：在 1080p 与 60% 小窗两档下截图对照，三行完整可读、不遮挡单击/双击/拖拽手势，关闭态仍不刷新。
 - **已观察实例**：`device-test-2026-10-21-metrics-r2/report.md` §7（Q-3），证据 `shots/o6-hud-smallwindow-60.png`。
+- **2026-10-21 新增一行**：HUD 增加第 4 行音频指标（`av … ms (p95 …) | af … | ad … | au …`，见 [TB-AUDIO-001](#tb-audio-001)），60% 小窗下该行同样受本条目约束；`av.offset` 读数异常偏大时（见 [TB-AUDIO-003](#tb-audio-003) N6）这一行会先折行，修 N6 前不要用截图判定「行数」。
 - **边界**：纯呈现问题，不影响指标数值与媒体路径；因需要肉眼对照截图，应排在一次设备棒里做，不与媒体路径改动混批。
 - **关联文档**：[TB-OBS-001](#tb-obs-001)、[本计划](superpowers/plans/2026-10-21-transport-observability.md) 6.6
 

@@ -93,6 +93,29 @@ public enum AudioAvailability {
     }
 
     /**
+     * Classifies the preconditions of a capture start.
+     *
+     * <p>A runtime permission and the app-op are two separate gates: {@code adb shell pm revoke}
+     * followed by {@code pm grant} leaves the permission granted while the app-op stays
+     * {@code ignore}, and a playback capture opened in that state records nothing. The caller
+     * therefore reports both gates through one reason, and a device without the app-op check at all
+     * passes {@code false}.</p>
+     *
+     * @param sdkInt              platform API level
+     * @param isPermissionGranted whether the recording permission is granted
+     * @param isAppOpIgnored      whether the platform ignores the recording app-op
+     * @return {@link #AVAILABLE} when capture may start, otherwise the reason to publish
+     */
+    public static AudioAvailability forCaptureStart(int sdkInt, boolean isPermissionGranted,
+                                                    boolean isAppOpIgnored) {
+        final AudioAvailability apiLevel = forApiLevel(sdkInt);
+        if (apiLevel != AVAILABLE) {
+            return apiLevel;
+        }
+        return isPermissionGranted && !isAppOpIgnored ? AVAILABLE : PERMISSION_DENIED;
+    }
+
+    /**
      * Returns the resource key of the explanation, or null when audio is available.
      */
     public String getStringKey() {

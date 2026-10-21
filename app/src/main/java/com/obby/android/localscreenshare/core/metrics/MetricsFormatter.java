@@ -5,7 +5,7 @@ import java.util.Collections;
 import java.util.List;
 
 /**
- * Renders a {@link MetricsSnapshot} as one structured log line or as the three debug-overlay
+ * Renders a {@link MetricsSnapshot} as one structured log line or as the four debug-overlay
  * lines.
  *
  * <p>This is the only place in the metrics package that builds strings. It runs on an aggregation
@@ -15,7 +15,7 @@ import java.util.List;
  * <p><b>Empty metrics are omitted.</b> A window without samples and a counter whose value is zero
  * are skipped in the log line, so a line stays comparable and short (well under 512 bytes) and a
  * disabled scope produces only the framing fields. The overlay keeps a fixed shape instead, so
- * its three lines do not jump while the user reads them.</p>
+ * its four lines do not jump while the user reads them.</p>
  *
  * <p><b>Units.</b> Latency values are printed in milliseconds with one decimal; frame rate with one
  * decimal; sizes, counts and bitrates are printed as integers; the round-trip kind is printed as a
@@ -167,6 +167,8 @@ public final class MetricsFormatter {
                     Unit.NANOS, Stat.P50),
             new WindowRow(RttMetricNames.RTT, PipelineMetrics.Window.RTT,
                     Unit.NANOS, Stat.P95),
+            new WindowRow(ClientMetricNames.AV_OFFSET, PipelineMetrics.Window.AV_OFFSET,
+                    Unit.NANOS, Stat.P50, Stat.P95),
     };
 
     private MetricsFormatter() {
@@ -331,15 +333,16 @@ public final class MetricsFormatter {
     }
 
     /**
-     * Renders the three debug-overlay lines.
+     * Renders the four debug-overlay lines.
      *
      * <p>The shape is fixed: frame rate, bitrate and round trip on the first line; queue depth,
      * decode latency and lateness on the second; relative delay, stalls, local drops, catch-ups and
-     * key-frame requests on the third. Missing values print as {@code n/a} instead of disappearing,
-     * so the overlay does not reflow while a user watches it.</p>
+     * key-frame requests on the third; the audio offset distribution and the audio counters on the
+     * fourth. Missing values print as {@code n/a} instead of disappearing, so the overlay does not
+     * reflow while a user watches it.</p>
      *
      * @param snapshot snapshot to render; must not be null
-     * @return an immutable list of exactly three lines
+     * @return an immutable list of exactly four lines
      * @throws IllegalArgumentException if {@code snapshot} is null
      */
     public static List<String> toHud(MetricsSnapshot snapshot) {
@@ -347,7 +350,7 @@ public final class MetricsFormatter {
     }
 
     /**
-     * Renders the three debug-overlay lines with interval rates on the first line.
+     * Renders the four debug-overlay lines with interval rates on the first line.
      *
      * <p>The overlay is refreshed every second while the log line runs every five, so the two
      * readers pass their own {@link MetricsRate}; a rate that has no interval yet prints
@@ -355,14 +358,14 @@ public final class MetricsFormatter {
      *
      * @param snapshot snapshot to render; must not be null
      * @param rate     interval rate of the receiving pipeline, or null when it was not measured
-     * @return an immutable list of exactly three lines
+     * @return an immutable list of exactly four lines
      * @throws IllegalArgumentException if {@code snapshot} is null
      */
     public static List<String> toHud(MetricsSnapshot snapshot, MetricsRate rate) {
         if (snapshot == null) {
             throw new IllegalArgumentException("snapshot must not be null");
         }
-        List<String> lines = new ArrayList<>(3);
+        List<String> lines = new ArrayList<>(4);
 
         StringBuilder first = new StringBuilder(64);
         if (rate != null && rate.hasInterval()) {
@@ -409,7 +412,36 @@ public final class MetricsFormatter {
         delay.append(" | kf ").append(snapshot.getCounter(PipelineMetrics.Counter.KEYFRAME_REQUESTS));
         lines.add(delay.toString());
 
+        lines.add(audioHudLine(snapshot));
+
         return Collections.unmodifiableList(lines);
+    }
+
+    /**
+     * Renders the fourth overlay line: the audio offset distribution and the audio counters.
+     *
+     * <p>The line is short on purpose, because the overlay already wraps at the narrowest window
+     * width the viewer offers. {@code av} is the absolute audio/video offset against the shared
+     * session clock, {@code af} the accepted audio frames, {@code ad} the frames the player dropped
+     * and {@code au} the underruns it filled with silence; a viewer that receives no audio still
+     * sees the fixed shape with {@code n/a} and zero counters.</p>
+     */
+    private static String audioHudLine(MetricsSnapshot snapshot) {
+        StringBuilder audio = new StringBuilder(64);
+        audio.append("av ");
+        LatencyWindow.Stats offset = snapshot.getWindow(PipelineMetrics.Window.AV_OFFSET);
+        if (offset.hasSamples()) {
+            appendMillis(audio, offset.getP50());
+            audio.append(" ms (p95 ");
+            appendMillis(audio, offset.getP95());
+            audio.append(')');
+        } else {
+            audio.append("n/a");
+        }
+        audio.append(" | af ").append(snapshot.getCounter(PipelineMetrics.Counter.AUDIO_FRAMES));
+        audio.append(" | ad ").append(snapshot.getCounter(PipelineMetrics.Counter.AUDIO_DROPPED));
+        audio.append(" | au ").append(snapshot.getCounter(PipelineMetrics.Counter.AUDIO_UNDERRUNS));
+        return audio.toString();
     }
 
     /**
@@ -473,6 +505,24 @@ public final class MetricsFormatter {
                 PipelineMetrics.Counter.CONVERGENCE_FAILURES, null);
         appendCatchUpReason(out, snapshot);
         appendRttFields(out, snapshot);
+        appendAudioFields(out, snapshot);
+    }
+
+    /**
+     * Appends the audio track counters of the same receive session.
+     *
+     * <p>They are the counter half of the audio block whose offset distribution
+     * {@link ClientMetricNames#AV_OFFSET} prints: frames tell whether the client is decoding at all,
+     * drops and underruns tell whether the playback path is keeping up. A viewer that never receives
+     * audio produces the same line it did before the audio track existed.</p>
+     */
+    private static void appendAudioFields(StringBuilder out, MetricsSnapshot snapshot) {
+        appendCounters(out, snapshot, ClientMetricNames.AUDIO_FRAMES,
+                PipelineMetrics.Counter.AUDIO_FRAMES, null);
+        appendCounters(out, snapshot, ClientMetricNames.AUDIO_DROPPED,
+                PipelineMetrics.Counter.AUDIO_DROPPED, null);
+        appendCounters(out, snapshot, ClientMetricNames.AUDIO_UNDERRUNS,
+                PipelineMetrics.Counter.AUDIO_UNDERRUNS, null);
     }
 
     /**
