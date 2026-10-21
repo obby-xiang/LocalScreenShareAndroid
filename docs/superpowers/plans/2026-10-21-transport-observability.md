@@ -465,6 +465,7 @@ Review Focus（最容易咬人的失败模式）：
 5. **关闭态必须真的关**：同一场景 A/B 时，若关闭态仍有窗口分配或快照线程，视为未实现。
 6. **HUD 不得阻塞渲染路径**：叠加层文本更新在 1 s 定时线程上完成，主线程只做一次 `setText`；`TextureView` 的 `Surface` 生命周期不受根视图替换影响（`:922` 的 `addView`/`removeView` 成对迁移到容器）。
 7. **RTT 回显不排队**：`Pong` 必须绕开 `ClientSendSession` 的队列，否则测到的是本地队列延迟。
+8. **Android 组件的字段初始化器不得触碰 Context**：框架用 `Class.newInstance()` 构造组件，`attachBaseContext` 在后面才调用，因此字段初始化器里的 `new Xxx(this)` 若在构造函数里读 `getApplicationContext()`／`getSystemService()`，拿到的是 null base：`NullPointerException` → `Unable to instantiate service` → 进程 FATAL（2026-10-21 的 D-1 就是这样丢掉了每一次启动）。需要 Context 的对象一律在 `onCreate()` 或首次使用处惰性创建（本轮落地的 `service/LazyContextValue`），并为"构造不触上下文"补契约用例；纯 JVM 测试走不到框架实例化路径，这条只能靠约定 + 用例守。
 
 ### 8.2 O1：指标内核（纯 JVM，零接线）
 
@@ -624,6 +625,8 @@ Review Focus（最容易咬人的失败模式）：
 - 字符串同步 `values-zh`，运行 `check_strings.py`、`check_cjk.py`、`check_docs.py`。
 
 **提交计划：** 一个 `feat:` 提交（HUD + 菜单）与一个 `feat:` 提交（设备状态块），互相独立。
+
+**设备回归（2026-10-21，D-1）：** 设备状态块最初把采样器写在字段初始化器里（`new AndroidDeviceProfileSampler(this)`），它在服务构造期执行、`attachBaseContext` 尚未调用，采样器构造函数的 `getApplicationContext()` 得到 null base → `Unable to instantiate service` → 两台设备每次启动 FATAL，与指标开关无关。改为 `service/LazyContextValue` 首次采样惰性创建，`LazyContextValueTest` 3 条守构造契约；禁令见 8.1 第 8 条，设备证据与 D-2 的口径结论见 [TB-OBS-001](../../task-board.md#tb-obs-001)。
 
 ### 8.8 O7：基线执行与 DV-001 裁决（设备解禁后，不改代码）
 
