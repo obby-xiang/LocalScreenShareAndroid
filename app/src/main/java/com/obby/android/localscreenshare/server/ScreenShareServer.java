@@ -625,6 +625,14 @@ public final class ScreenShareServer {
          * @param fingerprint fingerprint derived from the peer certificate
          */
         void onNewPeerPinned(@NonNull String deviceId, @NonNull String fingerprint);
+
+        /**
+         * Called on a gRPC transport thread when a peer failed the identity check.
+         *
+         * @param deviceId device id derived from the peer certificate
+         * @param reason   rejection reason, such as {@code identity_changed}
+         */
+        void onPeerRejected(@NonNull String deviceId, @NonNull String reason);
     }
 
     /**
@@ -1053,6 +1061,14 @@ public final class ScreenShareServer {
         return nsdServiceInfo;
     }
 
+    private void notifyPeerRejected(@NonNull final TlsCertificate peer,
+                                    @NonNull final String reason) {
+        final PeerTrustListener listener = mPeerTrustListener;
+        if (listener != null) {
+            listener.onPeerRejected(peer.getDeviceId(), reason);
+        }
+    }
+
     // Certificate identity of the current call, or null on a plaintext call.
     @Nullable
     private static TlsCertificate peerCertificate() {
@@ -1087,10 +1103,12 @@ public final class ScreenShareServer {
                 return null;
             case CHANGED:
                 Log.w(mTag, "acceptPeer: peer fingerprint changed, rejecting");
+                notifyPeerRejected(peer, PinningTrustManager.REASON_IDENTITY_CHANGED);
                 return PinningTrustManager.REASON_IDENTITY_CHANGED;
             case IDENTITY_MISMATCH:
             default:
                 Log.w(mTag, "acceptPeer: peer certificate does not match its id, rejecting");
+                notifyPeerRejected(peer, PinningTrustManager.REASON_IDENTITY_MISMATCH);
                 return PinningTrustManager.REASON_IDENTITY_MISMATCH;
         }
     }

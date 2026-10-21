@@ -803,13 +803,25 @@ public class ScreenShareService extends Service {
         mServer = new ScreenShareServer(this);
         mServer.setServerInfoListener(mServerInfoListener);
         mServer.setServerStatsListener(mServerStatsListener);
-        mServer.setPeerTrustListener((deviceId, fingerprint) -> mMainHandler.post(() -> {
-            mNewPeerBadge = getString(R.string.tls_new_device_badge,
-                deviceId.substring(0,
-                    Math.min(com.obby.android.localscreenshare.identity.DeviceIdentity
-                        .SHORT_ID_LENGTH, deviceId.length())));
-            updateNotification();
-        }));
+        mServer.setPeerTrustListener(new ScreenShareServer.PeerTrustListener() {
+            @Override
+            public void onNewPeerPinned(final String deviceId, final String fingerprint) {
+                mMainHandler.post(() -> {
+                    mNewPeerBadge = getString(R.string.tls_new_device_badge,
+                        deviceId.substring(0,
+                            Math.min(DeviceIdentity.SHORT_ID_LENGTH, deviceId.length())));
+                    updateNotification();
+                });
+            }
+
+            @Override
+            public void onPeerRejected(final String deviceId, final String reason) {
+                mMainHandler.post(() -> Toast.makeText(ScreenShareService.this,
+                    getString(R.string.tls_peer_rejected_toast, deviceId.substring(0,
+                        Math.min(DeviceIdentity.SHORT_ID_LENGTH, deviceId.length()))),
+                    Toast.LENGTH_LONG).show());
+            }
+        });
         mServer.setStream(mStreamHub, mStreamRuntime);
         mServer.setSecure(mIsProjectionSecure);
         mServer.setDeviceStore(DiscoveryManager.get().getDeviceStore());

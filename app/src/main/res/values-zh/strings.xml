@@ -97,6 +97,7 @@
     <string name="tls_local_fingerprint_label">"密钥指纹"</string>
     <string name="tls_service_notification_fingerprint">"比对指纹：<xliff:g id="fingerprint">%1$s</xliff:g>"</string>
     <string name="tls_new_device_badge">"新设备：<xliff:g id="id">%1$s</xliff:g>"</string>
+    <string name="tls_peer_rejected_toast">"已拒绝来自 <xliff:g id="id">%1$s</xliff:g> 的连接：身份校验失败。"</string>
     <string name="tls_plaintext_warning">"传输加密已关闭（开发调试开关）。"</string>
     <string name="tls_device_not_encrypted">"该设备不支持加密连接。"</string>
     <string name="device_identity_label">"设备 ID"</string>

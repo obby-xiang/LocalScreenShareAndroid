@@ -97,6 +97,7 @@ This can happen after a reinstall, a data reset or a key reset. Connect only if 
     <string name="tls_local_fingerprint_label">"Key fingerprint"</string>
     <string name="tls_service_notification_fingerprint">"Compare fingerprint: <xliff:g id="fingerprint">%1$s</xliff:g>"</string>
     <string name="tls_new_device_badge">"New device: <xliff:g id="id">%1$s</xliff:g>"</string>
+    <string name="tls_peer_rejected_toast">"Refused a connection from <xliff:g id="id">%1$s</xliff:g>: identity check failed."</string>
     <string name="tls_plaintext_warning">"Transport encryption is off (development override)."</string>
     <string name="tls_device_not_encrypted">"This device does not support encrypted connections."</string>
     <string name="device_identity_label">"Device ID"</string>
