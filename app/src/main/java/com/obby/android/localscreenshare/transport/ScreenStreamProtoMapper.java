@@ -1,6 +1,9 @@
 package com.obby.android.localscreenshare.transport;
 
 import com.obby.android.localscreenshare.core.model.AccessUnitFlags;
+import com.obby.android.localscreenshare.core.model.AudioAccessUnit;
+import com.obby.android.localscreenshare.core.model.AudioCodecCapability;
+import com.obby.android.localscreenshare.core.model.AudioDescriptor;
 import com.obby.android.localscreenshare.core.model.BitstreamFormat;
 import com.obby.android.localscreenshare.core.model.CodecConfigPart;
 import com.obby.android.localscreenshare.core.model.EncodedAccessUnit;
@@ -176,10 +179,96 @@ public final class ScreenStreamProtoMapper {
     }
 
     /**
+     * Maps an audio descriptor to its wire form.
+     *
+     * @param descriptor the published audio descriptor; must not be null
+     * @throws IllegalArgumentException if {@code descriptor} is null
+     */
+    public static com.obby.android.localscreenshare.grpc.screenstream.AudioDescriptor
+            toProtoAudioDescriptor(AudioDescriptor descriptor) {
+        if (descriptor == null) {
+            throw new IllegalArgumentException("descriptor must not be null");
+        }
+        com.obby.android.localscreenshare.grpc.screenstream.AudioDescriptor.Builder builder =
+                com.obby.android.localscreenshare.grpc.screenstream.AudioDescriptor.newBuilder()
+                        .setProtocolVersion(PROTOCOL_VERSION)
+                        .setConfigEpoch(descriptor.getConfigEpoch())
+                        .setCodecId(descriptor.getCodecId())
+                        .setMime(descriptor.getMime())
+                        .setSampleRate(descriptor.getSampleRate())
+                        .setChannels(descriptor.getChannels())
+                        .setBitrateBps(descriptor.getBitrateBps())
+                        .setFrameSamples(descriptor.getFrameSamples())
+                        .setConfigHash(descriptor.getConfigHash());
+        if (descriptor.getProfile() != null) {
+            builder.setProfile(descriptor.getProfile());
+        }
+        for (CodecConfigPart part : descriptor.getConfigParts()) {
+            builder.addConfigParts(toProtoConfigPart(part));
+        }
+        return builder.build();
+    }
+
+    /**
+     * Rebuilds an audio descriptor from its wire form.
+     *
+     * @param descriptor the received proto descriptor; must not be null
+     * @throws IllegalArgumentException if {@code descriptor} is null or the wire values are invalid
+     */
+    public static AudioDescriptor toAudioDescriptor(
+            com.obby.android.localscreenshare.grpc.screenstream.AudioDescriptor descriptor) {
+        if (descriptor == null) {
+            throw new IllegalArgumentException("descriptor must not be null");
+        }
+        AudioDescriptor.Builder builder = AudioDescriptor.builder(descriptor.getConfigEpoch(),
+                        descriptor.getCodecId(), descriptor.getMime(), descriptor.getSampleRate(),
+                        descriptor.getChannels(), descriptor.getBitrateBps())
+                .profile(nullIfEmpty(descriptor.getProfile()))
+                .frameSamples(descriptor.getFrameSamples())
+                .configParts(toConfigParts(descriptor.getConfigPartsList()));
+        return builder.build();
+    }
+
+    /**
+     * Maps an audio access unit to its wire form.
+     *
+     * @throws IllegalArgumentException if {@code accessUnit} is null
+     */
+    public static com.obby.android.localscreenshare.grpc.screenstream.AudioAccessUnit
+            toProtoAudioAccessUnit(AudioAccessUnit accessUnit) {
+        if (accessUnit == null) {
+            throw new IllegalArgumentException("accessUnit must not be null");
+        }
+        return com.obby.android.localscreenshare.grpc.screenstream.AudioAccessUnit.newBuilder()
+                .setConfigEpoch(accessUnit.getConfigEpoch())
+                .setSequence(accessUnit.getSequence())
+                .setPtsUs(accessUnit.getPtsUs())
+                .setPayload(com.google.protobuf.ByteString.copyFrom(accessUnit.getPayload()))
+                .build();
+    }
+
+    /**
+     * Rebuilds an audio access unit from its wire form.
+     *
+     * @param accessUnit the received proto access unit; must not be null
+     * @throws IllegalArgumentException if {@code accessUnit} is null or its payload is empty
+     */
+    public static AudioAccessUnit toAudioAccessUnit(
+            com.obby.android.localscreenshare.grpc.screenstream.AudioAccessUnit accessUnit) {
+        if (accessUnit == null) {
+            throw new IllegalArgumentException("accessUnit must not be null");
+        }
+        return new AudioAccessUnit(accessUnit.getConfigEpoch(), accessUnit.getSequence(),
+                accessUnit.getPtsUs(), accessUnit.getPayload().toByteArray());
+    }
+
+    /**
      * Maps client capabilities to a wire capabilities message.
      *
      * <p>Each per-codec capability carries its profile, level and size/rate bounds; a zero bound or
-     * a null profile/level means "unconstrained" and is simply omitted on the wire.</p>
+     * a null profile/level means "unconstrained" and is simply omitted on the wire. Audio decoders
+     * are written into the same message's {@code audio_codecs} list, so one capabilities message
+     * describes both tracks.</p>
      */
     public static Capabilities toProtoCapabilities(ClientCapabilities capabilities) {
         Capabilities.Builder builder = Capabilities.newBuilder();
@@ -187,16 +276,20 @@ public final class ScreenStreamProtoMapper {
             for (CodecCapability capability : capabilities.getCapabilities().values()) {
                 builder.addCodecs(toProtoCodecCapability(capability));
             }
+            for (AudioCodecCapability capability : capabilities.getAudioCapabilities().values()) {
+                builder.addAudioCodecs(toProtoAudioCodecCapability(capability));
+            }
         }
         return builder.build();
     }
 
     /**
      * Rebuilds client capabilities from a wire capabilities message, or empty capabilities when
-     * null.
+     * null. An old client sends no {@code audio_codecs} entries, so its audio map is empty.
      */
     public static ClientCapabilities toClientCapabilities(Capabilities capabilities) {
         Map<String, CodecCapability> map = new LinkedHashMap<>();
+        Map<String, AudioCodecCapability> audioMap = new LinkedHashMap<>();
         if (capabilities != null) {
             for (com.obby.android.localscreenshare.grpc.screenstream.CodecCapability proto
                     : capabilities.getCodecsList()) {
@@ -204,8 +297,14 @@ public final class ScreenStreamProtoMapper {
                     map.put(proto.getCodecId(), toCodecCapability(proto));
                 }
             }
+            for (com.obby.android.localscreenshare.grpc.screenstream.AudioCodecCapability proto
+                    : capabilities.getAudioCodecsList()) {
+                if (proto.getCodecId() != null && !proto.getCodecId().isEmpty()) {
+                    audioMap.put(proto.getCodecId(), toAudioCodecCapability(proto));
+                }
+            }
         }
-        return new ClientCapabilities(map);
+        return new ClientCapabilities(map, audioMap);
     }
 
     private static com.obby.android.localscreenshare.grpc.screenstream.CodecCapability
@@ -237,6 +336,27 @@ public final class ScreenStreamProtoMapper {
                 nullIfEmpty(proto.getProfile()), nullIfEmpty(proto.getLevel()),
                 proto.getMaxWidth(), proto.getMaxHeight(), proto.getMaxFrameRate(),
                 proto.getMaxBitrateBps(), proto.getSurfaceOutput(), proto.getAdaptive());
+    }
+
+    private static com.obby.android.localscreenshare.grpc.screenstream.AudioCodecCapability
+            toProtoAudioCodecCapability(AudioCodecCapability capability) {
+        com.obby.android.localscreenshare.grpc.screenstream.AudioCodecCapability.Builder builder =
+                com.obby.android.localscreenshare.grpc.screenstream.AudioCodecCapability
+                        .newBuilder()
+                        .setCodecId(capability.getCodecId())
+                        .setMaxSampleRate(capability.getMaxSampleRate())
+                        .setMaxChannels(capability.getMaxChannels())
+                        .setMaxBitrateBps(capability.getMaxBitrateBps());
+        if (capability.getMime() != null) {
+            builder.setMime(capability.getMime());
+        }
+        return builder.build();
+    }
+
+    private static AudioCodecCapability toAudioCodecCapability(
+            com.obby.android.localscreenshare.grpc.screenstream.AudioCodecCapability proto) {
+        return new AudioCodecCapability(proto.getCodecId(), nullIfEmpty(proto.getMime()),
+                proto.getMaxSampleRate(), proto.getMaxChannels(), proto.getMaxBitrateBps());
     }
 
     /**

@@ -90,6 +90,19 @@ message Pong {
 
 message Capabilities {
   repeated CodecCapability codecs = 1;
+  // Audio decoders the client can run. Empty means "no audio", which is also what an old client
+  // that never heard of this field reports, so the server simply sends it no audio.
+  repeated AudioCodecCapability audio_codecs = 2;
+}
+
+// Decode capability for one audio codec. A zero bound means "unconstrained", mirroring
+// CodecCapability.
+message AudioCodecCapability {
+  string codec_id = 1;
+  string mime = 2;
+  int32 max_sample_rate = 3;
+  int32 max_channels = 4;
+  int32 max_bitrate_bps = 5;
 }
 
 message CodecCapability {
@@ -110,7 +123,37 @@ message ServerMessage {
     Descriptor descriptor = 1;
     AccessUnit access_unit = 2;
     Pong pong = 3;
+    // Audio travels on the same stream but keeps its own descriptor, epoch and access units, so a
+    // client can ignore it entirely and still decode video.
+    AudioDescriptor audio_descriptor = 4;
+    AudioAccessUnit audio_access_unit = 5;
   }
+}
+
+// Decode configuration of the audio track. config_parts carries the AudioSpecificConfig (csd-0), so
+// the receiver configures its decoder without parsing ADTS headers; the wire never carries ADTS.
+message AudioDescriptor {
+  int32 protocol_version = 1;
+  int32 config_epoch = 2;
+  string codec_id = 3;
+  string mime = 4;
+  string profile = 5;
+  int32 sample_rate = 6;
+  int32 channels = 7;
+  int32 bitrate_bps = 8;
+  // Samples per encoded frame; 1024 for AAC-LC, which is the only profile this version produces.
+  int32 frame_samples = 9;
+  repeated ConfigPart config_parts = 10;
+  string config_hash = 11;
+}
+
+// One encoded audio frame. Audio has no key frames, so it carries no sync/join flags and no decode
+// timestamp.
+message AudioAccessUnit {
+  int32 config_epoch = 1;
+  int64 sequence = 2;
+  int64 pts_us = 3;
+  bytes payload = 4;
 }
 
 message Descriptor {
