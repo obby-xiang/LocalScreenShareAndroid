@@ -17,10 +17,12 @@ import com.obby.android.localscreenshare.transport.ScreenStreamProtoMapper;
  * the session-level secure flag to a {@link ClientSecureListener} and the display geometry of the
  * incoming stream to a {@link StreamGeometryListener}. It also counts every received access unit and
  * its payload bytes into the metric scope, which is what makes the viewer's frame rate and bitrate
- * measurable at all. It is deliberately not thread-safe: the
- * owning client must call {@link #onServerMessage} from a single decode thread so decoding never
- * runs on the gRPC shared executor. The session itself serializes its own state, so the receiver
- * only has to serialize the deserialization plus the secure-flag edge tracking.</p>
+ * measurable at all. It is deliberately not thread-safe: the owning client must call
+ * {@link #onServerMessage} for video messages from a single decode thread, and for audio messages
+ * from the single audio thread, so decoding never runs on the gRPC shared executor. The two tracks
+ * touch disjoint state - {@code lastSecure} and the video session belong to the decode thread, the
+ * audio session to the audio thread and its own lock - which is why the split needs no further
+ * serialization.</p>
  */
 public final class ClientMediaReceiver {
 
@@ -125,9 +127,9 @@ public final class ClientMediaReceiver {
     /**
      * Creates a receiver that also drives the stream's optional audio track.
      *
-     * <p>Audio messages are deserialized and applied here, on the same decode thread, but they
-     * never enter {@link ClientMediaSession}: a malformed audio message, an unknown audio codec or
-     * a failing audio decoder only affects the audio session.</p>
+     * <p>Audio messages are deserialized and applied on the audio thread - never on the video decode
+     * thread - and they never enter {@link ClientMediaSession}: a malformed audio message, an
+     * unknown audio codec or a failing audio decoder only affects the audio session.</p>
      *
      * @param streamKey        stream identity used to rebuild descriptors and access units
      * @param session          the video session driven by this receiver

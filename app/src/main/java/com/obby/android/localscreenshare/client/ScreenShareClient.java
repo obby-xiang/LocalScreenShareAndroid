@@ -77,11 +77,14 @@ import lombok.experimental.Accessors;
  *
  * <p><b>Threading.</b> {@link #start} and {@link #stop} are expected on the main thread. gRPC
  * transport invokes the response observer on threads of the private {@code lss-grpc-client-*}
- * executor; that observer only enqueues work onto the {@code lss-client-decode} thread. Observer
- * callbacks are always delivered on the main thread. The catch-up decisions run on the decode
- * thread; the only state they share with the transport thread is the catch-up generation, an
- * {@link AtomicInteger}. Writes to the request observer stay on the main thread: the media path
- * posts its key-frame request instead of writing from the decode thread.</p>
+ * executor; that observer only enqueues work: video messages onto the {@code lss-client-decode}
+ * thread, audio messages onto the {@code lss-client-audio} thread. The two tracks are decoded on
+ * separate single threads because a 1080p60 frame occupies the decode thread for a whole frame
+ * period, and an audio frame queued behind one starves the playback track. Observer callbacks are
+ * always delivered on the main thread. The catch-up decisions run on the decode thread; the only
+ * state they share with the transport thread is the catch-up generation, an {@link AtomicInteger}.
+ * Writes to the request observer stay on the main thread: the media path posts its key-frame
+ * request instead of writing from the decode thread.</p>
  */
 @Accessors(prefix = "m")
 public final class ScreenShareClient {
@@ -94,6 +97,11 @@ public final class ScreenShareClient {
     // Bounds the decode queue so a catastrophically slow decoder cannot grow it without limit;
     // a rejected message is dropped and the session recovers on the next join point.
     private static final int DECODE_QUEUE_CAPACITY = 256;
+
+    // Bounds the audio queue. Audio is decoded on its own thread so a 1080p60 video frame cannot
+    // hold a 21 ms audio frame behind it; the bound is what keeps a stalled audio decoder from
+    // growing the queue without limit. Thirty-two frames are about 680 ms of media.
+    private static final int AUDIO_QUEUE_CAPACITY = 32;
 
     // Limits how often a decode-queue overflow asks for a key frame; requests are raised on the
     // transport thread that detected the overflow.
@@ -197,8 +205,8 @@ public final class ScreenShareClient {
         })
         .build(), new ThreadPoolExecutor.AbortPolicy());
 
-    // Dedicated single thread that drives the media session; serializes all decoding. Typed as a
-    // pool executor so the receive probe can sample its queue depth.
+    // Dedicated single thread that drives the video session; serializes all video decoding. Typed
+    // as a pool executor so the receive probe can sample its queue depth.
     @NonNull
     private final ThreadPoolExecutor mDecodeExecutor = new ThreadPoolExecutor(1, 1, 30L,
         TimeUnit.SECONDS, new LinkedBlockingQueue<>(DECODE_QUEUE_CAPACITY),
@@ -207,6 +215,24 @@ public final class ScreenShareClient {
                 @Override
                 public void run() {
                     Process.setThreadPriority(Process.THREAD_PRIORITY_DISPLAY);
+                    super.run();
+                }
+            })
+            .build(), new ThreadPoolExecutor.AbortPolicy());
+
+    // Dedicated single thread for the audio track. Audio used to share the video decode thread,
+    // where a 1080p60 frame consumed the whole 16.7 ms budget and every audio frame queued behind
+    // it; measured on device, application-level audio starvation correlated with presentation drops
+    // at r = 0.94. The audio thread is separate for the same reason the writer thread is: a video
+    // decode must never sit between an audio frame and the sink.
+    @NonNull
+    private final ThreadPoolExecutor mAudioExecutor = new ThreadPoolExecutor(1, 1, 30L,
+        TimeUnit.SECONDS, new LinkedBlockingQueue<>(AUDIO_QUEUE_CAPACITY),
+        new BasicThreadFactory.Builder().namingPattern("lss-client-audio-%d")
+            .wrappedFactory(runnable -> new Thread(runnable) {
+                @Override
+                public void run() {
+                    Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO);
                     super.run();
                 }
             })
@@ -358,7 +384,8 @@ public final class ScreenShareClient {
      * {@link #stop()} is called, and it is never called after {@code stop()} returns.</p>
      *
      * @param observer receiver of connection-state callbacks
-     * @param receiver media session driver; every server message is handed to it on the decode thread
+     * @param receiver media session driver; video messages are handed to it on the decode thread and
+     *                 audio messages on the audio thread
      */
     public void start(@NonNull final ClientObserver observer,
                       @NonNull final ClientMediaReceiver receiver) {
@@ -380,6 +407,21 @@ public final class ScreenShareClient {
                     }
                     // One clock read marks the arrival; everything downstream measures from it.
                     final long arrivalNs = mMetrics.nowNs();
+                    if (isAudio(value.getPayloadCase())) {
+                        // Audio has its own thread: a 1080p60 video frame occupies the decode
+                        // thread for about a frame period, and every audio frame queued behind one
+                        // left the track starved.
+                        try {
+                            mAudioExecutor.execute(() -> onAudioTask(receiver, value, arrivalNs));
+                        } catch (RejectedExecutionException e) {
+                            mMetrics.increment(PipelineMetrics.Counter.AUDIO_DROPPED);
+                            Log.w(mTag, "onNext: audio queue full, dropping an audio message");
+                        }
+                        if (!mIsConnected) {
+                            ensureConnected();
+                        }
+                        return;
+                    }
                     final int generation = mCatchUpGeneration.get();
                     final boolean descriptor =
                         value.getPayloadCase() == ServerMessage.PayloadCase.DESCRIPTOR;
@@ -528,6 +570,33 @@ public final class ScreenShareClient {
     }
 
     /**
+     * Returns whether a message belongs to the audio track.
+     *
+     * <p>Audio messages carry their own descriptor and access units and are applied on the audio
+     * thread; everything else stays on the video decode thread.</p>
+     */
+    private static boolean isAudio(@NonNull final ServerMessage.PayloadCase payload) {
+        return payload == ServerMessage.PayloadCase.AUDIO_DESCRIPTOR
+            || payload == ServerMessage.PayloadCase.AUDIO_ACCESS_UNIT;
+    }
+
+    /**
+     * Applies one audio message on the audio thread.
+     *
+     * <p>Audio is exempt from the catch-up generation: a catch-up discards video access units whose
+     * reference chain was abandoned, while an audio frame needs no reference and simply continues
+     * the timeline. The receiver contains every audio failure itself, so a broken audio track can
+     * never terminate the video stream.</p>
+     */
+    private void onAudioTask(@NonNull ClientMediaReceiver receiver,
+                             @NonNull ServerMessage message, long arrivalNs) {
+        if (mIsStopped) {
+            return;
+        }
+        receiver.onServerMessage(message, arrivalNs);
+    }
+
+    /**
      * Runs one server message on the decode thread: skips it when a catch-up superseded it,
      * otherwise applies it and samples the backlog.
      *
@@ -637,6 +706,7 @@ public final class ScreenShareClient {
         mGrpcChannel.shutdownNow();
         mGrpcClientExecutor.shutdownNow();
         mDecodeExecutor.shutdownNow();
+        mAudioExecutor.shutdownNow();
     }
 
     /**
