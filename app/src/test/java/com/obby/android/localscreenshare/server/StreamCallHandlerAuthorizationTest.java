@@ -69,6 +69,96 @@ public class StreamCallHandlerAuthorizationTest {
     }
 
     @Test
+    public void aCallThatHasNotSpokenYetIsNotRefused() throws Exception {
+        final Fixture fixture = new Fixture();
+        final Node node = newNode(fixture, new FakeTransport());
+
+        assertFalse(node.handler.drainOnce());
+
+        assertFalse(node.handler.isClosed());
+        assertNull(node.listener.rejectionReason);
+        assertEquals(0, fixture.hub.getSessionCount());
+    }
+
+    @Test
+    public void aParkedCallIsNotRefusedWhileTheUserDecides() throws Exception {
+        final Fixture fixture = new Fixture();
+        final FakeTransport transport = new FakeTransport();
+        final Node node = newNode(fixture, transport);
+        node.handler.onClientMessage(hello(node.certificate, "Laptop"));
+
+        // Every drain of the waiting window must leave the call parked: a request that is still
+        // open is not a withdrawn grant, so the peer keeps waiting for the answer.
+        for (int pass = 0; pass < 5; pass++) {
+            assertFalse(node.handler.drainOnce());
+        }
+
+        assertFalse(node.handler.isClosed());
+        assertNull(node.handler.getJoinFailure());
+        assertNull(node.listener.rejectionReason);
+        assertNull(node.handler.getAttachedKey());
+        assertTrue(transport.getEvents().isEmpty());
+        assertEquals(0, fixture.hub.getSessionCount());
+        assertEquals(1, fixture.gate.getPendingCount());
+    }
+
+    @Test
+    public void approvingAParkedCallJoinsOnTheNextPassWithoutARefusal() throws Exception {
+        final Fixture fixture = new Fixture();
+        final Node node = newNode(fixture, new FakeTransport());
+        node.handler.onClientMessage(hello(node.certificate, null));
+        assertFalse(node.handler.drainOnce());
+        // A second pass must leave the call parked: the answer has not arrived yet.
+        assertFalse(node.handler.drainOnce());
+
+        fixture.gate.resolve(requestId(fixture), ApprovalOutcome.ALLOW_ALWAYS);
+
+        assertTrue(node.handler.drainOnce());
+        assertNotNull(node.handler.getAttachedKey());
+        assertFalse(node.handler.isClosed());
+        assertNull(node.handler.getJoinFailure());
+        assertNull(node.listener.rejectionReason);
+    }
+
+    @Test
+    public void aDenialIsReportedAsADenialAfterAParkedWait() throws Exception {
+        final Fixture fixture = new Fixture();
+        final Node node = newNode(fixture, new FakeTransport());
+        node.handler.onClientMessage(hello(node.certificate, null));
+        // The waiting window spans many drain passes; the answer must still be read as an answer
+        // rather than as a withdrawn grant on the pass that sees it.
+        for (int pass = 0; pass < 5; pass++) {
+            assertFalse(node.handler.drainOnce());
+        }
+
+        fixture.gate.resolve(requestId(fixture), ApprovalOutcome.DENY);
+        assertFalse(node.handler.drainOnce());
+
+        assertTrue(node.handler.isClosed());
+        assertEquals(AuthorizationPolicy.REASON_DENIED, node.handler.getJoinFailure());
+        assertEquals(AuthorizationPolicy.REASON_DENIED, node.listener.rejectionReason);
+        assertNull(node.handler.getAttachedKey());
+    }
+
+    @Test
+    public void aTimeoutIsReportedAsATimeoutAfterAParkedWait() throws Exception {
+        final Fixture fixture = new Fixture();
+        final Node node = newNode(fixture, new FakeTransport());
+        node.handler.onClientMessage(hello(node.certificate, null));
+        for (int pass = 0; pass < 5; pass++) {
+            assertFalse(node.handler.drainOnce());
+        }
+
+        fixture.clock.advance(AuthorizationPolicy.APPROVAL_TIMEOUT_MS);
+        assertFalse(node.handler.drainOnce());
+
+        assertTrue(node.handler.isClosed());
+        assertEquals(AuthorizationPolicy.REASON_TIMEOUT, node.handler.getJoinFailure());
+        assertEquals(AuthorizationPolicy.REASON_TIMEOUT, node.listener.rejectionReason);
+        assertEquals(0, fixture.hub.getSessionCount());
+    }
+
+    @Test
     public void allowOnceJoinsWithoutWritingTheDurableSet() throws Exception {
         final Fixture fixture = new Fixture();
         final Node node = newNode(fixture, new FakeTransport());
@@ -106,6 +196,7 @@ public class StreamCallHandlerAuthorizationTest {
         assertTrue(node.handler.isClosed());
         assertEquals(AuthorizationPolicy.REASON_DENIED, node.handler.getJoinFailure());
         assertEquals(AuthorizationPolicy.REASON_DENIED, node.listener.rejectionReason);
+        assertNull(node.handler.getAttachedKey());
         assertEquals(0, fixture.hub.getSessionCount());
     }
 
