@@ -1,6 +1,7 @@
 # 配对与授权实施计划（TB-SEC-001：默认拒绝 + 审批 + 持久授权）
 
-> 状态：本文件是计划，随后续批次逐批落地；落地进度与提交哈希写在[任务看板](../../task-board.md)的 TB-SEC-001 条目里。
+> 状态：S1–S4 已于 2026-10-21 落地（提交 `7416f9f` 授权存储/策略/闸门、`8c3cf1d` 服务端审批流与协议增量、`3cc5ef8` 客户端等待与拒绝文案、`a7840d2` 设置与已授权设备管理），S5 为看板/决策板登记；**设备验证未执行**，点位见第 8 章与[任务看板](../../task-board.md#tb-sec-001)条目。
+> 证据口径：全量 JVM **1363 tests / 132 classes / 0 failures / 0 errors / 0 skipped**（基线 1322/128），`assembleDebug`、`lintDebug`（0 errors / 146 warnings）与三项 checks 通过。
 > 依据：派发方 2026-10-21 的裁决（两层分离、默认拒绝、持久授权、撤销即时生效、开关默认开、音频沿用「能看就能听」）。
 > 相关：[任务看板](../../task-board.md)、[决策看板](../../decision-board.md)、[TOFU 计划](2026-10-21-tls-tofu.md)、[命名规范](../../naming-conventions.md)、[媒体架构安全模型](../../media-architecture.md)。
 

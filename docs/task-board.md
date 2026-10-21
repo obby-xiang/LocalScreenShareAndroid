@@ -21,6 +21,7 @@
 
 ## 🎯 当前焦点
 
+- 2026-10-21 **配对/授权落地（[TB-SEC-001](#tb-sec-001)，代码与 JVM 验证完成，设备验证待棒）**：两层分离——TOFU 管「身份是不是真的它」（已有），授权管「准不准看」。**默认拒绝**：未授权身份的媒体流请求不直接拒绝，而是停在待批准（不进 `StreamHub`、不发一帧、音频不扇出），服务端弹审批（设备名 + id 短码 + 指纹短码，允许一次 / 总是允许 / 拒绝，60 s 无回答即 `authorization_timeout`），拒绝与超时都带明确原因。**持久授权**按 id **且** 指纹落盘到独立文件 `lss-authorization`（与 `lss-trust` 分开），只有「总是允许」写盘、「允许一次」仅当次。**撤销即时生效**：直播中的会话每次 drain 复核授权，撤销后 ≤5 ms 断流（原因 `authorization_revoked`）。**开关默认开**，关闭回到旧行为并在设置里明示风险；音频沿用 D11「能看就能听」，不单独设许可。协议只做纯增量（`Hello.device_name=6`、`ServerMessage.authorization=6`），旧端忽略。提交 `d690592`（计划）、`7416f9f`（存储/策略/闸门）、`8c3cf1d`（服务端审批流）、`3cc5ef8`（客户端文案）、`a7840d2`（设置与已授权设备）及本条目；全量 **1363 tests / 132 classes / 0 failures / 0 errors / 0 skipped**（基线 1322/128，只增不减），`assembleDebug`、`:app:lintDebug`（0 errors / 146 warnings）与三项 checks 通过。**本棒不碰设备**，点位见 [TB-SEC-001](#tb-sec-001)。
 - 2026-10-21 **音频水位与口径修复（R1–R3，[TB-AUDIO-003](#tb-audio-003) 的两个 ❌ 与重连瞬态）**（来源 handoff `device-test-2026-10-21-dual/audio-fix-verify/report.md` §1.4/§4 的 N1/N2/N4）：**R1 水位** `MAX_DEPTH_MS 250→400`、`RECOVER_DEPTH_MS 150→250` —— 稳态深度是轨道 128 ms + 预填 ~106 ms ≈ **234–248 ms**，与旧的 250 ms 只差几毫秒，任何视频突发都会顶破并按 150 ms 一次砍 6 帧（128 ms 音频，每 13–18 s 一次，`audio.dropped` 0.294 次/s）；同时把丢弃改成**渐进**（新增 `MAX_DROP_FRAMES_PER_PLAN=2`，单次 ≤43 ms；丢弃速率仍高于实时，积压照常排空）。**R2 口径** `AudioPlayhead.audiblePtsUs()` 增加 `pendingFrames` 入参，可闻位置同时扣掉「轨道内未播帧」与「等写线程的帧」，`ClientAudioSession` 用 `pendingSamplesLocked()` 供数 —— 过去深预填被算成"音频落后/超前"的固定偏置（实测 70–91 ms）。**R3 重连瞬态** 播放开始时重锚漂移基准（`referenceOffsetUs` + 检查时刻），新音频会话在已被视频锚定的时间线上重播时，预填期的测量不再被当作基准（上一轮 `drift guard dropped one frame, offset = -185 ms`）。提交 `0b0f8cb`；全量 **1322 tests / 128 classes / 0 failures / 0 errors / 0 skipped**（基线 1315/128，只增不减），`assembleDebug`、`:app:lintDebug`（0 errors / 146 warnings）与三项 checks 通过。**本棒不碰设备**，判据见 [TB-AUDIO-003](#tb-audio-003)。
 - 2026-10-21 **双真机首测的 onboarding/身份三问（N3/N2/N1）代码修复**（来源 handoff `device-test-2026-10-21-dual/report.md` §1.1/§5 与派发方诊断 F1–F4）：**N3（P0）** 扫描取消用 `shutdownNow()` 打断 keystore 读 → 被 `catch (GeneralSecurityException) → null` 误判为密钥不可读 → 静默删键重建（1.4 s 内 14 次），叠加公告/`ServerInfo`/握手证书三份快照，双向 `identity_mismatch`；修法为纯 JVM `KeyEntryFailurePolicy`（瞬时故障保留键）+ `IdentityKeyEntryLoader`（二次确认、每进程一次、被中断不碰 keystore）+ `KeystoreExecutor`（keystore 单线程）+ 身份统一由 `TlsMaterialHolder` 派生并播发变更事件，`ACTION_IDENTITY_RESET` 一并重建 `ServerInfo`，`AddressScanner` 改温和取消，观看端 HELLO 改用建通道时的材料（`8bdd113`、`76ba8a9`）。**N2（P1）** 公告不带指纹时点行直接报"证书与设备 ID 不一致"（把信息不足说成疑似攻击）；改为先直连握手取指纹再进既有首连确认，失败按原因分流、确认记在 `MULTICAST` 不 pin 条目（`3b5ad60`、`f43a89f`）。**N1（P1）** 公告 `sec` 把「画面私密」当成传输能力，导致默认配置下任何跨机连接都被拒；`secure`/`auth` 改回恒表示传输能力，私密开关只管 `Descriptor.secure`/FLAG_SECURE，文案全面校订（`27f991a`）。全量 **1315 tests / 128 classes / 0 failures / 0 errors / 0 skipped**（基线 1283/124，只增不减），`assembleDebug`、`:app:lintDebug`（0 errors / 146 warnings）与 checks 三件套通过。**本棒不碰设备**，判据与点位见 [TB-SEC-002](#tb-sec-002)、[TB-DISC-013](#tb-disc-013)、[TB-SEC-003](#tb-sec-003)。
 - 2026-10-21 **观看端音频周期性「咔」修复（[TB-AUDIO-003](#tb-audio-003)，P0×3 + P1×2 + P2×1）**（来源 handoff `device-test-2026-10-21-dual/audio-noise/report.md` 的诊断，238 s 真机数据 + 代码级定位）：确认脉冲不是网络抖动、不是漂移守卫、不是 jitter buffer 丢帧，而是**播放缓冲永远填不满**导致的反复欠载，每次欠载被应用补成一整帧 21.3 ms 数字静音（`audio.underruns` **2.60 次/s ⇒ 每 0.38 s 一次**，与用户听感吻合；平台侧 AudioFlinger `tallyUnderrunFrames` **6.03 次/s**、`FrmRdy` 常年 2.7–42 ms、`Server FrmCnt=3072`）。根因四条：① `ClientAudioSession` 传给 `plan()` 的是**累计收帧数**而非队列深度（第 3 帧即开播、第 8 帧起每帧都请求丢弃，三档水位成死代码）；② 写线程 20 ms 轮询且入队不 `notify`；③ 音频与 1080p60 视频同一条解码线程（`pres.drop` r=0.94）；④ 轨道 64 ms + 低时延模式。修法：深度改为「已写媒体时间 − 已呈现时间 + 待写帧」（120/250/150 ms，预填到轨道真有 120 ms 才 `play()`）、入队 `notifyAll` 唤醒（仅欠载计时短 wait）、音频改走独立 `lss-client-audio` 单线程 + 32 帧小队列、轨道 64→128 ms 去低时延、欠载按实测缺口补静音且 >100 ms 改「暂停 + 重新锚定」、计数拆 `audio.starved/driftInsert/driftDrop` 且 0 值也打印、新增 `core/audio/AudioLog` 给音频路径补限流日志与平台欠载增量。提交 `76a3be4`、`5343d07`、`c364d9d`、`6ced8e0`、`a520545`、`4cfb75f`；全量 **1283 tests / 124 classes / 0 failures / 0 errors / 0 skipped**（基线 1275/124，只增不减），`assembleDebug`、`:app:lintDebug` 与三项 checks 通过。**本棒不碰设备**，判据与点位见 [TB-AUDIO-003](#tb-audio-003)。
@@ -88,7 +89,7 @@
 | TB-WIN-001 | 🔶 部分完成 | 🟠 P1 | 窗口切换（方案 B；功能冒烟通过，全项回归待统一棒） | 2026-10-17 | — | [窗口与会话设计](windowing-session-design.md) |
 | TB-OBS-001 | 🔶 部分完成 | 🔴 P0 | 可观测性与基线（O1–O6 已落地，O7 待设备） | 2026-10-17 | — | [本计划](superpowers/plans/2026-10-21-transport-observability.md) |
 | TB-FW-002 | 🔶 部分完成 | 🟠 P1 | JPEG 适配 | 2026-10-17 | — | [编码框架设计](codec-framework.md) |
-| TB-SEC-001 | 📋 待办 | 🟠 P1 | 配对与传输加密 | 2026-10-17 | — | [媒体架构](media-architecture.md) |
+| TB-SEC-001 | 🔶 部分完成 | 🟠 P1 | 配对与授权（默认拒绝 + 审批 + 持久授权；代码完成，设备验证待棒） | 2026-10-17 | — | [实施计划](superpowers/plans/2026-10-21-sec-pairing.md) |
 | TB-AUDIO-001 | 🔶 部分完成 | 🟡 P2 | 音频链路（A1–A7 代码完成，设备验证待 TB-AUDIO-003） | 2026-10-17 | — | [音频计划](superpowers/plans/2026-10-21-audio.md) |
 | TB-AUDIO-002 | ⏸ 待裁决 | 🟡 P2 | 麦克风降级（D1=不做，未激活） | 2026-10-21 | — | [音频计划 6.9](superpowers/plans/2026-10-21-audio.md) |
 | TB-AUDIO-003 | ⏳ 等待设备验证 | 🟡 P2 | 音频设备验证清单（并入 TB-ENG-013 统一回归） | 2026-10-21 | — | [音频计划 6.10](superpowers/plans/2026-10-21-audio.md) |
@@ -376,14 +377,24 @@
 </details>
 
 <a id="tb-sec-001"></a>
-<details><summary>TB-SEC-001 配对与传输加密（📋 待办）</summary>
+<details><summary>TB-SEC-001 配对与授权（🔶 部分完成 · 代码与 JVM 验证完成，设备验证待棒）</summary>
 
-- **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟠 P1 / 2026-10-17 / —
-- **任务**：配对、会话令牌与授权：默认拒绝未配对客户端；观看、音频、反控分级授权；发现默认不广播设备名。
-- **与 TB-DISC-010 的边界**：传输加密与设备身份（SPKI 指纹 + pin）已由 [TB-DISC-010](#tb-disc-010) 提供；TOFU pin 只回答“是不是同一台机器”，**不回答“是否允许观看”**。本条剩余配对、会话令牌、默认拒绝未配对客户端与分级授权。
-- **交付物 / 验证证据**：交付：配对流程、令牌校验、授权策略、安全提示。验证：未配对连接被拒绝、授权分级生效、日志脱敏；当前未执行。
-- **音频授权缺口（2026-10-21 登记）**：v1 音频按裁决 D11 采用「能看就能听」——只要视频 join 成功且客户端声明 AAC，`AudioHub` 就向它发音频，没有独立的「允许听」授权项。分级授权（观看/音频/反控）仍归本条；在它落地前，本缺口不得写成“已解决”。
-- **关联文档**：[项目现状安全边界](project-assessment.md)、[媒体架构安全模型](media-architecture.md)、[TB-DISC-010 实施计划](superpowers/plans/2026-10-21-tls-tofu.md)、[音频计划第 8 章](superpowers/plans/2026-10-21-audio.md)、[路线图阶段 2](optimization-roadmap.md)
+- **状态 / 优先级 / 创建 / 完成**：🔶 部分完成（代码 + JVM 用例完成，设备复测待棒）/ 🟠 P1 / 2026-10-17 / —（代码完成 2026-10-21）
+- **任务（原始）**：配对、会话令牌与授权：默认拒绝未配对客户端；观看、音频、反控分级授权；发现默认不广播设备名。
+- **与 TB-DISC-010 的边界**：传输加密与设备身份（SPKI 指纹 + pin）已由 [TB-DISC-010](#tb-disc-010) 提供；TOFU pin 只回答“是不是同一台机器”，**不回答“是否允许观看”**。本棒交付「默认拒绝 + 审批 + 持久授权 + 撤销」，不交付 PIN/扫码配对与会话令牌。
+- **设计（派发方 2026-10-21 裁决）**：两层分离——身份由 TOFU 负责，许可由授权负责；未授权身份进入**待批准**而不是直接拒绝；审批超时（60 s）即拒绝；「总是允许」才落盘，「允许一次」仅当次；撤销即时断流；**已 pin 不等于已授权**（服务端静默 pin 行为保留、客户端 TOFU 流程不变）；开关默认**开**，关闭回旧行为并明示风险；音频沿用 D11「能看就能听」。计划见[实施计划](superpowers/plans/2026-10-21-sec-pairing.md)。
+- **交付物**（提交 `7416f9f`、`8c3cf1d`、`3cc5ef8`、`a7840d2`）：
+  - **授权集合与闸门**（`authorization` 包）：`AuthorizationEntry`（id + 指纹 + 名称 + 授权时间）、`AuthorizationStore`（独立文件 `lss-authorization`，坏文档按空表 fail-closed，写盘失败不影响内存）、`AuthorizationPolicy`（默认拒绝；只有「总是允许」且身份可验证才落盘；三个拒绝原因常量）、`AuthorizationGate`（待批准注册表 + 60 s 窗口 + 开关短路 + 取消）。
+  - **服务端审批流**：`StreamCallHandler` 在 HELLO 与证书身份绑定之后、`hub.join` 之前进闸门；待批准期间**不进 `StreamHub`**（无会话、无帧、无音频），drain 轮询（≤5 ms）判定结果；拒绝 `authorization_denied`、超时 `authorization_timeout`、撤销 `authorization_revoked` 都以 `PERMISSION_DENIED + description` 结束。「允许一次」的会话不参与撤销复核。
+  - **服务端 UI**：独立高优先级通道 `lss-approval` 的审批通知（标题「<设备名> 请求观看」，正文 id 短码 + 指纹短码 + 超时秒数，三键：允许一次 / 总是允许 / 拒绝，点正文进主界面）；主界面收到 `MSG_AUTHORIZATION_REQUEST` 弹同选项对话框；决定经广播（通知按钮）或 Messenger（对话框）回同一个 `AuthorizationGate.resolve`；任何结局都撤销通知与对话框。
+  - **客户端**：`ServerMessage.authorization(PENDING)` 在解码线程之前分流，加载提示改为「等待对方批准（最多 N 秒）」；`Hello.device_name` 仅在启用「共享设备名」且存在别名时发送（**发现默认不广播设备名**维持不变）；`StreamFailure` 新增三种授权拒绝并各自给文案（拒绝 / 未在限时内批准 / 已撤销授权），按不可重试的终止处理。
+  - **设置**：「观看前需经我批准」开关（默认开）+ 说明，关闭时文案改为风险提示；「已授权设备（N）」对话框列出名称 / id 短码 / 授权时间，逐条确认撤销并即时刷新计数。撤销只删授权集合，不动身份 pin。
+  - **协议增量（纯增量）**：`Hello.device_name = 6`、`ServerMessage.authorization = 6`（`AuthorizationStatus{state, timeout_seconds}`）；旧服务端忽略 `device_name`（审批显示「未知设备」+ id 短码），旧客户端把 `authorization` 当 `PAYLOAD_NOT_SET` 忽略（只是等待更久）。不新增 RPC/端口/依赖。
+- **JVM 证据**：`AuthorizationPolicyTest` 8、`AuthorizationStoreTest` 10、`AuthorizationGateTest` 12、`StreamCallHandlerAuthorizationTest` 10（挂起不进会话 / 允许一次不落盘 / 总是允许落盘 / 拒绝 / 超时 / 取消撤销提示 / 撤销断流 / 一次授权不受撤销影响 / 开关关闭直连 / 通知失败关闭调用）、`GrpcMediaTransportTest.sendApprovalPendingEmitsOneNoticeAndFailsAfterClose`、`FingerprintFormatterTest.theShortDisplayKeepsTwoGroups`、`StreamFailureTest` +2。全量 **1363 tests / 132 classes / 0 failures / 0 errors / 0 skipped**（基线 1322/128，只增不减）。
+- **构建证据**：`./gradlew :app:assembleDebug --offline` 通过；`:app:lintDebug` **0 errors / 146 warnings**（与基线同数；新增计数文案的 `PluralsCandidate` 已按 lint 口径改写）；`check_strings.py`（174 键双一致）、`check_cjk.py`、`check_docs.py` 通过。
+- **设备判据（待验证棒）**：① 未授权设备请求观看 → 服务端 ≤1 s 出现审批通知（名称 + id 短码 + 指纹短码），客户端显示「等待对方批准」，`ServerStats` 会话数与 `lss.metrics` 的 `enc.*` 不因等待而变化；②「允许一次」→ 出画，断开重连再次审批；③「总是允许」→ 出画，重连不再审批，`shared_prefs/lss-authorization.xml` 出现该 id；④「拒绝」→ 客户端弹出「对方拒绝了这次观看请求」并结束会话（无重试入口）；⑤ 60 s 不操作 → 客户端弹出超时文案，服务端通知消失；⑥ 设置 →「已授权设备」撤销正在观看的设备 → 客户端 ≤1 s 内断流并显示「对方已撤销观看授权」（`logcat` 有 `reason = authorization_revoked`）；⑦ 关闭开关 → 新设备直接出画（旧行为），设置里出现风险说明，重新打开后既有授权仍生效；⑧ 客户端未开启「共享设备名」→ 审批显示「未知设备」+ id 短码。
+- **已知取舍 / 遗留**：① **PIN/扫码配对与会话令牌未实施**（DV-022 仍维持人工比对口径，DV-026 登记审批体验参数）；② 反控（TB-CTRL-001）未实施，因此「观看/音频/反控分级授权」只剩观看一项落地，**音频按 D11 不单设许可**，不得写成「分级授权已完成」；③ 待批准期间占用一条 gRPC 流与一个 5 ms 轮询的 drain 线程（不占编码器与会话），最多 60 s；④ 会话进行中把开关从关改为开，未授权的当前观看者会按 `authorization_revoked` 断开并需重新批准（刻意保守，未单独设「即时生效」提示）；⑤ 明文调试开关下的无身份对端每次都只能「允许一次」（无可持久化的身份）；⑥ 「已授权设备」计数只在设置 sheet 显示时与撤销后刷新，不订阅存储变更。
+- **关联文档**：[实施计划](superpowers/plans/2026-10-21-sec-pairing.md)、[决策 DB-SEC-001](decision-board.md#db-sec-001)、[DB-SEC-004](decision-board.md#db-sec-004)、[DV-026](decision-board.md)、[媒体架构安全模型](media-architecture.md)、[TB-DISC-010 实施计划](superpowers/plans/2026-10-21-tls-tofu.md)、[音频计划第 8 章](superpowers/plans/2026-10-21-audio.md)、[项目现状安全边界](project-assessment.md)
 
 </details>
 
