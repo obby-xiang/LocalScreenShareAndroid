@@ -66,6 +66,7 @@ import com.obby.android.localscreenshare.core.codec.CodecRegistry;
 import com.obby.android.localscreenshare.core.codec.EncoderSizeAlignment;
 import com.obby.android.localscreenshare.core.codec.h264.H264Codec;
 import com.obby.android.localscreenshare.core.codec.mediacodec.EncoderAlignmentProbe;
+import com.obby.android.localscreenshare.core.metrics.DeviceProfileSampler;
 import com.obby.android.localscreenshare.core.metrics.MetricsFormatter;
 import com.obby.android.localscreenshare.core.metrics.PipelineMetrics;
 import com.obby.android.localscreenshare.core.model.BitstreamFormat;
@@ -176,6 +177,9 @@ public class ScreenShareService extends Service {
     // because the line is meant for log capture, not for a live display.
     private static final long UPDATE_METRICS_INTERVAL_MS = 5000L;
 
+    // The device block is logged every other metric line, that is every ten seconds.
+    private static final int DEVICE_BLOCK_EVERY_N_LOGS = 2;
+
     // Attempts per encoder switch; the second one covers a transient codec resource shortage
     // without turning a permanently invalid request into an endless rebuild loop.
     private static final int ENCODER_SWITCH_MAX_ATTEMPTS = 2;
@@ -227,6 +231,10 @@ public class ScreenShareService extends Service {
 
             Log.i(mTag, MetricsFormatter.toLogLine(MetricsFormatter.Role.SERVER,
                 metrics.snapshot(UPDATE_METRICS_INTERVAL_MS)));
+            if (++mMetricsLogCount % DEVICE_BLOCK_EVERY_N_LOGS == 0) {
+                Log.i(mTag, MetricsFormatter.toDeviceLine(MetricsFormatter.Role.SERVER,
+                    mDeviceProfileSampler.sample()));
+            }
             mMainHandler.postDelayed(mMetricsLogRunnable, UPDATE_METRICS_INTERVAL_MS);
         }
     };
@@ -305,6 +313,13 @@ public class ScreenShareService extends Service {
 
     // Set once the capture-to-output probe suppressed itself, so the warning is logged once.
     private boolean mCapToOutSuppressed;
+
+    // Device readings emitted with the metric lines; platform lookups live in the service layer.
+    @NonNull
+    private final DeviceProfileSampler mDeviceProfileSampler = new AndroidDeviceProfileSampler(this);
+
+    // Counts metric log lines so the device block is emitted every ten seconds.
+    private int mMetricsLogCount;
 
     // Last values rendered into the notification; used to skip redundant notification updates.
     private int mConnectionCount;
@@ -837,6 +852,7 @@ public class ScreenShareService extends Service {
 
         mMainHandler.removeCallbacks(mMetricsLogRunnable);
         mMetrics = null;
+        mMetricsLogCount = 0;
 
         // Stop producing UI first so the chip never outlives the running session.
         if (mScreenShareChip != null) {

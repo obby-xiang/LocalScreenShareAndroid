@@ -174,6 +174,11 @@ public final class Preferences {
      */
     public static final String KEY_METRICS_ENABLED = "metrics_enabled";
 
+    /**
+     * Viewer debug-overlay flag; see {@link #isViewerHudEnabled()}.
+     */
+    public static final String KEY_VIEWER_HUD_ENABLED = "viewer_hud_enabled";
+
     private static final String KEY_IDENTITY_ID = "identity_id";
 
     private static final String KEY_IDENTITY_FINGERPRINT = "identity_fingerprint";
@@ -354,6 +359,24 @@ public final class Preferences {
      */
     public void setMetricsEnabled(final boolean isEnabled) {
         mPreferences.edit().putBoolean(KEY_METRICS_ENABLED, isEnabled).commit();
+    }
+
+    /**
+     * Whether the viewer shows the debug overlay; defaults to false.
+     *
+     * <p>It is separate from {@link #isMetricsEnabled()} on purpose: the overlay only decides
+     * whether the numbers are visible, never whether they are collected, so turning the overlay on
+     * cannot silently start measuring a pipeline the user switched off.</p>
+     */
+    public boolean isViewerHudEnabled() {
+        return mPreferences.getBoolean(KEY_VIEWER_HUD_ENABLED, false);
+    }
+
+    /**
+     * Persists the viewer debug-overlay flag; a running viewer applies it immediately.
+     */
+    public void setViewerHudEnabled(final boolean isEnabled) {
+        mPreferences.edit().putBoolean(KEY_VIEWER_HUD_ENABLED, isEnabled).commit();
     }
 
     /**

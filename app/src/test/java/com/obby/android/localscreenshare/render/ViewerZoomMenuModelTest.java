@@ -7,6 +7,7 @@ import java.util.List;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 /**
@@ -43,6 +44,36 @@ public class ViewerZoomMenuModelTest {
             assertFalse("the integer preset must not repeat the actual-size window",
                     entry.getMode() == ZoomMode.INTEGER);
         }
+    }
+
+    @Test
+    public void debugOverlayToggle_isAppendedOnlyWhenRequested() {
+        List<ViewerZoomMenuModel.Entry> withoutToggle = ViewerZoomMenuModel.build(CONTENT_WIDTH,
+                CONTENT_HEIGHT, 0, BOUNDS_WIDTH, BOUNDS_HEIGHT, 80, MIN_SIZE, ZoomMode.FIT);
+        assertEquals(2, withoutToggle.size());
+        for (ViewerZoomMenuModel.Entry entry : withoutToggle) {
+            assertEquals(ViewerZoomMenuModel.Kind.ZOOM, entry.getKind());
+        }
+
+        List<ViewerZoomMenuModel.Entry> withToggle = ViewerZoomMenuModel.build(CONTENT_WIDTH,
+                CONTENT_HEIGHT, 0, BOUNDS_WIDTH, BOUNDS_HEIGHT, 80, MIN_SIZE, ZoomMode.FIT, true);
+
+        assertEquals(3, withToggle.size());
+        ViewerZoomMenuModel.Entry toggle = withToggle.get(2);
+        assertEquals(ViewerZoomMenuModel.Kind.DEBUG_OVERLAY, toggle.getKind());
+        assertNull(toggle.getMode());
+        assertTrue("an enabled overlay is marked as the applied state", toggle.isSelected());
+        assertFalse(toggle.isClamped());
+    }
+
+    @Test
+    public void debugOverlayToggle_reflectsTheDisabledState() {
+        List<ViewerZoomMenuModel.Entry> entries = ViewerZoomMenuModel.build(CONTENT_WIDTH,
+                CONTENT_HEIGHT, 0, BOUNDS_WIDTH, BOUNDS_HEIGHT, 80, MIN_SIZE, ZoomMode.FIT, false);
+
+        ViewerZoomMenuModel.Entry toggle = entries.get(entries.size() - 1);
+        assertEquals(ViewerZoomMenuModel.Kind.DEBUG_OVERLAY, toggle.getKind());
+        assertFalse(toggle.isSelected());
     }
 
     @Test

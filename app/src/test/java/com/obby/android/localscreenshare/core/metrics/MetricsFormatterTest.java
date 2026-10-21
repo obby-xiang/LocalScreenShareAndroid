@@ -161,11 +161,33 @@ public class MetricsFormatterTest {
     }
 
     @Test
+    public void deviceLine_printsEveryReading() {
+        DeviceProfile profile = new DeviceProfile(2L, 352L, 12L * 1024L * 1024L,
+                30L * 1024L * 1024L, 48L);
+
+        assertEquals("lss.device role=client thermal=2 battTempC=35.2 heapMB=42.0 threads=48",
+                MetricsFormatter.toDeviceLine(Role.CLIENT, profile));
+    }
+
+    @Test
+    public void deviceLine_marksMissingReadingsAsUnknown() {
+        DeviceProfile profile = new DeviceProfile(DeviceProfile.UNKNOWN, DeviceProfile.UNKNOWN,
+                DeviceProfile.UNKNOWN, DeviceProfile.UNKNOWN, DeviceProfile.UNKNOWN);
+
+        assertEquals("lss.device role=server thermal=n/a battTempC=n/a heapMB=n/a threads=n/a",
+                MetricsFormatter.toDeviceLine(Role.SERVER, profile));
+    }
+
+    @Test
     public void nullArguments_areRejected() {
         assertThrows(IllegalArgumentException.class,
                 () -> MetricsFormatter.toLogLine(null, PipelineMetrics.NONE.snapshot(1000L)));
         assertThrows(IllegalArgumentException.class,
                 () -> MetricsFormatter.toLogLine(Role.SERVER, null));
         assertThrows(IllegalArgumentException.class, () -> MetricsFormatter.toHud(null));
+        assertThrows(IllegalArgumentException.class,
+                () -> MetricsFormatter.toDeviceLine(null, new DeviceProfile(0L, 0L, 0L, 0L, 0L)));
+        assertThrows(IllegalArgumentException.class,
+                () -> MetricsFormatter.toDeviceLine(Role.CLIENT, null));
     }
 }

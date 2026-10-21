@@ -51,6 +51,36 @@ public final class MetricNames {
      */
     public static final String APPROX_FLOW_WINDOW = "approx.tx.flowWindow";
 
+    /**
+     * Prefix of the device-state log line, which is emitted next to the metric lines.
+     */
+    public static final String DEVICE_PREFIX = "lss.device";
+
+    /**
+     * Thermal status reported by the platform.
+     */
+    public static final String KEY_THERMAL = "thermal";
+
+    /**
+     * Battery temperature in degrees Celsius.
+     */
+    public static final String KEY_BATTERY_TEMPERATURE = "battTempC";
+
+    /**
+     * Used heap in megabytes, native and Java added together.
+     */
+    public static final String KEY_HEAP_MB = "heapMB";
+
+    /**
+     * Number of live threads in the process.
+     */
+    public static final String KEY_THREADS = "threads";
+
+    /**
+     * Value printed for a reading the platform did not provide.
+     */
+    public static final String VALUE_UNKNOWN = "n/a";
+
     private MetricNames() {
     }
 }

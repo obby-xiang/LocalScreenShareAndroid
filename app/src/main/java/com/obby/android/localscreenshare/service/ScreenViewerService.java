@@ -11,6 +11,7 @@ import android.content.IntentFilter;
 import android.content.pm.ServiceInfo;
 import android.content.res.Configuration;
 import android.graphics.Bitmap;
+import android.graphics.Color;
 import android.graphics.Canvas;
 import android.graphics.DrawFilter;
 import android.graphics.Matrix;
@@ -18,16 +19,20 @@ import android.graphics.Outline;
 import android.graphics.Paint;
 import android.graphics.PaintFlagsDrawFilter;
 import android.graphics.PixelFormat;
+import android.graphics.Typeface;
+import android.graphics.drawable.ColorDrawable;
 import android.graphics.PointF;
 import android.graphics.Rect;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.text.TextUtils;
 import android.text.format.Formatter;
 import android.util.DisplayMetrics;
 import android.util.Log;
 import android.util.Size;
+import android.util.TypedValue;
 import android.view.GestureDetector;
 import android.view.Gravity;
 import android.view.LayoutInflater;
@@ -38,7 +43,9 @@ import android.view.ViewConfiguration;
 import android.view.ViewGroup;
 import android.view.ViewOutlineProvider;
 import android.view.WindowManager;
+import android.widget.FrameLayout;
 import android.widget.ImageView;
+import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -78,6 +85,7 @@ import com.obby.android.localscreenshare.core.codec.CodecIds;
 import com.obby.android.localscreenshare.core.codec.CodecRegistry;
 import com.obby.android.localscreenshare.core.codec.h264.H264Codec;
 import com.obby.android.localscreenshare.core.metrics.ArrivalTracker;
+import com.obby.android.localscreenshare.core.metrics.DeviceProfileSampler;
 import com.obby.android.localscreenshare.core.metrics.MetricsFormatter;
 import com.obby.android.localscreenshare.core.metrics.PipelineMetrics;
 import com.obby.android.localscreenshare.core.model.ClientSessionKey;
@@ -144,6 +152,12 @@ public class ScreenViewerService extends Service {
     // Cadence of the structured metric log line; slower than the three-second UI statistics.
     private static final long UPDATE_METRICS_INTERVAL_MS = 5000L;
 
+    // Cadence of the debug overlay; only runs while the overlay is enabled.
+    private static final long UPDATE_HUD_INTERVAL_MS = 1000L;
+
+    // The device block is logged every other metric line, that is every ten seconds.
+    private static final int DEVICE_BLOCK_EVERY_N_LOGS = 2;
+
     // Target of the current session; null while stopped.
     @Nullable
     private DeviceInfo mServiceInfo;
@@ -204,9 +218,20 @@ public class ScreenViewerService extends Service {
     @NonNull
     private final Runnable mMetricsLogRunnable = this::logMetrics;
 
+    // Refreshes the debug overlay; reschedules itself only while the overlay stays enabled.
+    @NonNull
+    private final Runnable mHudRunnable = this::updateHud;
+
     // Last resynchronization reason rendered, so the reason is logged once per change.
     @Nullable
     private ClientMediaSession.ResyncReason mLoggedResyncReason;
+
+    // Counts metric log lines so the device block is emitted every ten seconds.
+    private int mMetricsLogCount;
+
+    // Device readings emitted with the metric lines; platform lookups live in the service layer.
+    @NonNull
+    private final DeviceProfileSampler mDeviceProfileSampler = new AndroidDeviceProfileSampler(this);
 
     private final String mTag = "ScreenViewerService@" + hashCode();
 
@@ -518,8 +543,10 @@ public class ScreenViewerService extends Service {
         mInboundDataRate = 0L;
 
         mMainHandler.removeCallbacks(mMetricsLogRunnable);
+        mMainHandler.removeCallbacks(mHudRunnable);
         mMetrics = null;
         mLoggedResyncReason = null;
+        mMetricsLogCount = 0;
 
         if (mDialog != null) {
             mDialog.dismiss();
@@ -591,7 +618,8 @@ public class ScreenViewerService extends Service {
             mStreamKey = new StreamKey("remote", "screen");
         }
         if (mSurfaceShareViewer == null) {
-            mSurfaceShareViewer = new SurfaceShareViewer(this, mServiceInfo);
+            mSurfaceShareViewer = new SurfaceShareViewer(this, mServiceInfo,
+                this::syncHudLoop);
         }
         mSurfaceRenderTarget = new SurfaceRenderTarget(mSurfaceShareViewer.getTextureView(),
                 () -> {
@@ -624,6 +652,7 @@ public class ScreenViewerService extends Service {
         if (mMetrics.isEnabled()) {
             mMainHandler.postDelayed(mMetricsLogRunnable, UPDATE_METRICS_INTERVAL_MS);
         }
+        syncHudLoop();
 
         return mClientMediaReceiver;
     }
@@ -642,6 +671,43 @@ public class ScreenViewerService extends Service {
                 : PipelineMetrics.NONE;
         }
         return mMetrics;
+    }
+
+    /**
+     * Starts, restarts or stops the overlay refresh loop to match the current preference.
+     *
+     * <p>Called when a session starts and whenever the menu toggles the overlay. While the overlay
+     * is off no snapshot is taken at all, so a hidden overlay costs nothing beyond this check.</p>
+     */
+    private void syncHudLoop() {
+        mMainHandler.removeCallbacks(mHudRunnable);
+        final SurfaceShareViewer viewer = mSurfaceShareViewer;
+        if (viewer == null) {
+            return;
+        }
+        if (!Preferences.get().isViewerHudEnabled() || mMetrics == null || !mMetrics.isEnabled()) {
+            viewer.setHudLines(Collections.emptyList());
+            return;
+        }
+        updateHud();
+    }
+
+    /**
+     * Refreshes the overlay from one snapshot and reschedules itself.
+     */
+    private void updateHud() {
+        mMainHandler.removeCallbacks(mHudRunnable);
+        final SurfaceShareViewer viewer = mSurfaceShareViewer;
+        final PipelineMetrics metrics = mMetrics;
+        if (viewer == null || metrics == null) {
+            return;
+        }
+        if (!Preferences.get().isViewerHudEnabled() || !metrics.isEnabled()) {
+            viewer.setHudLines(Collections.emptyList());
+            return;
+        }
+        viewer.setHudLines(MetricsFormatter.toHud(metrics.snapshot(UPDATE_HUD_INTERVAL_MS)));
+        mMainHandler.postDelayed(mHudRunnable, UPDATE_HUD_INTERVAL_MS);
     }
 
     /**
@@ -669,6 +735,11 @@ public class ScreenViewerService extends Service {
         if (reason != null && reason != mLoggedResyncReason) {
             mLoggedResyncReason = reason;
             Log.i(mTag, "logMetrics: resync reason " + reason.name());
+        }
+
+        if (++mMetricsLogCount % DEVICE_BLOCK_EVERY_N_LOGS == 0) {
+            Log.i(mTag, MetricsFormatter.toDeviceLine(MetricsFormatter.Role.CLIENT,
+                mDeviceProfileSampler.sample()));
         }
 
         mMainHandler.postDelayed(mMetricsLogRunnable, UPDATE_METRICS_INTERVAL_MS);
@@ -832,13 +903,25 @@ public class ScreenViewerService extends Service {
         private final WindowManager mWindowManager;
 
         @NonNull
+        private final FrameLayout mRootView;
+
+        @NonNull
         private final TextureView mTextureView;
+
+        // Debug overlay; a non-clickable child of the root, so touches still reach the texture.
+        @NonNull
+        private final TextView mHudView;
 
         @NonNull
         private final WindowManager.LayoutParams mLayoutParams;
 
         @NonNull
         private final GestureDetector mGestureDetector;
+
+        // Invoked after the overlay preference changed, so the service can start or stop the
+        // one-second refresh loop instead of leaving it running for a hidden overlay.
+        @NonNull
+        private final Runnable onHudPreferenceChanged;
 
         @NonNull
         private final PointF mLocation = new PointF();
@@ -880,9 +963,11 @@ public class ScreenViewerService extends Service {
         private float mCornerSize;
 
         private SurfaceShareViewer(@NonNull final Context context,
-                                   @NonNull final DeviceInfo serviceInfo) {
+                                   @NonNull final DeviceInfo serviceInfo,
+                                   @NonNull final Runnable onHudPreferenceChanged) {
             mContext = new ContextThemeWrapper(context, R.style.Theme_ScreenShare);
             mServiceInfo = serviceInfo;
+            this.onHudPreferenceChanged = onHudPreferenceChanged;
             mWindowManager = mContext.getSystemService(WindowManager.class);
             mTouchSlop = ViewConfiguration.get(mContext).getScaledTouchSlop();
             mTextureView = new TextureView(mContext) {
@@ -892,13 +977,31 @@ public class ScreenViewerService extends Service {
                     // The usable bounds change with rotation and multi-window; re-fit after the new
                     // configuration has been applied, as the bitmap viewer did.
                     post(() -> {
-                        if (getParent() != null) {
+                        if (mRootView.getParent() != null) {
                             updateView();
                         }
                     });
                 }
             };
             mTextureView.setOpaque(false);
+            mHudView = new TextView(mContext);
+            mHudView.setTextColor(Color.WHITE);
+            mHudView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f);
+            mHudView.setTypeface(Typeface.MONOSPACE);
+            mHudView.setBackground(new ColorDrawable(0x99000000));
+            mHudView.setPadding(12, 8, 12, 8);
+            mHudView.setLineSpacing(0f, 1.1f);
+            // The overlay never consumes input: without a click listener and with clickable
+            // false, a touch falls through to the texture view underneath.
+            mHudView.setClickable(false);
+            mHudView.setFocusable(false);
+            mHudView.setVisibility(View.GONE);
+            mRootView = new FrameLayout(mContext);
+            mRootView.addView(mTextureView, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            mRootView.addView(mHudView, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP | Gravity.START));
             // The outline is evaluated against the current view bounds, so the clipped corners
             // follow the window size while the radius keeps the bitmap viewer's ratio.
             mTextureView.setOutlineProvider(new ViewOutlineProvider() {
@@ -993,8 +1096,42 @@ public class ScreenViewerService extends Service {
             return mTextureView;
         }
 
+        /**
+         * Replaces the debug overlay text.
+         *
+         * <p>Called on the main thread once per second. An empty list hides the overlay instead of
+         * leaving stale numbers on screen, which is what a disabled overlay or a disabled metric
+         * scope looks like.</p>
+         *
+         * @param lines rendered lines, or an empty list to hide the overlay
+         */
+        void setHudLines(@NonNull final List<String> lines) {
+            if (lines.isEmpty() || !Preferences.get().isViewerHudEnabled()) {
+                mHudView.setText(null);
+                mHudView.setVisibility(View.GONE);
+                return;
+            }
+            mHudView.setText(TextUtils.join("\n", lines));
+            mHudView.setVisibility(View.VISIBLE);
+        }
+
+        /**
+         * Hides the overlay when the preference is off and re-shows a populated one otherwise.
+         *
+         * <p>The root view owns the window, so the overlay only ever changes visibility; the
+         * texture view, its outline and its transform are untouched.</p>
+         */
+        private void updateHudVisibility() {
+            if (!Preferences.get().isViewerHudEnabled()) {
+                mHudView.setText(null);
+                mHudView.setVisibility(View.GONE);
+            } else if (mHudView.getText().length() > 0) {
+                mHudView.setVisibility(View.VISIBLE);
+            }
+        }
+
         void show() {
-            if (mTextureView.getParent() == null) {
+            if (mRootView.getParent() == null) {
                 mOpacity = Preferences.get().getViewerOpacity();
                 mScale = Preferences.get().getViewerScale();
                 mZoomMode = ZoomMode.fromWire(Preferences.get().getViewerZoomMode());
@@ -1002,7 +1139,8 @@ public class ScreenViewerService extends Service {
                 updateLayoutParams();
                 updateShape();
                 updateContentTransform();
-                mWindowManager.addView(mTextureView, mLayoutParams);
+                mWindowManager.addView(mRootView, mLayoutParams);
+                updateHudVisibility();
             }
         }
 
@@ -1025,7 +1163,7 @@ public class ScreenViewerService extends Service {
             mContentHeight = visibleHeight;
             mRotationDegrees = rotationDegrees;
 
-            if (mTextureView.getParent() != null) {
+            if (mRootView.getParent() != null) {
                 updateView();
             }
         }
@@ -1037,7 +1175,8 @@ public class ScreenViewerService extends Service {
             updateLayoutParams();
             updateShape();
             updateContentTransform();
-            mWindowManager.updateViewLayout(mTextureView, mLayoutParams);
+            mWindowManager.updateViewLayout(mRootView, mLayoutParams);
+            updateHudVisibility();
         }
 
         /**
@@ -1098,8 +1237,8 @@ public class ScreenViewerService extends Service {
                 mDialog.dismiss();
                 mDialog = null;
             }
-            if (mTextureView.getParent() != null) {
-                mWindowManager.removeViewImmediate(mTextureView);
+            if (mRootView.getParent() != null) {
+                mWindowManager.removeViewImmediate(mRootView);
             }
         }
 
@@ -1114,8 +1253,8 @@ public class ScreenViewerService extends Service {
             } else {
                 mLayoutParams.flags &= ~WindowManager.LayoutParams.FLAG_SECURE;
             }
-            if (mTextureView.getParent() != null) {
-                mWindowManager.updateViewLayout(mTextureView, mLayoutParams);
+            if (mRootView.getParent() != null) {
+                mWindowManager.updateViewLayout(mRootView, mLayoutParams);
             }
         }
 
@@ -1187,7 +1326,7 @@ public class ScreenViewerService extends Service {
                 .getDimensionPixelSize(R.dimen.screen_share_viewer_min_size);
             final List<ViewerZoomMenuModel.Entry> entries = ViewerZoomMenuModel.build(
                 mContentWidth, mContentHeight, mRotationDegrees, mBounds.width(), mBounds.height(),
-                mScale, minSize, mZoomMode);
+                mScale, minSize, mZoomMode, Preferences.get().isViewerHudEnabled());
 
             final CharSequence[] labels = new CharSequence[entries.size() + 1];
             int checked = 0;
@@ -1205,10 +1344,15 @@ public class ScreenViewerService extends Service {
                 .setTitle(R.string.viewer_zoom_mode_title)
                 .setSingleChoiceItems(labels, checked, (target, which) -> {
                     target.dismiss();
-                    if (which < entries.size()) {
-                        setZoomMode(entries.get(which).getMode());
-                    } else {
+                    if (which >= entries.size()) {
                         showViewerScaleDialog();
+                        return;
+                    }
+                    final ViewerZoomMenuModel.Entry entry = entries.get(which);
+                    if (entry.getKind() == ViewerZoomMenuModel.Kind.DEBUG_OVERLAY) {
+                        setHudEnabled(!entry.isSelected());
+                    } else {
+                        setZoomMode(entry.getMode());
                     }
                 })
                 .setNegativeButton(android.R.string.cancel, null)
@@ -1256,6 +1400,10 @@ public class ScreenViewerService extends Service {
          */
         @NonNull
         private String labelOf(@NonNull final ViewerZoomMenuModel.Entry entry) {
+            if (entry.getKind() == ViewerZoomMenuModel.Kind.DEBUG_OVERLAY) {
+                return markSelection(mContext.getString(R.string.viewer_debug_overlay_label),
+                    entry.isSelected());
+            }
             final int percent = entry.getEffectivePercent();
             final String label;
             switch (entry.getMode()) {
@@ -1293,7 +1441,7 @@ public class ScreenViewerService extends Service {
             }
             mZoomMode = mode;
             Preferences.get().setViewerZoomMode(mode.wire());
-            if (mTextureView.getParent() != null) {
+            if (mRootView.getParent() != null) {
                 updateView();
             }
         }
@@ -1307,9 +1455,18 @@ public class ScreenViewerService extends Service {
             }
             mScale = percent;
             Preferences.get().setViewerScale(percent);
-            if (mTextureView.getParent() != null) {
+            if (mRootView.getParent() != null) {
                 updateView();
             }
+        }
+
+        /**
+         * Persists the debug-overlay flag and applies it to the running session.
+         */
+        private void setHudEnabled(final boolean enabled) {
+            Preferences.get().setViewerHudEnabled(enabled);
+            updateHudVisibility();
+            onHudPreferenceChanged.run();
         }
 
         private void updateLocation(final int x, final int y) {
@@ -1323,7 +1480,7 @@ public class ScreenViewerService extends Service {
             if (mLayoutParams.x != finalX || mLayoutParams.y != finalY) {
                 mLayoutParams.x = finalX;
                 mLayoutParams.y = finalY;
-                mWindowManager.updateViewLayout(mTextureView, mLayoutParams);
+                mWindowManager.updateViewLayout(mRootView, mLayoutParams);
             }
         }
 

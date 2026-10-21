@@ -16,7 +16,12 @@ import java.util.List;
  *
  * <p><b>Purity.</b> The model reads no configuration, keeps no state and touches no Android type,
  * so the same input always produces the same rows and every rule is unit-testable on the JVM. The
- * row order is fixed: fit, actual size, integer preset.</p>
+ * row order is fixed: fit, actual size, integer preset, and - when the caller asks for it - one
+ * debug-overlay toggle row.</p>
+ *
+ * <p><b>Debug toggle.</b> The overlay switch lives in the same menu because a second menu would be
+ * a second discovery problem: a user who never finds the overlay cannot report what the numbers
+ * say. The toggle row carries no zoom mode; {@link Entry#getKind()} tells the two apart.</p>
  */
 public final class ViewerZoomMenuModel {
 
@@ -31,6 +36,9 @@ public final class ViewerZoomMenuModel {
 
     /**
      * Builds the zoom menu rows for the given stream geometry and viewing preferences.
+     *
+     * <p>Returns zoom rows only; use {@link #build(int, int, int, int, int, int, int, ZoomMode,
+     * boolean)} when the menu should also offer the debug-overlay toggle.</p>
      *
      * <p>The actual-size row is clamped exactly like the window: a stream larger than the usable
      * display area is reduced to fit, and the row then reports the reduced scale so the label can
@@ -53,6 +61,28 @@ public final class ViewerZoomMenuModel {
     public static List<Entry> build(int contentWidth, int contentHeight, int rotationDegrees,
                                     int boundsWidth, int boundsHeight, int scalePercent,
                                     int minSizePx, ZoomMode currentMode) {
+        return build(contentWidth, contentHeight, rotationDegrees, boundsWidth, boundsHeight,
+                scalePercent, minSizePx, currentMode, null);
+    }
+
+    /**
+     * Builds the zoom menu rows and optionally appends the debug-overlay toggle.
+     *
+     * @param contentWidth    visible stream width in pixels; non-positive means "unknown yet"
+     * @param contentHeight   visible stream height in pixels; non-positive means "unknown yet"
+     * @param rotationDegrees display rotation applied by the viewer
+     * @param boundsWidth     width of the usable display area in pixels
+     * @param boundsHeight    height of the usable display area in pixels
+     * @param scalePercent    viewing percentage, clamped to {@code 1..100}
+     * @param minSizePx       minimum window size on either axis in pixels
+     * @param currentMode     currently applied preset; must not be null
+     * @param hudEnabled      whether the debug overlay is currently shown, or null to omit the row
+     * @return an immutable list of zoom rows, with the toggle row last when requested
+     * @throws IllegalArgumentException if {@code currentMode} is null
+     */
+    public static List<Entry> build(int contentWidth, int contentHeight, int rotationDegrees,
+                                    int boundsWidth, int boundsHeight, int scalePercent,
+                                    int minSizePx, ZoomMode currentMode, Boolean hudEnabled) {
         if (currentMode == null) {
             throw new IllegalArgumentException("currentMode must not be null");
         }
@@ -78,6 +108,9 @@ public final class ViewerZoomMenuModel {
             entries.add(new Entry(ZoomMode.INTEGER, percentOf(integer), integer.isClamped(),
                     currentMode == ZoomMode.INTEGER));
         }
+        if (hudEnabled != null) {
+            entries.add(Entry.debugOverlay(hudEnabled));
+        }
         return Collections.unmodifiableList(entries);
     }
 
@@ -96,17 +129,40 @@ public final class ViewerZoomMenuModel {
     }
 
     /**
-     * One zoom menu row: the preset it applies, the scale it would use and whether it is the
-     * currently applied preset.
+     * What a row does when it is chosen.
+     */
+    public enum Kind {
+
+        /**
+         * Applies a zoom preset.
+         */
+        ZOOM,
+
+        /**
+         * Toggles the debug overlay.
+         */
+        DEBUG_OVERLAY
+    }
+
+    /**
+     * One menu row: either a zoom preset with the scale it would apply, or the debug-overlay
+     * toggle.
      */
     public static final class Entry {
 
+        private final Kind kind;
         private final ZoomMode mode;
         private final int effectivePercent;
         private final boolean clamped;
         private final boolean selected;
 
         private Entry(ZoomMode mode, int effectivePercent, boolean clamped, boolean selected) {
+            this(Kind.ZOOM, mode, effectivePercent, clamped, selected);
+        }
+
+        private Entry(Kind kind, ZoomMode mode, int effectivePercent, boolean clamped,
+                      boolean selected) {
+            this.kind = kind;
             this.mode = mode;
             this.effectivePercent = effectivePercent;
             this.clamped = clamped;
@@ -114,7 +170,21 @@ public final class ViewerZoomMenuModel {
         }
 
         /**
-         * Returns the preset this row applies; never null.
+         * Creates the debug-overlay toggle row.
+         */
+        private static Entry debugOverlay(boolean enabled) {
+            return new Entry(Kind.DEBUG_OVERLAY, null, 0, false, enabled);
+        }
+
+        /**
+         * Returns what choosing this row does; never null.
+         */
+        public Kind getKind() {
+            return kind;
+        }
+
+        /**
+         * Returns the preset this row applies, or null for the debug-overlay toggle row.
          */
         public ZoomMode getMode() {
             return mode;

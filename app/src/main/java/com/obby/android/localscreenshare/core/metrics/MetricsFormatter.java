@@ -207,6 +207,62 @@ public final class MetricsFormatter {
     }
 
     /**
+     * Renders one device-state log record.
+     *
+     * <p>Emitted every ten seconds next to the metric lines. It answers "was the device hot or out
+     * of memory" and deliberately carries no attribution: a hot device is context for a slow
+     * pipeline, never the measured cause of it.</p>
+     *
+     * @param role    which side reported the reading; must not be null
+     * @param profile reading to render; must not be null
+     * @return one line starting with {@link MetricNames#DEVICE_PREFIX}
+     * @throws IllegalArgumentException if an argument is null
+     */
+    public static String toDeviceLine(Role role, DeviceProfile profile) {
+        if (role == null) {
+            throw new IllegalArgumentException("role must not be null");
+        }
+        if (profile == null) {
+            throw new IllegalArgumentException("profile must not be null");
+        }
+        StringBuilder out = new StringBuilder(96);
+        out.append(MetricNames.DEVICE_PREFIX).append(' ')
+                .append(MetricNames.KEY_ROLE).append('=')
+                .append(role == Role.SERVER ? "server" : "client");
+        out.append(' ').append(MetricNames.KEY_THERMAL).append('=');
+        appendOptional(out, profile.getThermalStatus());
+        out.append(' ').append(MetricNames.KEY_BATTERY_TEMPERATURE).append('=');
+        if (profile.getBatteryTemperatureDeciC() == DeviceProfile.UNKNOWN) {
+            out.append(MetricNames.VALUE_UNKNOWN);
+        } else {
+            appendTenths(out, profile.getBatteryTemperatureDeciC() / 10d);
+        }
+        out.append(' ').append(MetricNames.KEY_HEAP_MB).append('=');
+        if (profile.getNativeHeapBytes() == DeviceProfile.UNKNOWN
+                && profile.getJavaHeapBytes() == DeviceProfile.UNKNOWN) {
+            out.append(MetricNames.VALUE_UNKNOWN);
+        } else {
+            long bytes = Math.max(0L, profile.getNativeHeapBytes())
+                    + Math.max(0L, profile.getJavaHeapBytes());
+            appendTenths(out, bytes / (1024d * 1024d));
+        }
+        out.append(' ').append(MetricNames.KEY_THREADS).append('=');
+        appendOptional(out, profile.getThreadCount());
+        return out.toString();
+    }
+
+    /**
+     * Appends a value or the unknown marker.
+     */
+    private static void appendOptional(StringBuilder out, long value) {
+        if (value == DeviceProfile.UNKNOWN) {
+            out.append(MetricNames.VALUE_UNKNOWN);
+        } else {
+            out.append(value);
+        }
+    }
+
+    /**
      * Renders the three debug-overlay lines.
      *
      * <p>The shape is fixed: frame rate, bitrate and round trip on the first line; queue depth,
