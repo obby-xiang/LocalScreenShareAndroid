@@ -115,8 +115,11 @@ public final class ScreenShareClient {
     // mCatchUpPolicy reports an episode.
     private long mCatchUpStartedNs;
 
-    // Lifecycle flag, written and read on the main thread; once set, callbacks become no-ops.
-    private boolean mIsStopped;
+    // Lifecycle flag, written on the main thread and read by the transport and decode threads;
+    // once set, callbacks become no-ops. Volatile because a stop tears the channel down from the
+    // main thread and the transport then reports the cancellation on its own thread: without the
+    // write being visible, that late error would be logged as a peer failure.
+    private volatile boolean mIsStopped;
 
     // Non-null only between start() and stop().
     @Nullable
@@ -416,18 +419,29 @@ public final class ScreenShareClient {
 
                 @Override
                 public void onError(Throwable t) {
-                    onDisconnected();
+                    if (mIsStopped) {
+                        // A local stop shuts the channel down, which the transport reports as
+                        // CANCELLED; that is neither a failure of the peer nor news for the log.
+                        return;
+                    }
+                    // Every termination is logged with its reason. Without it a refused identity, a
+                    // server rejection and a lost connection look identical in logcat and in the
+                    // UI, which is what made the failure paths unreportable in the field.
+                    final StreamFailure failure = StreamFailure.from(t);
+                    Log.w(mTag, "onError: stream terminated, " + failure.toLogText());
+                    onDisconnected(failure);
                 }
 
                 @Override
                 public void onCompleted() {
-                    onDisconnected();
+                    Log.i(mTag, "onCompleted: stream completed by the peer");
+                    onDisconnected(StreamFailure.completed());
                 }
 
-                private void onDisconnected() {
+                private void onDisconnected(@NonNull final StreamFailure failure) {
                     mMainHandler.post(() -> {
                         if (!mIsStopped) {
-                            observer.onDisconnected();
+                            observer.onDisconnected(failure);
                         }
                     });
                 }

@@ -15,6 +15,7 @@
     <string name="screen_share_disconnect_confirm">"Disconnect from the shared screen \"&lt;b&gt;<xliff:g id="name">%1$s</xliff:g>&lt;/b&gt;\"?"</string>
     <string name="screen_share_retry_connect_confirm">"Unable to connect to the shared screen \"&lt;b&gt;<xliff:g id="name">%1$s</xliff:g>&lt;/b&gt;\". Retry?"</string>
     <string name="screen_share_reconnect_confirm">"Disconnected from the shared screen \"&lt;b&gt;<xliff:g id="name">%1$s</xliff:g>&lt;/b&gt;\". Reconnect?"</string>
+    <string name="screen_share_identity_rejected_message">"Device identity verification failed, so the connection was refused. This is a security check and cannot be bypassed. If the device was reset or the app was reinstalled, reconnect from the device list and confirm its new key fingerprint."</string>
     <string name="viewer_zoom_mode_title">"Display mode"</string>
     <string name="viewer_zoom_mode_fit_percent">"Fit window (%1$d%%)"</string>
     <string name="viewer_zoom_mode_one_to_one_percent">"Actual size (1:1, %1$d%%)"</string>

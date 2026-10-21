@@ -1,9 +1,12 @@
 package com.obby.android.localscreenshare.transport;
 
 import com.obby.android.localscreenshare.grpc.screenstream.DeviceSummary;
+import com.obby.android.localscreenshare.grpc.screenstream.ClientMessage;
 import com.obby.android.localscreenshare.grpc.screenstream.RegisterRequest;
 import com.obby.android.localscreenshare.grpc.screenstream.RegisterResponse;
 import com.obby.android.localscreenshare.grpc.screenstream.ScreenStreamServiceGrpc;
+import com.obby.android.localscreenshare.grpc.screenstream.ServerMessage;
+import com.obby.android.localscreenshare.client.StreamFailure;
 import com.obby.android.localscreenshare.identity.SpkiId;
 import com.obby.android.localscreenshare.identity.tls.TlsCertificate;
 import com.obby.android.localscreenshare.identity.tls.TlsMaterial;
@@ -26,7 +29,9 @@ import java.security.cert.X509Certificate;
 import java.security.spec.ECGenParameterSpec;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import io.grpc.ManagedChannel;
 import io.grpc.Server;
@@ -38,6 +43,8 @@ import io.grpc.okhttp.OkHttpServerBuilder;
 import io.grpc.stub.StreamObserver;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -201,6 +208,33 @@ public class TlsHandshakeEndToEndTest {
         assertTrue(response.getAccepted());
     }
 
+    @Test
+    public void aChangedPinOnTheStreamIsAnIdentityRejection() throws Exception {
+        final TlsMaterial server = material();
+        final TlsMaterial other = material();
+        final int port = startServer(server);
+
+        final Throwable error = streamError(channel(port, server.getDeviceId(),
+            id -> new TlsPin(server.getDeviceId(), other.getFingerprint(), 0L), true));
+
+        final StreamFailure failure = StreamFailure.from(error);
+        assertTrue(failure.toLogText(), failure.isIdentityRejected());
+        assertEquals(PinningTrustManager.REASON_IDENTITY_CHANGED, failure.getReason());
+    }
+
+    @Test
+    public void aServerRejectionKeepsTheReasonItSent() throws Exception {
+        final TlsMaterial server = material();
+        final int port = startRejectingStreamServer(server, "session taken over by a newer connection");
+
+        final Throwable error = streamError(channel(port, server.getDeviceId(), pin(server), true));
+
+        final StreamFailure failure = StreamFailure.from(error);
+        assertFalse(failure.toLogText(), failure.isIdentityRejected());
+        assertEquals("session taken over by a newer connection", failure.getReason());
+        assertEquals(io.grpc.Status.Code.ABORTED, failure.getStatusCode());
+    }
+
     private static RegisterResponse register(final ManagedChannel channel,
                                              final String deviceId,
                                              final String fingerprint) {
@@ -226,6 +260,45 @@ public class TlsHandshakeEndToEndTest {
 
     private int startBoundMutualServer(final TlsMaterial material) throws IOException {
         return startServer(material, true, new BoundRegisterService(material));
+    }
+
+    private int startRejectingStreamServer(final TlsMaterial material, final String reason)
+        throws IOException {
+        return startServer(material, false, new RejectingStreamService(reason));
+    }
+
+    /**
+     * Opens the media stream and returns the error that ends it.
+     *
+     * <p>The stream is the call the viewer uses, so this is the closest a JVM test gets to the
+     * client path: the handshake and the server's rejection arrive exactly as they do on a device,
+     * and only the anchors are fed into {@link StreamFailure}.</p>
+     */
+    private static Throwable streamError(final ManagedChannel channel) throws InterruptedException {
+        final CountDownLatch done = new CountDownLatch(1);
+        final AtomicReference<Throwable> error = new AtomicReference<>();
+        ScreenStreamServiceGrpc.newStub(channel)
+            .withDeadlineAfter(DEADLINE_SECONDS, TimeUnit.SECONDS)
+            .stream(new StreamObserver<ServerMessage>() {
+                @Override
+                public void onNext(final ServerMessage value) {
+                }
+
+                @Override
+                public void onError(final Throwable t) {
+                    error.set(t);
+                    done.countDown();
+                }
+
+                @Override
+                public void onCompleted() {
+                    done.countDown();
+                }
+            });
+
+        assertTrue("the stream must end", done.await(DEADLINE_SECONDS, TimeUnit.SECONDS));
+        assertNotNull("the stream must fail, not complete", error.get());
+        return error.get();
     }
 
     private int startServer(final TlsMaterial material, final boolean mutual,
@@ -347,7 +420,6 @@ public class TlsHandshakeEndToEndTest {
     private static final class EchoRegisterService
         extends ScreenStreamServiceGrpc.ScreenStreamServiceImplBase {
         private final TlsCertificate mCertificate;
-
         private EchoRegisterService(final TlsMaterial material) {
             mCertificate = material.getCertificate();
         }
@@ -364,6 +436,39 @@ public class TlsHandshakeEndToEndTest {
                     .build())
                 .build());
             responseObserver.onCompleted();
+        }
+    }
+
+    /**
+     * Ends every stream with the given reason, the way the server reports a takeover or a refused
+     * join.
+     */
+    private static final class RejectingStreamService
+        extends ScreenStreamServiceGrpc.ScreenStreamServiceImplBase {
+        private final String mReason;
+
+        private RejectingStreamService(final String reason) {
+            mReason = reason;
+        }
+
+        @Override
+        public StreamObserver<ClientMessage> stream(final StreamObserver<ServerMessage> responseObserver) {
+            responseObserver.onError(io.grpc.Status.ABORTED
+                .withDescription(mReason)
+                .asRuntimeException());
+            return new StreamObserver<ClientMessage>() {
+                @Override
+                public void onNext(final ClientMessage value) {
+                }
+
+                @Override
+                public void onError(final Throwable t) {
+                }
+
+                @Override
+                public void onCompleted() {
+                }
+            };
         }
     }
 }

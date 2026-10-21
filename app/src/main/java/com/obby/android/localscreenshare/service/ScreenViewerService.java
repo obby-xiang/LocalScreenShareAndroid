@@ -78,6 +78,7 @@ import com.obby.android.localscreenshare.client.ScreenShareClient;
 import com.obby.android.localscreenshare.client.ClientObserver;
 import com.obby.android.localscreenshare.client.ClientStats;
 import com.obby.android.localscreenshare.client.ClientStatsListener;
+import com.obby.android.localscreenshare.client.StreamFailure;
 import com.obby.android.localscreenshare.client.StreamGeometryListener;
 import com.obby.android.localscreenshare.core.client.ClientMediaSession;
 import com.obby.android.localscreenshare.core.client.ClientStateListener;
@@ -135,8 +136,10 @@ import java.util.Objects;
  * the first frame arrives. The first frame drives the session into {@code STREAMING}, which dismisses
  * the loading overlay; a later disconnect, or a failed first connection, closes the client, shows a
  * floating confirmation and offers a retry. The retry creates a new client because an
- * {@link ScreenShareClient} is single-use. Cancelling the confirmation broadcasts
- * {@link ServiceProtocol#ACTION_STOP_CLIENT_SERVICE}.</p>
+ * {@link ScreenShareClient} is single-use. A refused peer identity is reported separately: the
+ * failure carries the reason, so the dialog explains the security check and ends the session
+ * instead of offering a retry that would fail the same check. Cancelling either confirmation
+ * broadcasts {@link ServiceProtocol#ACTION_STOP_CLIENT_SERVICE}.</p>
  *
  * <p><b>Threading and ownership.</b> All service callbacks and {@link ClientObserver}
  * callbacks run on the main thread; {@link ScreenShareClient} decodes frames on its own executor and
@@ -274,11 +277,24 @@ public class ScreenViewerService extends Service {
 
         @SuppressWarnings("DataFlowIssue")
         @Override
-        public void onDisconnected() {
+        public void onDisconnected(@NonNull final StreamFailure failure) {
+            // A refused identity is not a lost connection: the same check fails on every retry, so
+            // the dialog explains the refusal and offers no retry. Trust is confirmed in the
+            // activity, where the fingerprint dialog lives, so the only action here is to end the
+            // session and let the user reconnect from the list.
+            final boolean isIdentityRejected = failure.isIdentityRejected();
+            Log.w(mTag, "onDisconnected: session ended, identityRejected = " + isIdentityRejected
+                + ", " + failure.toLogText());
+
             // A session that was connected reports a reconnect prompt; a failed first connection
             // reports a retry prompt.
-            final int messageResId = mIsConnected ? R.string.screen_share_reconnect_confirm
-                : R.string.screen_share_retry_connect_confirm;
+            final int messageResId;
+            if (isIdentityRejected) {
+                messageResId = R.string.screen_share_identity_rejected_message;
+            } else {
+                messageResId = mIsConnected ? R.string.screen_share_reconnect_confirm
+                    : R.string.screen_share_retry_connect_confirm;
+            }
             mIsConnected = false;
             mClientStats = null;
 
@@ -309,21 +325,29 @@ public class ScreenViewerService extends Service {
             // loading overlay again. The confirmation is a floating window because the activity
             // may not be visible.
             final Context themedContext = new ContextThemeWrapper(ScreenViewerService.this, R.style.Theme_ScreenShare);
-            mDialog = new MaterialAlertDialogBuilder(themedContext)
-                .setMessage(HtmlCompat.fromHtml(getString(messageResId, nameOf(mServiceInfo)),
+            final MaterialAlertDialogBuilder builder = new MaterialAlertDialogBuilder(themedContext)
+                .setMessage(HtmlCompat.fromHtml(isIdentityRejected
+                        ? getString(messageResId)
+                        : getString(messageResId, nameOf(mServiceInfo)),
                     HtmlCompat.FROM_HTML_MODE_LEGACY))
-                .setPositiveButton(android.R.string.ok, (dialog, which) -> {
-                    final ClientMediaReceiver receiver = startMediaSession();
-                    mClient = new ScreenShareClient(hostOf(mServiceInfo), portOf(mServiceInfo), viewerMetrics(),
-                    mServiceInfo.getId());
-                    mClient.setClientStatsListener(mClientStatsListener);
-                    mScreenShareLoading.show();
-                    mClient.start(mClientObserver, receiver);
-                })
-                .setNegativeButton(android.R.string.cancel, (dialog, which) -> sendBroadcast(
-                    new Intent(ServiceProtocol.ACTION_STOP_CLIENT_SERVICE).setPackage(getPackageName())))
-                .setCancelable(false)
-                .create();
+                .setCancelable(false);
+            if (isIdentityRejected) {
+                builder.setTitle(nameOf(mServiceInfo))
+                    .setPositiveButton(android.R.string.ok, (dialog, which) -> sendBroadcast(
+                        new Intent(ServiceProtocol.ACTION_STOP_CLIENT_SERVICE).setPackage(getPackageName())));
+            } else {
+                builder.setPositiveButton(android.R.string.ok, (dialog, which) -> {
+                        final ClientMediaReceiver receiver = startMediaSession();
+                        mClient = new ScreenShareClient(hostOf(mServiceInfo), portOf(mServiceInfo), viewerMetrics(),
+                        mServiceInfo.getId());
+                        mClient.setClientStatsListener(mClientStatsListener);
+                        mScreenShareLoading.show();
+                        mClient.start(mClientObserver, receiver);
+                    })
+                    .setNegativeButton(android.R.string.cancel, (dialog, which) -> sendBroadcast(
+                        new Intent(ServiceProtocol.ACTION_STOP_CLIENT_SERVICE).setPackage(getPackageName())));
+            }
+            mDialog = builder.create();
             mDialog.getWindow().setType(ServiceProtocol.FLOATING_WINDOW_TYPE);
             mDialog.show();
         }
