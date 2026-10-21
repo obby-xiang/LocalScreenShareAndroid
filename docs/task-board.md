@@ -29,7 +29,7 @@
 - 编码框架隔离核心（契约、StreamHub、有界队列、六状态机、JPEG 参考适配）已完成并通过 JVM 验证，见 [TB-FW-001](#tb-fw-001)、[TB-FW-004](#tb-fw-004)、[TB-FW-005](#tb-fw-005)、[TB-FW-002](#tb-fw-002)。
 - 问题 3 尚未由用户明确关闭，不能标记完成；代码完成 ≠ 问题关闭，API 25 只是兼容下限，能力按运行时探测分档。
 - 编码框架待收尾：TB-FW-003、TB-FW-006、TB-MEDIA-001、TB-MEDIA-003 等待设备验证；TB-FW-002 仍部分完成；TB-FW-007、TB-FW-008 未完成。
-- 设备发现功能（[TB-DISC-001](#tb-disc-001)..[TB-DISC-009](#tb-disc-009)）B1–B5 已全部完成：B1（[TB-DISC-002](#tb-disc-002)、[TB-DISC-003](#tb-disc-003)）、B2（[TB-DISC-004](#tb-disc-004)）、B3（[TB-DISC-005](#tb-disc-005)、[TB-DISC-006](#tb-disc-006)）、B4（[TB-DISC-007](#tb-disc-007)、[TB-DISC-008](#tb-disc-008)）与 B5（[TB-DISC-009](#tb-disc-009)）；全量 **670 tests / 0 failures / 0 errors / 0 skipped**（58 个测试类），各批 Build 与 Checks CI 均 success。后续待办：[TB-DISC-010](#tb-disc-010)（自签 TLS + TOFU pinning）后置；设备验证仍未解禁。
+- 设备发现功能（[TB-DISC-001](#tb-disc-001)..[TB-DISC-009](#tb-disc-009)）B1–B5 已全部完成：B1（[TB-DISC-002](#tb-disc-002)、[TB-DISC-003](#tb-disc-003)）、B2（[TB-DISC-004](#tb-disc-004)）、B3（[TB-DISC-005](#tb-disc-005)、[TB-DISC-006](#tb-disc-006)）、B4（[TB-DISC-007](#tb-disc-007)、[TB-DISC-008](#tb-disc-008)）与 B5（[TB-DISC-009](#tb-disc-009)）；全量 **670 tests / 0 failures / 0 errors / 0 skipped**（58 个测试类），各批 Build 与 Checks CI 均 success。[TB-DISC-010](#tb-disc-010)（自签 TLS + TOFU pinning）已于 2026-10-21 完成 T1–T5 与 JVM 证据，设备验证项并入 [TB-DISC-012](#tb-disc-012)；设备验证仍未解禁。
 - 代码结构梳理（[TB-ENG-011](#tb-eng-011)）已完成 R0–R5：命名规范 [naming-conventions.md](naming-conventions.md) 自 2026-10-20 生效，六个批次均为纯移动/改名（R5 为主题名去平台词与组播工厂改名），行为零变化核验通过，全量仍为 **670 tests / 0 failures**（58 个测试类）；新代码与后续批次按该规范执行，遗留观察（`ClientObserver` 同名、`service` 上帝包、`core.codec` 包环）见条目详情。
 - B3 已落地 UDP 组播公告（启动 3 连发、5/15 s 心跳、停服告别、`MulticastLock` 引用计数）与 Register 双向握手（成功才确认、`announces` 单跳防回环、限速与限包长）；仅经 JVM/fake 与编译验证，同网段互见、真实组播与 Reverse Register 未做设备实测。
 - B4 已落地分级扫描（按接口前缀生成候选、1 s grace 零确认才升级、50 并发/500 ms 探测/8 s 预算、可取消）、收藏持久化与上次成功地址优先探测、手动 IP 常驻入口与 8 s 空列表提示、连接前指纹校验；仅经 JVM/fake 与编译验证，真实网段扫描、组播被过滤场景与手动探测未做设备实测。
@@ -60,7 +60,6 @@
 
 | ID | 状态 | 优先级 | 标题 | 创建 | 完成 | 关联 |
 | --- | --- | --- | --- | --- | --- | --- |
-| TB-DISC-010 | 📋 待办 | 🟡 P2 | 传输加密与身份 pinning | 2026-10-20 | — | [发现调研](discovery-research.md) |
 | TB-DISC-012 | 📋 待办 | 🟡 P2 | 双真机联机验证 | 2026-10-20 | — | [发现调研](discovery-research.md) |
 | TB-DISC-011 | 📋 待办 | 🟡 P3 | 手动添加条目跨重启持久化 | 2026-10-20 | — | [发现调研](discovery-research.md) |
 | TB-MEDIA-004 | 📋 待办 | 🟡 P3 | 首帧绿色花屏自愈 | 2026-10-20 | — | [媒体架构](media-architecture.md) |
@@ -88,6 +87,7 @@
 
 | ID | 状态 | 优先级 | 标题 | 创建 | 完成 | 关联 |
 | --- | --- | --- | --- | --- | --- | --- |
+| TB-DISC-010 | ✅ 已完成 | 🟠 P1 | 自签 TLS 与 TOFU 身份 pinning | 2026-10-20 | 2026-10-21 | [实施计划](superpowers/plans/2026-10-21-tls-tofu.md) |
 | TB-CLIENT-003 | ✅ 已完成 | 🟠 P1 | 查看器宽高比与缩放质量 | 2026-10-20 | 2026-10-20 | [实施计划](superpowers/plans/2026-10-21-viewer-quality-and-settings.md) |
 | TB-OBS-002 | ✅ 已完成 | 🟠 P1 | RTT 探针（Ping/Pong）与估计器 | 2026-10-21 | 2026-10-21 | [本计划](superpowers/plans/2026-10-21-transport-observability.md) |
 | TB-CLIENT-005 | ✅ 已完成 | 🟡 P2 | 观看端解码队列背压与追赶（catch-up） | 2026-10-21 | 2026-10-21 | [TB-OBS-001](#tb-obs-001) |
@@ -157,15 +157,7 @@
 
 ### 📋 待办条目
 
-<a id="tb-disc-010"></a>
-<details><summary>TB-DISC-010 传输加密与身份 pinning（📋 待办）</summary>
 
-- **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟡 P2 / 2026-10-20 / —
-- **任务**：自签 TLS + TOFU 指纹确认；Register 与媒体流加密；与 [TB-SEC-001](#tb-sec-001) 协同；本项可后置。
-- **交付物 / 验证证据**：交付：TLS 配置、指纹确认流程、pinning 校验与测试。验证：首次连接需确认指纹、指纹变化被拒绝、Register 与媒体流均加密；当前未实施，设备验证未解禁。
-- **关联文档**：[发现调研](discovery-research.md)、[TB-SEC-001](#tb-sec-001)
-
-</details>
 
 <a id="tb-disc-011"></a>
 <details><summary>TB-DISC-011 手动添加条目跨重启持久化（📋 待办）</summary>
@@ -191,7 +183,7 @@
 <details><summary>TB-DISC-012 双真机联机验证（📋 待办）</summary>
 
 - **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟡 P2 / 2026-10-20 / —
-- **任务**：需第二台真机才能验证的事项：跨机 NSD/组播/分级扫描互见（模拟器 NAT 不转发组播，已实测确认）、双真机完整联机行为（真实 LAN RTT/丢包、双端互操作）、收藏与身份跨机行为、多观看者（依赖 [TB-CLIENT-001](#tb-client-001)）。
+- **任务**：需第二台真机才能验证的事项：跨机 NSD/组播/分级扫描互见（模拟器 NAT 不转发组播，已实测确认）、双真机完整联机行为（真实 LAN RTT/丢包、双端互操作）、收藏与身份跨机行为、多观看者（依赖 [TB-CLIENT-001](#tb-client-001)）。**TLS 专项**（[计划 9.7 D1–D10](superpowers/plans/2026-10-21-tls-tofu.md)）：AndroidKeyStore 私钥握手、API 25 的 TLS 1.2、证书字段解析、首次确认流程、指纹变更拒绝、首连 MITM 演练、TLS 下的扫描预算、性能 A/B、功耗/温升、备份恢复后身份变化。
 - **交付物 / 验证证据**：交付：第二台真机下的互见与联机证据。验证：待用户提供第二台真机后执行；当前仅真机↔模拟器联机（媒体链路双向跑通，发现跨 NAT 不可用）。
 - **关联文档**：[发现调研](discovery-research.md)
 
@@ -289,9 +281,10 @@
 <details><summary>TB-SEC-001 配对与传输加密（📋 待办）</summary>
 
 - **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟠 P1 / 2026-10-17 / —
-- **任务**：配对、会话令牌与传输加密：默认拒绝未配对客户端；控制面 TLS；媒体面 TLS 或 DTLS-SRTP；观看、音频、反控分级授权；发现默认不广播设备名。
-- **交付物 / 验证证据**：交付：配对流程、令牌校验、加密配置、安全提示。验证：未配对连接被拒绝、传输加密生效、日志脱敏；当前未执行。
-- **关联文档**：[项目现状安全边界](project-assessment.md)、[媒体架构安全模型](media-architecture.md)、[路线图阶段 2](optimization-roadmap.md)
+- **任务**：配对、会话令牌与授权：默认拒绝未配对客户端；观看、音频、反控分级授权；发现默认不广播设备名。
+- **与 TB-DISC-010 的边界**：传输加密与设备身份（SPKI 指纹 + pin）已由 [TB-DISC-010](#tb-disc-010) 提供；TOFU pin 只回答“是不是同一台机器”，**不回答“是否允许观看”**。本条剩余配对、会话令牌、默认拒绝未配对客户端与分级授权。
+- **交付物 / 验证证据**：交付：配对流程、令牌校验、授权策略、安全提示。验证：未配对连接被拒绝、授权分级生效、日志脱敏；当前未执行。
+- **关联文档**：[项目现状安全边界](project-assessment.md)、[媒体架构安全模型](media-architecture.md)、[TB-DISC-010 实施计划](superpowers/plans/2026-10-21-tls-tofu.md)、[路线图阶段 2](optimization-roadmap.md)
 
 </details>
 
@@ -405,6 +398,21 @@
 </details>
 
 ### ✅ 已完成条目
+
+<a id="tb-disc-010"></a>
+<details><summary>TB-DISC-010 传输加密与身份 pinning（✅ 2026-10-21）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：✅ 已完成 / 🟠 P1（由 P2 上调）/ 2026-10-20 / 2026-10-21
+- **任务**：自签 TLS + TOFU 指纹确认；Register 与媒体流加密；与 [TB-SEC-001](#tb-sec-001) 协同。九项用户裁决与落地口径见计划第 13 章；`Descriptor.secure` 保持私密屏幕语义，传输能力只写入 `DeviceInfo.secure`/`auth`（计划 2.3）。
+- **交付物 / 验证证据**：
+  - 交付：身份密钥自签证书（SPKI 即身份，证书只是容器）、自定义 `X509ExtendedKeyManager`/`X509ExtendedTrustManager`、pin 存储与三态判定、mTLS 与 HELLO/Register 交叉校验、TOFU 首次确认/变更告警/忘记信任、`secure`/`auth` 公告与明文拒绝。
+  - 计划：`docs/superpowers/plans/2026-10-21-tls-tofu.md`（`6d747f3`）。
+  - 批次：T1 `0f6e96c`、`9adb207`；T2 `c7cb676`、`503663e`；T3 `7995bcb`；T5 `02261d5`（先于 T4 合入，避免调用尚未实现的签名）；T4 `a2f43b5`。
+  - JVM：`./gradlew :app:testDebugUnitTest --offline` = **1041 tests / 95 classes / 0 failures / 0 errors / 0 skipped**；`TlsHandshakeEndToEndTest` 用 OkHttp server/channel 在 loopback 跑真实 TLS 握手，覆盖 pin 正确/缺失/不匹配/id 不一致/无客户端证书/缺 `overrideAuthority` 六类；`:app:assembleDebug --offline` 通过；各批 Build 与 Checks CI 均 success。
+  - 边界：AndroidKeyStore 私钥在 Conscrypt 下的握手可用性、API 25、扫描预算、性能 A/B、功耗/温升与备份恢复均未验证（计划 9.7 D1–D10）；TOFU 不是配对，是否允许观看仍归 [TB-SEC-001](#tb-sec-001)。
+- **关联文档**：[实施计划](superpowers/plans/2026-10-21-tls-tofu.md)、[TB-SEC-001](#tb-sec-001)、[TB-DISC-012](#tb-disc-012)、[决策看板](decision-board.md)
+
+</details>
 
 <a id="tb-client-005"></a>
 <details><summary>TB-CLIENT-005 观看端解码队列背压与追赶（✅ 2026-10-21）</summary>

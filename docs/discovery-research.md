@@ -466,7 +466,7 @@ flowchart LR
 ### 7.5 风险与待定
 
 - Android `NsdManager` 的 SRV target 可能仍含系统 hostname；要彻底控制需自建 mDNS responder。
-- Android Keystore 自签证书的续签能力有限；可能需要自定义 TrustManager 或软件密钥。
+- Android Keystore 自签证书的续签能力有限；可能需要自定义 TrustManager 或软件密钥。**已由 [TB-DISC-010](task-board.md#tb-disc-010) 给出方案**：复用身份密钥、自签字段受控证书、自定义 KeyManager/TrustManager；证书只是容器，身份取 SPKI 哈希，因此不需要续签协议（设备端可用性仍待验证）。
 - Web 端无稳定身份；只能 guest/ephemeral。
 - 身份密钥若被备份/克隆，会出现同一 `id` 多实例；需检测并警告。
 - 组播在部分企业网络被禁用；必须保留手动/扫码。
