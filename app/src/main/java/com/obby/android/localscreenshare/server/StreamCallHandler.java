@@ -51,6 +51,14 @@ import java.util.UUID;
  * starves video. An audio transport failure only detaches audio: the handler keeps the video
  * session and reports the reason for logs, because a failure in the optional track must not end the
  * stream the user is watching.</p>
+ *
+ * <p><b>Authorization.</b> With an {@link AuthorizationGate}, the HELLO is bound to the certificate
+ * identity first and only then checked against the durable authorization set. A peer that is not
+ * authorized is parked instead of joined: it has no session, receives no frame and no audio, and
+ * one notice goes out so its viewer can show that it is waiting. {@link #drainOnce()} settles the
+ * request - a grant joins on that same pass, a refusal or the elapsed window closes the call with
+ * the reason, and a revoked grant ends an attached call within one pass. A grant made for one call
+ * only is never re-checked, because it does not live in the durable set.</p>
  */
 public final class StreamCallHandler {
 
