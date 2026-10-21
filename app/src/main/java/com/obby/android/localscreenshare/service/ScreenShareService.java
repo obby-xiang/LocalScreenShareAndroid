@@ -1550,10 +1550,9 @@ public class ScreenShareService extends Service {
             return;
         }
         transitionAudioState(AudioSessionState.STARTING);
-        final AudioAvailability supported =
-                AudioAvailability.forApiLevel(Build.VERSION.SDK_INT);
-        if (supported != AudioAvailability.AVAILABLE) {
-            markAudioUnavailable(supported);
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            // Playback capture exists from Q onwards; the classifier owns the user-facing reason.
+            markAudioUnavailable(AudioAvailability.forApiLevel(Build.VERSION.SDK_INT));
             return;
         }
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
