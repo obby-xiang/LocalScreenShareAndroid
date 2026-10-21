@@ -65,6 +65,31 @@ public final class AuthorizationGate {
     }
 
     /**
+     * Answer to the re-check of a call that is already talking to the gate.
+     *
+     * <p>A call has to be re-checked because a grant can be withdrawn while it runs. The three
+     * answers keep the two ways of "no grant" apart: {@link #WAITING} means the user is still
+     * deciding about exactly this identity, so the call stays as it is instead of being refused,
+     * and only {@link #DENY} means nothing is left to wait for.</p>
+     */
+    public enum Review {
+        /**
+         * The identity may watch: the feature is off or the durable set holds it.
+         */
+        ALLOW,
+
+        /**
+         * No durable grant, but a request of this identity is still waiting for the user.
+         */
+        WAITING,
+
+        /**
+         * No durable grant and nothing waiting: a running call must end.
+         */
+        DENY
+    }
+
+    /**
      * Receives the approval lifecycle so the service can show and withdraw its prompt.
      */
     public interface Listener {
@@ -184,6 +209,51 @@ public final class AuthorizationGate {
                 deviceId, fingerprint);
         return AuthorizationPolicy.decide(isEnabled(), isGranted)
             == AuthorizationPolicy.Verdict.ALLOW;
+    }
+
+    /**
+     * Re-checks one identity that is arriving or already watching.
+     *
+     * <p>This is the only question the streaming call asks on every pass, and its three answers are
+     * what a parked call depends on: a peer whose request is still open reports {@link
+     * Review#WAITING} rather than {@link Review#DENY}, so waiting for the user is never mistaken
+     * for a withdrawn grant. The identity is compared after trimming the ends only, the same rule
+     * the durable set uses.</p>
+     *
+     * @param deviceId    identity of the peer, or null when it declared none
+     * @param fingerprint fingerprint of the peer, or null when it declared none
+     */
+    @NonNull
+    public Review review(@Nullable final String deviceId, @Nullable final String fingerprint) {
+        if (isAuthorized(deviceId, fingerprint)) {
+            return Review.ALLOW;
+        }
+        return isWaitingFor(deviceId, fingerprint) ? Review.WAITING : Review.DENY;
+    }
+
+    // Returns whether a request of this identity is still waiting for the user; called under the
+    // monitor so a request answered in the same instant cannot be read half settled.
+    private synchronized boolean isWaitingFor(@Nullable final String deviceId,
+                                              @Nullable final String fingerprint) {
+        for (final Pending pending : mPending.values()) {
+            if (pending.state != null) {
+                continue;
+            }
+            final ApprovalRequest request = pending.request;
+            if (isSameIdentity(request.getDeviceId(), deviceId)
+                && isSameIdentity(request.getFingerprint(), fingerprint)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Compares two declared values the way the durable set does: trimmed, never case folded.
+    private static boolean isSameIdentity(@Nullable final String left, @Nullable final String right) {
+        if (left == null || right == null) {
+            return left == null && right == null;
+        }
+        return left.trim().equals(right.trim());
     }
 
     /**
