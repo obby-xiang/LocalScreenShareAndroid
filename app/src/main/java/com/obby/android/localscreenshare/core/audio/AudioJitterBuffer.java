@@ -17,9 +17,11 @@ package com.obby.android.localscreenshare.core.audio;
  * same length, so the audio keeps its rate instead of speeding up. Frames that go backwards are
  * dropped, because a late frame cannot be placed in the timeline without disturbing it.</p>
  *
- * <p><b>Drift.</b> Comparing the sink's playhead with the session clock can reveal a constant
- * offset. The guard allows at most one correction per two seconds and only acts when the difference
- * exceeds 40 ms, so it never oscillates around the measurement noise.</p>
+ * <p><b>Drift.</b> Comparing the audible position with the session clock reveals both a fixed offset
+ * and its movement. The guard allows at most one correction per two seconds, only acts when the
+ * offset has moved by more than 40 ms since the last correction, and never chases a fixed offset:
+ * one frame of media cannot remove a constant bias, and repeating the attempt would pad the output
+ * for the whole session.</p>
  */
 public final class AudioJitterBuffer {
 
@@ -193,30 +195,37 @@ public final class AudioJitterBuffer {
     }
 
     /**
-     * Decides whether the drift guard should correct the offset now.
+     * Decides whether the drift guard should correct the drift now.
      *
-     * @param expectedPtsUs   stream timestamp the session clock expects to be audible now
-     * @param playheadPtsUs   stream timestamp the sink reports as audible, or {@link #UNSET}
+     * <p>The argument is a drift, not an absolute offset: a fixed audio/video offset cannot be
+     * removed by one frame of silence, so correcting it would repeat the same correction every
+     * cooldown period for as long as the stream lasts. What the guard can absorb is the part that
+     * moves - the difference between the offset measured now and the offset it left behind after the
+     * previous correction.</p>
+     *
+     * @param driftUs         movement of the audible position relative to the timeline since the last
+     *                        correction, or {@link #UNSET} when nothing has been measured yet
      * @param frameDurationUs duration of one frame, or non-positive for the AAC default
      * @param nowMs           monotonic time in milliseconds
-     * @return {@code -1} to drop one frame (audio is ahead), {@code 1} to insert one silence frame
-     *         (audio is behind), or {@code 0} to do nothing
+     * @return {@code 1} to insert one silence frame (the audible audio moved ahead of the timeline
+     *         and has to be delayed), {@code -1} to drop one buffered frame (the audible audio moved
+     *         behind and the following content has to be brought forward), or {@code 0} to do
+     *         nothing
      */
-    public int driftCorrectionFrames(long expectedPtsUs, long playheadPtsUs, long frameDurationUs,
-                                     long nowMs) {
-        if (expectedPtsUs == UNSET || playheadPtsUs == UNSET) {
+    public int driftCorrectionFrames(long driftUs, long frameDurationUs, long nowMs) {
+        if (driftUs == UNSET) {
             return 0;
         }
         if (lastDriftCorrectionMs != UNSET
                 && nowMs - lastDriftCorrectionMs < DRIFT_COOLDOWN_MS) {
             return 0;
         }
-        final long diffMs = (playheadPtsUs - expectedPtsUs) / 1_000L;
-        if (Math.abs(diffMs) <= DRIFT_THRESHOLD_MS) {
+        final long driftMs = driftUs / 1_000L;
+        if (Math.abs(driftMs) <= DRIFT_THRESHOLD_MS) {
             return 0;
         }
         lastDriftCorrectionMs = nowMs;
-        return diffMs > 0 ? -1 : 1;
+        return driftMs > 0 ? 1 : -1;
     }
 
     /**

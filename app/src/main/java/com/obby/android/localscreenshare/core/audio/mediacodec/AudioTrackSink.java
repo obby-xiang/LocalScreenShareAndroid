@@ -6,6 +6,7 @@ import android.media.AudioTimestamp;
 import android.media.AudioTrack;
 import android.os.Build;
 
+import com.obby.android.localscreenshare.core.audio.AudioPlayhead;
 import com.obby.android.localscreenshare.core.audio.AudioSink;
 import com.obby.android.localscreenshare.core.audio.AudioSinkException;
 
@@ -171,23 +172,26 @@ public final class AudioTrackSink implements AudioSink {
     }
 
     /**
-     * Returns the played position in monotonic nanoseconds, or a negative value when unknown.
+     * Returns the frames presented at {@code nowNs}, or a negative value when unknown.
      *
-     * <p>Uses the platform timestamp when it is available and falls back to the playback head
-     * position, which is still a monotonic frame count even if it does not name a clock.</p>
+     * <p>The platform timestamp pairs a frame position with the monotonic instant that position was
+     * presented at, which is the only combination that can be projected onto the session clock: the
+     * position alone is track-relative and would be off by the device uptime. The playback-head
+     * fallback is the same frame count without the projection, so a device that reports no
+     * timestamp still yields a position, just up to one hardware buffer late.</p>
      */
     @Override
-    public long getPlayheadNs() {
+    public long getPresentedFrames(long nowNs) {
         final AudioTrack current = track;
         if (current == null) {
             return -1L;
         }
         try {
-            if (current.getTimestamp(timestamp)) {
-                return timestamp.framePosition * 1_000_000_000L / sampleRate;
+            if (current.getTimestamp(timestamp) && timestamp.nanoTime > 0L) {
+                return AudioPlayhead.presentedFrames(timestamp.framePosition, timestamp.nanoTime,
+                        nowNs, sampleRate);
             }
-            final long position = current.getPlaybackHeadPosition() & 0xFFFFFFFFL;
-            return position * 1_000_000_000L / sampleRate;
+            return current.getPlaybackHeadPosition() & 0xFFFFFFFFL;
         } catch (RuntimeException ignored) {
             return -1L;
         }

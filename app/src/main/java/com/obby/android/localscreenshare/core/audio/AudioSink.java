@@ -8,9 +8,11 @@ package com.obby.android.localscreenshare.core.audio;
  * little-endian 16-bit PCM; volume changes are applied without stopping playback, so unmuting never
  * restarts the timeline.</p>
  *
- * <p><b>Playhead.</b> {@link #getPlayheadNs()} reports the estimated played position on the
- * monotonic clock, or a negative value when the platform cannot report one. It is used by the drift
- * guard to compare what is audible with what the session clock expects.</p>
+ * <p><b>Playhead.</b> {@link #getPresentedFrames(long)} reports how many frames have left the sink,
+ * counted in the same unit as the frames written, or a negative value when the platform cannot
+ * report a position. It is deliberately a frame count and not a time: only counts share a base with
+ * the session's own bookkeeping, and the session converts them into stream time where the session
+ * clock lives.</p>
  */
 public interface AudioSink {
 
@@ -55,8 +57,15 @@ public interface AudioSink {
     void release();
 
     /**
-     * Returns the estimated playhead position in monotonic nanoseconds, or a negative value when
-     * unknown.
+     * Returns the number of PCM frames the device has presented at {@code nowNs}, or a negative
+     * value when unknown.
+     *
+     * <p>The count is per channel and cumulative since the sink was opened, which is the base the
+     * session's written-frame count uses. Counts advance with the device clock, so projecting the
+     * last platform timestamp onto {@code nowNs} is what keeps the value comparable between two
+     * measurements rather than stale by up to one buffer.</p>
+     *
+     * @param nowNs monotonic instant to project the last platform timestamp onto
      */
-    long getPlayheadNs();
+    long getPresentedFrames(long nowNs);
 }

@@ -126,7 +126,13 @@ public final class ClientAudioSession {
 
     private long lastWrittenPtsUs = SessionClock.UNSET;
 
+    private long writtenSamples;
+
+    private long writtenEndPtsUs = SessionClock.UNSET;
+
     private long lastDriftMs;
+
+    private long referenceOffsetUs = SessionClock.UNSET;
 
     private long framesReceived;
 
@@ -136,6 +142,10 @@ public final class ClientAudioSession {
 
     /**
      * One decoded frame waiting for the writer, with the timestamp it belongs to.
+     *
+     * <p>{@code silence} marks the buffers the session produced itself - gap fill, a drift
+     * correction or an underrun - so the written-media position advances by their duration instead
+     * of jumping to the next decoded timestamp.</p>
      */
     private static final class PcmFrame {
 
@@ -143,9 +153,12 @@ public final class ClientAudioSession {
 
         private final long ptsUs;
 
-        private PcmFrame(byte[] data, long ptsUs) {
+        private final boolean silence;
+
+        private PcmFrame(byte[] data, long ptsUs, boolean silence) {
             this.data = data;
             this.ptsUs = ptsUs;
+            this.silence = silence;
         }
     }
 
@@ -244,19 +257,12 @@ public final class ClientAudioSession {
     }
 
     /**
-     * Returns the number of PCM buffers written to the sink.
+     * Returns the number of PCM buffers written to the sink, decoded and synthesized alike.
      */
     public long getWrittenFrames() {
         synchronized (lock) {
             return writtenFrames;
         }
-    }
-
-    /**
-     * Returns the playhead the sink reports, or a negative value when unknown.
-     */
-    public long getPlayheadNs() {
-        return sink.getPlayheadNs();
     }
 
     /**
@@ -302,6 +308,7 @@ public final class ClientAudioSession {
                 silenceFrame = new byte[newDescriptor.getFrameSamples() * channels * 2];
                 pending.clear();
                 framesReceived = 0L;
+                referenceOffsetUs = SessionClock.UNSET;
                 buffer.reset();
                 state = State.ACTIVE;
                 applied = true;
@@ -368,9 +375,9 @@ public final class ClientAudioSession {
                     }
                     final long ptsUs = accessUnit.getPtsUs();
                     for (int i = 0; i < plan.getSilenceFrames(); i++) {
-                        enqueueLocked(new PcmFrame(silenceFrame, ptsUs));
+                        enqueueLocked(new PcmFrame(silenceFrame, ptsUs, true));
                     }
-                    enqueueLocked(new PcmFrame(pcm.getData(), ptsUs));
+                    enqueueLocked(new PcmFrame(pcm.getData(), ptsUs, false));
                     metrics.increment(PipelineMetrics.Counter.AUDIO_FRAMES);
                     if (sessionClock != null) {
                         // Audio-first sessions anchor the shared timeline; a session already
@@ -420,6 +427,16 @@ public final class ClientAudioSession {
         if (frame == null) {
             return false;
         }
+        return writeFrame(frame);
+    }
+
+    /**
+     * Writes one buffer and advances the written-media bookkeeping the drift guard reasons about.
+     *
+     * @param frame the buffer to write; never null
+     * @return false when the sink failed, which has already moved the session to {@code UNAVAILABLE}
+     */
+    private boolean writeFrame(PcmFrame frame) {
         try {
             sink.write(frame.data, 0, frame.data.length);
         } catch (AudioSinkException e) {
@@ -429,32 +446,72 @@ public final class ClientAudioSession {
         synchronized (lock) {
             writtenFrames++;
             lastWrittenPtsUs = frame.ptsUs;
+            recordWrittenLocked(frame);
         }
         applyDriftGuard();
         return true;
     }
 
     /**
-     * Compares the sink's playhead with the shared timeline, at most once per drift interval.
+     * Advances the written sample count and the stream timestamp at the end of the written audio.
      *
-     * <p>Only the shared timeline makes this comparison meaningful: the sink reports what is
-     * audible now, and {@link SessionClock#unmap(long)} turns it into the stream timestamp that
-     * should be audible. A correction is one frame - dropped when audio runs ahead, filled with
-     * silence when it runs behind - and the jitter buffer enforces the two-second cooldown.</p>
+     * <p>A decoded buffer names its own timestamp, so it sets the end position outright; a buffer
+     * the session produced itself only extends the previous end by its duration. That keeps gap fill
+     * and drift corrections in the timeline instead of letting them rewind it to the next decoded
+     * timestamp.</p>
+     */
+    private void recordWrittenLocked(PcmFrame frame) {
+        final int bytesPerSampleFrame = channels * 2;
+        if (bytesPerSampleFrame <= 0) {
+            return;
+        }
+        final long samples = frame.data.length / bytesPerSampleFrame;
+        final long durationUs = sampleRate > 0 ? samples * 1_000_000L / sampleRate : 0L;
+        writtenSamples += samples;
+        if (!frame.silence && frame.ptsUs != SessionClock.UNSET) {
+            writtenEndPtsUs = frame.ptsUs + durationUs;
+        } else if (writtenEndPtsUs != SessionClock.UNSET) {
+            writtenEndPtsUs += durationUs;
+        }
+    }
+
+    /**
+     * Compares the audible stream position with the shared timeline, at most once per drift
+     * interval.
+     *
+     * <p>Both sides are microseconds of the same session timeline: the sink reports which frames it
+     * has presented, and the session turns that count into the stream timestamp leaving the speaker
+     * by subtracting the frames still queued inside the track from the end of the last written
+     * buffer. {@link SessionClock#unmap(long)} gives what the timeline says should be audible at the
+     * same instant. The output buffer therefore cancels out instead of showing up as a constant
+     * lag, and the comparison is a real measurement rather than a comparison of two clocks.</p>
+     *
+     * <p>A correction is one frame and the jitter buffer enforces the two-second cooldown, so only a
+     * drift that actually exceeds the threshold moves the timeline. The guard corrects the
+     * <em>movement</em> of the offset, not its absolute value: one frame of media cannot remove a
+     * constant audio/video bias, so chasing one would insert a silence frame every cooldown period
+     * for the whole session - the failure this guard used to have. A constant bias is reported
+     * through {@link PipelineMetrics.Window#AV_OFFSET} and left to calibration.</p>
      */
     private void applyDriftGuard() {
         final SessionClock shared = sessionClock;
         if (shared == null || !shared.isAnchored()) {
             return;
         }
-        final long lastPts;
+        final long endPtsUs;
+        final long samples;
+        final int rate;
+        final long frameUs;
         synchronized (lock) {
             if (closed || state != State.ACTIVE) {
                 return;
             }
-            lastPts = lastWrittenPtsUs;
+            endPtsUs = writtenEndPtsUs;
+            samples = writtenSamples;
+            rate = sampleRate;
+            frameUs = frameDurationUsLocked();
         }
-        if (lastPts == SessionClock.UNSET) {
+        if (endPtsUs == SessionClock.UNSET || rate <= 0) {
             return;
         }
         final long nowMs = nowMs();
@@ -462,24 +519,43 @@ public final class ClientAudioSession {
                 && nowMs - lastDriftCheckMs < AudioJitterBuffer.DRIFT_COOLDOWN_MS) {
             return;
         }
-        final long playheadNs = sink.getPlayheadNs();
-        final long expectedNs = shared.map(lastPts);
-        if (playheadNs < 0 || expectedNs == SessionClock.UNSET) {
+        final long nowNs = clock.nowNs();
+        final long presentedFrames = sink.getPresentedFrames(nowNs);
+        if (presentedFrames < 0L) {
+            return;
+        }
+        final long audiblePtsUs = AudioPlayhead.audiblePtsUs(endPtsUs, samples, presentedFrames,
+                rate);
+        final long expectedPtsUs = shared.unmap(nowNs);
+        if (audiblePtsUs == SessionClock.UNSET || expectedPtsUs == SessionClock.UNSET) {
             return;
         }
         lastDriftCheckMs = nowMs;
-        final long offsetNs = playheadNs - expectedNs;
+        final long offsetUs = audiblePtsUs - expectedPtsUs;
+        final long referenceUs;
         synchronized (lock) {
-            lastDriftMs = offsetNs / 1_000_000L;
+            lastDriftMs = offsetUs / 1_000L;
+            if (referenceOffsetUs == SessionClock.UNSET) {
+                referenceOffsetUs = offsetUs;
+            }
+            referenceUs = referenceOffsetUs;
         }
-        metrics.record(PipelineMetrics.Window.AV_OFFSET, Math.abs(offsetNs));
-        final int correction = buffer.driftCorrectionFrames(lastPts, shared.unmap(playheadNs),
-                frameDurationUsLocked(), nowMs);
+        metrics.record(PipelineMetrics.Window.AV_OFFSET, Math.abs(offsetUs) * 1_000L);
+        final int correction = buffer.driftCorrectionFrames(offsetUs - referenceUs, frameUs, nowMs);
+        if (correction != 0) {
+            synchronized (lock) {
+                referenceOffsetUs = offsetUs;
+            }
+        }
         applyFrameCorrection(correction);
     }
 
     /**
-     * Applies one drift correction: drop a frame when audio is ahead, insert silence when behind.
+     * Applies one drift correction.
+     *
+     * <p>Audio that runs ahead of the timeline is delayed by one frame of silence, because the sound
+     * already played cannot be taken back; audio that runs behind skips one buffered frame, which is
+     * what brings the following content forward again.</p>
      */
     private void applyFrameCorrection(int correction) {
         if (correction == 0) {
@@ -489,13 +565,13 @@ public final class ClientAudioSession {
             if (closed || state != State.ACTIVE) {
                 return;
             }
-            if (correction < 0) {
-                if (pending.pollFirst() != null) {
-                    metrics.increment(PipelineMetrics.Counter.AUDIO_DROPPED);
+            if (correction > 0) {
+                if (silenceFrame != null) {
+                    pending.addLast(new PcmFrame(silenceFrame, lastWrittenPtsUs, true));
+                    metrics.increment(PipelineMetrics.Counter.AUDIO_UNDERRUNS);
                 }
-            } else if (silenceFrame != null) {
-                pending.addLast(new PcmFrame(silenceFrame, lastWrittenPtsUs));
-                metrics.increment(PipelineMetrics.Counter.AUDIO_UNDERRUNS);
+            } else if (pending.pollFirst() != null) {
+                metrics.increment(PipelineMetrics.Counter.AUDIO_DROPPED);
             }
         }
     }
@@ -571,6 +647,11 @@ public final class ClientAudioSession {
             sink.setVolume(volume);
             sampleRate = pcm.getSampleRate();
             channels = pcm.getChannels();
+            // A new track counts its presented frames from zero, so the written counters restart
+            // with it; the written timestamps are re-derived from the next decoded frame.
+            writtenSamples = 0L;
+            writtenEndPtsUs = SessionClock.UNSET;
+            referenceOffsetUs = SessionClock.UNSET;
             final int samples = descriptor != null ? descriptor.getFrameSamples() : 1024;
             silenceFrame = new byte[samples * channels * 2];
             return true;
@@ -631,15 +712,14 @@ public final class ClientAudioSession {
             if (underrun) {
                 // Silence keeps the output fed; dropping samples instead would speed the track up.
                 final byte[] frame;
+                final long ptsUs;
                 synchronized (lock) {
                     frame = silenceFrame;
+                    ptsUs = lastWrittenPtsUs;
                 }
                 if (frame != null) {
                     metrics.increment(PipelineMetrics.Counter.AUDIO_UNDERRUNS);
-                    try {
-                        sink.write(frame, 0, frame.length);
-                    } catch (AudioSinkException e) {
-                        fail("audio playback failed");
+                    if (!writeFrame(new PcmFrame(frame, ptsUs, true))) {
                         return;
                     }
                 }

@@ -98,15 +98,15 @@ public class AudioJitterBufferTest {
     @Test
     public void driftGuardRespectsThresholdAndCooldown() {
         AudioJitterBuffer buffer = new AudioJitterBuffer();
-        final long expected = 1_000_000L;
 
-        assertEquals(0, buffer.driftCorrectionFrames(expected, expected + 20_000L, FRAME_US, 0L));
-        assertEquals(-1, buffer.driftCorrectionFrames(expected, expected + 60_000L, FRAME_US, 0L));
-        assertEquals(0, buffer.driftCorrectionFrames(expected, expected + 60_000L, FRAME_US, 199L));
-        assertEquals(1, buffer.driftCorrectionFrames(expected, expected - 60_000L, FRAME_US,
+        assertEquals(0, buffer.driftCorrectionFrames(20_000L, FRAME_US, 0L));
+        // The audible audio moved ahead of the timeline and has to be delayed by one silence frame.
+        assertEquals(1, buffer.driftCorrectionFrames(60_000L, FRAME_US, 0L));
+        assertEquals(0, buffer.driftCorrectionFrames(60_000L, FRAME_US, 199L));
+        // The audible audio moved behind and skips a buffered frame to catch up.
+        assertEquals(-1, buffer.driftCorrectionFrames(-60_000L, FRAME_US,
                 AudioJitterBuffer.DRIFT_COOLDOWN_MS));
-        assertEquals(0, buffer.driftCorrectionFrames(expected, AudioJitterBuffer.UNSET, FRAME_US,
-                10_000L));
+        assertEquals(0, buffer.driftCorrectionFrames(AudioJitterBuffer.UNSET, FRAME_US, 10_000L));
     }
 
     @Test

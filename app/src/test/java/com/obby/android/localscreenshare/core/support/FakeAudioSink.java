@@ -12,7 +12,9 @@ import java.util.List;
  *
  * <p>Keeps every written buffer as a byte-length record (contents are all zeros in these tests), the
  * volume history, and the lifecycle counters, so a test can assert exactly how much audio reached
- * the output. Open and write failures are injectable; the playhead is a settable value.</p>
+ * the output. Open and write failures are injectable; the presented position is either an absolute
+ * value or a fixed distance behind the written frame count, which is what models a real
+ * {@code AudioTrack} buffer.</p>
  */
 public final class FakeAudioSink implements AudioSink {
 
@@ -26,7 +28,11 @@ public final class FakeAudioSink implements AudioSink {
 
     private AudioSinkException writeFailure;
 
-    private long playheadNs = -1L;
+    private long presentedFrames = -1L;
+
+    private long queuedFrames = -1L;
+
+    private long writtenFrames;
 
     private boolean open;
 
@@ -38,6 +44,8 @@ public final class FakeAudioSink implements AudioSink {
 
     private int pauseCount;
 
+    private int sampleRate;
+
     private int channels;
 
     public void failOpen(AudioSinkException failure) {
@@ -48,8 +56,24 @@ public final class FakeAudioSink implements AudioSink {
         this.writeFailure = failure;
     }
 
-    public void setPlayheadNs(long playheadNs) {
-        this.playheadNs = playheadNs;
+    /**
+     * Fixes the presented frame count, independent of what has been written.
+     */
+    public void setPresentedFrames(long frames) {
+        this.presentedFrames = frames;
+        this.queuedFrames = -1L;
+    }
+
+    /**
+     * Models a track buffer: the device is always {@code frames} behind the written count.
+     */
+    public void setQueuedFrames(long frames) {
+        this.queuedFrames = frames;
+        this.presentedFrames = -1L;
+    }
+
+    public long getWrittenFrames() {
+        return writtenFrames;
     }
 
     public int getOpenCount() {
@@ -93,6 +117,8 @@ public final class FakeAudioSink implements AudioSink {
         }
         this.open = true;
         this.channels = channels;
+        this.sampleRate = sampleRate;
+        this.writtenFrames = 0L;
         openCount++;
         sampleRates.add(sampleRate);
     }
@@ -108,6 +134,9 @@ public final class FakeAudioSink implements AudioSink {
             throw writeFailure;
         }
         writeLengths.add(count);
+        if (channels > 0) {
+            writtenFrames += count / (channels * 2);
+        }
     }
 
     @Override
@@ -132,7 +161,10 @@ public final class FakeAudioSink implements AudioSink {
     }
 
     @Override
-    public long getPlayheadNs() {
-        return playheadNs;
+    public long getPresentedFrames(long nowNs) {
+        if (queuedFrames >= 0L) {
+            return Math.max(0L, writtenFrames - queuedFrames);
+        }
+        return presentedFrames;
     }
 }

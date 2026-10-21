@@ -196,7 +196,7 @@ public class ClientMediaReceiverAudioTest {
         }
 
         @Override
-        public long getPlayheadNs() {
+        public long getPresentedFrames(long nowNs) {
             return -1L;
         }
     }
