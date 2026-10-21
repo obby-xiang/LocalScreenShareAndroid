@@ -22,6 +22,7 @@ import androidx.core.content.ContextCompat;
 
 import com.obby.android.localscreenshare.core.codec.CodecRegistry;
 import com.obby.android.localscreenshare.core.model.ClientSessionKey;
+import com.obby.android.localscreenshare.core.stream.SessionSnapshot;
 import com.obby.android.localscreenshare.core.stream.StreamHub;
 import com.obby.android.localscreenshare.core.stream.StreamRuntime;
 import com.obby.android.localscreenshare.core.util.TimeSource;
@@ -68,9 +69,9 @@ import org.apache.commons.lang3.concurrent.BasicThreadFactory;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -84,7 +85,6 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.LockSupport;
-import java.util.stream.Collectors;
 
 import io.grpc.Attributes;
 import io.grpc.Contexts;
@@ -213,6 +213,11 @@ public final class ScreenShareServer {
 
     @Nullable
     private StreamRuntime mStreamRuntime;
+
+    // Live stream calls; used to attribute a session's counters to the remote address its call
+    // arrived on. Closed handlers are pruned on every statistics collection.
+    @NonNull
+    private final List<StreamCallHandler> mStreamCallHandlers = new CopyOnWriteArrayList<>();
 
     // Store shared with the activity-side discovery, so a peer learned through Register shows up
     // in the device list. Optional: a server without it simply does not learn callers.
@@ -389,7 +394,8 @@ public final class ScreenShareServer {
                 return;
             }
 
-            final ServerStats serverStats = mServerProfile.collect();
+            final ServerStats serverStats = mServerProfile.collect(sessions(),
+                clientAddresses());
             if (Objects.equals(mServerStats, serverStats)) {
                 Log.w(mTag, "mUpdateServerStatsRunnable: server stats not changed");
             } else {
@@ -759,6 +765,7 @@ public final class ScreenShareServer {
         mServerProfile = null;
         mServerStats = null;
         mRegisterHandler = null;
+        mStreamCallHandlers.clear();
         if (mReverseRegisterClient != null) {
             mReverseRegisterClient.cancelAll();
             mReverseRegisterClient = null;
@@ -837,6 +844,40 @@ public final class ScreenShareServer {
         Log.i(mTag, String.format("postResolveRetry: resolve retry scheduled, delayMs = %d", delayMs));
         mMainHandler.removeCallbacks(mResolveNsdServiceRunnable);
         mMainHandler.postDelayed(mResolveNsdServiceRunnable, delayMs);
+    }
+
+    /**
+     * Returns the attached send sessions, ordered by client id; empty before a stream is wired.
+     */
+    @NonNull
+    private List<SessionSnapshot> sessions() {
+        final StreamHub hub = mStreamHub;
+        return hub == null ? Collections.emptyList() : hub.snapshotSessions();
+    }
+
+    /**
+     * Returns the remote address of every attached session, keyed by client id.
+     *
+     * <p>Only live calls contribute: a handler that has not attached yet has no session key, and a
+     * closed handler is pruned here rather than on its own drain thread, because that thread has
+     * already left when the call ended. The address is the one the call arrived on, in the same
+     * socket form the transport tracer uses for the byte counters, so both can be joined.</p>
+     */
+    @NonNull
+    private Map<String, String> clientAddresses() {
+        final Map<String, String> addresses = new HashMap<>();
+        for (final StreamCallHandler handler : mStreamCallHandlers) {
+            if (handler.isClosed()) {
+                mStreamCallHandlers.remove(handler);
+                continue;
+            }
+            final ClientSessionKey key = handler.getAttachedKey();
+            final String address = handler.getRemoteAddress();
+            if (key != null && address != null) {
+                addresses.putIfAbsent(key.getClientId(), address);
+            }
+        }
+        return addresses;
     }
 
     /**
@@ -983,8 +1024,11 @@ public final class ScreenShareServer {
                 responseObserver.onCompleted();
                 return new NoopClientObserver();
             }
+            final InetSocketAddress remoteAddress = REMOTE_ADDRESS.get();
             final StreamCallHandler handler = new StreamCallHandler(mStreamHub, mStreamRuntime,
-                    new GrpcMediaTransport(responseObserver, mSecure), mStreamCallListener);
+                    new GrpcMediaTransport(responseObserver, mSecure), mStreamCallListener,
+                    remoteAddress);
+            mStreamCallHandlers.add(handler);
             final Thread drain = new Thread(() -> drainLoop(handler, responseObserver),
                     "lss-stream-drain-" + handler.hashCode());
             drain.setDaemon(true);
@@ -1085,8 +1129,9 @@ public final class ScreenShareServer {
      * Aggregated transport accounting while the server is running.
      *
      * <p>{@code mLock} guards the transport list and the collection timestamp; byte counters are
-     * atomics updated from gRPC transport threads. {@link #collect()} runs on the main thread,
-     * resets per-transport counters and derives rates over the elapsed interval.</p>
+     * atomics updated from gRPC transport threads. {@link #collect(List, Map)} runs on the main
+     * thread, resets per-transport counters and delegates the aggregation to
+     * {@link ServerStatsMapper}.</p>
      */
     @Accessors(prefix = "m")
     private static class ServerProfile {
@@ -1126,34 +1171,21 @@ public final class ScreenShareServer {
         }
 
         @NonNull
-        public ServerStats collect() {
+        public ServerStats collect(@NonNull final List<SessionSnapshot> sessions,
+                                   @NonNull final Map<String, String> addressByClientId) {
             synchronized (mLock) {
                 // getAndSet closes the current interval and opens the next one.
                 final long startTimestamp = mCollectionTimestamp.getAndSet(SystemClock.elapsedRealtimeNanos());
                 final long endTimestamp = mCollectionTimestamp.get();
-                final List<ServerStats.TransportStats> transports = mTransports.stream()
-                    .map(transportProfile -> {
-                        final long outboundDataSize = transportProfile.getAndResetOutboundDataSize();
-                        final long outboundDataRate = Math.round((double) outboundDataSize
-                            / (endTimestamp - startTimestamp) * Duration.ofSeconds(1L).toNanos());
-                        return ServerStats.TransportStats.builder()
-                            .remoteAddress(transportProfile.getRemoteAddress().toString())
-                            .outboundDataSize(outboundDataSize)
-                            .outboundDataRate(outboundDataRate)
-                            .build();
-                    })
-                    .collect(Collectors.toUnmodifiableList());
-                final long outboundDataSize = transports.stream()
-                    .map(ServerStats.TransportStats::getOutboundDataSize)
-                    .reduce(0L, Long::sum);
-                final long outboundDataRate = Math.round((double) outboundDataSize / (endTimestamp - startTimestamp)
-                    * Duration.ofSeconds(1L).toNanos());
-
-                return ServerStats.builder()
-                    .outboundDataSize(outboundDataSize)
-                    .outboundDataRate(outboundDataRate)
-                    .transports(transports)
-                    .build();
+                final long periodMs = Math.max(1L, (endTimestamp - startTimestamp) / 1_000_000L);
+                final List<ServerStatsMapper.AddressTraffic> traffic =
+                    new ArrayList<>(mTransports.size());
+                for (final TransportProfile transportProfile : mTransports) {
+                    traffic.add(new ServerStatsMapper.AddressTraffic(
+                        transportProfile.getRemoteAddress().toString(),
+                        transportProfile.getAndResetOutboundDataSize()));
+                }
+                return ServerStatsMapper.map(traffic, sessions, addressByClientId, periodMs);
             }
         }
 

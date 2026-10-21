@@ -12,6 +12,7 @@ import com.obby.android.localscreenshare.grpc.screenstream.Hello;
 import com.obby.android.localscreenshare.transport.ScreenStreamProtoMapper;
 
 import java.io.IOException;
+import java.net.InetSocketAddress;
 import java.util.Collections;
 import java.util.UUID;
 
@@ -44,6 +45,10 @@ public final class StreamCallHandler {
     private final MediaTransport transport;
 
     private final StreamCallListener listener;
+
+    // Remote address the call arrived on; null when the caller does not attribute statistics to a
+    // peer address (tests, or a call whose transport attributes carry none).
+    private final InetSocketAddress remoteAddress;
 
     private ClientSessionKey key;
 
@@ -83,6 +88,24 @@ public final class StreamCallHandler {
      */
     public StreamCallHandler(StreamHub hub, StreamRuntime runtime, MediaTransport transport,
                              StreamCallListener listener) {
+        this(hub, runtime, transport, listener, null);
+    }
+
+    /**
+     * Creates a handler for one client that also knows the address its call arrived on.
+     *
+     * <p>The address is only used to attribute the session's counters to the transport row that
+     * carries the same address in the server statistics; it never influences the session itself.</p>
+     *
+     * @param hub           stream hub the client joins; required
+     * @param runtime       active stream runtime; required
+     * @param transport     transport owned by this call; required
+     * @param listener      receiver of call events; required
+     * @param remoteAddress address the call arrived on, or null when unknown
+     * @throws IllegalArgumentException if any required argument is null
+     */
+    public StreamCallHandler(StreamHub hub, StreamRuntime runtime, MediaTransport transport,
+                             StreamCallListener listener, InetSocketAddress remoteAddress) {
         if (hub == null) {
             throw new IllegalArgumentException("hub must not be null");
         }
@@ -99,6 +122,7 @@ public final class StreamCallHandler {
         this.runtime = runtime;
         this.transport = transport;
         this.listener = listener;
+        this.remoteAddress = remoteAddress;
     }
 
     /**
@@ -201,6 +225,23 @@ public final class StreamCallHandler {
      */
     public synchronized String getJoinFailure() {
         return joinFailure;
+    }
+
+    /**
+     * Returns the session key this handler attached with, or null before a successful join.
+     */
+    public synchronized ClientSessionKey getAttachedKey() {
+        return key;
+    }
+
+    /**
+     * Returns the address the call arrived on in socket form, or null when it is unknown.
+     *
+     * <p>The text is the same form the gRPC transport tracer reports, so server statistics can
+     * join the per-call session counters with the per-address byte counters.</p>
+     */
+    public String getRemoteAddress() {
+        return remoteAddress == null ? null : remoteAddress.toString();
     }
 
     /**

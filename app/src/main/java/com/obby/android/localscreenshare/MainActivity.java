@@ -640,9 +640,29 @@ public class MainActivity extends AppCompatActivity {
 
     @SuppressLint("StringFormatMatches")
     private void updateServiceStatsView() {
+        final List<ServerStats.TransportStats> transports = mServerStats == null
+            ? Collections.emptyList() : mServerStats.getTransports();
+
+        // Viewer rows carry a session block; address rows without a viewer contribute no counters.
+        int viewers = 0;
+        long queuedUnits = 0L;
+        long droppedUnits = 0L;
+        long resyncCount = 0L;
+        for (final ServerStats.TransportStats transport : transports) {
+            if (transport.getClientId() == null) {
+                continue;
+            }
+            viewers++;
+            queuedUnits += transport.getQueuedUnits();
+            droppedUnits += transport.getDroppedUnits();
+            resyncCount += transport.getResyncCount();
+        }
+
         mServiceStatsView.setText(getString(R.string.service_stats,
-            mServerStats == null ? 0 : mServerStats.getTransports().size(),
-            Formatter.formatFileSize(this, mServerStats == null ? 0L : mServerStats.getOutboundDataRate())));
+            transports.size(),
+            Formatter.formatFileSize(this, mServerStats == null ? 0L : mServerStats.getOutboundDataRate()))
+            + "\n" + getString(R.string.service_viewers, viewers, queuedUnits, droppedUnits,
+            resyncCount));
         mServiceStatsView.setEnabled(mServiceStatus == SERVICE_STATUS_ONLINE);
     }
 

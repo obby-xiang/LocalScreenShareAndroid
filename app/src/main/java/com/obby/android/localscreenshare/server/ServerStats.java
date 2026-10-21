@@ -4,6 +4,7 @@ import android.os.Parcel;
 import android.os.Parcelable;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import java.util.Comparator;
 import java.util.List;
@@ -74,10 +75,17 @@ public class ServerStats implements Parcelable {
     }
 
     /**
-     * Outbound traffic of one remote transport.
+     * Outbound traffic of one remote transport, optionally with the send session attached to it.
      *
-     * <p>Ordered by remote address, then by descending data rate, so equal addresses list their
-     * busiest transport first.</p>
+     * <p>Ordered by remote address, then by client id, then by descending data rate, so equal
+     * addresses list their busiest transport first and two sessions of the same address keep a
+     * stable order.</p>
+     *
+     * <p><b>Client block.</b> {@code clientId} is null for a row that carries traffic without a
+     * session, which is what an address keeps after its last viewer detached. When one address
+     * carries more than one session the payload bytes stay on the first row of that address and the
+     * other rows report zero bytes: the transport counter is per address, so splitting it between
+     * sessions would invent a value.</p>
      */
     @Accessors(prefix = "m")
     @Data
@@ -98,6 +106,8 @@ public class ServerStats implements Parcelable {
 
         private static final Comparator<TransportStats> COMPARATOR =
             Comparator.nullsLast(Comparator.comparing(TransportStats::getRemoteAddress)
+                .thenComparing(TransportStats::getClientId,
+                    Comparator.nullsFirst(Comparator.naturalOrder()))
                 .thenComparing(TransportStats::getOutboundDataRate, Comparator.reverseOrder()));
 
         /**
@@ -116,15 +126,65 @@ public class ServerStats implements Parcelable {
          */
         private final long mOutboundDataRate;
 
+        /**
+         * Client id of the session attached to this address, or null when no session maps here.
+         */
+        @Nullable
+        private final String mClientId;
+
+        /**
+         * Session state name, or null when no session maps here.
+         */
+        @Nullable
+        private final String mClientState;
+
+        /**
+         * Units still queued for this client at snapshot time.
+         */
+        private final long mQueuedUnits;
+
+        /**
+         * Payload bytes still queued for this client at snapshot time.
+         */
+        private final long mQueuedBytes;
+
+        /**
+         * Units this client's queue dropped over the session lifetime.
+         */
+        private final long mDroppedUnits;
+
+        /**
+         * Resynchronization episodes of this client's session.
+         */
+        private final long mResyncCount;
+
+        /**
+         * Units successfully sent to this client.
+         */
+        private final long mSentUnits;
+
+        /**
+         * 95th percentile of one transport send call in milliseconds, zero when not measured.
+         */
+        private final long mSendLatencyP95Ms;
+
         @SuppressWarnings("DataFlowIssue")
         private TransportStats(@NonNull final Parcel in) {
             mRemoteAddress = in.readString();
             mOutboundDataSize = in.readLong();
             mOutboundDataRate = in.readLong();
+            mClientId = in.readString();
+            mClientState = in.readString();
+            mQueuedUnits = in.readLong();
+            mQueuedBytes = in.readLong();
+            mDroppedUnits = in.readLong();
+            mResyncCount = in.readLong();
+            mSentUnits = in.readLong();
+            mSendLatencyP95Ms = in.readLong();
         }
 
         /**
-         * Orders by remote address, then by descending outbound data rate.
+         * Orders by remote address, then client id, then descending outbound data rate.
          */
         @Override
         public int compareTo(TransportStats transportStats) {
@@ -141,6 +201,14 @@ public class ServerStats implements Parcelable {
             dest.writeString(mRemoteAddress);
             dest.writeLong(mOutboundDataSize);
             dest.writeLong(mOutboundDataRate);
+            dest.writeString(mClientId);
+            dest.writeString(mClientState);
+            dest.writeLong(mQueuedUnits);
+            dest.writeLong(mQueuedBytes);
+            dest.writeLong(mDroppedUnits);
+            dest.writeLong(mResyncCount);
+            dest.writeLong(mSentUnits);
+            dest.writeLong(mSendLatencyP95Ms);
         }
     }
 }

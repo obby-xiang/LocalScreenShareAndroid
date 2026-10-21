@@ -32,6 +32,7 @@
     <string name="service_offline">"Offline"</string>
     <string name="service_address">"<xliff:g id="host">%1$s</xliff:g>:<xliff:g id="port">%2$d</xliff:g>"</string>
     <string name="service_stats">"<xliff:g id="count">%1$d</xliff:g> connection(s) | <xliff:g id="speed">%2$s/s</xliff:g>"</string>
+    <string name="service_viewers">"<xliff:g id="count">%1$d</xliff:g> viewer(s) | queue <xliff:g id="queued">%2$d</xliff:g> | dropped <xliff:g id="dropped">%3$d</xliff:g> | resync <xliff:g id="resync">%4$d</xliff:g>"</string>
     <string name="discovery_toolbar_title">"Nearby Shared Screens"</string>
     <string name="searching_services">"Searching…"</string>
     <string name="search_services_off">"Search off"</string>

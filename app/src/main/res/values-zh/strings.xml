@@ -32,6 +32,7 @@
     <string name="service_offline">"离线"</string>
     <string name="service_address">"<xliff:g id="host">%1$s</xliff:g>:<xliff:g id="port">%2$d</xliff:g>"</string>
     <string name="service_stats">"<xliff:g id="count">%1$d</xliff:g> 个连接 | <xliff:g id="speed">%2$s/s</xliff:g>"</string>
+    <string name="service_viewers">"<xliff:g id="count">%1$d</xliff:g> 位观看者 · 队列 <xliff:g id="queued">%2$d</xliff:g> · 丢弃 <xliff:g id="dropped">%3$d</xliff:g> · 重同步 <xliff:g id="resync">%4$d</xliff:g>"</string>
     <string name="discovery_toolbar_title">"附近的共享屏幕"</string>
     <string name="searching_services">"正在搜索…"</string>
     <string name="search_services_off">"搜索已关闭"</string>
