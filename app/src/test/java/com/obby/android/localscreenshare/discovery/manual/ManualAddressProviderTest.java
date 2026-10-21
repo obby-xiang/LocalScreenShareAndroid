@@ -93,6 +93,37 @@ public class ManualAddressProviderTest {
     }
 
     @Test
+    public void anIdentityProbeConfirmsUnderMulticastAndDoesNotPinTheAddress()
+        throws InterruptedException {
+        mProvider.start(noopListener());
+
+        mProvider.probeIdentity("192.168.1.9", 9000, mCallback);
+
+        waitFor(() -> mCallback.confirmed.size() == 1);
+        assertEquals(1, mSink.confirmations.size());
+        // The address was observed over multicast; recording it as a manual entry would pin it and
+        // keep a merely tapped device in the list after it stops announcing.
+        assertEquals(DiscoveryChannel.MULTICAST, mSink.confirmations.get(0).channel);
+        assertEquals("192.168.1.9", mSink.confirmations.get(0).host);
+        assertEquals(9000, mSink.confirmations.get(0).port);
+        assertEquals("192.168.1.9", mCallback.confirmed.get(0));
+        // No manual target was remembered, so the periodic re-probe has nothing to do.
+        assertEquals(0, mProvider.manualTargetCount());
+    }
+
+    @Test
+    public void anIdentityProbeFailureIsReportedWithoutAConfirmation() throws InterruptedException {
+        mProbe = new FakeProbe((host, port) -> ProbeResult.failed(host, port, "identity_mismatch"));
+        mProvider = new ManualAddressProvider(mProbe, mFavorites, Runnable::run, mSink, TIMEOUT_MS);
+
+        mProvider.probeIdentity("192.168.1.9", 9000, mCallback);
+
+        waitFor(() -> mCallback.failures.size() == 1);
+        assertEquals("identity_mismatch", mCallback.failures.get(0));
+        assertTrue(mSink.confirmations.isEmpty());
+    }
+
+    @Test
     public void aManualProbeConfirmsThroughTheSink() throws InterruptedException {
         assertTrue(mProvider.probeManual("192.168.1.9:9000", 8080, mCallback));
 

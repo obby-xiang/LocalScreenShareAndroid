@@ -255,9 +255,10 @@ public final class ManualAddressProvider implements DiscoveryProvider {
      * <p>A multicast announcement carries no fingerprint, so the row a user taps has nothing to
      * confirm yet. One direct {@code Register} over TLS yields the peer's certificate fingerprint,
      * and a success is written to the store through the same confirmation sink as every other probe,
-     * which is what makes the row connectable afterwards. Unlike {@link #probeManual}, the address is
-     * not remembered as a manual target: the user asked about one device they already see, not to
-     * keep an address alive.</p>
+     * which is what makes the row connectable afterwards. The confirmation is recorded under {@link
+     * DiscoveryChannel#MULTICAST}, because that is where the address was observed: recording it as a
+     * manual entry would pin it, and a device the user merely tapped must keep expiring like any
+     * other announced one. For the same reason the address is not remembered as a manual target.</p>
      *
      * @param host address of the discovered device
      * @param port gRPC port of the discovered device
@@ -280,7 +281,8 @@ public final class ManualAddressProvider implements DiscoveryProvider {
                 }
                 mMainExecutor.execute(() -> {
                     if (result.isConfirmed() && result.getSummary() != null) {
-                        mSink.onConfirmed(DiscoveryChannel.MANUAL, result.getSummary(), host, port);
+                        mSink.onConfirmed(DiscoveryChannel.MULTICAST, result.getSummary(), host,
+                            port);
                         callback.onConfirmed(host, port, result.getSummary());
                     } else {
                         callback.onFailed(result.getReason());
