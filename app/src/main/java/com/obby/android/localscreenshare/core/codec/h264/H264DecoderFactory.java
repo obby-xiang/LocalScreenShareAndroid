@@ -1,5 +1,6 @@
 package com.obby.android.localscreenshare.core.codec.h264;
 
+import com.obby.android.localscreenshare.core.audio.SessionClock;
 import com.obby.android.localscreenshare.core.codec.Decoder;
 import com.obby.android.localscreenshare.core.codec.DecoderFactory;
 import com.obby.android.localscreenshare.core.codec.KeyFrameRequester;
@@ -27,6 +28,8 @@ public final class H264DecoderFactory implements DecoderFactory {
     private final PipelineMetrics metrics;
 
     private final NanoClock clock;
+
+    private final SessionClock sessionClock;
 
     /**
      * Creates a factory whose decoders do not report key-frame needs.
@@ -59,6 +62,24 @@ public final class H264DecoderFactory implements DecoderFactory {
     public H264DecoderFactory(MediaCodecBridgeFactory bridgeFactory,
                               KeyFrameRequester keyFrameRequester, PipelineMetrics metrics,
                               NanoClock clock) {
+        this(bridgeFactory, keyFrameRequester, metrics, clock, null);
+    }
+
+    /**
+     * Creates a factory whose decoders share the session's audio/video timeline.
+     *
+     * <p>A null clock keeps the decoder-local anchor, so existing callers are unaffected.</p>
+     *
+     * @param bridgeFactory     creates platform decoder bridges; required
+     * @param keyFrameRequester notified when a decoder had to shed a frame; required
+     * @param metrics           metric scope of the receiving pipeline; required
+     * @param clock             clock used by the decode and presentation probes; required
+     * @param sessionClock      shared timeline, or null for a decoder-local anchor
+     * @throws IllegalArgumentException if a required argument is null
+     */
+    public H264DecoderFactory(MediaCodecBridgeFactory bridgeFactory,
+                              KeyFrameRequester keyFrameRequester, PipelineMetrics metrics,
+                              NanoClock clock, SessionClock sessionClock) {
         if (bridgeFactory == null) {
             throw new IllegalArgumentException("bridgeFactory must not be null");
         }
@@ -75,12 +96,13 @@ public final class H264DecoderFactory implements DecoderFactory {
         this.keyFrameRequester = keyFrameRequester;
         this.metrics = metrics;
         this.clock = clock;
+        this.sessionClock = sessionClock;
     }
 
     @Override
     public Decoder create(StreamKey streamKey, StreamDescriptor descriptor,
                           RenderTarget renderTarget) {
         return new H264Decoder(streamKey, descriptor, renderTarget, bridgeFactory,
-                keyFrameRequester, metrics, clock);
+                keyFrameRequester, metrics, clock, sessionClock);
     }
 }

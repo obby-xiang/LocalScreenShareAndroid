@@ -1,5 +1,6 @@
 package com.obby.android.localscreenshare.core.audio;
 
+import com.obby.android.localscreenshare.core.metrics.PipelineMetrics;
 import com.obby.android.localscreenshare.core.model.AudioAccessUnit;
 import com.obby.android.localscreenshare.core.model.AudioDescriptor;
 import com.obby.android.localscreenshare.core.util.NanoClock;
@@ -91,11 +92,15 @@ public final class ClientAudioSession {
 
     private final boolean asyncWriter;
 
+    private final SessionClock sessionClock;
+
+    private final PipelineMetrics metrics;
+
     private final AudioJitterBuffer buffer = new AudioJitterBuffer();
 
     private final Object lock = new Object();
 
-    private final ArrayDeque<byte[]> pending = new ArrayDeque<>();
+    private final ArrayDeque<PcmFrame> pending = new ArrayDeque<>();
 
     private AudioDescriptor descriptor;
 
@@ -117,6 +122,12 @@ public final class ClientAudioSession {
 
     private long lastEnqueuedMs = Long.MIN_VALUE;
 
+    private long lastDriftCheckMs = Long.MIN_VALUE;
+
+    private long lastWrittenPtsUs = SessionClock.UNSET;
+
+    private long lastDriftMs;
+
     private long framesReceived;
 
     private long writtenFrames;
@@ -124,10 +135,25 @@ public final class ClientAudioSession {
     private Thread writer;
 
     /**
+     * One decoded frame waiting for the writer, with the timestamp it belongs to.
+     */
+    private static final class PcmFrame {
+
+        private final byte[] data;
+
+        private final long ptsUs;
+
+        private PcmFrame(byte[] data, long ptsUs) {
+            this.data = data;
+            this.ptsUs = ptsUs;
+        }
+    }
+
+    /**
      * Creates a session with the production clock and a writer thread.
      */
     public ClientAudioSession(AudioDecoder decoder, AudioSink sink, Listener listener) {
-        this(decoder, sink, listener, NanoClock.MONOTONIC, true);
+        this(decoder, sink, listener, NanoClock.MONOTONIC, null, PipelineMetrics.NONE, true);
     }
 
     /**
@@ -146,6 +172,29 @@ public final class ClientAudioSession {
      */
     public ClientAudioSession(AudioDecoder decoder, AudioSink sink, Listener listener,
                               NanoClock clock, boolean asyncWriter) {
+        this(decoder, sink, listener, clock, null, PipelineMetrics.NONE, asyncWriter);
+    }
+
+    /**
+     * Creates a session that shares the session timeline with the video track.
+     *
+     * <p>The shared clock is what makes lip sync possible: the audio anchors it when it arrives
+     * first and follows it when video did, and the drift guard compares the sink's playhead with
+     * the same mapping the video pacer uses.</p>
+     *
+     * @param decoder      audio decoder; required
+     * @param sink         playback sink; required
+     * @param listener     state listener; may be null
+     * @param clock        clock used by the jitter buffer; required
+     * @param sessionClock shared session timeline, or null for a standalone audio timeline
+     * @param metrics      metric scope of the receiving pipeline; required, may be
+     *                     {@link PipelineMetrics#NONE}
+     * @param asyncWriter  true to run a dedicated writer thread
+     * @throws IllegalArgumentException if a required argument is null
+     */
+    public ClientAudioSession(AudioDecoder decoder, AudioSink sink, Listener listener,
+                              NanoClock clock, SessionClock sessionClock, PipelineMetrics metrics,
+                              boolean asyncWriter) {
         if (decoder == null) {
             throw new IllegalArgumentException("decoder must not be null");
         }
@@ -155,10 +204,15 @@ public final class ClientAudioSession {
         if (clock == null) {
             throw new IllegalArgumentException("clock must not be null");
         }
+        if (metrics == null) {
+            throw new IllegalArgumentException("metrics must not be null");
+        }
         this.decoder = decoder;
         this.sink = sink;
         this.listener = listener;
         this.clock = clock;
+        this.sessionClock = sessionClock;
+        this.metrics = metrics;
         this.asyncWriter = asyncWriter;
     }
 
@@ -312,10 +366,17 @@ public final class ClientAudioSession {
                             break;
                         }
                     }
+                    final long ptsUs = accessUnit.getPtsUs();
                     for (int i = 0; i < plan.getSilenceFrames(); i++) {
-                        enqueueLocked(silenceFrame);
+                        enqueueLocked(new PcmFrame(silenceFrame, ptsUs));
                     }
-                    enqueueLocked(pcm.getData());
+                    enqueueLocked(new PcmFrame(pcm.getData(), ptsUs));
+                    metrics.increment(PipelineMetrics.Counter.AUDIO_FRAMES);
+                    if (sessionClock != null) {
+                        // Audio-first sessions anchor the shared timeline; a session already
+                        // anchored by video keeps its anchor untouched.
+                        sessionClock.anchorIfUnset(ptsUs, clock.nowNs());
+                    }
                     lastEnqueuedMs = nowMs();
                     if (plan.isStartPlayback() && !playing) {
                         playing = true;
@@ -349,7 +410,7 @@ public final class ClientAudioSession {
      * @return true when a frame was written
      */
     public boolean drainOnce() {
-        final byte[] frame;
+        final PcmFrame frame;
         synchronized (lock) {
             if (closed) {
                 return false;
@@ -360,15 +421,83 @@ public final class ClientAudioSession {
             return false;
         }
         try {
-            sink.write(frame, 0, frame.length);
+            sink.write(frame.data, 0, frame.data.length);
         } catch (AudioSinkException e) {
             fail("audio playback failed");
             return false;
         }
         synchronized (lock) {
             writtenFrames++;
+            lastWrittenPtsUs = frame.ptsUs;
         }
+        applyDriftGuard();
         return true;
+    }
+
+    /**
+     * Compares the sink's playhead with the shared timeline, at most once per drift interval.
+     *
+     * <p>Only the shared timeline makes this comparison meaningful: the sink reports what is
+     * audible now, and {@link SessionClock#unmap(long)} turns it into the stream timestamp that
+     * should be audible. A correction is one frame - dropped when audio runs ahead, filled with
+     * silence when it runs behind - and the jitter buffer enforces the two-second cooldown.</p>
+     */
+    private void applyDriftGuard() {
+        final SessionClock shared = sessionClock;
+        if (shared == null || !shared.isAnchored()) {
+            return;
+        }
+        final long lastPts;
+        synchronized (lock) {
+            if (closed || state != State.ACTIVE) {
+                return;
+            }
+            lastPts = lastWrittenPtsUs;
+        }
+        if (lastPts == SessionClock.UNSET) {
+            return;
+        }
+        final long nowMs = nowMs();
+        if (lastDriftCheckMs != Long.MIN_VALUE
+                && nowMs - lastDriftCheckMs < AudioJitterBuffer.DRIFT_COOLDOWN_MS) {
+            return;
+        }
+        final long playheadNs = sink.getPlayheadNs();
+        final long expectedNs = shared.map(lastPts);
+        if (playheadNs < 0 || expectedNs == SessionClock.UNSET) {
+            return;
+        }
+        lastDriftCheckMs = nowMs;
+        final long offsetNs = playheadNs - expectedNs;
+        synchronized (lock) {
+            lastDriftMs = offsetNs / 1_000_000L;
+        }
+        metrics.record(PipelineMetrics.Window.AV_OFFSET, Math.abs(offsetNs));
+        final int correction = buffer.driftCorrectionFrames(lastPts, shared.unmap(playheadNs),
+                frameDurationUsLocked(), nowMs);
+        applyFrameCorrection(correction);
+    }
+
+    /**
+     * Applies one drift correction: drop a frame when audio is ahead, insert silence when behind.
+     */
+    private void applyFrameCorrection(int correction) {
+        if (correction == 0) {
+            return;
+        }
+        synchronized (lock) {
+            if (closed || state != State.ACTIVE) {
+                return;
+            }
+            if (correction < 0) {
+                if (pending.pollFirst() != null) {
+                    metrics.increment(PipelineMetrics.Counter.AUDIO_DROPPED);
+                }
+            } else if (silenceFrame != null) {
+                pending.addLast(new PcmFrame(silenceFrame, lastWrittenPtsUs));
+                metrics.increment(PipelineMetrics.Counter.AUDIO_UNDERRUNS);
+            }
+        }
     }
 
     /**
@@ -450,8 +579,8 @@ public final class ClientAudioSession {
         }
     }
 
-    private void enqueueLocked(byte[] frame) {
-        if (frame == null) {
+    private void enqueueLocked(PcmFrame frame) {
+        if (frame == null || frame.data == null) {
             return;
         }
         while (pending.size() >= MAX_PENDING_FRAMES) {
@@ -506,6 +635,7 @@ public final class ClientAudioSession {
                     frame = silenceFrame;
                 }
                 if (frame != null) {
+                    metrics.increment(PipelineMetrics.Counter.AUDIO_UNDERRUNS);
                     try {
                         sink.write(frame, 0, frame.length);
                     } catch (AudioSinkException e) {
@@ -575,6 +705,16 @@ public final class ClientAudioSession {
     public int getPendingFrames() {
         synchronized (lock) {
             return pending.size();
+        }
+    }
+
+    /**
+     * Returns the last measured audio/video offset in milliseconds; positive means the audible
+     * audio runs ahead of the shared timeline.
+     */
+    public long getLastDriftMs() {
+        synchronized (lock) {
+            return lastDriftMs;
         }
     }
 

@@ -53,11 +53,15 @@ public final class AudioJitterBuffer {
      */
     public static final long DRIFT_COOLDOWN_MS = 2_000L;
 
+    /**
+     * Sentinel for an unknown playhead or expected timestamp in
+     * {@link #driftCorrectionFrames(long, long, long, long)}.
+     */
+    public static final long UNSET = Long.MIN_VALUE;
+
     private static final long DEFAULT_FRAME_US = 21_333L;
 
     private static final int MAX_SILENCE_FRAMES = 25;
-
-    private static final long UNSET = Long.MIN_VALUE;
 
     /**
      * What the session should do with one decoded frame.
@@ -192,7 +196,7 @@ public final class AudioJitterBuffer {
      * Decides whether the drift guard should correct the offset now.
      *
      * @param expectedPtsUs   stream timestamp the session clock expects to be audible now
-     * @param playheadPtsUs   stream timestamp the sink reports as audible, or negative when unknown
+     * @param playheadPtsUs   stream timestamp the sink reports as audible, or {@link #UNSET}
      * @param frameDurationUs duration of one frame, or non-positive for the AAC default
      * @param nowMs           monotonic time in milliseconds
      * @return {@code -1} to drop one frame (audio is ahead), {@code 1} to insert one silence frame
@@ -200,7 +204,7 @@ public final class AudioJitterBuffer {
      */
     public int driftCorrectionFrames(long expectedPtsUs, long playheadPtsUs, long frameDurationUs,
                                      long nowMs) {
-        if (expectedPtsUs < 0 || playheadPtsUs < 0) {
+        if (expectedPtsUs == UNSET || playheadPtsUs == UNSET) {
             return 0;
         }
         if (lastDriftCorrectionMs != UNSET

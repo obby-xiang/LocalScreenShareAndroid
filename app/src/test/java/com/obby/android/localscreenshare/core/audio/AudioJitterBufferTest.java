@@ -105,7 +105,8 @@ public class AudioJitterBufferTest {
         assertEquals(0, buffer.driftCorrectionFrames(expected, expected + 60_000L, FRAME_US, 199L));
         assertEquals(1, buffer.driftCorrectionFrames(expected, expected - 60_000L, FRAME_US,
                 AudioJitterBuffer.DRIFT_COOLDOWN_MS));
-        assertEquals(0, buffer.driftCorrectionFrames(expected, -1L, FRAME_US, 10_000L));
+        assertEquals(0, buffer.driftCorrectionFrames(expected, AudioJitterBuffer.UNSET, FRAME_US,
+                10_000L));
     }
 
     @Test

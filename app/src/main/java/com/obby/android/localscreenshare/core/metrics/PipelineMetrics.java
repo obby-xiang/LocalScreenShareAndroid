@@ -139,7 +139,12 @@ public final class PipelineMetrics {
         /**
          * Catch-up start to the accepted join point that ended it, in nanoseconds.
          */
-        CATCH_UP_LATENCY
+        CATCH_UP_LATENCY,
+
+        /**
+         * Absolute audio/video offset observed by the audio drift guard, in nanoseconds.
+         */
+        AV_OFFSET
     }
 
     /**
@@ -250,7 +255,22 @@ public final class PipelineMetrics {
         /**
          * Catch-up attempts aborted because the stream did not converge.
          */
-        CONVERGENCE_FAILURES
+        CONVERGENCE_FAILURES,
+
+        /**
+         * Audio frames received and accepted by the client audio session.
+         */
+        AUDIO_FRAMES,
+
+        /**
+         * Audio frames dropped by the send queue, the transport or the jitter buffer.
+         */
+        AUDIO_DROPPED,
+
+        /**
+         * Audio underruns that were filled with silence.
+         */
+        AUDIO_UNDERRUNS
     }
 
     /**

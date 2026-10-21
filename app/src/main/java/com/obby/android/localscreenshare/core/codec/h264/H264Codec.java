@@ -1,5 +1,6 @@
 package com.obby.android.localscreenshare.core.codec.h264;
 
+import com.obby.android.localscreenshare.core.audio.SessionClock;
 import com.obby.android.localscreenshare.core.codec.CodecDescriptor;
 import com.obby.android.localscreenshare.core.codec.CodecIds;
 import com.obby.android.localscreenshare.core.codec.CodecRegistration;
@@ -85,6 +86,23 @@ public final class H264Codec {
     public static CodecRegistration registration(MediaCodecBridgeFactory bridgeFactory,
                                                  KeyFrameRequester keyFrameRequester,
                                                  PipelineMetrics metrics, NanoClock clock) {
+        return registration(bridgeFactory, keyFrameRequester, metrics, clock, null);
+    }
+
+    /**
+     * Builds the H.264 registration whose decoders share the session's audio/video timeline.
+     *
+     * @param bridgeFactory      creates platform codec bridges; required
+     * @param keyFrameRequester  notified when a decoder had to shed a frame; required
+     * @param metrics            metric scope of the active encoder; required
+     * @param clock              clock used by the encode-stage probes; required
+     * @param sessionClock       shared timeline handed to every decoder, or null
+     * @throws IllegalArgumentException if a required argument is null
+     */
+    public static CodecRegistration registration(MediaCodecBridgeFactory bridgeFactory,
+                                                 KeyFrameRequester keyFrameRequester,
+                                                 PipelineMetrics metrics, NanoClock clock,
+                                                 SessionClock sessionClock) {
         if (bridgeFactory == null) {
             throw new IllegalArgumentException("bridgeFactory must not be null");
         }
@@ -101,7 +119,8 @@ public final class H264Codec {
                 BitstreamFormat.ANNEX_B, true, true, true);
         return new CodecRegistration(descriptor,
                 new H264EncoderFactory(bridgeFactory, metrics, clock),
-                new H264DecoderFactory(bridgeFactory, keyFrameRequester, metrics, clock),
+                new H264DecoderFactory(bridgeFactory, keyFrameRequester, metrics, clock,
+                        sessionClock),
                 new H264CodecPolicy(), 10);
     }
 
@@ -151,6 +170,24 @@ public final class H264Codec {
                                                         NanoClock clock) {
         return registration(new AndroidMediaCodecBridgeFactory(), keyFrameRequester, metrics,
                 clock);
+    }
+
+    /**
+     * Builds the production registration whose decoders share the session timeline with audio.
+     *
+     * <p>Used by the viewer so the picture and the sound are placed on one timeline: whichever
+     * track anchors first fixes the mapping, and a null clock keeps the historical behaviour.</p>
+     *
+     * @param keyFrameRequester notified when a decoder had to shed a frame; required
+     * @param metrics           metric scope of the receiving pipeline; required
+     * @param clock             clock used by the probes; required
+     * @param sessionClock      shared timeline, or null for a decoder-local anchor
+     */
+    public static CodecRegistration androidRegistration(KeyFrameRequester keyFrameRequester,
+                                                        PipelineMetrics metrics, NanoClock clock,
+                                                        SessionClock sessionClock) {
+        return registration(new AndroidMediaCodecBridgeFactory(), keyFrameRequester, metrics,
+                clock, sessionClock);
     }
 
     /**

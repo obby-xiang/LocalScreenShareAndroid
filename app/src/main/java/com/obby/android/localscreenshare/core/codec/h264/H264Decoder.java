@@ -2,6 +2,7 @@ package com.obby.android.localscreenshare.core.codec.h264;
 
 import android.view.Surface;
 
+import com.obby.android.localscreenshare.core.audio.SessionClock;
 import com.obby.android.localscreenshare.core.codec.CodecIds;
 import com.obby.android.localscreenshare.core.codec.Decoder;
 import com.obby.android.localscreenshare.core.codec.DecoderException;
@@ -95,6 +96,9 @@ public final class H264Decoder implements Decoder {
     private final PipelineMetrics metrics;
     private final NanoClock clock;
 
+    // Shared audio/video timeline, or null to keep the historical decoder-local anchor.
+    private final SessionClock sessionClock;
+
     // Timestamps of the most recent input submissions, keyed by presentation time, used to match a
     // dequeued output with the moment its frame was handed to the decoder.
     private final long[] pendingPtsUs = new long[DECODE_SAMPLE_CAPACITY];
@@ -173,6 +177,33 @@ public final class H264Decoder implements Decoder {
                        RenderTarget renderTarget, MediaCodecBridgeFactory bridgeFactory,
                        KeyFrameRequester keyFrameRequester, PipelineMetrics metrics,
                        NanoClock clock) {
+        this(streamKey, descriptor, renderTarget, bridgeFactory, keyFrameRequester, metrics,
+                clock, null);
+    }
+
+    /**
+     * Creates a decoder that maps stream timestamps through a shared session timeline.
+     *
+     * <p>When a {@link SessionClock} is supplied, the decoder no longer anchors its own timeline:
+     * the first frame seen by either track anchors the shared one, and every later frame is
+     * presented at the shared mapping. That is what keeps the picture and the sound on one
+     * timeline instead of two drifting ones. A null clock keeps the historical self-anchored
+     * behaviour, so existing callers and tests are unaffected.</p>
+     *
+     * @param streamKey         identity of the stream being decoded
+     * @param descriptor        descriptor used before {@link #configure(StreamDescriptor)} is called
+     * @param renderTarget      output target; owned by the caller
+     * @param bridgeFactory     creates the platform decoder bridge
+     * @param keyFrameRequester notified when frames were dropped inside the decoder; not null
+     * @param metrics           metric scope of the receiving pipeline; required
+     * @param clock             clock used by the decode and presentation probes; required
+     * @param sessionClock      shared timeline, or null to keep a decoder-local anchor
+     * @throws IllegalArgumentException if a required argument is null
+     */
+    public H264Decoder(StreamKey streamKey, StreamDescriptor descriptor,
+                       RenderTarget renderTarget, MediaCodecBridgeFactory bridgeFactory,
+                       KeyFrameRequester keyFrameRequester, PipelineMetrics metrics,
+                       NanoClock clock, SessionClock sessionClock) {
         if (streamKey == null) {
             throw new IllegalArgumentException("streamKey must not be null");
         }
@@ -198,6 +229,7 @@ public final class H264Decoder implements Decoder {
         this.keyFrameRequester = keyFrameRequester;
         this.metrics = metrics;
         this.clock = clock;
+        this.sessionClock = sessionClock;
     }
 
     /**
@@ -534,6 +566,13 @@ public final class H264Decoder implements Decoder {
      * wait for its slot.</p>
      */
     private long toDeviceTimeNs(long ptsUs, long nowNs) {
+        if (sessionClock != null) {
+            sessionClock.anchorIfUnset(ptsUs, nowNs);
+            final long mapped = sessionClock.map(ptsUs);
+            if (mapped != SessionClock.UNSET) {
+                return mapped;
+            }
+        }
         if (timeAnchorNs == PresentationPacer.UNSET || ptsAnchorUs == PresentationPacer.UNSET) {
             ptsAnchorUs = ptsUs;
             timeAnchorNs = nowNs;
@@ -583,6 +622,8 @@ public final class H264Decoder implements Decoder {
         firstFrameSeen = false;
         ptsAnchorUs = PresentationPacer.UNSET;
         timeAnchorNs = PresentationPacer.UNSET;
+        // The shared session anchor is deliberately left alone: a video flush must not shift the
+        // audio timeline, and an audio reconfiguration never reaches this class.
     }
 
     /**

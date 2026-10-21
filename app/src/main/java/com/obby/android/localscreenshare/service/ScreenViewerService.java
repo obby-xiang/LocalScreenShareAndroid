@@ -66,6 +66,7 @@ import com.obby.android.localscreenshare.MainActivity;
 import com.obby.android.localscreenshare.ViewerActivity;
 import com.obby.android.localscreenshare.R;
 import com.obby.android.localscreenshare.core.audio.ClientAudioSession;
+import com.obby.android.localscreenshare.core.audio.SessionClock;
 import com.obby.android.localscreenshare.core.audio.mediacodec.AndroidAudioDecoder;
 import com.obby.android.localscreenshare.core.audio.mediacodec.AudioTrackSink;
 import com.obby.android.localscreenshare.client.ClientMediaReceiver;
@@ -233,6 +234,12 @@ public class ScreenViewerService extends Service {
     // Why the viewer has no sound, or null while it is fine; shown in the overlay in A6.
     @Nullable
     private String mAudioUnavailableReason;
+
+    // One timeline for audio and video of the current viewing session. Reset when a new media
+    // session starts; every other reset (video flush, audio reconfiguration) is deliberately not
+    // forwarded to it.
+    @NonNull
+    private final SessionClock mSessionClock = new SessionClock();
 
     @Nullable
     private ClientMediaReceiver mClientMediaReceiver;
@@ -789,10 +796,12 @@ public class ScreenViewerService extends Service {
     @NonNull
     private ClientMediaReceiver startMediaSession() {
         ensureMetrics();
+        mSessionClock.reset();
         if (mCodecRegistry == null) {
             mCodecRegistry = CodecRegistry.withDefaults();
             mCodecRegistry.register(H264Codec.androidRegistration(
-                () -> mMainHandler.post(this::requestKeyFrame), mMetrics, NanoClock.MONOTONIC));
+                () -> mMainHandler.post(this::requestKeyFrame), mMetrics, NanoClock.MONOTONIC,
+                mSessionClock));
         }
         if (mStreamKey == null) {
             mStreamKey = new StreamKey("remote", "screen");
@@ -848,7 +857,8 @@ public class ScreenViewerService extends Service {
     @NonNull
     private ClientAudioSession createAudioSession() {
         return new ClientAudioSession(new AndroidAudioDecoder(), new AudioTrackSink(),
-                (state, reason) -> mMainHandler.post(() -> onAudioStateChanged(state, reason)));
+                (state, reason) -> mMainHandler.post(() -> onAudioStateChanged(state, reason)),
+                NanoClock.MONOTONIC, mSessionClock, mMetrics, true);
     }
 
     /**
