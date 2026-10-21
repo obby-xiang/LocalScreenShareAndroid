@@ -4,6 +4,7 @@
 > 适用范围：本仓库全部新代码。存量代码按 TB-ENG-011（代码结构梳理与命名统一）的 R1–R4 批次逐步对齐，不在本规范生效时做一次性重命名。
 > 根包约束：根包 `com.obby.android.localscreenshare` 不可变更；本规范只约束其子包、类型、成员与资源。
 > 依据：TB-ENG-011 的盘点结论与经用户批准的调整方案。本规范是 R1–R4 重构批次与今后新代码的依据；R1–R4 已于 2026-10-20 全部落地，文中目标名即当前实现。
+> 强制约束：[第 8 章 Android 组件构造禁令](#8-android-组件构造禁令强制)——字段初始化器不得触碰 Context，违反即进程 FATAL。
 > 相关文档：[任务看板](task-board.md) · [决策看板](decision-board.md) · [项目现状与技术审查](project-assessment.md)
 
 ## 1. 包
@@ -224,3 +225,38 @@ R2 批次同时处理了盘点中的其余命名问题：`KeystoreIdentityProvid
 3. **方法**：生命周期动词是否成对、boolean 前缀是否正确、访问器是否统一。
 4. **资源**：领域是否在前、是否套用 4.1 的前缀表、字符串是否同步 `values-zh`。
 5. **常量**：是否单域、是否不超过 20 个值、归属到 `ServiceProtocol` 或对应 feature 的 `*Constants`。
+6. **组件构造**：新增或改动的 Activity/Service/Receiver/Provider/Application 是否有触碰 Context 的字段初始化器（第 8 章）。
+
+## 8. Android 组件构造禁令（强制）
+
+> 本章与命名无关，但它是全局硬约束，因此放在本规范里单独立章：它曾被两次漏掉（见 8.3），两次都是“进程一起就死”，而不是某条路径慢或某个界面错。
+
+### 8.1 字段初始化器不得触碰 Context
+
+- 框架用 `Class.newInstance()` 构造组件（`Activity`、`Service`、`BroadcastReceiver`、`ContentProvider`、`Application`），`attachBaseContext()` 在这之后才调用。字段初始化器在**构造期**执行，此时 `this` 的 base context 仍是 `null`。
+- 字段初始化器里禁止出现读取上下文的表达式，典型形态是 `new Xxx(this, …)`，也包括 `this.getResources()`、`this.getSystemService(…)`、`this.getApplicationContext()`、`this.getApplicationInfo()`；被调用的构造函数间接读上下文同样算违规（`GestureDetector`、`Dialog`、`View`、`Toast`、`WindowManager` 布局参数都读）。
+- 失败形态：`NullPointerException` 抛在 `Class.newInstance` 内部，框架报 `Unable to instantiate activity/service`，**整个进程 FATAL**。崩溃点不在调用方，用 `try/catch` 包住 `startActivity()` 救不了；同进程的会话、悬浮窗与前台通知一起消失。`android:exported="false"` 让这类组件只能由应用内入口触发，设备验证时更容易被漏掉。
+- 正确写法（任选其一）：
+  - 字段只声明，在 `onCreate()`、`onStartCommand()` 或首次使用处创建（`ViewerActivity` 的 `GestureDetector` 即此写法）；
+  - 惰性持有：`service/LazyContextValue` 只保存 `this::getApplicationContext` 这样的方法引用，首次 `get()` 才解析（D-1 的 `AndroidDeviceProfileSampler` 即此写法）。
+- 允许的字段初始化器：不触碰 Context 的表达式，例如 `new Handler(Looper.getMainLooper())`、`new HashSet<>()`、`"Tag@" + hashCode()`、`this::method` 方法引用，以及匿名 `ServiceConnection`、`BroadcastReceiver`、`Listener` 实例——它们的方法体在回调时才执行，构造期只分配对象。
+- 唯一豁免：`Application` 子类在 `onCreate()` 里把 `this` 发布给静态持有者（`App.onCreate()`），因为那时 base context 已就绪。
+- 复查命令（仓库根，命中即违规）：
+
+```bash
+git grep -nE '^    .*=[^;]*new [A-Za-z0-9_.]+\(this[,)]' -- 'app/src/main/java/**/*.java'
+```
+
+### 8.2 为什么只能靠禁令与契约用例
+
+- JVM 用例不经过框架的组件实例化路径：`Class.newInstance`、`attachBaseContext`、`performLaunchActivity` 都在设备侧，1095 条用例跑绿也覆盖不到这一条。
+- 因此仓库另有一条静态契约用例 `ComponentConstructionTest`：扫描 manifest 里的组件类，断言其**类级字段初始化器**不出现 `(this`、`this.`、`getSystemService(`、`getResources()`、`getApplicationContext()`。它只是启发式护栏，不能替代代码评审第 8.1 节。
+- 设备上观察到 “点击后卡住 1–9 s → 黑屏 → 回桌面”且会话一起消失时，先查 logcat 的 `Unable to instantiate`，再查该组件的字段初始化器。
+
+### 8.3 事故记录
+
+| 日期 | 组件 | 症状 | 修正 |
+| --- | --- | --- | --- |
+| 2026-10-21（D-1） | `ScreenShareService` | 设备状态块采样器写在字段初始化器里（`new AndroidDeviceProfileSampler(this)`），两台设备每次启动都 `Unable to instantiate service` → FATAL | 改为 `service/LazyContextValue` 首次采样惰性创建；`LazyContextValueTest` 守构造契约 |
+| 2026-10-21（TB-WIN-001 设备验证） | `ViewerActivity` | `mGestureDetector` 字段初始化器 `new GestureDetector(this, …)` 读 `ViewConfiguration` → NPE → 展开全屏即进程死亡，会话与通知一起消失 | 移入 `onCreate()`（`createGestureDetector()`）；同批全仓 grep 同类反模式，仅此一处 |
+
