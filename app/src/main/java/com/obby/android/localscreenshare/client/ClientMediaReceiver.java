@@ -1,5 +1,6 @@
 package com.obby.android.localscreenshare.client;
 
+import com.obby.android.localscreenshare.core.audio.ClientAudioSession;
 import com.obby.android.localscreenshare.core.client.ClientMediaSession;
 import com.obby.android.localscreenshare.core.metrics.ArrivalTracker;
 import com.obby.android.localscreenshare.core.metrics.PipelineMetrics;
@@ -39,6 +40,10 @@ public final class ClientMediaReceiver {
     private final ArrivalTracker arrivalTracker;
 
     private final PipelineMetrics metrics;
+
+    // Optional audio track of the same stream. Audio messages never reach the video session, and a
+    // failure in the audio path is contained here.
+    private final ClientAudioSession audioSession;
 
     private Boolean lastSecure;
 
@@ -114,6 +119,31 @@ public final class ClientMediaReceiver {
                                StreamGeometryListener geometryListener,
                                ArrivalTracker arrivalTracker,
                                PipelineMetrics metrics) {
+        this(streamKey, session, secureListener, geometryListener, arrivalTracker, metrics, null);
+    }
+
+    /**
+     * Creates a receiver that also drives the stream's optional audio track.
+     *
+     * <p>Audio messages are deserialized and applied here, on the same decode thread, but they
+     * never enter {@link ClientMediaSession}: a malformed audio message, an unknown audio codec or
+     * a failing audio decoder only affects the audio session.</p>
+     *
+     * @param streamKey        stream identity used to rebuild descriptors and access units
+     * @param session          the video session driven by this receiver
+     * @param secureListener   optional listener for secure-flag changes; may be null
+     * @param geometryListener optional listener for stream geometry changes; may be null
+     * @param arrivalTracker   optional receiver of arrival statistics; may be null
+     * @param metrics          receive-side metric scope; required
+     * @param audioSession     optional audio session of the same stream; may be null
+     * @throws IllegalArgumentException if {@code streamKey}, {@code session} or {@code metrics} is
+     *                                  null
+     */
+    public ClientMediaReceiver(StreamKey streamKey, ClientMediaSession session,
+                               ClientSecureListener secureListener,
+                               StreamGeometryListener geometryListener,
+                               ArrivalTracker arrivalTracker, PipelineMetrics metrics,
+                               ClientAudioSession audioSession) {
         if (streamKey == null) {
             throw new IllegalArgumentException("streamKey must not be null");
         }
@@ -129,6 +159,7 @@ public final class ClientMediaReceiver {
         this.geometryListener = geometryListener;
         this.arrivalTracker = arrivalTracker;
         this.metrics = metrics;
+        this.audioSession = audioSession;
     }
 
     /**
@@ -198,9 +229,37 @@ public final class ClientMediaReceiver {
                 session.onAccessUnit(accessUnit);
                 break;
             }
+            case AUDIO_DESCRIPTOR: {
+                applyAudioMessage(() -> audioSession.onDescriptor(
+                        ScreenStreamProtoMapper.toAudioDescriptor(message.getAudioDescriptor())));
+                break;
+            }
+            case AUDIO_ACCESS_UNIT: {
+                applyAudioMessage(() -> audioSession.onAccessUnit(
+                        ScreenStreamProtoMapper.toAudioAccessUnit(message.getAudioAccessUnit())));
+                break;
+            }
             case PAYLOAD_NOT_SET:
             default:
                 break;
+        }
+    }
+
+    /**
+     * Applies one audio message without letting its failure reach the video path.
+     *
+     * <p>A malformed payload, an unsupported codec or a failing decoder is exactly the situation the
+     * audio track is designed to absorb: the message is dropped and the next video frame is still
+     * decoded normally.</p>
+     */
+    private void applyAudioMessage(Runnable action) {
+        if (audioSession == null) {
+            return;
+        }
+        try {
+            action.run();
+        } catch (RuntimeException ignored) {
+            // Audio is optional; the video stream must keep decoding.
         }
     }
 
@@ -212,9 +271,16 @@ public final class ClientMediaReceiver {
     }
 
     /**
-     * Closes the underlying session; idempotent.
+     * Closes the audio and video sessions; idempotent.
      */
     public void close() {
+        if (audioSession != null) {
+            try {
+                audioSession.close();
+            } catch (RuntimeException ignored) {
+                // A failing audio close must not keep the video session open.
+            }
+        }
         session.close();
     }
 }

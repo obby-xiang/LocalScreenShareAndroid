@@ -4,8 +4,10 @@ import android.media.MediaCodecInfo;
 import android.media.MediaCodecList;
 import android.util.Range;
 
+import com.obby.android.localscreenshare.core.audio.AudioCodecIds;
 import com.obby.android.localscreenshare.core.codec.CodecIds;
 import com.obby.android.localscreenshare.core.codec.h264.H264Codec;
+import com.obby.android.localscreenshare.core.model.AudioCodecCapability;
 import com.obby.android.localscreenshare.core.stream.ClientCapabilities;
 import com.obby.android.localscreenshare.core.stream.CodecCapability;
 
@@ -31,13 +33,17 @@ public final class CodecCapabilityProbe {
      * Probes the device's decoders for the codecs this client can receive, for the HELLO message.
      *
      * <p>H.264 is the compatibility baseline and JPEG is the fallback; each is included only when a
-     * decoder is actually present.</p>
+     * decoder is actually present. The AAC-LC decoder is declared in the audio list: it is required
+     * on every Android device that defines a microphone, but probing keeps the advertisement honest
+     * on devices where it is missing.</p>
      */
     public static ClientCapabilities probeClientDecoders() {
         Map<String, CodecCapability> capabilities = new LinkedHashMap<>();
         probeDecoder(capabilities, CodecIds.H264, H264Codec.MIME);
         probeDecoder(capabilities, CodecIds.JPEG, JPEG_MIME);
-        return new ClientCapabilities(capabilities);
+        Map<String, AudioCodecCapability> audioCapabilities = new LinkedHashMap<>();
+        probeAudioDecoder(audioCapabilities, AudioCodecIds.AAC, AudioCodecIds.AAC_MIME);
+        return new ClientCapabilities(capabilities, audioCapabilities);
     }
 
     /**
@@ -61,6 +67,41 @@ public final class CodecCapabilityProbe {
             // probing failure means "not proven available"
         }
         return false;
+    }
+
+    private static void probeAudioDecoder(Map<String, AudioCodecCapability> capabilities,
+                                          String codecId, String mime) {
+        try {
+            MediaCodecList list = new MediaCodecList(MediaCodecList.ALL_CODECS);
+            for (MediaCodecInfo info : list.getCodecInfos()) {
+                if (info.isEncoder()) {
+                    continue;
+                }
+                MediaCodecInfo.CodecCapabilities codecCapabilities;
+                try {
+                    codecCapabilities = info.getCapabilitiesForType(mime);
+                } catch (IllegalArgumentException ignored) {
+                    continue;
+                }
+                android.media.MediaCodecInfo.AudioCapabilities audio =
+                        codecCapabilities.getAudioCapabilities();
+                if (audio == null) {
+                    continue;
+                }
+                int maxSampleRate = 0;
+                int[] sampleRates = audio.getSupportedSampleRates();
+                if (sampleRates != null) {
+                    for (int sampleRate : sampleRates) {
+                        maxSampleRate = Math.max(maxSampleRate, sampleRate);
+                    }
+                }
+                capabilities.put(codecId, new AudioCodecCapability(codecId, mime,
+                        maxSampleRate, Math.max(0, audio.getMaxInputChannelCount()), 0));
+                return;
+            }
+        } catch (RuntimeException ignored) {
+            // probing failure means "not proven available"
+        }
     }
 
     private static void probeDecoder(Map<String, CodecCapability> capabilities, String codecId,

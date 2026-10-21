@@ -65,6 +65,9 @@ import com.google.android.material.slider.Slider;
 import com.obby.android.localscreenshare.MainActivity;
 import com.obby.android.localscreenshare.ViewerActivity;
 import com.obby.android.localscreenshare.R;
+import com.obby.android.localscreenshare.core.audio.ClientAudioSession;
+import com.obby.android.localscreenshare.core.audio.mediacodec.AndroidAudioDecoder;
+import com.obby.android.localscreenshare.core.audio.mediacodec.AudioTrackSink;
 import com.obby.android.localscreenshare.client.ClientMediaReceiver;
 import com.obby.android.localscreenshare.client.ClientSecureListener;
 import com.obby.android.localscreenshare.client.KeyFrameRequestThrottle;
@@ -221,6 +224,15 @@ public class ScreenViewerService extends Service {
 
     @Nullable
     private ClientMediaSession mClientMediaSession;
+
+    // Optional audio track of the viewing session. Created with the media session and released with
+    // it; audio never shares state with the video session.
+    @Nullable
+    private ClientAudioSession mClientAudioSession;
+
+    // Why the viewer has no sound, or null while it is fine; shown in the overlay in A6.
+    @Nullable
+    private String mAudioUnavailableReason;
 
     @Nullable
     private ClientMediaReceiver mClientMediaReceiver;
@@ -801,11 +813,12 @@ public class ScreenViewerService extends Service {
                 new ClientCapabilities(Collections.singleton(CodecIds.H264)),
                 mRenderTarget, mClientStateListener, mMetrics);
         mClientMediaSession = session;
+        mClientAudioSession = createAudioSession();
         mClientMediaReceiver = new ClientMediaReceiver(mStreamKey, session, mClientSecureListener,
             (visibleWidth, visibleHeight, rotationDegrees) -> mMainHandler.post(() ->
                 // The descriptor arrives on the decode thread; the hosts are only touched here.
                 applyContentGeometry(visibleWidth, visibleHeight, rotationDegrees)),
-            new ArrivalTracker(mMetrics), mMetrics);
+            new ArrivalTracker(mMetrics), mMetrics, mClientAudioSession);
 
         // Mount the surface viewer now so its texture view acquires a surface; the H.264 decoder
         // cannot be created until a surface exists, and STREAMING (which used to trigger the mount)
@@ -822,6 +835,34 @@ public class ScreenViewerService extends Service {
         syncHudLoop();
 
         return mClientMediaReceiver;
+    }
+
+    /**
+     * Creates the audio session of a viewing stream.
+     *
+     * <p>The session owns its decoder and its {@code AudioTrack}; it is created with the media
+     * session so the HELLO that declared an AAC decoder has something to receive into, and it is
+     * closed with the session. A failure here only marks sound unavailable: {@link #startMediaSession()}
+     * returns the video receiver either way.</p>
+     */
+    @NonNull
+    private ClientAudioSession createAudioSession() {
+        return new ClientAudioSession(new AndroidAudioDecoder(), new AudioTrackSink(),
+                (state, reason) -> mMainHandler.post(() -> onAudioStateChanged(state, reason)));
+    }
+
+    /**
+     * Records one audio state transition.
+     *
+     * <p>The viewer shows sound as unavailable in its overlay; nothing here can stop the session,
+     * because audio is optional and the video keeps rendering.</p>
+     */
+    private void onAudioStateChanged(@NonNull final ClientAudioSession.State state,
+                                     @Nullable final String reason) {
+        Log.i(mTag, "audio state = " + state + (reason == null ? "" : ", reason = " + reason));
+        if (state == ClientAudioSession.State.UNAVAILABLE) {
+            mAudioUnavailableReason = reason;
+        }
     }
 
     /**
@@ -1332,6 +1373,11 @@ public class ScreenViewerService extends Service {
             mClientMediaReceiver.close();
             mClientMediaReceiver = null;
         }
+        if (mClientAudioSession != null) {
+            mClientAudioSession.close();
+            mClientAudioSession = null;
+        }
+        mAudioUnavailableReason = null;
         mClientMediaSession = null;
         mRenderTarget = null;
         mIsActivityTransitionDone = false;
