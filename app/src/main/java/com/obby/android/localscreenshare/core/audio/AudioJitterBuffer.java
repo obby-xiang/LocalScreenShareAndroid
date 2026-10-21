@@ -10,12 +10,22 @@ package com.obby.android.localscreenshare.core.audio;
  *
  * <p><b>Why a buffer at all.</b> Audio is played from a sink that needs a small reservoir in front
  * of it: too little and every scheduling hiccup becomes a click, too much and the sound lags the
- * picture. The default is a 60 ms target, drained until it reaches 90 ms after exceeding 150 ms,
- * and at most 120 ms of prefill wait before playback starts with whatever arrived.</p>
+ * picture. The default is a 120 ms target, drained until it reaches 150 ms after exceeding 250 ms,
+ * and at most 1500 ms of prefill wait before playback starts with whatever arrived.</p>
+ *
+ * <p><b>Depth.</b> {@link #plan(long, long, long, long)} is told how much media is actually
+ * buffered ahead of the playhead - what was written to the sink and not yet presented, plus what
+ * still waits for the writer - and never a frame count of the session's own history. The
+ * distinction matters: a monotonically growing "depth" would cross every threshold once and then
+ * request a drop per frame for the rest of the session.</p>
  *
  * <p><b>Gaps.</b> A missing frame is never "played immediately": the session inserts silence of the
  * same length, so the audio keeps its rate instead of speeding up. Frames that go backwards are
  * dropped, because a late frame cannot be placed in the timeline without disturbing it.</p>
+ *
+ * <p><b>Starvation.</b> {@link #onUnderrun(long, long)} turns a measured gap into either the number
+ * of silence frames that closes it or a request to restart playback: a gap longer than
+ * {@link #RESTART_GAP_MS} is cheaper to re-prefill than to pad.</p>
  *
  * <p><b>Drift.</b> Comparing the audible position with the session clock reveals both a fixed offset
  * and its movement. The guard allows at most one correction per two seconds, only acts when the
@@ -28,22 +38,35 @@ public final class AudioJitterBuffer {
     /**
      * Depth the buffer aims for before playback starts, in milliseconds.
      */
-    public static final long TARGET_DEPTH_MS = 60L;
+    public static final long TARGET_DEPTH_MS = 120L;
 
     /**
      * Depth above which the oldest frames are dropped, in milliseconds.
      */
-    public static final long MAX_DEPTH_MS = 150L;
+    public static final long MAX_DEPTH_MS = 250L;
 
     /**
      * Depth the buffer is drained to when it exceeded {@link #MAX_DEPTH_MS}, in milliseconds.
      */
-    public static final long RECOVER_DEPTH_MS = 90L;
+    public static final long RECOVER_DEPTH_MS = 150L;
 
     /**
      * Longest wait for the target depth before playback starts anyway, in milliseconds.
+     *
+     * <p>Only a sender that delivers less than real time can reach it: at the nominal frame rate the
+     * target depth is buffered long before. It exists so that a stream which never fills the target
+     * still starts playing, instead of staying silent for the whole session.</p>
      */
-    public static final long MAX_PREFILL_WAIT_MS = 120L;
+    public static final long MAX_PREFILL_WAIT_MS = 1500L;
+
+    /**
+     * Gap above which starved playback is restarted instead of padded, in milliseconds.
+     *
+     * <p>Padding a long gap means writing dozens of silence frames while the sink stays empty, which
+     * is both slower than the gap and audible. Re-prefilling rebuilds the reservoir and re-anchors
+     * the timeline on the next decoded frame.</p>
+     */
+    public static final long RESTART_GAP_MS = 100L;
 
     /**
      * Offset above which the drift guard corrects, in milliseconds.
@@ -119,6 +142,35 @@ public final class AudioJitterBuffer {
         }
     }
 
+    /**
+     * What the session should do after a measured starvation gap.
+     */
+    public static final class Underrun {
+
+        private final boolean restart;
+
+        private final int silenceFrames;
+
+        private Underrun(boolean restart, int silenceFrames) {
+            this.restart = restart;
+            this.silenceFrames = silenceFrames;
+        }
+
+        /**
+         * Returns whether playback has to be restarted instead of padded.
+         */
+        public boolean isRestart() {
+            return restart;
+        }
+
+        /**
+         * Returns how many silence frames close the gap; zero when a restart is required.
+         */
+        public int getSilenceFrames() {
+            return silenceFrames;
+        }
+    }
+
     private long lastPtsUs = UNSET;
 
     private boolean started;
@@ -138,15 +190,15 @@ public final class AudioJitterBuffer {
      *
      * @param ptsUs           presentation timestamp of the frame
      * @param frameDurationUs duration of one frame, or a non-positive value to use the AAC default
-     * @param bufferedFrames  frames already waiting in the player before this one
+     * @param bufferedUs      media time buffered ahead of the playhead before this frame, in
+     *                        microseconds; see the class documentation for what counts
      * @param nowMs           monotonic time in milliseconds
      * @return the plan; never null
      */
-    public Plan plan(long ptsUs, long frameDurationUs, int bufferedFrames, long nowMs) {
+    public Plan plan(long ptsUs, long frameDurationUs, long bufferedUs, long nowMs) {
         final long frameUs = frameDurationUs > 0 ? frameDurationUs : DEFAULT_FRAME_US;
         final long frameMs = Math.max(1L, (frameUs + 500L) / 1_000L);
-        final int depthFrames = Math.max(0, bufferedFrames) + 1;
-        final long depthMs = depthFrames * frameMs;
+        final long depthMs = (Math.max(0L, bufferedUs) + frameUs) / 1_000L;
 
         int dropOldest = 0;
         if (started && depthMs > MAX_DEPTH_MS) {

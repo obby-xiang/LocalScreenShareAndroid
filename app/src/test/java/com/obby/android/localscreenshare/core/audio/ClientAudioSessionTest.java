@@ -62,16 +62,51 @@ public class ClientAudioSessionTest {
         Fixture fixture = new Fixture();
         fixture.session.onDescriptor(descriptor(1));
 
-        fixture.session.onAccessUnit(unit(1, 0, 0L));
-        assertEquals(0, fixture.sink.getPlayCount());
-        fixture.session.onAccessUnit(unit(1, 1, FRAME_US));
-        assertEquals(0, fixture.sink.getPlayCount());
-        fixture.session.onAccessUnit(unit(1, 2, 2 * FRAME_US));
+        for (int i = 0; i < 5; i++) {
+            fixture.session.onAccessUnit(unit(1, i, i * FRAME_US));
+            assertEquals(0, fixture.sink.getPlayCount());
+        }
+        // Five written frames plus this one are 128 ms, above the 120 ms target.
+        fixture.session.onAccessUnit(unit(1, 5, 5 * FRAME_US));
 
         assertEquals(1, fixture.sink.getPlayCount());
-        assertEquals(3, fixture.sink.writeLengths.size());
+        assertEquals(6, fixture.sink.writeLengths.size());
         assertEquals(4096, (int) fixture.sink.writeLengths.get(0));
-        assertEquals(3L, fixture.session.getWrittenFrames());
+        assertEquals(6L, fixture.session.getWrittenFrames());
+    }
+
+    @Test
+    public void theTrackBufferCountsTowardsTheTargetDepth() {
+        Fixture fixture = new Fixture();
+        fixture.session.onDescriptor(descriptor(1));
+        // The track has presented everything it was given: five frames have no reservoir at all.
+        fixture.sink.setQueuedFrames(0L);
+        for (int i = 0; i < 5; i++) {
+            fixture.session.onAccessUnit(unit(1, i, i * FRAME_US));
+        }
+        assertEquals(0, fixture.sink.getPlayCount());
+
+        // The same five frames are now still inside the track, which is 106 ms of depth.
+        fixture.sink.setQueuedFrames(5 * 1_024L);
+        fixture.session.onAccessUnit(unit(1, 5, 5 * FRAME_US));
+
+        assertEquals(1, fixture.sink.getPlayCount());
+    }
+
+    @Test
+    public void aFrameCountIsNotDepth() {
+        Fixture fixture = new Fixture();
+        fixture.session.onDescriptor(descriptor(1));
+        // Nothing is ever buffered: every frame is presented as soon as it is written.
+        fixture.sink.setQueuedFrames(0L);
+
+        for (int i = 0; i < 20; i++) {
+            fixture.session.onAccessUnit(unit(1, i, i * FRAME_US));
+        }
+
+        // Twenty frames of history are not twenty frames of depth, so playback waits for the
+        // prefill limit instead of starting on a phantom reservoir.
+        assertEquals(0, fixture.sink.getPlayCount());
     }
 
     @Test

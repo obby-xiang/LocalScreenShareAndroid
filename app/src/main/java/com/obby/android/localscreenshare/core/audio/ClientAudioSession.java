@@ -134,8 +134,6 @@ public final class ClientAudioSession {
 
     private long referenceOffsetUs = SessionClock.UNSET;
 
-    private long framesReceived;
-
     private long writtenFrames;
 
     private Thread writer;
@@ -307,7 +305,6 @@ public final class ClientAudioSession {
                 channels = newDescriptor.getChannels();
                 silenceFrame = new byte[newDescriptor.getFrameSamples() * channels * 2];
                 pending.clear();
-                framesReceived = 0L;
                 referenceOffsetUs = SessionClock.UNSET;
                 buffer.reset();
                 state = State.ACTIVE;
@@ -364,9 +361,7 @@ public final class ClientAudioSession {
             outputFailed = !ensureFormatLocked(pcm);
             if (!outputFailed) {
                 final AudioJitterBuffer.Plan plan = buffer.plan(accessUnit.getPtsUs(),
-                        pcm.getDurationUs(), (int) Math.min(Integer.MAX_VALUE, framesReceived),
-                        nowMs());
-                framesReceived++;
+                        pcm.getDurationUs(), bufferedUsLocked(clock.nowNs()), nowMs());
                 if (plan.isAccept()) {
                     for (int i = 0; i < plan.getDropOldestFrames(); i++) {
                         if (pending.pollFirst() == null) {
@@ -473,6 +468,33 @@ public final class ClientAudioSession {
         } else if (writtenEndPtsUs != SessionClock.UNSET) {
             writtenEndPtsUs += durationUs;
         }
+    }
+
+    /**
+     * Returns the media time buffered ahead of the playhead, in microseconds.
+     *
+     * <p>This is the depth the jitter buffer has to reason about, and it has two parts: what was
+     * already written to the sink but not yet presented, which is what the track still holds, and
+     * what is still waiting for the writer. Neither part is a frame count of the session's own
+     * history: the previous model passed the cumulative frames received and therefore reported a
+     * depth that only ever grew, which crossed the target once and then asked for a drop on every
+     * following frame.</p>
+     *
+     * <p>A sink that cannot report a position is treated as having presented nothing, which
+     * over-estimates the depth by at most one track buffer. Starting playback a little early is
+     * recoverable through the starvation path; never starting is not.</p>
+     */
+    private long bufferedUsLocked(long nowNs) {
+        if (sampleRate <= 0 || channels <= 0) {
+            return 0L;
+        }
+        final long presented = sink.getPresentedFrames(nowNs);
+        final long queuedFrames = writtenSamples - Math.max(0L, presented);
+        long samples = Math.max(0L, queuedFrames);
+        for (PcmFrame frame : pending) {
+            samples += frame.data.length / (channels * 2);
+        }
+        return samples * 1_000_000L / sampleRate;
     }
 
     /**
