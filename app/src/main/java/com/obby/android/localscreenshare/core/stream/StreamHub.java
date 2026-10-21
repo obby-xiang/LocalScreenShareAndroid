@@ -421,6 +421,36 @@ public final class StreamHub implements StreamRuntimeListener {
     }
 
     /**
+     * Returns one metrics snapshot per attached session, ordered by client id and then by stream
+     * key.
+     *
+     * <p>Every session records its send stage into a scope of its own, so the process-wide snapshot
+     * of the owning service can never contain {@code tx.send}, {@code tx.qResidency} or
+     * {@code tx.qDepth}. This is the export path for those samples: the session list is copied under
+     * the lock and each scope is then read lock free, exactly like {@link #snapshotSessions()}, so
+     * the probe path is untouched and a concurrent join or detach simply appears or disappears. The
+     * order is stable for the same reason the session snapshots are sorted: two collections must be
+     * comparable line by line.</p>
+     *
+     * @param periodMs cadence the log framing prints; must not be negative
+     * @return one snapshot per attached session, possibly empty
+     */
+    public List<SessionMetricsSnapshot> snapshotSessionMetrics(long periodMs) {
+        List<ClientSendSession> current;
+        synchronized (lock) {
+            current = new ArrayList<>(sessions.values());
+        }
+        List<SessionMetricsSnapshot> snapshots = new ArrayList<>(current.size());
+        for (ClientSendSession session : current) {
+            snapshots.add(new SessionMetricsSnapshot(session.getKey(),
+                    session.snapshotMetrics(periodMs)));
+        }
+        snapshots.sort(Comparator.comparing(SessionMetricsSnapshot::getClientId)
+                .thenComparing(snapshot -> snapshot.getKey().getStreamKey().getValue()));
+        return snapshots;
+    }
+
+    /**
      * Fans one access unit out to every attached session.
      *
      * <p>The unit is forwarded only when its stream key matches the active runtime; events from a

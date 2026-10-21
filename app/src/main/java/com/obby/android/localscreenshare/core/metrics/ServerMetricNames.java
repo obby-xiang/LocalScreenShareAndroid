@@ -25,12 +25,12 @@ public final class ServerMetricNames {
     public static final String ENC_AU_BYTES = "enc.auBytes";
 
     /**
-     * Encoded access units per second over the snapshot period.
+     * Encoded access units per second over the measured interval.
      */
     public static final String ENC_AU_RATE = "enc.auRate";
 
     /**
-     * Encoded bits per second over the snapshot period.
+     * Encoded payload bits per second over the measured interval.
      */
     public static final String ENC_BITRATE = "enc.bitrate";
 

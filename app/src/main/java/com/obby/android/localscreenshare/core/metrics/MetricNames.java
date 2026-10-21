@@ -27,7 +27,10 @@ public final class MetricNames {
     public static final String KEY_ROLE = "role";
 
     /**
-     * Field carrying the period the counters accumulated over, in milliseconds.
+     * Field carrying the cadence the line was requested at, in milliseconds.
+     *
+     * <p>It is framing only: counters on the line are cumulative for the life of their scope, and a
+     * rate is measured over its own interval, so the field must not be used as a divisor.</p>
      */
     public static final String KEY_PERIOD = "period";
 

@@ -69,10 +69,12 @@ import com.obby.android.localscreenshare.core.codec.mediacodec.EncoderAlignmentP
 import com.obby.android.localscreenshare.core.metrics.DeviceProfileSampler;
 import com.obby.android.localscreenshare.core.metrics.MetricsFormatter;
 import com.obby.android.localscreenshare.core.metrics.PipelineMetrics;
+import com.obby.android.localscreenshare.core.metrics.RateSampler;
 import com.obby.android.localscreenshare.core.model.BitstreamFormat;
 import com.obby.android.localscreenshare.core.model.StreamDescriptor;
 import com.obby.android.localscreenshare.core.model.StreamKey;
 import com.obby.android.localscreenshare.core.model.StreamParameters;
+import com.obby.android.localscreenshare.core.stream.SessionMetricsSnapshot;
 import com.obby.android.localscreenshare.core.stream.StreamHub;
 import com.obby.android.localscreenshare.core.stream.StreamQueueLimits;
 import com.obby.android.localscreenshare.core.stream.StreamRuntime;
@@ -230,7 +232,9 @@ public class ScreenShareService extends Service {
             }
 
             Log.i(mTag, MetricsFormatter.toLogLine(MetricsFormatter.Role.SERVER,
-                metrics.snapshot(UPDATE_METRICS_INTERVAL_MS)));
+                metrics.snapshot(UPDATE_METRICS_INTERVAL_MS), null,
+                mRateSampler != null ? mRateSampler.sample() : null));
+            logSessionMetrics(hub);
             if (++mMetricsLogCount % DEVICE_BLOCK_EVERY_N_LOGS == 0) {
                 Log.i(mTag, MetricsFormatter.toDeviceLine(MetricsFormatter.Role.SERVER,
                     mDeviceProfileSampler.get().sample()));
@@ -310,6 +314,11 @@ public class ScreenShareService extends Service {
     // preference yields PipelineMetrics.NONE, so no window and no snapshot exists at all.
     @Nullable
     private PipelineMetrics mMetrics;
+
+    // Reader-owned baseline of the encoder output counters; the counter itself stays cumulative, so
+    // the five-second line reports this interval instead of the average since the scope was created.
+    @Nullable
+    private RateSampler mRateSampler;
 
     // Set once the capture-to-output probe suppressed itself, so the warning is logged once.
     private boolean mCapToOutSuppressed;
@@ -855,6 +864,7 @@ public class ScreenShareService extends Service {
 
         mMainHandler.removeCallbacks(mMetricsLogRunnable);
         mMetrics = null;
+        mRateSampler = null;
         mMetricsLogCount = 0;
 
         // Stop producing UI first so the chip never outlives the running session.
@@ -1302,8 +1312,35 @@ public class ScreenShareService extends Service {
         mStreamHub.activate(mStreamKey);
         mStreamRuntime.start();
 
+        // The sampler closes an interval over the encoder output counters; created with the scope so
+        // the first five-second line already reports one full period.
+        mRateSampler = mMetrics.isEnabled() ? new RateSampler(mMetrics) : null;
+
         if (mMetrics.isEnabled()) {
             mMainHandler.postDelayed(mMetricsLogRunnable, UPDATE_METRICS_INTERVAL_MS);
+        }
+    }
+
+    /**
+     * Writes one metric line per attached send session.
+     *
+     * <p>A session records into its own scope, so the process-wide line can never show its send
+     * duration, queue residency or queue depth. Reading those scopes here, on the aggregation
+     * thread, keeps the probe path lock free: nothing is registered and nothing is written while
+     * frames move. A session without a single sample yet is skipped so an idle viewer does not
+     * produce a line that says nothing.</p>
+     */
+    private void logSessionMetrics(@Nullable final StreamHub hub) {
+        if (hub == null) {
+            return;
+        }
+        for (final SessionMetricsSnapshot session
+            : hub.snapshotSessionMetrics(UPDATE_METRICS_INTERVAL_MS)) {
+            if (session.getMetrics().isEmpty()) {
+                continue;
+            }
+            Log.i(mTag, MetricsFormatter.toSessionLogLine(session.getMetrics(),
+                session.getClientIdTail()));
         }
     }
 

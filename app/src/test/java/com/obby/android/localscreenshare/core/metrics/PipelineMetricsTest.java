@@ -71,8 +71,6 @@ public class PipelineMetricsTest {
         assertEquals(3_000_000L, snapshot.getWindow(PipelineMetrics.Window.SEND).getMax());
         assertEquals(30L, snapshot.getCounter(PipelineMetrics.Counter.ACCESS_UNITS));
         assertEquals(2L, snapshot.getGauge(PipelineMetrics.Gauge.PEER_COUNT));
-        assertEquals(30d, snapshot.perSecond(PipelineMetrics.Counter.ACCESS_UNITS), 0.001d);
-        assertEquals(32_000_000d, snapshot.bitrateBps(), 0.001d);
     }
 
     @Test

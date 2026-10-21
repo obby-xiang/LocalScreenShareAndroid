@@ -6,6 +6,7 @@ import com.obby.android.localscreenshare.core.model.ClientSessionKey;
 import com.obby.android.localscreenshare.core.model.ClientState;
 import com.obby.android.localscreenshare.core.model.EncodedAccessUnit;
 import com.obby.android.localscreenshare.core.model.StreamDescriptor;
+import com.obby.android.localscreenshare.core.metrics.MetricsSnapshot;
 import com.obby.android.localscreenshare.core.metrics.PipelineMetrics;
 import com.obby.android.localscreenshare.core.util.TimeSource;
 
@@ -91,9 +92,10 @@ public final class ClientSendSession {
      * Creates a session that reports its send-stage metrics to {@code metrics}.
      *
      * <p>The scope receives the duration of one transport send call, the queue depth observed by
-     * the drain loop and the residency of the unit that was just polled. Probes read the clock
-     * once per timestamp and run outside the state lock, so a measured session keeps the existing
-     * ordering guarantees and a slow transport still holds no lock that {@link #offer} needs.</p>
+     * the drain loop, the residency of the unit that was just polled and the sent-unit and resync
+     * counters. Probes read the clock once per timestamp and run outside the state lock, so a
+     * measured session keeps the existing ordering guarantees and a slow transport still holds no
+     * lock that {@link #offer} needs.</p>
      *
      * @param key         client and stream identity; required
      * @param registry    codec registry used to resolve the per-codec policy; required
@@ -369,6 +371,7 @@ public final class ClientSendSession {
                         descriptorSends++;
                     } else {
                         sentUnits++;
+                        metrics.increment(PipelineMetrics.Counter.SENT_UNITS);
                         boolean epochStillCurrent = currentDescriptor != null
                                 && currentDescriptor.getConfigEpoch() == sentEpoch;
                         if (epochStillCurrent && policy.isJoinPoint(accessUnitToSend)) {
@@ -432,6 +435,20 @@ public final class ClientSendSession {
     }
 
     /**
+     * Returns a snapshot of this session's metric scope.
+     *
+     * <p>The scope is read without any lock: windows and counters are lock free, and the session
+     * keeps recording while the snapshot is copied. Intended for the aggregation thread that writes
+     * the per-session log line, never for a probe.</p>
+     *
+     * @param periodMs cadence the line framing prints; must not be negative
+     * @return an immutable snapshot, never null
+     */
+    public MetricsSnapshot snapshotMetrics(long periodMs) {
+        return metrics.snapshot(periodMs);
+    }
+
+    /**
      * Detaches the session and closes its transport.
      *
      * <p>Idempotent and safe from any thread; repeated calls do not close the transport again.
@@ -485,6 +502,7 @@ public final class ClientSendSession {
         if (queue != null && queue.isResyncRequired() && !resyncEpisodeCounted) {
             state = ClientState.RESYNCING;
             resyncCount++;
+            metrics.increment(PipelineMetrics.Counter.RESYNCS);
             resyncEpisodeCounted = true;
         }
     }

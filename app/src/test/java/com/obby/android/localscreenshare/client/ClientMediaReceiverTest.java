@@ -93,6 +93,33 @@ public class ClientMediaReceiverTest {
     }
 
     @Test
+    public void receivedAccessUnitsAreCountedWithTheirPayload() {
+        PipelineMetrics metrics = PipelineMetrics.create(new MutableNanoClock(), 8);
+        ClientMediaReceiver receiver = new ClientMediaReceiver(STREAM_KEY, session, null, null,
+                null, metrics);
+
+        receiver.onServerMessage(descriptorMessage(1, true));
+        receiver.onServerMessage(accessUnitMessage(1, 0L, true), 1_000_000L);
+        receiver.onServerMessage(accessUnitMessage(1, 1L, false), 1_033_000_000L);
+
+        assertEquals(2L, metrics.count(PipelineMetrics.Counter.ACCESS_UNITS));
+        assertEquals(2L, metrics.count(PipelineMetrics.Counter.ACCESS_UNIT_BYTES));
+    }
+
+    @Test
+    public void countingLeavesADisabledScopeEmpty() {
+        PipelineMetrics metrics = PipelineMetrics.create(new MutableNanoClock(), 8);
+        ClientMediaReceiver receiver = new ClientMediaReceiver(STREAM_KEY, session, null, null,
+                null, PipelineMetrics.NONE);
+
+        receiver.onServerMessage(descriptorMessage(1, true));
+        receiver.onServerMessage(accessUnitMessage(1, 0L, true), 1_000_000L);
+
+        assertEquals(0L, metrics.count(PipelineMetrics.Counter.ACCESS_UNITS));
+        assertEquals(0L, metrics.count(PipelineMetrics.Counter.ACCESS_UNIT_BYTES));
+    }
+
+    @Test
     public void descriptorConfiguresDecoderAndReportsSecure() {
         ClientMediaReceiver receiver = new ClientMediaReceiver(STREAM_KEY, session,
                 secureChanges::add);

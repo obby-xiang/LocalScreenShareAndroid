@@ -11,6 +11,7 @@ import androidx.annotation.Nullable;
 
 import com.obby.android.localscreenshare.core.metrics.PipelineMetrics;
 import com.obby.android.localscreenshare.core.metrics.RttEstimator;
+import com.obby.android.localscreenshare.core.model.ClientSessionKey;
 import com.obby.android.localscreenshare.grpc.screenstream.ClientMessage;
 import com.obby.android.localscreenshare.grpc.screenstream.Hello;
 import com.obby.android.localscreenshare.grpc.screenstream.Ping;
@@ -69,9 +70,6 @@ import lombok.experimental.Accessors;
 @Accessors(prefix = "m")
 public final class ScreenShareClient {
     private static final long UPDATE_CLIENT_STATS_INTERVAL_MS = 3000L;
-
-    // Number of client-id characters kept for log correlation.
-    private static final int SESSION_ID_TAIL_LENGTH = 8;
 
     // Cadence of the round-trip probe. One probe per second is under 40 bytes per second and far
     // below any congestion-visible load.
@@ -405,13 +403,7 @@ public final class ScreenShareClient {
      */
     @Nullable
     public String getClientIdTail() {
-        final String clientId = mClientId;
-        if (clientId == null) {
-            return null;
-        }
-        return clientId.length() <= SESSION_ID_TAIL_LENGTH
-            ? clientId
-            : clientId.substring(clientId.length() - SESSION_ID_TAIL_LENGTH);
+        return ClientSessionKey.tailOf(mClientId);
     }
 
     /**

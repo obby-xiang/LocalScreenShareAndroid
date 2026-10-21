@@ -9,6 +9,12 @@ import java.util.Arrays;
  * scope and can be passed between threads without locking. A disabled scope produces a snapshot
  * whose windows are all {@link LatencyWindow.Stats#EMPTY} and whose counters and gauges are zero,
  * which is what makes "the switch was off" observable instead of ambiguous.</p>
+ *
+ * <p><b>Counters are cumulative.</b> Every counter value describes the scope since it was created,
+ * never the snapshot period, so a reader that wants "how many in this period" subtracts two
+ * readings itself. Rate fields are deliberately not derived here: a rate needs a measured interval,
+ * which belongs to the reader and is carried by {@link MetricsRate} through a
+ * {@link RateSampler}.</p>
  */
 public final class MetricsSnapshot {
 
@@ -23,7 +29,7 @@ public final class MetricsSnapshot {
     /**
      * Creates a snapshot; the arrays are copied and must cover every enum constant.
      *
-     * @param periodMs duration the counters accumulated over
+     * @param periodMs cadence the snapshot was requested at, printed in the line framing
      * @param windows  window summaries indexed by {@link PipelineMetrics.Window#ordinal()}
      * @param counters counter values indexed by {@link PipelineMetrics.Counter#ordinal()}
      * @param gauges   gauge values indexed by {@link PipelineMetrics.Gauge#ordinal()}
@@ -46,7 +52,8 @@ public final class MetricsSnapshot {
     }
 
     /**
-     * Returns the duration the counters accumulated over, in milliseconds.
+     * Returns the cadence the snapshot was requested at, in milliseconds; never a divisor for a
+     * cumulative counter.
      */
     public long getPeriodMs() {
         return periodMs;
@@ -71,29 +78,6 @@ public final class MetricsSnapshot {
      */
     public long getGauge(PipelineMetrics.Gauge gauge) {
         return gauges[gauge.ordinal()];
-    }
-
-    /**
-     * Returns how many events per second a counter accumulated.
-     *
-     * @param counter counter to convert
-     * @return events per second, or zero when the period is not positive
-     */
-    public double perSecond(PipelineMetrics.Counter counter) {
-        if (periodMs <= 0L) {
-            return 0d;
-        }
-        return getCounter(counter) * 1000d / periodMs;
-    }
-
-    /**
-     * Returns how many bits per second the {@link PipelineMetrics.Counter#ACCESS_UNIT_BYTES}
-     * counter accumulated.
-     *
-     * @return bits per second, or zero when the period is not positive
-     */
-    public double bitrateBps() {
-        return perSecond(PipelineMetrics.Counter.ACCESS_UNIT_BYTES) * 8d;
     }
 
     /**

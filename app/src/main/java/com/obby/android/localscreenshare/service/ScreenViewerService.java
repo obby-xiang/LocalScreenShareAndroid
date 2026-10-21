@@ -88,6 +88,7 @@ import com.obby.android.localscreenshare.core.metrics.ArrivalTracker;
 import com.obby.android.localscreenshare.core.metrics.DeviceProfileSampler;
 import com.obby.android.localscreenshare.core.metrics.MetricsFormatter;
 import com.obby.android.localscreenshare.core.metrics.PipelineMetrics;
+import com.obby.android.localscreenshare.core.metrics.RateSampler;
 import com.obby.android.localscreenshare.core.model.ClientSessionKey;
 import com.obby.android.localscreenshare.core.model.ClientState;
 import com.obby.android.localscreenshare.core.model.StreamKey;
@@ -214,6 +215,14 @@ public class ScreenViewerService extends Service {
     // tracker is recreated per session because its baseline belongs to one stream.
     @Nullable
     private PipelineMetrics mMetrics;
+
+    // One sampler per reader: the overlay refreshes every second and the log line every five, so a
+    // shared baseline would make the five-second line report the last one-second sliver.
+    @Nullable
+    private RateSampler mHudRateSampler;
+
+    @Nullable
+    private RateSampler mLogRateSampler;
 
     @NonNull
     private final Runnable mMetricsLogRunnable = this::logMetrics;
@@ -381,9 +390,25 @@ public class ScreenViewerService extends Service {
         intentFilter.addAction(ServiceProtocol.ACTION_STOP_CLIENT_SERVICE);
         ContextCompat.registerReceiver(this, mBroadcastReceiver, intentFilter, ContextCompat.RECEIVER_NOT_EXPORTED);
 
+        ensureMetrics();
+    }
+
+    /**
+     * Creates the receiving metric scope and its two readers on first use.
+     *
+     * <p>The scope lives as long as the service, so a reconnect keeps the same windows and a
+     * cumulative counter never restarts mid-session. A disabled preference yields
+     * {@link PipelineMetrics#NONE} and no sampler, which keeps both readers free of state.</p>
+     */
+    private void ensureMetrics() {
+        if (mMetrics != null) {
+            return;
+        }
         mMetrics = Preferences.get().isMetricsEnabled()
             ? PipelineMetrics.create(NanoClock.MONOTONIC)
             : PipelineMetrics.NONE;
+        mHudRateSampler = mMetrics.isEnabled() ? new RateSampler(mMetrics) : null;
+        mLogRateSampler = mMetrics.isEnabled() ? new RateSampler(mMetrics) : null;
     }
 
     /**
@@ -548,6 +573,8 @@ public class ScreenViewerService extends Service {
         mMainHandler.removeCallbacks(mMetricsLogRunnable);
         mMainHandler.removeCallbacks(mHudRunnable);
         mMetrics = null;
+        mHudRateSampler = null;
+        mLogRateSampler = null;
         mLoggedResyncReason = null;
         mMetricsLogCount = 0;
 
@@ -607,11 +634,7 @@ public class ScreenViewerService extends Service {
      */
     @NonNull
     private ClientMediaReceiver startMediaSession() {
-        if (mMetrics == null) {
-            mMetrics = Preferences.get().isMetricsEnabled()
-                ? PipelineMetrics.create(NanoClock.MONOTONIC)
-                : PipelineMetrics.NONE;
-        }
+        ensureMetrics();
         if (mCodecRegistry == null) {
             mCodecRegistry = CodecRegistry.withDefaults();
             mCodecRegistry.register(H264Codec.androidRegistration(
@@ -644,7 +667,7 @@ public class ScreenViewerService extends Service {
                     mSurfaceShareViewer.setContentGeometry(visibleWidth, visibleHeight,
                         rotationDegrees);
                 }
-            }), new ArrivalTracker(mMetrics));
+            }), new ArrivalTracker(mMetrics), mMetrics);
 
         // Mount the surface viewer now so its texture view acquires a surface; the H.264 decoder
         // cannot be created until a surface exists, and STREAMING (which used to trigger the mount)
@@ -668,11 +691,7 @@ public class ScreenViewerService extends Service {
      */
     @NonNull
     private PipelineMetrics viewerMetrics() {
-        if (mMetrics == null) {
-            mMetrics = Preferences.get().isMetricsEnabled()
-                ? PipelineMetrics.create(NanoClock.MONOTONIC)
-                : PipelineMetrics.NONE;
-        }
+        ensureMetrics();
         return mMetrics;
     }
 
@@ -709,7 +728,8 @@ public class ScreenViewerService extends Service {
             viewer.setHudLines(Collections.emptyList());
             return;
         }
-        viewer.setHudLines(MetricsFormatter.toHud(metrics.snapshot(UPDATE_HUD_INTERVAL_MS)));
+        viewer.setHudLines(MetricsFormatter.toHud(metrics.snapshot(UPDATE_HUD_INTERVAL_MS),
+            mHudRateSampler != null ? mHudRateSampler.sample() : null));
         mMainHandler.postDelayed(mHudRunnable, UPDATE_HUD_INTERVAL_MS);
     }
 
@@ -730,7 +750,8 @@ public class ScreenViewerService extends Service {
         final ScreenShareClient client = mClient;
         Log.i(mTag, MetricsFormatter.toLogLine(MetricsFormatter.Role.CLIENT,
             metrics.snapshot(UPDATE_METRICS_INTERVAL_MS),
-            client == null ? null : client.getClientIdTail()));
+            client == null ? null : client.getClientIdTail(),
+            mLogRateSampler != null ? mLogRateSampler.sample() : null));
 
         final ClientMediaSession session = mClientMediaSession;
         final ClientMediaSession.ResyncReason reason =

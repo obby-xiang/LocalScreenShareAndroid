@@ -26,19 +26,39 @@ public class MetricsFormatterTest {
         metrics.record(PipelineMetrics.Window.SEND, 12_300_000L);
         metrics.add(PipelineMetrics.Counter.ACCESS_UNITS, 30L);
 
-        String line = MetricsFormatter.toLogLine(Role.SERVER, metrics.snapshot(1000L));
+        String line = MetricsFormatter.toLogLine(Role.SERVER, metrics.snapshot(1000L), null,
+                new MetricsRate(1000L, 30L, 0L));
 
         assertEquals("lss.metrics role=server period=1000 tx.send.p50=12.3"
                 + " tx.send.p95=12.3 tx.send.max=12.3 enc.auRate=30.0 enc.bitrate=0", line);
     }
 
     @Test
+    public void serverLine_omitsRatesThatWereNotMeasured() {
+        PipelineMetrics metrics = PipelineMetrics.create(new MutableNanoClock(), 16);
+        metrics.add(PipelineMetrics.Counter.ACCESS_UNITS, 30L);
+
+        String line = MetricsFormatter.toLogLine(Role.SERVER, metrics.snapshot(1000L));
+
+        assertFalse(line.contains("enc.auRate"));
+        assertFalse(line.contains("enc.bitrate"));
+    }
+
+    @Test
     public void emptySnapshot_printsOnlyTheFramingFields() {
         String line = MetricsFormatter.toLogLine(Role.SERVER, PipelineMetrics.NONE.snapshot(5000L));
 
-        assertEquals("lss.metrics role=server period=5000 enc.auRate=0.0 enc.bitrate=0", line);
+        assertEquals("lss.metrics role=server period=5000", line);
         assertFalse(line.contains("tx."));
         assertFalse(line.contains("enc.cap2out"));
+    }
+
+    @Test
+    public void emptySnapshot_withAnInterval_printsZeroRates() {
+        String line = MetricsFormatter.toLogLine(Role.SERVER, PipelineMetrics.NONE.snapshot(5000L),
+                null, new MetricsRate(5000L, 0L, 0L));
+
+        assertEquals("lss.metrics role=server period=5000 enc.auRate=0.0 enc.bitrate=0", line);
     }
 
     @Test
@@ -74,9 +94,29 @@ public class MetricsFormatterTest {
         assertTrue(line.contains(" tx.clients=2"));
         assertTrue(line.contains(" kf.request=1"));
         assertTrue(line.contains(" kf.joins=2"));
-        assertTrue(line.contains(" tx.sent=1489"));
-        assertTrue(line.contains(" tx.drop=4"));
-        assertTrue(line.contains(" tx.resync=1"));
+        assertFalse(line.contains("tx.sent"));
+    }
+
+    @Test
+    public void sessionLine_printsSendStageAndSessionCounters() {
+        PipelineMetrics session = PipelineMetrics.create(new MutableNanoClock(), 16);
+        session.record(PipelineMetrics.Window.SEND, 12_300_000L);
+        session.record(PipelineMetrics.Window.QUEUE_RESIDENCY, 120_000_000L);
+        session.record(PipelineMetrics.Window.QUEUE_DEPTH, 4L);
+        session.add(PipelineMetrics.Counter.SENT_UNITS, 1489L);
+        session.add(PipelineMetrics.Counter.RESYNCS, 2L);
+
+        String line = MetricsFormatter.toSessionLogLine(session.snapshot(5000L), "1a2b3c4d");
+
+        assertEquals("lss.metrics role=server period=5000 sid=1a2b3c4d tx.send.p50=12.3"
+                + " tx.send.p95=12.3 tx.send.max=12.3 tx.qResidency.p95=120.0"
+                + " tx.qResidency.max=120.0 tx.qDepth.max=4 tx.sent=1489 tx.resync=2", line);
+    }
+
+    @Test
+    public void sessionLine_keepsOnlyTheFramingFieldsWhenNothingWasRecorded() {
+        assertEquals("lss.metrics role=server period=5000",
+                MetricsFormatter.toSessionLogLine(PipelineMetrics.NONE.snapshot(5000L), null));
     }
 
     @Test
@@ -101,6 +141,21 @@ public class MetricsFormatterTest {
         assertTrue(line.contains(" rx.arr.p50=33.0"));
         assertTrue(line.contains(" rx.stall=1"));
         assertFalse(line.contains("rx.seqGap"));
+    }
+
+    @Test
+    public void clientLine_printsIntervalRatesWhenMeasured() {
+        PipelineMetrics metrics = PipelineMetrics.create(new MutableNanoClock(), 16);
+        metrics.add(PipelineMetrics.Counter.ACCESS_UNITS, 150L);
+        metrics.add(PipelineMetrics.Counter.ACCESS_UNIT_BYTES, 1_250_000L);
+
+        String line = MetricsFormatter.toLogLine(Role.CLIENT, metrics.snapshot(5000L), "1a2b3c4d",
+                new MetricsRate(5_000L, 150L, 1_250_000L));
+
+        assertTrue(line.contains(" rx.auRate=30.0"));
+        assertTrue(line.contains(" rx.bitrate=2000000"));
+        assertFalse(MetricsFormatter.toLogLine(Role.CLIENT, metrics.snapshot(5000L))
+                .contains("rx.auRate"));
     }
 
     @Test
@@ -135,7 +190,8 @@ public class MetricsFormatterTest {
         metrics.record(PipelineMetrics.Window.ROWD, 8_000_000L);
         metrics.add(PipelineMetrics.Counter.STALLS, 1L);
 
-        List<String> lines = MetricsFormatter.toHud(metrics.snapshot(1000L));
+        List<String> lines = MetricsFormatter.toHud(metrics.snapshot(1000L),
+                new MetricsRate(1000L, 30L, 475_000L));
 
         assertEquals(3, lines.size());
         assertEquals("30.0 fps | 3.8 Mbps | RTT 4.2 ms", lines.get(0));
@@ -148,9 +204,20 @@ public class MetricsFormatterTest {
         List<String> lines = MetricsFormatter.toHud(PipelineMetrics.NONE.snapshot(1000L));
 
         assertEquals(3, lines.size());
-        assertEquals("0.0 fps | 0.0 Mbps | RTT n/a", lines.get(0));
+        assertEquals("n/a fps | n/a Mbps | RTT n/a", lines.get(0));
         assertEquals("q 0 | dec n/a | late 0.0", lines.get(1));
         assertEquals("rowd +0.0 | stall 0 | drop 0 | kf 0", lines.get(2));
+    }
+
+    @Test
+    public void hud_ofSilentInterval_printsZeroRates() {
+        List<String> lines = MetricsFormatter.toHud(PipelineMetrics.NONE.snapshot(1000L),
+                MetricsRate.EMPTY);
+
+        assertEquals("n/a fps | n/a Mbps | RTT n/a", lines.get(0));
+        assertEquals("0.0 fps | 0.0 Mbps | RTT n/a",
+                MetricsFormatter.toHud(PipelineMetrics.NONE.snapshot(1000L),
+                        new MetricsRate(1000L, 0L, 0L)).get(0));
     }
 
     @Test
@@ -185,6 +252,8 @@ public class MetricsFormatterTest {
         assertThrows(IllegalArgumentException.class,
                 () -> MetricsFormatter.toLogLine(Role.SERVER, null));
         assertThrows(IllegalArgumentException.class, () -> MetricsFormatter.toHud(null));
+        assertThrows(IllegalArgumentException.class,
+                () -> MetricsFormatter.toSessionLogLine(null, "1a2b3c4d"));
         assertThrows(IllegalArgumentException.class,
                 () -> MetricsFormatter.toDeviceLine(null, new DeviceProfile(0L, 0L, 0L, 0L, 0L)));
         assertThrows(IllegalArgumentException.class,

@@ -17,9 +17,10 @@ import java.util.List;
  * disabled scope produces only the framing fields. The overlay keeps a fixed shape instead, so
  * its three lines do not jump while the user reads them.</p>
  *
- * <p><b>Units.</b> Latency values are printed in milliseconds with one decimal; sizes, counts and
- * rates are printed as integers; the round-trip kind is printed as a symbol from
- * {@link RttMetricNames}.</p>
+ * <p><b>Units.</b> Latency values are printed in milliseconds with one decimal; frame rate with one
+ * decimal; sizes, counts and bitrates are printed as integers; the round-trip kind is printed as a
+ * symbol from {@link RttMetricNames}. A rate always comes from a {@link MetricsRate} measured over
+ * an interval, never from a cumulative counter divided by a period.</p>
  */
 public final class MetricsFormatter {
 
@@ -128,6 +129,17 @@ public final class MetricsFormatter {
                     Unit.COUNT, Stat.MAX),
     };
 
+    // One send session owns only the send stage, so its line carries the last three rows plus the
+    // session counters; the encoder rows belong to the process-wide scope and would be empty here.
+    private static final WindowRow[] SESSION_ROWS = {
+            new WindowRow(ServerMetricNames.TX_SEND, PipelineMetrics.Window.SEND,
+                    Unit.NANOS, Stat.P50, Stat.P95, Stat.MAX),
+            new WindowRow(ServerMetricNames.TX_QUEUE_RESIDENCY, PipelineMetrics.Window.QUEUE_RESIDENCY,
+                    Unit.NANOS, Stat.P95, Stat.MAX),
+            new WindowRow(ServerMetricNames.TX_QUEUE_DEPTH, PipelineMetrics.Window.QUEUE_DEPTH,
+                    Unit.COUNT, Stat.MAX),
+    };
+
     private static final WindowRow[] CLIENT_ROWS = {
             new WindowRow(ClientMetricNames.RX_ARRIVAL, PipelineMetrics.Window.ARRIVAL,
                     Unit.NANOS, Stat.P50, Stat.P95, Stat.P99),
@@ -167,7 +179,7 @@ public final class MetricsFormatter {
      * @throws IllegalArgumentException if an argument is null
      */
     public static String toLogLine(Role role, MetricsSnapshot snapshot) {
-        return toLogLine(role, snapshot, null);
+        return toLogLine(role, snapshot, null, null);
     }
 
     /**
@@ -183,6 +195,25 @@ public final class MetricsFormatter {
      * @throws IllegalArgumentException if an argument is null
      */
     public static String toLogLine(Role role, MetricsSnapshot snapshot, String sessionId) {
+        return toLogLine(role, snapshot, sessionId, null);
+    }
+
+    /**
+     * Renders one single-line structured log record with a session identifier and interval rates.
+     *
+     * <p>Rates are printed only when {@code rate} measured an interval: a rate derived from a
+     * cumulative counter would grow without bound, and a fabricated zero would be indistinguishable
+     * from a genuinely silent pipeline, so an absent interval omits the fields instead.</p>
+     *
+     * @param role       pipeline the snapshot describes; must not be null
+     * @param snapshot   snapshot to render; must not be null
+     * @param sessionId  session identifier to append, or null to omit the field
+     * @param rate       interval rate of this pipeline, or null when it was not measured
+     * @return one line starting with {@link MetricNames#PREFIX}, without a trailing newline
+     * @throws IllegalArgumentException if a required argument is null
+     */
+    public static String toLogLine(Role role, MetricsSnapshot snapshot, String sessionId,
+                                   MetricsRate rate) {
         if (role == null) {
             throw new IllegalArgumentException("role must not be null");
         }
@@ -199,10 +230,45 @@ public final class MetricsFormatter {
             out.append(' ').append(MetricNames.KEY_SESSION_ID).append('=').append(sessionId);
         }
         if (role == Role.SERVER) {
-            appendServerFields(out, snapshot);
+            appendServerFields(out, snapshot, rate);
         } else {
-            appendClientFields(out, snapshot);
+            appendClientFields(out, snapshot, rate);
         }
+        return out.toString();
+    }
+
+    /**
+     * Renders one send session of the server as a structured log record.
+     *
+     * <p>The session owns its own metric scope, so its send duration, queue residency and queue
+     * depth never reach the process-wide line. This method prints them under the same framing and
+     * keys, with the session identifier that matches the viewer's own line, which is what makes
+     * "the server blocked on this viewer" readable from a log capture.</p>
+     *
+     * @param snapshot  snapshot of one session's metric scope; must not be null
+     * @param sessionId session identifier to append, or null to omit the field
+     * @return one line starting with {@link MetricNames#PREFIX}, without a trailing newline
+     * @throws IllegalArgumentException if {@code snapshot} is null
+     */
+    public static String toSessionLogLine(MetricsSnapshot snapshot, String sessionId) {
+        if (snapshot == null) {
+            throw new IllegalArgumentException("snapshot must not be null");
+        }
+        StringBuilder out = new StringBuilder(192);
+        out.append(MetricNames.PREFIX).append(' ')
+                .append(MetricNames.KEY_ROLE).append("=server")
+                .append(' ').append(MetricNames.KEY_PERIOD).append('=')
+                .append(snapshot.getPeriodMs());
+        if (sessionId != null) {
+            out.append(' ').append(MetricNames.KEY_SESSION_ID).append('=').append(sessionId);
+        }
+        appendRows(out, snapshot, SESSION_ROWS);
+        appendCounters(out, snapshot, ServerMetricNames.TX_SENT,
+                PipelineMetrics.Counter.SENT_UNITS, null);
+        appendCounters(out, snapshot, ServerMetricNames.TX_DROP,
+                PipelineMetrics.Counter.DROPPED_UNITS, null);
+        appendCounters(out, snapshot, ServerMetricNames.TX_RESYNC,
+                PipelineMetrics.Counter.RESYNCS, null);
         return out.toString();
     }
 
@@ -275,25 +341,45 @@ public final class MetricsFormatter {
      * @throws IllegalArgumentException if {@code snapshot} is null
      */
     public static List<String> toHud(MetricsSnapshot snapshot) {
+        return toHud(snapshot, null);
+    }
+
+    /**
+     * Renders the three debug-overlay lines with interval rates on the first line.
+     *
+     * <p>The overlay is refreshed every second while the log line runs every five, so the two
+     * readers pass their own {@link MetricsRate}; a rate that has no interval yet prints
+     * {@code n/a} rather than a zero the user would read as "the stream is dead".</p>
+     *
+     * @param snapshot snapshot to render; must not be null
+     * @param rate     interval rate of the receiving pipeline, or null when it was not measured
+     * @return an immutable list of exactly three lines
+     * @throws IllegalArgumentException if {@code snapshot} is null
+     */
+    public static List<String> toHud(MetricsSnapshot snapshot, MetricsRate rate) {
         if (snapshot == null) {
             throw new IllegalArgumentException("snapshot must not be null");
         }
         List<String> lines = new ArrayList<>(3);
 
-        StringBuilder rate = new StringBuilder(64);
-        appendTenths(rate, snapshot.perSecond(PipelineMetrics.Counter.ACCESS_UNITS));
-        rate.append(" fps | ");
-        appendTenths(rate, snapshot.bitrateBps() / 1_000_000d);
-        rate.append(" Mbps | ");
+        StringBuilder first = new StringBuilder(64);
+        if (rate != null && rate.hasInterval()) {
+            appendTenths(first, rate.getFramesPerSecond());
+            first.append(" fps | ");
+            appendTenths(first, rate.getBitsPerSecond() / 1_000_000d);
+            first.append(" Mbps | ");
+        } else {
+            first.append("n/a fps | n/a Mbps | ");
+        }
         LatencyWindow.Stats rtt = snapshot.getWindow(PipelineMetrics.Window.RTT);
         if (rtt.hasSamples()) {
-            rate.append("RTT ");
-            appendMillis(rate, rtt.getP50());
-            rate.append(" ms");
+            first.append("RTT ");
+            appendMillis(first, rtt.getP50());
+            first.append(" ms");
         } else {
-            rate.append("RTT n/a");
+            first.append("RTT n/a");
         }
-        lines.add(rate.toString());
+        lines.add(first.toString());
 
         StringBuilder decode = new StringBuilder(64);
         decode.append("q ").append(snapshot.getWindow(PipelineMetrics.Window.QUEUE_DEPTH).getMax());
@@ -324,33 +410,40 @@ public final class MetricsFormatter {
     }
 
     /**
-     * Appends server-side windows, derived rates and counters.
+     * Appends server-side windows, derived interval rates and counters.
+     *
+     * <p>Send-session counters are not printed here: they belong to one session's scope and are
+     * rendered by {@link #toSessionLogLine(MetricsSnapshot, String)}.</p>
      */
-    private static void appendServerFields(StringBuilder out, MetricsSnapshot snapshot) {
+    private static void appendServerFields(StringBuilder out, MetricsSnapshot snapshot,
+                                           MetricsRate rate) {
         appendRows(out, snapshot, SERVER_ROWS);
-        out.append(' ').append(ServerMetricNames.ENC_AU_RATE).append('=');
-        appendTenths(out, snapshot.perSecond(PipelineMetrics.Counter.ACCESS_UNITS));
-        out.append(' ').append(ServerMetricNames.ENC_BITRATE).append('=')
-                .append(Math.round(snapshot.bitrateBps()));
+        if (rate != null && rate.hasInterval()) {
+            out.append(' ').append(ServerMetricNames.ENC_AU_RATE).append('=');
+            appendTenths(out, rate.getFramesPerSecond());
+            out.append(' ').append(ServerMetricNames.ENC_BITRATE).append('=')
+                    .append(Math.round(rate.getBitsPerSecond()));
+        }
         appendCounters(out, snapshot, ServerMetricNames.TX_CLIENTS, null,
                 PipelineMetrics.Gauge.PEER_COUNT);
         appendCounters(out, snapshot, ServerMetricNames.KF_REQUEST,
                 PipelineMetrics.Counter.JOIN_REQUESTS, null);
         appendCounters(out, snapshot, ServerMetricNames.KF_JOINS,
                 PipelineMetrics.Counter.JOIN_POINTS, null);
-        appendCounters(out, snapshot, ServerMetricNames.TX_SENT,
-                PipelineMetrics.Counter.SENT_UNITS, null);
-        appendCounters(out, snapshot, ServerMetricNames.TX_DROP,
-                PipelineMetrics.Counter.DROPPED_UNITS, null);
-        appendCounters(out, snapshot, ServerMetricNames.TX_RESYNC,
-                PipelineMetrics.Counter.RESYNCS, null);
     }
 
     /**
-     * Appends client-side windows, counters, gauges and round-trip fields.
+     * Appends client-side windows, interval rates, counters, gauges and round-trip fields.
      */
-    private static void appendClientFields(StringBuilder out, MetricsSnapshot snapshot) {
+    private static void appendClientFields(StringBuilder out, MetricsSnapshot snapshot,
+                                            MetricsRate rate) {
         appendRows(out, snapshot, CLIENT_ROWS);
+        if (rate != null && rate.hasInterval()) {
+            out.append(' ').append(ClientMetricNames.RX_AU_RATE).append('=');
+            appendTenths(out, rate.getFramesPerSecond());
+            out.append(' ').append(ClientMetricNames.RX_BITRATE).append('=')
+                    .append(Math.round(rate.getBitsPerSecond()));
+        }
         appendCounters(out, snapshot, ClientMetricNames.RX_STALL,
                 PipelineMetrics.Counter.STALLS, null);
         appendCounters(out, snapshot, ClientMetricNames.RX_SEQ_GAP,

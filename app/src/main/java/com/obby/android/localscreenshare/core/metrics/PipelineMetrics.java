@@ -27,9 +27,9 @@ import java.util.concurrent.atomic.LongAdder;
  * {@link #isEnabled()} is false always reports empty windows and zero counters.</p>
  *
  * <p><b>Units.</b> Latency windows store nanoseconds, {@link Window#AU_BYTES} stores payload bytes
- * and {@link Window#QUEUE_DEPTH} stores queued units. Counters store plain counts, except
- * {@link Counter#ACCESS_UNIT_BYTES}, which accumulates payload bytes so a bitrate can be derived
- * from a snapshot.</p>
+ * and {@link Window#QUEUE_DEPTH} stores queued units. Counters store plain monotonic counts, except
+ * {@link Counter#ACCESS_UNIT_BYTES}, which accumulates payload bytes so a reader can derive an
+ * interval bitrate by subtracting two readings.</p>
  */
 public final class PipelineMetrics {
 
@@ -428,9 +428,12 @@ public final class PipelineMetrics {
     /**
      * Copies every window, counter and gauge into an immutable snapshot.
      *
-     * <p>Allocates; intended for the aggregation thread.</p>
+     * <p>Allocates; intended for the aggregation thread. Counters are copied as they are, that is
+     * cumulative for the lifetime of this scope; {@code periodMs} is only the cadence the line
+     * framing prints and the window span the percentiles describe, never a divisor for counters.
+     * Interval rates are derived by the reader through a {@link RateSampler}.</p>
      *
-     * @param periodMs duration the counters accumulated over, used by rate derivations
+     * @param periodMs cadence this snapshot was requested at, printed in the line framing
      * @return an immutable snapshot, never null
      */
     public MetricsSnapshot snapshot(long periodMs) {

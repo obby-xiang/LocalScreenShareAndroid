@@ -2,6 +2,7 @@ package com.obby.android.localscreenshare.client;
 
 import com.obby.android.localscreenshare.core.client.ClientMediaSession;
 import com.obby.android.localscreenshare.core.metrics.ArrivalTracker;
+import com.obby.android.localscreenshare.core.metrics.PipelineMetrics;
 import com.obby.android.localscreenshare.core.model.EncodedAccessUnit;
 import com.obby.android.localscreenshare.core.model.StreamDescriptor;
 import com.obby.android.localscreenshare.core.model.StreamKey;
@@ -13,7 +14,9 @@ import com.obby.android.localscreenshare.transport.ScreenStreamProtoMapper;
  *
  * <p>The receiver owns the deserialization of server messages and the stream identity, and reports
  * the session-level secure flag to a {@link ClientSecureListener} and the display geometry of the
- * incoming stream to a {@link StreamGeometryListener}. It is deliberately not thread-safe: the
+ * incoming stream to a {@link StreamGeometryListener}. It also counts every received access unit and
+ * its payload bytes into the metric scope, which is what makes the viewer's frame rate and bitrate
+ * measurable at all. It is deliberately not thread-safe: the
  * owning client must call {@link #onServerMessage} from a single decode thread so decoding never
  * runs on the gRPC shared executor. The session itself serializes its own state, so the receiver
  * only has to serialize the deserialization plus the secure-flag edge tracking.</p>
@@ -34,6 +37,8 @@ public final class ClientMediaReceiver {
     private final StreamGeometryListener geometryListener;
 
     private final ArrivalTracker arrivalTracker;
+
+    private final PipelineMetrics metrics;
 
     private Boolean lastSecure;
 
@@ -82,17 +87,48 @@ public final class ClientMediaReceiver {
                                ClientSecureListener secureListener,
                                StreamGeometryListener geometryListener,
                                ArrivalTracker arrivalTracker) {
+        this(streamKey, session, secureListener, geometryListener, arrivalTracker,
+                PipelineMetrics.NONE);
+    }
+
+    /**
+     * Creates a receiver that also counts received access units.
+     *
+     * <p>The counters answer "how many frames and how many bytes did this viewer receive", which is
+     * the frame-rate and bitrate the overlay shows. Counting happens on the same decoded access unit
+     * the arrival probe already consumes, so it adds no timestamp, no allocation and no second
+     * deserialization; a disabled scope makes both calls a single volatile read.</p>
+     *
+     * @param streamKey        stream identity used to rebuild descriptors and access units
+     * @param session          the session driven by this receiver
+     * @param secureListener   optional listener for secure-flag changes; may be null
+     * @param geometryListener optional listener for stream geometry changes; may be null
+     * @param arrivalTracker   optional receiver of arrival statistics; may be null
+     * @param metrics          receive-side metric scope; required, may be
+     *                         {@link PipelineMetrics#NONE}
+     * @throws IllegalArgumentException if {@code streamKey}, {@code session} or {@code metrics} is
+     *                                  null
+     */
+    public ClientMediaReceiver(StreamKey streamKey, ClientMediaSession session,
+                               ClientSecureListener secureListener,
+                               StreamGeometryListener geometryListener,
+                               ArrivalTracker arrivalTracker,
+                               PipelineMetrics metrics) {
         if (streamKey == null) {
             throw new IllegalArgumentException("streamKey must not be null");
         }
         if (session == null) {
             throw new IllegalArgumentException("session must not be null");
         }
+        if (metrics == null) {
+            throw new IllegalArgumentException("metrics must not be null");
+        }
         this.streamKey = streamKey;
         this.session = session;
         this.secureListener = secureListener;
         this.geometryListener = geometryListener;
         this.arrivalTracker = arrivalTracker;
+        this.metrics = metrics;
     }
 
     /**
@@ -150,6 +186,11 @@ public final class ClientMediaReceiver {
             case ACCESS_UNIT: {
                 final EncodedAccessUnit accessUnit = ScreenStreamProtoMapper.toAccessUnit(streamKey,
                         message.getAccessUnit());
+                // One write per received unit: the frame-rate and bitrate the viewer reports are
+                // counts of what actually arrived, not of what the server believed it sent.
+                metrics.increment(PipelineMetrics.Counter.ACCESS_UNITS);
+                metrics.add(PipelineMetrics.Counter.ACCESS_UNIT_BYTES,
+                        accessUnit.getPayloadLength());
                 if (arrivalTracker != null && arrivalNs != UNKNOWN_ARRIVAL_NS) {
                     arrivalTracker.feed(accessUnit.getConfigEpoch(), accessUnit.getSequence(),
                             accessUnit.getPtsUs(), arrivalNs);

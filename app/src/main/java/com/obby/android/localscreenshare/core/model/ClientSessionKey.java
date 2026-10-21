@@ -13,6 +13,11 @@ import java.util.Objects;
  */
 public final class ClientSessionKey {
 
+    /**
+     * Number of client-id characters kept for log correlation.
+     */
+    private static final int CLIENT_ID_TAIL_LENGTH = 8;
+
     private final StreamKey streamKey;
     private final String clientId;
 
@@ -38,6 +43,33 @@ public final class ClientSessionKey {
 
     public String getClientId() {
         return clientId;
+    }
+
+    /**
+     * Returns the client-id tail that correlates both ends of one session in a log capture.
+     *
+     * <p>The tail is the last {@link #CLIENT_ID_TAIL_LENGTH} characters of the sender's random
+     * per-run client id. It is deliberately not an identity: the full id stays inside the process,
+     * and eight characters are enough to match two log lines without making a capture traceable
+     * back to a device.</p>
+     *
+     * @param clientId client id, or null when no session exists yet
+     * @return the tail, the whole id when it is short enough, or null for a null id
+     */
+    public static String tailOf(String clientId) {
+        if (clientId == null) {
+            return null;
+        }
+        return clientId.length() <= CLIENT_ID_TAIL_LENGTH
+                ? clientId
+                : clientId.substring(clientId.length() - CLIENT_ID_TAIL_LENGTH);
+    }
+
+    /**
+     * Returns {@link #tailOf(String)} of this key's client id.
+     */
+    public String getClientIdTail() {
+        return tailOf(clientId);
     }
 
     @Override

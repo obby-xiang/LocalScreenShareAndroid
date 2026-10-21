@@ -1,6 +1,7 @@
 package com.obby.android.localscreenshare.core.stream;
 
 import com.obby.android.localscreenshare.core.codec.CodecRegistry;
+import com.obby.android.localscreenshare.core.metrics.PipelineMetrics;
 import com.obby.android.localscreenshare.core.model.BitstreamFormat;
 import com.obby.android.localscreenshare.core.model.ClientSessionKey;
 import com.obby.android.localscreenshare.core.model.ClientState;
@@ -12,6 +13,7 @@ import com.obby.android.localscreenshare.core.support.BlockingTransport;
 import com.obby.android.localscreenshare.core.support.FakeCodec;
 import com.obby.android.localscreenshare.core.support.FakeTransport;
 import com.obby.android.localscreenshare.core.support.MutableClock;
+import com.obby.android.localscreenshare.core.support.MutableNanoClock;
 
 import org.junit.Test;
 
@@ -597,6 +599,68 @@ public class StreamHubTest {
         drainToStreaming(hub, CLIENT_A, transport);
         assertEquals(0L, hub.snapshotSessions().get(0).getStats().getQueuedUnits());
         assertEquals(1L, hub.snapshotSessions().get(0).getStats().getSentUnits());
+    }
+
+    @Test
+    public void snapshotSessionMetrics_exposesThePerSessionSendStage() throws Exception {
+        MutableClock clock = new MutableClock();
+        FakeCodec fake = new FakeCodec(ACTIVE_CODEC_ID, 0, false, false);
+        fake.setAutoEmitJoinOnRequest(false);
+        CodecRegistry registry = registry(fake);
+        StreamRuntime runtime = startedRuntime(registry, STREAM_KEY, ACTIVE_CODEC_ID, clock);
+        PipelineMetrics metrics = PipelineMetrics.create(new MutableNanoClock(), 16);
+        StreamHub hub = new StreamHub(registry, new StreamQueueLimits(128L, 2, MAX_AGE_MS), clock,
+                metrics);
+        hub.register(runtime);
+        hub.activate(STREAM_KEY);
+
+        assertTrue(hub.snapshotSessionMetrics(5000L).isEmpty());
+
+        FakeTransport transport = new FakeTransport();
+        assertEquals(JoinDecision.Status.ACCEPTED,
+                hub.join(CLIENT_A, capabilities(ACTIVE_CODEC_ID), transport).getStatus());
+        fake.emitJoin(new byte[]{0x31});
+        drainToStreaming(hub, CLIENT_A, transport);
+
+        List<SessionMetricsSnapshot> snapshots = hub.snapshotSessionMetrics(5000L);
+        assertEquals(1, snapshots.size());
+        assertEquals("client-A", snapshots.get(0).getClientId());
+        assertEquals("client-A", snapshots.get(0).getClientIdTail());
+        assertEquals(1L, snapshots.get(0).getMetrics()
+                .getWindow(PipelineMetrics.Window.SEND).getCount());
+        assertEquals(1L, snapshots.get(0).getMetrics()
+                .getCounter(PipelineMetrics.Counter.SENT_UNITS));
+        // The process-wide scope stays free of send samples: this is exactly why the server line
+        // used to log no tx.send at all.
+        assertEquals(0L, metrics.getRecordedCount(PipelineMetrics.Window.SEND));
+
+        hub.detach(CLIENT_A);
+
+        assertTrue(hub.snapshotSessionMetrics(5000L).isEmpty());
+    }
+
+    @Test
+    public void snapshotSessionMetrics_isOrderedByClientId() {
+        MutableClock clock = new MutableClock();
+        FakeCodec fake = new FakeCodec(ACTIVE_CODEC_ID, 0, false, false);
+        fake.setAutoEmitJoinOnRequest(false);
+        CodecRegistry registry = registry(fake);
+        StreamRuntime runtime = startedRuntime(registry, STREAM_KEY, ACTIVE_CODEC_ID, clock);
+        StreamHub hub = newHub(registry, clock);
+        hub.register(runtime);
+        hub.activate(STREAM_KEY);
+
+        assertEquals(JoinDecision.Status.ACCEPTED,
+                hub.join(CLIENT_B, capabilities(ACTIVE_CODEC_ID), new FakeTransport())
+                        .getStatus());
+        assertEquals(JoinDecision.Status.ACCEPTED,
+                hub.join(CLIENT_A, capabilities(ACTIVE_CODEC_ID), new FakeTransport())
+                        .getStatus());
+
+        List<SessionMetricsSnapshot> snapshots = hub.snapshotSessionMetrics(5000L);
+        assertEquals(2, snapshots.size());
+        assertEquals("client-A", snapshots.get(0).getClientId());
+        assertEquals("client-B", snapshots.get(1).getClientId());
     }
 
     @Test

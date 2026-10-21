@@ -4,6 +4,7 @@ import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThrows;
 
 public class ClientSessionKeyTest {
@@ -39,5 +40,15 @@ public class ClientSessionKeyTest {
                 () -> new ClientSessionKey(streamKey("stream-1"), ""));
         assertThrows(IllegalArgumentException.class,
                 () -> new ClientSessionKey(streamKey("stream-1"), "   "));
+    }
+
+    @Test
+    public void clientIdTail_isTheLastEightCharactersAndNeverAnIdentity() {
+        ClientSessionKey key = new ClientSessionKey(streamKey("stream-1"), "0123456789abcdef");
+
+        assertEquals("89abcdef", key.getClientIdTail());
+        assertEquals("89abcdef", ClientSessionKey.tailOf("0123456789abcdef"));
+        assertEquals("short", ClientSessionKey.tailOf("short"));
+        assertNull(ClientSessionKey.tailOf(null));
     }
 }

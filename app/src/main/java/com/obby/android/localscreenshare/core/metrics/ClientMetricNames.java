@@ -16,6 +16,16 @@ public final class ClientMetricNames {
     public static final String RX_ARRIVAL = "rx.arr";
 
     /**
+     * Received access units per second over the measured interval.
+     */
+    public static final String RX_AU_RATE = "rx.auRate";
+
+    /**
+     * Received payload bits per second over the measured interval.
+     */
+    public static final String RX_BITRATE = "rx.bitrate";
+
+    /**
      * Relative one-way delay against the window minimum.
      */
     public static final String RX_ROWD = "rx.rowd";
