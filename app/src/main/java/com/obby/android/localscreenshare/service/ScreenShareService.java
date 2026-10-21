@@ -110,6 +110,7 @@ import com.obby.android.localscreenshare.support.ServiceProtocol;
 import com.obby.android.localscreenshare.support.WindowUtils;
 import com.obby.android.localscreenshare.transport.ScreenStreamProtoMapper;
 
+import org.apache.commons.lang3.concurrent.BasicThreadFactory;
 import org.apache.commons.lang3.time.DurationFormatUtils;
 
 import java.io.ByteArrayOutputStream;
@@ -120,6 +121,8 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Random;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * Foreground service that captures the screen and serves it to clients through {@link ScreenShareServer}.
@@ -128,15 +131,15 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * user grants screen capture; the consent result travels in
  * {@link ServiceProtocol#EXTRA_MEDIA_PROJECTION_RESULT}. {@link #onCreate()} registers the stop-command
  * receiver, snapshots the projection preferences and subscribes the preference observer.
- * {@link #onStartCommand(Intent, int, int)} then, in this order, promotes the service to the
- * foreground with the media-projection type, creates and starts the server, obtains the
- * {@link MediaProjection} from the consent result, builds the capture pipeline and shows the
- * floating chip. A null intent, a second start while the server is running, or a failure to
- * promote the service to the foreground or to start the server is rejected with
- * {@code START_NOT_STICKY}; a successful start returns {@code START_STICKY}.
- * {@link #stopService()} tears the pipeline down in reverse order and calls
- * {@link #stopSelf()}; {@link #onDestroy()} unregisters the receiver and the preference
- * observer.</p>
+ * {@link #onStartCommand(Intent, int, int)} then promotes the service to the foreground with the
+ * media-projection type, obtains the {@link MediaProjection} from the consent result, builds the
+ * capture pipeline and hands the server start to the control thread; the start completes with the
+ * virtual display and the floating chip on the main thread. A null intent, a second start while the
+ * server is starting or running, or a failure to promote the service to the foreground, to build the
+ * pipeline or to start the server is rejected with {@code START_NOT_STICKY}; a successful start
+ * returns {@code START_STICKY}. {@link #stopService()} tears the pipeline down in reverse order and
+ * calls {@link #stopSelf()}; {@link #onDestroy()} unregisters the receiver, the preference observer
+ * and the control thread.</p>
  *
  * <p><b>Capture pipeline.</b> The projection renders into a {@link VirtualDisplay} backed by an
  * {@link ImageReader} surface. The image-available listener runs on the dedicated
@@ -149,8 +152,12 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * <p><b>Threading.</b> Service callbacks, server listeners, preference changes and all state
  * except the capture state run on the main thread. The capture listener runs on the image reader
  * thread; {@code mImageReaderLock} serializes image acquisition, reader replacement and teardown
- * so no frame is posted once the reader has been closed. Apart from the capture thread's
- * {@code postScreenFrame} call, {@code mServer} is accessed only on the main thread.</p>
+ * so no frame is posted once the reader has been closed. The server start runs on the
+ * {@code lss-server-control} thread, because binding the port and preparing TLS material reach the
+ * AndroidKeyStore and blocked the main thread for seconds when the identity key was unusable
+ * (N-t6-2); everything after the start returns to the main thread. Apart from that task and the
+ * capture thread's {@code postScreenFrame} call, {@code mServer} is accessed only on the main
+ * thread.</p>
  *
  * <p><b>Clients.</b> Activities bind to the service with {@code BIND_AUTO_CREATE} and register a
  * {@link Messenger} as {@code replyTo}; the service keeps the registered messengers in a
@@ -190,6 +197,16 @@ public class ScreenShareService extends Service {
     // Main-thread state; non-null only between a successful start and stopService().
     @Nullable
     private ScreenShareServer mServer;
+
+    // Decides who stops the server when a stop arrives while the start is still running.
+    @NonNull
+    private final ServerStartCoordinator mServerStartCoordinator = new ServerStartCoordinator();
+
+    // Serializes the server start and stop away from the main thread. A start that blocks in the
+    // keystore must not hold up the main thread, and a stop queued behind it must not race it.
+    @NonNull
+    private final ExecutorService mServerControlExecutor = Executors.newSingleThreadExecutor(
+        new BasicThreadFactory.Builder().namingPattern("lss-server-control").build());
 
     // Multicast announcer; non-null only while the server advertises itself.
     @Nullable
@@ -383,9 +400,12 @@ public class ScreenShareService extends Service {
         }
     }));
 
-    // ScreenShareServer invokes both listeners on the main thread.
+    // ScreenShareServer invokes the statistics listener on the main thread. The info listener is
+    // additionally reached from the control thread, because the first server info is published
+    // inside start(), so it hops to the main thread before touching any state.
     @NonNull
-    private final ServerInfoListener mServerInfoListener = this::onServerInfoChanged;
+    private final ServerInfoListener mServerInfoListener =
+        serverInfo -> mMainHandler.post(() -> onServerInfoChanged(serverInfo));
 
     @NonNull
     private final ServerStatsListener mServerStatsListener = this::onServerStatsChanged;
@@ -508,6 +528,11 @@ public class ScreenShareService extends Service {
                 stopService();
             } else if (ServiceProtocol.ACTION_IDENTITY_RESET.equals(intent.getAction())) {
                 restartAnnouncements();
+                // The notification carries the fingerprint guide of this device. It has to show the
+                // new identity immediately, because the user may compare the two values right after
+                // the reset (N-t6-3); waiting for the next statistics or peer event left the old
+                // fingerprint there until sharing was restarted.
+                updateNotification();
             }
         }
     };
@@ -718,6 +743,8 @@ public class ScreenShareService extends Service {
         Preferences.get().removeObserver(mPreferencesObserver);
         mMainHandler.removeCallbacks(mEncoderRebuildRunnable);
         stopAnnouncements();
+        // Queued work still runs; a start in flight finishes and stops its own server.
+        mServerControlExecutor.shutdown();
     }
 
     /**
@@ -745,22 +772,25 @@ public class ScreenShareService extends Service {
      *
      * <p>Requires the consent result in {@link ServiceProtocol#EXTRA_MEDIA_PROJECTION_RESULT}; a null
      * intent cannot carry it, so a system restart is rejected with {@code START_NOT_STICKY}. A
-     * second start while the server is running is ignored for the same reason. The foreground
-     * notification is posted before the projection is used, and a failure while promoting the
-     * foreground service or starting the server tears the partially built state down through
-     * {@link #stopService()}.</p>
+     * second start while the server is starting or running is ignored for the same reason. The
+     * foreground notification is posted before the projection is used, and a failure while promoting
+     * the foreground service or building the stream pipeline tears the partially built state down
+     * through {@link #stopService()}. The server itself starts on the control thread and its
+     * completion comes back to the main thread (see {@link #startServer(ScreenShareServer)}).</p>
      */
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         Log.i(mTag, String.format("onStartCommand: startId = %d", startId));
 
-        if (mServer != null) {
-            Log.w(mTag, "onStartCommand: server already running");
+        final long startGeneration = mServerStartCoordinator.beginStart();
+        if (startGeneration == ServerStartCoordinator.NO_GENERATION) {
+            Log.w(mTag, "onStartCommand: server already starting or running");
             return START_NOT_STICKY;
         }
 
         if (intent == null) {
             Log.w(mTag, "onStartCommand: intent is null");
+            mServerStartCoordinator.beginStop();
             return START_NOT_STICKY;
         }
 
@@ -800,10 +830,10 @@ public class ScreenShareService extends Service {
         // The server binds the configured port and starts advertising over NSD; its listeners
         // are invoked on the main thread. The discovery store is shared with the activity side so
         // Register-learned peers appear in the device list.
-        mServer = new ScreenShareServer(this);
-        mServer.setServerInfoListener(mServerInfoListener);
-        mServer.setServerStatsListener(mServerStatsListener);
-        mServer.setPeerTrustListener(new ScreenShareServer.PeerTrustListener() {
+        final ScreenShareServer server = new ScreenShareServer(this);
+        server.setServerInfoListener(mServerInfoListener);
+        server.setServerStatsListener(mServerStatsListener);
+        server.setPeerTrustListener(new ScreenShareServer.PeerTrustListener() {
             @Override
             public void onNewPeerPinned(final String deviceId, final String fingerprint) {
                 mMainHandler.post(() -> {
@@ -822,17 +852,65 @@ public class ScreenShareService extends Service {
                     Toast.LENGTH_LONG).show());
             }
         });
-        mServer.setStream(mStreamHub, mStreamRuntime);
-        mServer.setSecure(mIsProjectionSecure);
-        mServer.setDeviceStore(DiscoveryManager.get().getDeviceStore());
+        server.setStream(mStreamHub, mStreamRuntime);
+        server.setSecure(mIsProjectionSecure);
+        server.setDeviceStore(DiscoveryManager.get().getDeviceStore());
+        mServer = server;
 
+        // Binding the port and preparing TLS material reach the AndroidKeyStore and have to stay
+        // off the main thread: with an unusable identity key the keystore call blocked for 5.4 s
+        // and the system raised ANR (N-t6-2). The visible order is unchanged, because everything
+        // after the start is posted back to the main thread.
+        mServerControlExecutor.execute(() -> startServer(server, startGeneration));
+
+        return START_STICKY;
+    }
+
+    /**
+     * Starts the server on the control thread and hands the outcome back to the main thread.
+     *
+     * <p>Runs off the main thread because {@link ScreenShareServer#start()} opens the keystore to
+     * sign the TLS certificate and binds the gRPC port. The main-thread continuation is
+     * {@link #onServerStarted(ScreenShareServer)} on success and
+     * {@link #onServerStartFailed(ScreenShareServer)} otherwise. A stop that arrived while this was
+     * running has already forgotten the server, so this method stops it itself; a server that is
+     * starting is not reachable by peers yet and rejects calls until it is ready.</p>
+     *
+     * <p>Must not touch service state other than through {@link #mServerStartCoordinator}: every
+     * field owned by the main thread stays with the continuation.</p>
+     *
+     * @param server           server of the session that claimed the start
+     * @param startGeneration  token returned by the matching {@code beginStart()}
+     */
+    private void startServer(@NonNull final ScreenShareServer server, final long startGeneration) {
+        boolean isStarted = false;
         try {
-            mServer.start();
-        } catch (IOException e) {
-            Log.e(mTag, "onStartCommand: start server failed", e);
-            Toast.makeText(this, R.string.start_service_failed, Toast.LENGTH_LONG).show();
-            stopService();
-            return START_NOT_STICKY;
+            server.start();
+            isStarted = true;
+        } catch (IOException | RuntimeException e) {
+            Log.e(mTag, "startServer: start server failed", e);
+        }
+
+        if (!mServerStartCoordinator.finishStart(startGeneration)) {
+            Log.i(mTag, "startServer: stopped while starting, stopping the server");
+            server.stop();
+            return;
+        }
+        mMainHandler.post(isStarted
+            ? () -> onServerStarted(server)
+            : () -> onServerStartFailed(server));
+    }
+
+    /**
+     * Completes the start on the main thread: announcements, capture display, chip, clients.
+     *
+     * <p>The order is the same as a synchronous start. The server info listener was posted before
+     * this continuation, so {@link #mServerInfo} is already set when the announcer is built.</p>
+     */
+    private void onServerStarted(@NonNull final ScreenShareServer server) {
+        if (mServer != server) {
+            Log.i(mTag, "onServerStarted: session already stopped");
+            return;
         }
 
         startAnnouncements();
@@ -864,8 +942,18 @@ public class ScreenShareService extends Service {
 
         // Bound activities learn about the new state only after everything is in place.
         mClientMessengers.forEach(this::notifyServerStarted);
+    }
 
-        return START_STICKY;
+    /**
+     * Tears the session down when the server could not be started on the control thread.
+     */
+    private void onServerStartFailed(@NonNull final ScreenShareServer server) {
+        if (mServer != server) {
+            Log.i(mTag, "onServerStartFailed: session already stopped");
+            return;
+        }
+        Toast.makeText(this, R.string.start_service_failed, Toast.LENGTH_LONG).show();
+        stopService();
     }
 
     /**
@@ -952,8 +1040,17 @@ public class ScreenShareService extends Service {
         stopAnnouncements();
 
         if (mServer != null) {
-            mServer.stop();
+            final ScreenShareServer server = mServer;
             mServer = null;
+            if (mServerStartCoordinator.beginStop()) {
+                server.stop();
+            } else {
+                // The start is still running on the control thread; it stops the server as soon as
+                // start() returns, which keeps the port bound only for the rest of that call.
+                Log.i(mTag, "stopService: server start is in flight, it stops the server itself");
+            }
+        } else {
+            mServerStartCoordinator.beginStop();
         }
 
         mClientMessengers.forEach(this::notifyServerStopped);
@@ -1101,8 +1198,13 @@ public class ScreenShareService extends Service {
             .build();
     }
 
-    // Replays the latest server info to every registered client.
+    // Replays the latest server info to every registered client. Posted from the control thread,
+    // so a session that was torn down meanwhile is dropped instead of resurrected.
     private void onServerInfoChanged(@NonNull final ServerInfo serverInfo) {
+        if (mServer == null) {
+            Log.i(mTag, "onServerInfoChanged: session already stopped");
+            return;
+        }
         mServerInfo = serverInfo;
         mClientMessengers.forEach(this::notifyServerInfoChanged);
     }

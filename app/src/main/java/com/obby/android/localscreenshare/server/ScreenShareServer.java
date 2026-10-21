@@ -707,10 +707,15 @@ public final class ScreenShareServer {
     /**
      * Binds the gRPC port and starts advertising the service.
      *
-     * <p>Must be called once on the main thread. When this method returns, the gRPC server is
-     * accepting calls and the info listener, if any, has already been notified with the initial
-     * {@link ServerInfo}. The host address in that first notification is
-     * {@link Constants#UNKNOWN_HOST_ADDRESS} until NSD resolution succeeds.</p>
+     * <p>Called once per session from the capture service's control thread, so the keystore work of
+     * the TLS material and the port bind stay off the main thread (N-t6-2). When this method
+     * returns, the gRPC server is accepting calls and the info listener, if any, has already been
+     * notified with the initial {@link ServerInfo}; that notification is posted to the main
+     * thread. The host address in the first notification is {@link Constants#UNKNOWN_HOST_ADDRESS}
+     * until NSD resolution succeeds.</p>
+     *
+     * <p>Calls that arrive before this method returns are rejected: {@code register} answers
+     * {@code unavailable} and {@code stream} completes the call, both with a log line.</p>
      *
      * @throws IOException if the port cannot be bound or the server cannot start
      */
@@ -833,7 +838,8 @@ public final class ScreenShareServer {
     /**
      * Stops advertising, stops the gRPC server and releases the executor.
      *
-     * <p>Must be called on the main thread. State is nulled first, so pending callbacks turn into
+     * <p>Called from the main thread during teardown, or from the control thread when a start that
+     * was already abandoned returns. State is nulled first, so pending callbacks turn into
      * no-ops; then pending main-thread callbacks are removed, the broadcast receiver, the network
      * callback and both NSD registrations are unregistered, and finally the gRPC server is shut
      * down, active client observers are released and the executor is terminated. Unregistering
@@ -1122,8 +1128,8 @@ public final class ScreenShareServer {
      *
      * <p>{@code register} is the unary discovery handshake on the same channel. It delegates to
      * {@link RegisterCallHandler}, which validates, rate-limits, learns the caller and answers
-     * with this device's summary; a stopped server answers {@code unavailable} instead of failing
-     * the call.</p>
+     * with this device's summary; a server that is starting or stopping answers {@code unavailable}
+     * instead of failing the call.</p>
      */
     private final class StreamService extends ScreenStreamServiceGrpc.ScreenStreamServiceImplBase {
         @Override
@@ -1131,6 +1137,10 @@ public final class ScreenShareServer {
             final StreamObserver<RegisterResponse> responseObserver) {
             final RegisterCallHandler handler = mRegisterHandler;
             if (mIsStopped || handler == null) {
+                // A server that is still binding its port or signing TLS material cannot learn a
+                // peer yet: reject the call as unavailable instead of leaving it to time out.
+                Log.i(mTag, "register: server is not serving, rejected as unavailable, isStopped = "
+                    + mIsStopped);
                 responseObserver.onNext(RegisterResponse.newBuilder()
                     .setProtocolVersion(ScreenStreamProtoMapper.PROTOCOL_VERSION)
                     .setAccepted(false)
@@ -1160,6 +1170,8 @@ public final class ScreenShareServer {
         @Override
         public StreamObserver<ClientMessage> stream(StreamObserver<ServerMessage> responseObserver) {
             if (mIsStopped || mStreamHub == null || mStreamRuntime == null) {
+                Log.i(mTag, "stream: server is not serving, closing the call, isStopped = "
+                    + mIsStopped);
                 responseObserver.onCompleted();
                 return new NoopClientObserver();
             }
