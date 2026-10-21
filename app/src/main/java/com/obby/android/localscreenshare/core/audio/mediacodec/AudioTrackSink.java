@@ -4,7 +4,7 @@ import android.media.AudioAttributes;
 import android.media.AudioFormat;
 import android.media.AudioTimestamp;
 import android.media.AudioTrack;
-import android.os.Build;
+import android.util.Log;
 
 import com.obby.android.localscreenshare.core.audio.AudioPlayhead;
 import com.obby.android.localscreenshare.core.audio.AudioSink;
@@ -14,19 +14,23 @@ import com.obby.android.localscreenshare.core.audio.AudioSinkException;
  * {@link AudioSink} backed by a streaming {@code AudioTrack}.
  *
  * <p>Playback uses {@code MODE_STREAM} with media attributes: a screen-share viewer is consuming
- * media, and the track must coexist with whatever else the device is playing. Buffering is three
- * frames or the platform minimum, whichever is larger, which is the range where the jitter buffer
- * has room to absorb jitter without adding audible delay. API 26 and later request the low-latency
- * performance mode; older devices simply ignore the concept.</p>
+ * media, and the track must coexist with whatever else the device is playing. Buffering is 128 ms or
+ * the platform minimum, whichever is larger, which is the reservoir the jitter buffer prefills;
+ * a smaller track cannot hold the target depth at all, which is how the original 64 ms buffer turned
+ * every refill into a track underrun. The low-latency performance mode is deliberately not requested:
+ * a viewer's picture already runs hundreds of milliseconds behind the sender, so trading buffer for
+ * latency buys nothing audible and costs every starvation.</p>
  *
  * <p>Volume is applied through the track, so muting never stops decoding or resets the timeline.</p>
  */
 public final class AudioTrackSink implements AudioSink {
 
     /**
-     * Buffer duration in milliseconds; three AAC frames.
+     * Buffer duration in milliseconds; six AAC frames.
      */
-    private static final int BUFFER_MS = 64;
+    private static final int BUFFER_MS = 128;
+
+    private static final String TAG = "AudioTrackSink@";
 
     private final AudioTimestamp timestamp = new AudioTimestamp();
 
@@ -65,9 +69,6 @@ public final class AudioTrackSink implements AudioSink {
                             .build())
                     .setTransferMode(AudioTrack.MODE_STREAM)
                     .setBufferSizeInBytes(bufferSize);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                builder.setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY);
-            }
             track = builder.build();
             if (track.getState() != AudioTrack.STATE_INITIALIZED) {
                 release();
@@ -76,6 +77,10 @@ public final class AudioTrackSink implements AudioSink {
             this.sampleRate = sampleRate;
             this.channels = channels;
             this.writtenBytes = 0L;
+            Log.i(TAG, String.format("open: sampleRate = %d, channels = %d, bufferBytes = %d,"
+                    + " bufferFrames = %d, bufferMs = %d", sampleRate, channels, bufferSize,
+                track.getBufferSizeInFrames(),
+                sampleRate > 0 ? track.getBufferSizeInFrames() * 1_000L / sampleRate : 0L));
         } catch (RuntimeException e) {
             release();
             throw new AudioSinkException("cannot create the audio track", e);
