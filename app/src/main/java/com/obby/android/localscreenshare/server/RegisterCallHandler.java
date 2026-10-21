@@ -81,6 +81,11 @@ public final class RegisterCallHandler {
     public static final String REASON_IDENTITY_MISMATCH = "identity_mismatch";
 
     /**
+     * This server requires an encrypted transport and the caller advertises none.
+     */
+    public static final String REASON_INSECURE_TRANSPORT = "insecure_transport";
+
+    /**
      * This server is stopping and cannot answer discovery requests.
      */
     public static final String REASON_UNAVAILABLE = "unavailable";
@@ -262,6 +267,17 @@ public final class RegisterCallHandler {
      */
     public void handle(@NonNull final RegisterRequest request, @NonNull final String remoteHost,
         @Nullable final TlsCertificate peerCertificate, @NonNull final Replier replier) {
+        handle(request, remoteHost, peerCertificate, false, replier);
+    }
+
+    /**
+     * Handles one Register request with the transport policy of this endpoint.
+     *
+     * @param requireSecureTransport reject callers that advertise an unencrypted transport
+     */
+    public void handle(@NonNull final RegisterRequest request, @NonNull final String remoteHost,
+        @Nullable final TlsCertificate peerCertificate, final boolean requireSecureTransport,
+        @NonNull final Replier replier) {
         final long nowMs = mTimeSource.nowMs();
         if (!mGlobalLimiter.allow("", nowMs) || !mAddressLimiter.allow(remoteHost, nowMs)) {
             reply(replier, false, REASON_RATE_LIMITED, null);
@@ -271,6 +287,11 @@ public final class RegisterCallHandler {
         final String validation = validate(request);
         if (validation != null) {
             reply(replier, false, validation, null);
+            return;
+        }
+
+        if (requireSecureTransport && !request.getSelf().getSecure()) {
+            reply(replier, false, REASON_INSECURE_TRANSPORT, null);
             return;
         }
 

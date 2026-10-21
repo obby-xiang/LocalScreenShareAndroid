@@ -248,6 +248,11 @@ public final class ScreenShareServer {
     // Session-level secure flag applied to every descriptor; set by ScreenShareService.
     private volatile boolean mSecure;
 
+    // Reports a silently pinned viewer so the capture service can badge it; set by ScreenShareService.
+    @Setter
+    @Nullable
+    private PeerTrustListener mPeerTrustListener;
+
     // Set by stop(); late stream calls become no-ops.
     private volatile boolean mIsStopped;
 
@@ -610,6 +615,26 @@ public final class ScreenShareServer {
     }
 
     /**
+     * Receives a viewer that was trusted for the first time.
+     */
+    public interface PeerTrustListener {
+        /**
+         * Called on a gRPC transport thread after the pin was written.
+         *
+         * @param deviceId    device id derived from the peer certificate
+         * @param fingerprint fingerprint derived from the peer certificate
+         */
+        void onNewPeerPinned(@NonNull String deviceId, @NonNull String fingerprint);
+    }
+
+    /**
+     * Attaches the receiver of first-contact notices.
+     */
+    public void setPeerTrustListener(@Nullable final PeerTrustListener listener) {
+        mPeerTrustListener = listener;
+    }
+
+    /**
      * Sets the session-level secure flag applied to every descriptor.
      */
     public void setSecure(final boolean secure) {
@@ -961,8 +986,8 @@ public final class ScreenShareServer {
             .role(DeviceRole.SERVER)
             .state(ShareState.LIVE)
             .join(JoinPolicy.OPEN)
-            .secure(mSecure)
-            .auth(AuthMode.NONE)
+            .secure(mTransportSecure)
+            .auth(mTransportSecure ? AuthMode.MTLS : AuthMode.NONE)
             .protocolVersion(String.valueOf(ScreenStreamProtoMapper.PROTOCOL_VERSION))
             .metadataVersion(NSD_METADATA_VERSION)
             .capabilities(NsdConstants.DEVICE_CAPABILITY_H264 | NsdConstants.DEVICE_CAPABILITY_JPEG)
@@ -993,8 +1018,8 @@ public final class ScreenShareServer {
             .role(DeviceRole.SERVER)
             .state(ShareState.LIVE)
             .join(settings.visibilityPolicy(nowMs).joinPolicy(nowMs))
-            .secure(mSecure)
-            .auth(AuthMode.NONE)
+            .secure(mTransportSecure)
+            .auth(mTransportSecure ? AuthMode.MTLS : AuthMode.NONE)
             .protocolVersion(String.valueOf(ScreenStreamProtoMapper.PROTOCOL_VERSION))
             .metadataVersion(NSD_METADATA_VERSION)
             .capabilities(settings.capabilities())
@@ -1054,6 +1079,10 @@ public final class ScreenShareServer {
                 return null;
             case UNKNOWN:
                 pins.pin(peer.getDeviceId(), peer.getFingerprint());
+                final PeerTrustListener listener = mPeerTrustListener;
+                if (listener != null) {
+                    listener.onNewPeerPinned(peer.getDeviceId(), peer.getFingerprint());
+                }
                 Log.i(mTag, "acceptPeer: new device pinned");
                 return null;
             case CHANGED:
@@ -1096,7 +1125,7 @@ public final class ScreenShareServer {
 
             final TlsCertificate peer = peerCertificate();
             try {
-                handler.handle(request, remoteHost(), peer, response -> {
+                handler.handle(request, remoteHost(), peer, mTransportSecure, response -> {
                     responseObserver.onNext(response);
                     responseObserver.onCompleted();
                 });

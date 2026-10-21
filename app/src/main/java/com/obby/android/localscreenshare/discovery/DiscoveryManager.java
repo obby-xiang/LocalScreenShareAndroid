@@ -21,6 +21,7 @@ import com.obby.android.localscreenshare.discovery.model.DeviceAddress;
 import com.obby.android.localscreenshare.discovery.model.DeviceRole;
 import com.obby.android.localscreenshare.discovery.model.DiscoveryChannel;
 import com.obby.android.localscreenshare.discovery.model.JoinPolicy;
+import com.obby.android.localscreenshare.discovery.model.AuthMode;
 import com.obby.android.localscreenshare.discovery.model.DeviceInfo;
 import com.obby.android.localscreenshare.discovery.model.ShareState;
 import com.obby.android.localscreenshare.discovery.nsd.NsdDiscoveryProvider;
@@ -649,13 +650,15 @@ public final class DiscoveryManager {
     private DeviceSummary selfSummary() {
         try {
             final DeviceIdentity identity = IdentityManager.get().getIdentity();
+            final boolean isSecureTransport = !Preferences.get().isTlsAllowPlaintext();
             final DeviceInfo self = DeviceInfo.builder()
                 .id(identity.getId())
                 .fingerprint(identity.getFingerprint())
                 .role(DeviceRole.BOTH)
                 .state(ShareState.IDLE)
                 .join(JoinPolicy.UNKNOWN)
-                .secure(Preferences.get().isProjectionSecure())
+                .secure(isSecureTransport)
+                .auth(isSecureTransport ? AuthMode.MTLS : AuthMode.NONE)
                 .capabilities(Preferences.get().getDiscoverySettings().capabilities())
                 .metadataVersion(1)
                 .build();

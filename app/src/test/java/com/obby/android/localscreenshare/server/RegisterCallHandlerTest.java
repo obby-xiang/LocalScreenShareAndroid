@@ -281,6 +281,55 @@ public class RegisterCallHandlerTest {
     }
 
     @Test
+    public void insecureCallerIsRejectedWhenTransportIsRequired() {
+        AtomicReference<RegisterResponse> response = new AtomicReference<>();
+
+        mHandler.handle(request(false), REMOTE_HOST, null, true, response::set);
+
+        assertNotNull(response.get());
+        assertFalse(response.get().getAccepted());
+        assertEquals(RegisterCallHandler.REASON_INSECURE_TRANSPORT,
+            response.get().getRejectReason());
+        assertNull(mStore.device(PEER_ID));
+    }
+
+    @Test
+    public void secureCallerIsAcceptedWhenTransportIsRequired() {
+        AtomicReference<RegisterResponse> response = new AtomicReference<>();
+
+        mHandler.handle(secureRequest(), REMOTE_HOST, null, true, response::set);
+
+        assertNotNull(response.get());
+        assertTrue(response.get().getAccepted());
+        assertNotNull(mStore.device(PEER_ID));
+    }
+
+    @Test
+    public void insecureCallerIsAcceptedWithoutTheRequirement() {
+        AtomicReference<RegisterResponse> response = new AtomicReference<>();
+
+        mHandler.handle(request(false), REMOTE_HOST, null, false, response::set);
+
+        assertNotNull(response.get());
+        assertTrue(response.get().getAccepted());
+    }
+
+    private static RegisterRequest secureRequest() {
+        return requestBuilder()
+            .setSelf(DeviceSummary.newBuilder()
+                .setDeviceId(PEER_ID)
+                .setFingerprint(FINGERPRINT)
+                .setSecure(true)
+                .addAddresses(com.obby.android.localscreenshare.grpc.screenstream.DeviceAddress.newBuilder()
+                    .setHost(REMOTE_HOST)
+                    .setPort(8080)
+                    .setFamily(4)
+                    .build())
+                .build())
+            .build();
+    }
+
+    @Test
     public void certificateOfAnotherIdIsRejected() throws Exception {
         TlsCertificate certificate = certificate();
         AtomicReference<RegisterResponse> response = new AtomicReference<>();
