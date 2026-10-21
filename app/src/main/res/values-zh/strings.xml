@@ -167,4 +167,26 @@
     <string name="authorization_action_allow_always">"总是允许"</string>
     <string name="authorization_action_deny">"拒绝"</string>
     <string name="authorization_unknown_device">"未知设备"</string>
+    <string name="screen_share_authorization_pending">"等待对方批准…"</string>
+    <string name="screen_share_authorization_pending_seconds">"等待对方批准（最多 <xliff:g id="seconds">%1$d</xliff:g> 秒）…"</string>
+    <string name="screen_share_authorization_denied_message">"对方拒绝了这次观看请求。"</string>
+    <string name="screen_share_authorization_timeout_message">"对方没有在限时内批准，这次请求已被拒绝。"</string>
+    <string name="screen_share_authorization_revoked_message">"对方已撤销观看授权，连接已断开。"</string>
+    <string name="authorization_setting_label">"观看前需经我批准"</string>
+    <string name="authorization_setting_note">"未获批准的设备会停在这里等你决定：你回答之后才放行，不回答则自动拒绝。"</string>
+    <string name="authorization_setting_note_off">"任何能连上本机的设备都可以直接观看、无需询问。关闭这一保护并不推荐。"</string>
+    <string name="authorization_devices_entry_label">"已授权设备"</string>
+    <string name="authorization_devices_summary">"已授权 <xliff:g id="count">%1$d</xliff:g> 台"</string>
+    <string name="authorization_devices_title">"已授权设备"</string>
+    <string name="authorization_devices_empty">"还没有任何设备被允许免批准观看。"</string>
+    <string name="authorization_device_details">"ID <xliff:g id="id">%1$s</xliff:g> · 授权于 <xliff:g id="time">%2$s</xliff:g>"</string>
+    <string name="authorization_revoke_action">"撤销"</string>
+    <string name="authorization_revoked_toast">"已撤销：<xliff:g id="name">%1$s</xliff:g>。若它正在观看，连接已断开。"</string>
+    <string name="authorization_revoke_confirm">"撤销 <xliff:g id="name">%1$s</xliff:g> 的授权？下次观看需要重新批准。"</string>
+    <string name="authorization_dialog_title">"观看请求"</string>
+    <string name="authorization_dialog_message">"<b><xliff:g id="name">%1$s</xliff:g></b>（ID <xliff:g id="id">%2$s</xliff:g>）请求观看你的屏幕。
+
+指纹：<xliff:g id="fingerprint">%3$s</xliff:g>
+
+只有与该设备上显示的指纹一致时才允许；你回答之前不会共享任何画面。"</string>
 </resources>

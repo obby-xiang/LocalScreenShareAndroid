@@ -414,6 +414,18 @@ public final class ScreenShareClient {
                         ensureConnected();
                         return;
                     }
+                    if (value.getPayloadCase() == ServerMessage.PayloadCase.AUTHORIZATION) {
+                        // The server is waiting for its user; nothing decodes yet, so this is a state
+                        // report for the loading caption rather than a media message.
+                        final int timeoutSeconds = value.getAuthorization().getTimeoutSeconds();
+                        mMainHandler.post(() -> {
+                            if (!mIsStopped) {
+                                observer.onApprovalPending(timeoutSeconds);
+                            }
+                        });
+                        ensureConnected();
+                        return;
+                    }
                     // One clock read marks the arrival; everything downstream measures from it.
                     final long arrivalNs = mMetrics.nowNs();
                     if (isAudio(value.getPayloadCase())) {
@@ -514,6 +526,14 @@ public final class ScreenShareClient {
             hello.setDeviceId(material.getDeviceId()).setFingerprint(material.getFingerprint());
         } else {
             Log.w(mTag, "start: identity unavailable, HELLO carries no discovery key");
+        }
+        // The server's approval prompt can only show a name the user chose to share; the alias is
+        // never broadcast without that opt-in, so the field stays empty by default.
+        if (Preferences.get().isShareNameEnabled()) {
+            final String name = Preferences.get().getDeviceAlias();
+            if (name != null) {
+                hello.setDeviceName(name);
+            }
         }
 
         mRequestObserver.onNext(ClientMessage.newBuilder()

@@ -38,6 +38,7 @@ import android.view.ViewConfiguration;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.ImageView;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
@@ -70,6 +71,7 @@ import com.obby.android.localscreenshare.core.audio.ClientAudioSession;
 import com.obby.android.localscreenshare.core.audio.SessionClock;
 import com.obby.android.localscreenshare.core.audio.mediacodec.AndroidAudioDecoder;
 import com.obby.android.localscreenshare.core.audio.mediacodec.AudioTrackSink;
+import com.obby.android.localscreenshare.authorization.AuthorizationPolicy;
 import com.obby.android.localscreenshare.client.ClientMediaReceiver;
 import com.obby.android.localscreenshare.client.ClientSecureListener;
 import com.obby.android.localscreenshare.client.KeyFrameRequestThrottle;
@@ -369,19 +371,25 @@ public class ScreenViewerService extends Service {
         @SuppressWarnings("DataFlowIssue")
         @Override
         public void onDisconnected(@NonNull final StreamFailure failure) {
-            // A refused identity is not a lost connection: the same check fails on every retry, so
-            // the dialog explains the refusal and offers no retry. Trust is confirmed in the
-            // activity, where the fingerprint dialog lives, so the only action here is to end the
-            // session and let the user reconnect from the list.
+            // A refused identity or a refused viewing request is not a lost connection: the same
+            // check fails on every retry, so the dialog explains the refusal and offers no retry.
+            // Trust is confirmed in the activity, where the fingerprint dialog lives; a viewing
+            // request is answered on the sharing device, so the only action here is to end the
+            // session and let the user ask again from the list.
             final boolean isIdentityRejected = failure.isIdentityRejected();
+            final boolean isAuthorizationRejected = failure.isAuthorizationRejected();
+            final boolean isRefused = isIdentityRejected || isAuthorizationRejected;
             Log.w(mTag, "onDisconnected: session ended, identityRejected = " + isIdentityRejected
+                + ", authorizationRejected = " + isAuthorizationRejected
                 + ", " + failure.toLogText());
 
             // A session that was connected reports a reconnect prompt; a failed first connection
-            // reports a retry prompt.
+            // reports a retry prompt. A refusal reports its own reason instead.
             final int messageResId;
             if (isIdentityRejected) {
                 messageResId = R.string.screen_share_identity_rejected_message;
+            } else if (isAuthorizationRejected) {
+                messageResId = authorizationRejectedMessage(failure.getReason());
             } else {
                 messageResId = mIsConnected ? R.string.screen_share_reconnect_confirm
                     : R.string.screen_share_retry_connect_confirm;
@@ -422,12 +430,12 @@ public class ScreenViewerService extends Service {
             // may not be visible.
             final Context themedContext = new ContextThemeWrapper(ScreenViewerService.this, R.style.Theme_ScreenShare);
             final MaterialAlertDialogBuilder builder = new MaterialAlertDialogBuilder(themedContext)
-                .setMessage(HtmlCompat.fromHtml(isIdentityRejected
+                .setMessage(HtmlCompat.fromHtml(isRefused
                         ? getString(messageResId)
                         : getString(messageResId, nameOf(mServiceInfo)),
                     HtmlCompat.FROM_HTML_MODE_LEGACY))
                 .setCancelable(false);
-            if (isIdentityRejected) {
+            if (isRefused) {
                 builder.setTitle(nameOf(mServiceInfo))
                     .setPositiveButton(android.R.string.ok, (dialog, which) -> sendBroadcast(
                         new Intent(ServiceProtocol.ACTION_STOP_CLIENT_SERVICE).setPackage(getPackageName())));
@@ -446,6 +454,20 @@ public class ScreenViewerService extends Service {
             mDialog = builder.create();
             mDialog.getWindow().setType(ServiceProtocol.FLOATING_WINDOW_TYPE);
             mDialog.show();
+        }
+
+        @Override
+        public void onApprovalPending(final int timeoutSeconds) {
+            // The server parked the request; the stream stays open, so the caption explains the
+            // wait instead of leaving the spinner saying "connecting" forever.
+            Log.i(mTag, "onApprovalPending: waiting for the sharing device to approve, timeout = "
+                + timeoutSeconds);
+            if (mScreenShareLoading == null) {
+                return;
+            }
+            mScreenShareLoading.setMessage(timeoutSeconds > 0
+                ? getString(R.string.screen_share_authorization_pending_seconds, timeoutSeconds)
+                : getString(R.string.screen_share_authorization_pending));
         }
     };
 
@@ -711,6 +733,23 @@ public class ScreenViewerService extends Service {
     @NonNull
     private static String nameOf(@Nullable final DeviceInfo device) {
         return device == null ? "" : device.displayName();
+    }
+
+    /**
+     * Returns the message resource of one authorization refusal.
+     *
+     * <p>Each reason tells the viewer whether the sharing device said no, never answered, or took
+     * the permission away while the stream was running; the three are different situations for the
+     * person holding the phone.</p>
+     */
+    private static int authorizationRejectedMessage(@NonNull final String reason) {
+        if (AuthorizationPolicy.REASON_DENIED.equals(reason)) {
+            return R.string.screen_share_authorization_denied_message;
+        }
+        if (AuthorizationPolicy.REASON_REVOKED.equals(reason)) {
+            return R.string.screen_share_authorization_revoked_message;
+        }
+        return R.string.screen_share_authorization_timeout_message;
     }
 
     /**
@@ -1578,6 +1617,16 @@ public class ScreenViewerService extends Service {
         public void show() {
             if (mLoadingView.getParent() == null) {
                 mWindowManager.addView(mLoadingView, mLayoutParams);
+            }
+        }
+
+        /**
+         * Replaces the caption under the spinner, for a state the user has to wait out.
+         */
+        public void setMessage(@NonNull final CharSequence message) {
+            final TextView text = mLoadingView.findViewById(R.id.screen_share_loading_text);
+            if (text != null) {
+                text.setText(message);
             }
         }
 

@@ -19,6 +19,20 @@ public interface ClientObserver {
     void onConnected();
 
     /**
+     * Called on the main thread when the server parked this request for its user to approve.
+     *
+     * <p>The stream stays open: the server is not refusing yet, it is waiting. A grant shows up as
+     * media, and a refusal ends the call through
+     * {@link #onDisconnected(StreamFailure)} with an authorization reason. A server that predates
+     * this field never calls it, so an implementation must not depend on it to reach
+     * {@link #onConnected()}.</p>
+     *
+     * @param timeoutSeconds how long the server keeps the request open, or 0 when it did not say
+     */
+    default void onApprovalPending(final int timeoutSeconds) {
+    }
+
+    /**
      * Called on the main thread when the stream failed or completed on its own.
      *
      * <p>Not called for a local {@link ScreenShareClient#stop()}; the receiver is expected to release the

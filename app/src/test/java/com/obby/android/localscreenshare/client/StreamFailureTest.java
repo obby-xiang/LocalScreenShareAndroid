@@ -1,5 +1,6 @@
 package com.obby.android.localscreenshare.client;
 
+import com.obby.android.localscreenshare.authorization.AuthorizationPolicy;
 import com.obby.android.localscreenshare.trust.PinningTrustManager;
 
 import org.junit.Test;
@@ -71,6 +72,32 @@ public class StreamFailureTest {
         assertTrue(failure.isIdentityRejected());
         assertEquals(PinningTrustManager.REASON_PIN_UNKNOWN, failure.getReason());
         assertEquals(Status.Code.UNKNOWN, failure.getStatusCode());
+    }
+
+    @Test
+    public void anAuthorizationRefusalIsClassifiedFromTheStatusDescription() {
+        final StreamFailure denied = StreamFailure.from(Status.PERMISSION_DENIED
+            .withDescription(AuthorizationPolicy.REASON_DENIED).asRuntimeException());
+        final StreamFailure timeout = StreamFailure.from(Status.PERMISSION_DENIED
+            .withDescription(AuthorizationPolicy.REASON_TIMEOUT).asRuntimeException());
+        final StreamFailure revoked = StreamFailure.from(Status.PERMISSION_DENIED
+            .withDescription(AuthorizationPolicy.REASON_REVOKED).asRuntimeException());
+
+        assertTrue(denied.isAuthorizationRejected());
+        assertTrue(timeout.isAuthorizationRejected());
+        assertTrue(revoked.isAuthorizationRejected());
+        assertEquals(AuthorizationPolicy.REASON_DENIED, denied.getReason());
+        assertEquals(AuthorizationPolicy.REASON_TIMEOUT, timeout.getReason());
+        assertEquals(AuthorizationPolicy.REASON_REVOKED, revoked.getReason());
+    }
+
+    @Test
+    public void anAuthorizationRefusalIsNotAnIdentityRejection() {
+        final StreamFailure failure = StreamFailure.from(Status.PERMISSION_DENIED
+            .withDescription(AuthorizationPolicy.REASON_DENIED).asRuntimeException());
+
+        assertFalse(failure.isIdentityRejected());
+        assertTrue(failure.toLogText().contains(AuthorizationPolicy.REASON_DENIED));
     }
 
     @Test

@@ -3,6 +3,7 @@ package com.obby.android.localscreenshare.client;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
+import com.obby.android.localscreenshare.authorization.AuthorizationPolicy;
 import com.obby.android.localscreenshare.trust.PinningTrustManager;
 
 import java.util.Arrays;
@@ -53,6 +54,19 @@ public final class StreamFailure {
         PinningTrustManager.REASON_PIN_UNKNOWN,
         PinningTrustManager.REASON_INVALID_CHAIN));
 
+    /**
+     * Reasons that mean the peer refused to let this device watch.
+     *
+     * <p>All three are decided by the server: its user denied the request, nobody answered within
+     * the approval window, or the durable authorization was revoked while the stream was running.
+     * Retrying cannot change any of them, so the viewer explains the refusal instead of offering a
+     * retry, exactly like a refused identity.</p>
+     */
+    @NonNull
+    private static final List<String> AUTHORIZATION_REASONS = Collections.unmodifiableList(
+        Arrays.asList(AuthorizationPolicy.REASON_DENIED, AuthorizationPolicy.REASON_TIMEOUT,
+            AuthorizationPolicy.REASON_REVOKED));
+
     // Bounds the walk of the cause chain: a wrapped certificate error is two or three levels deep,
     // and a self-referencing or cyclic chain must not hang the transport thread that reports it.
     private static final int MAX_CAUSE_DEPTH = 8;
@@ -71,14 +85,17 @@ public final class StreamFailure {
 
     private final boolean mIsIdentityRejected;
 
+    private final boolean mIsAuthorizationRejected;
+
     private StreamFailure(@NonNull final String reason, @Nullable final Status.Code statusCode,
                           @Nullable final String description, @Nullable final String causeChain,
-                          final boolean isIdentityRejected) {
+                          final boolean isIdentityRejected, final boolean isAuthorizationRejected) {
         mReason = reason;
         mStatusCode = statusCode;
         mDescription = description;
         mCauseChain = causeChain;
         mIsIdentityRejected = isIdentityRejected;
+        mIsAuthorizationRejected = isAuthorizationRejected;
     }
 
     /**
@@ -100,11 +117,16 @@ public final class StreamFailure {
         final String causeChain = causeChainOf(throwable);
         final String identityReason = findIdentityReason(description, causeChain);
         if (identityReason != null) {
-            return new StreamFailure(identityReason, code, description, causeChain, true);
+            return new StreamFailure(identityReason, code, description, causeChain, true, false);
+        }
+        final String authorizationReason = findAuthorizationReason(description, causeChain);
+        if (authorizationReason != null) {
+            return new StreamFailure(authorizationReason, code, description, causeChain, false,
+                true);
         }
         final String reason = description != null
             ? description : code.name().toLowerCase(Locale.ROOT);
-        return new StreamFailure(reason, code, description, causeChain, false);
+        return new StreamFailure(reason, code, description, causeChain, false, false);
     }
 
     /**
@@ -112,7 +134,7 @@ public final class StreamFailure {
      */
     @NonNull
     public static StreamFailure completed() {
-        return new StreamFailure(REASON_COMPLETED, null, null, null, false);
+        return new StreamFailure(REASON_COMPLETED, null, null, null, false, false);
     }
 
     /**
@@ -123,6 +145,17 @@ public final class StreamFailure {
      */
     public boolean isIdentityRejected() {
         return mIsIdentityRejected;
+    }
+
+    /**
+     * Returns whether the peer refused to let this device watch.
+     *
+     * <p>True for a denied request, an elapsed approval window and a revoked authorization. The
+     * viewer uses it to say what happened instead of asking whether to retry a check that cannot
+     * pass.</p>
+     */
+    public boolean isAuthorizationRejected() {
+        return mIsAuthorizationRejected;
     }
 
     /**
@@ -182,6 +215,18 @@ public final class StreamFailure {
         for (final String identityReason : IDENTITY_REASONS) {
             if (contains(description, identityReason) || contains(causeChain, identityReason)) {
                 return identityReason;
+            }
+        }
+        return null;
+    }
+
+    @Nullable
+    private static String findAuthorizationReason(@Nullable final String description,
+                                                  @Nullable final String causeChain) {
+        for (final String authorizationReason : AUTHORIZATION_REASONS) {
+            if (contains(description, authorizationReason)
+                || contains(causeChain, authorizationReason)) {
+                return authorizationReason;
             }
         }
         return null;
