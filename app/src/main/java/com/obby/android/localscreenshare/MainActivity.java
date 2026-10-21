@@ -150,6 +150,11 @@ public class MainActivity extends AppCompatActivity {
 
     private static final int MAX_SERVER_PORT = 65535;
 
+    // Reason the discovery probe reports when a peer's certificate does not belong to the device id
+    // it claimed; every other reason is a transport failure, not a security finding.
+    @NonNull
+    private static final String IDENTITY_MISMATCH_REASON = "identity_mismatch";
+
     // True between onStart() and onStop(); a late onServiceConnected callback after unbinding is
     // ignored.
     private boolean mIsServiceBound;
@@ -171,6 +176,11 @@ public class MainActivity extends AppCompatActivity {
     // Last confirmation or permission dialog shown; dismissed when replaced and in onDestroy().
     @Nullable
     private AlertDialog mDialog;
+
+    // Device id of the identity probe in flight, or null when none is running. A callback that
+    // arrives after the user cancelled the probe, or after another device was selected, is dropped.
+    @Nullable
+    private String mFingerprintProbeId;
 
     // Created on first use and reused while the activity lives.
     @Nullable
@@ -1037,12 +1047,80 @@ public class MainActivity extends AppCompatActivity {
 
         final String fingerprint = serviceInfo.getFingerprint();
         if (fingerprint == null || !FingerprintFormatter.isCanonical(fingerprint)) {
-            // A peer without a verifiable certificate identity cannot be pinned; refuse instead of
-            // dialing and letting the transport fail later.
-            showIdentityMismatchDialog(serviceInfo);
+            // The row was only heard: an announcement carries no fingerprint by design. The
+            // certificate of a direct handshake is the value to confirm, so fetch it instead of
+            // treating "nothing to compare yet" as an identity failure (N2).
+            resolveDeviceIdentityThenConnect(serviceInfo);
             return;
         }
 
+        connectWithConfirmedIdentity(serviceInfo, fingerprint);
+    }
+
+    /**
+     * Learns the certificate identity of a device that was only heard, then connects normally.
+     *
+     * <p>Multicast announcements carry no fingerprint, so the first selection of a discovered device
+     * has nothing to confirm. One {@code Register} call over TLS answers with the identity proven by
+     * the certificate the peer presented, and the confirmation path is entered with that value. A
+     * real mismatch — a certificate that does not belong to the advertised id — is reported as the
+     * security check it is; a device that cannot be reached, or that stops sharing meanwhile, gets a
+     * neutral message instead.</p>
+     *
+     * @param serviceInfo discovered device whose fingerprint is still unknown
+     */
+    private void resolveDeviceIdentityThenConnect(@NonNull final DeviceInfo serviceInfo) {
+        if (mDialog != null) {
+            mDialog.dismiss();
+        }
+        mFingerprintProbeId = serviceInfo.getId();
+        mDialog = new MaterialAlertDialogBuilder(this)
+            .setTitle(serviceInfo.displayName())
+            .setMessage(R.string.tls_identity_probe_message)
+            .setNegativeButton(android.R.string.cancel, (dialog, which) -> mFingerprintProbeId = null)
+            .setCancelable(true)
+            .show();
+
+        DiscoveryManager.get().probeIdentity(serviceInfo,
+            new ManualAddressProvider.ProbeCallback() {
+                @Override
+                public void onConfirmed(@NonNull final String host, final int port,
+                    @NonNull final DeviceSummary peer) {
+                    if (!serviceInfo.getId().equals(mFingerprintProbeId)) {
+                        return;
+                    }
+                    mFingerprintProbeId = null;
+                    dismissDialog();
+                    final DeviceInfo confirmed =
+                        DiscoveryManager.get().getDeviceStore().device(peer.getDeviceId());
+                    if (confirmed == null
+                        || confirmed.getFingerprint() == null
+                        || !FingerprintFormatter.isCanonical(confirmed.getFingerprint())) {
+                        showIdentityProbeFailedDialog(serviceInfo);
+                        return;
+                    }
+                    startScreenShareViewer(confirmed);
+                }
+
+                @Override
+                public void onFailed(@NonNull final String reason) {
+                    if (!serviceInfo.getId().equals(mFingerprintProbeId)) {
+                        return;
+                    }
+                    mFingerprintProbeId = null;
+                    dismissDialog();
+                    if (IDENTITY_MISMATCH_REASON.equals(reason)) {
+                        showIdentityMismatchDialog(serviceInfo);
+                    } else {
+                        showIdentityProbeFailedDialog(serviceInfo);
+                    }
+                }
+            });
+    }
+
+    // Connects to a device whose certificate identity is already known and canonical.
+    private void connectWithConfirmedIdentity(@NonNull final DeviceInfo serviceInfo,
+                                              @NonNull final String fingerprint) {
         final TlsPin pin = TlsPinStore.get().find(serviceInfo.getId());
         final PinPolicy.Outcome outcome =
             PinPolicy.decide(serviceInfo.getId(), serviceInfo.getId(), fingerprint, pin);
@@ -1158,6 +1236,33 @@ public class MainActivity extends AppCompatActivity {
             .setMessage(R.string.tls_identity_mismatch_message)
             .setPositiveButton(android.R.string.ok, null)
             .show();
+    }
+
+    /**
+     * Reports that the certificate of a discovered device could not be read in time.
+     *
+     * <p>Nothing is wrong with the device's identity here: the probe may have timed out, the device
+     * may have stopped sharing, or the network may filter the call. The message says exactly that,
+     * because claiming a security problem the code cannot prove is worse than admitting that the
+     * check could not run (N2).</p>
+     */
+    private void showIdentityProbeFailedDialog(@NonNull final DeviceInfo serviceInfo) {
+        if (mDialog != null) {
+            mDialog.dismiss();
+        }
+        mDialog = new MaterialAlertDialogBuilder(this)
+            .setTitle(serviceInfo.displayName())
+            .setMessage(R.string.tls_identity_probe_failed)
+            .setPositiveButton(android.R.string.ok, null)
+            .show();
+    }
+
+    // Dismisses the dialog currently shown, if any.
+    private void dismissDialog() {
+        if (mDialog != null) {
+            mDialog.dismiss();
+            mDialog = null;
+        }
     }
 
     @NonNull

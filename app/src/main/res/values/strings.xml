@@ -102,6 +102,8 @@ Presented:
 This can happen after a reinstall, a data reset or a key reset. Connect only if you expected it; otherwise cancel and check the device."</string>
     <string name="tls_trust_new_identity">"Trust the new identity"</string>
     <string name="tls_identity_mismatch_message">"This device presented a certificate that does not match its device ID, so the connection was refused. This is a security check and cannot be bypassed."</string>
+    <string name="tls_identity_probe_message">"Reading this device's certificate… An announcement does not carry the certificate fingerprint, so it is checked with a direct encrypted connection. This takes a moment."</string>
+    <string name="tls_identity_probe_failed">"This device's certificate could not be read. It may have stopped sharing, or the network may be blocking the connection. Nothing about its identity was confirmed."</string>
     <string name="tls_forget_trust">"Forget trust"</string>
     <string name="tls_forget_trust_done">"Trust removed. The next connection will ask for confirmation."</string>
     <string name="tls_local_fingerprint_label">"Key fingerprint"</string>

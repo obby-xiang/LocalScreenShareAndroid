@@ -102,6 +102,8 @@
 重装、清除数据或重置身份都会造成这种情况。只有在你预期如此时才连接；否则请取消并检查该设备。"</string>
     <string name="tls_trust_new_identity">"信任新身份"</string>
     <string name="tls_identity_mismatch_message">"该设备出示的证书与其设备 ID 不一致，连接已被拒绝。这是安全检查，无法绕过。"</string>
+    <string name="tls_identity_probe_message">"正在读取该设备的证书……组播公告不携带证书指纹，因此改用一次直连加密握手核对。稍等一下。"</string>
+    <string name="tls_identity_probe_failed">"未能读取该设备的证书。它可能已停止共享，或者网络拦住了这次连接。它的身份没有得到任何确认。"</string>
     <string name="tls_forget_trust">"忘记信任"</string>
     <string name="tls_forget_trust_done">"已忘记信任。下次连接会重新请求确认。"</string>
     <string name="tls_local_fingerprint_label">"密钥指纹"</string>

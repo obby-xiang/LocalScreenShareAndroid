@@ -250,6 +250,49 @@ public final class ManualAddressProvider implements DiscoveryProvider {
     }
 
     /**
+     * Probes one discovered address to learn the certificate identity behind it.
+     *
+     * <p>A multicast announcement carries no fingerprint, so the row a user taps has nothing to
+     * confirm yet. One direct {@code Register} over TLS yields the peer's certificate fingerprint,
+     * and a success is written to the store through the same confirmation sink as every other probe,
+     * which is what makes the row connectable afterwards. Unlike {@link #probeManual}, the address is
+     * not remembered as a manual target: the user asked about one device they already see, not to
+     * keep an address alive.</p>
+     *
+     * @param host address of the discovered device
+     * @param port gRPC port of the discovered device
+     * @param callback outcome callback, invoked on the main-thread executor
+     */
+    public void probeIdentity(@NonNull final String host, final int port,
+        @NonNull final ProbeCallback callback) {
+        if (port <= 0 || port > 0xFFFF) {
+            mMainExecutor.execute(() -> callback.onFailed("invalid_port"));
+            return;
+        }
+        try {
+            mProbeExecutor.execute(() -> {
+                final ProbeResult result;
+                try {
+                    result = probe(host, port);
+                } catch (RuntimeException e) {
+                    mMainExecutor.execute(() -> callback.onFailed(REASON_PROBE_FAILED));
+                    return;
+                }
+                mMainExecutor.execute(() -> {
+                    if (result.isConfirmed() && result.getSummary() != null) {
+                        mSink.onConfirmed(DiscoveryChannel.MANUAL, result.getSummary(), host, port);
+                        callback.onConfirmed(host, port, result.getSummary());
+                    } else {
+                        callback.onFailed(result.getReason());
+                    }
+                });
+            });
+        } catch (RuntimeException e) {
+            mMainExecutor.execute(() -> callback.onFailed("probe_rejected"));
+        }
+    }
+
+    /**
      * Re-probes every manually added address so a reachable device stays confirmed and an
      * unreachable one degrades to unreachable instead of being removed by the store TTL.
      */

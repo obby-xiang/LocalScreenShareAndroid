@@ -117,6 +117,10 @@ public final class DiscoveryManager {
     // Manually added addresses are re-probed on this cadence so they stay confirmed while reachable.
     private static final long MANUAL_REPROBE_INTERVAL_MS = 15_000L;
 
+    // Reason reported when a discovered device has no address to probe at all: the announcement was
+    // seen without a served port, so there is nothing a handshake could reach.
+    private static final String REASON_NO_ADDRESS = "no_address";
+
     // Preference keys that change how discovery runs and therefore restart the providers.
     @NonNull
     private static final List<String> DISCOVERY_KEYS = Arrays.asList(
@@ -508,6 +512,36 @@ public final class DiscoveryManager {
                     callback.onFailed(reason);
                 }
             });
+    }
+
+    /**
+     * Probes a discovered device to learn the certificate identity its announcement cannot carry.
+     *
+     * <p>An announcement is deliberately fingerprint-free, so a device that was only heard has no
+     * value the user could confirm. The certificate of a direct TLS handshake is the value that
+     * matters, and a {@code Register} call over that handshake returns the peer's own identity proven
+     * by the certificate it presented. The probe confirms the device in the store like any other
+     * confirmation, so the row keeps its address and becomes connectable without the user typing an
+     * address by hand.</p>
+     *
+     * <p>Must be called on the main thread; the callback arrives on the main thread. A device without
+     * an address, or one that answers with a certificate that does not belong to its claimed id,
+     * fails with a reason instead of returning an identity.</p>
+     *
+     * @param device device whose row the user selected
+     * @param callback outcome callback
+     */
+    public void probeIdentity(@NonNull final DeviceInfo device,
+        @NonNull final ManualAddressProvider.ProbeCallback callback) {
+        final DeviceAddress address = device.primaryAddress();
+        if (address == null) {
+            Log.w(TAG, String.format("probeIdentity: no address, id = %s", device.getId()));
+            callback.onFailed(REASON_NO_ADDRESS);
+            return;
+        }
+        Log.i(TAG, String.format("probeIdentity: learning the identity of id = %s at %s:%d",
+            device.getId(), address.getHost(), address.getPort()));
+        mManualAddressProvider.probeIdentity(address.getHost(), address.getPort(), callback);
     }
 
     /**
