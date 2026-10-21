@@ -191,6 +191,20 @@ public class H264EncoderTest {
         assertEquals(2_500_000, format.getBitrateBps());
         assertEquals(60, format.getFrameRate());
         assertEquals(1, format.getKeyFrameIntervalSeconds());
+        assertEquals("the frame-rate hint doubles as the pre-encode cap",
+                60f, format.getMaxFpsToEncoder(), 0f);
+    }
+
+    @Test
+    public void constructor_requestsTheConfiguredFrameRateAsTheCap() {
+        Harness harness = new Harness(new StreamParameters(2_000_000, 15, 3000));
+
+        harness.newEncoder();
+
+        EncoderFormat format = harness.bridge.getLastConfigureFormat();
+        assertNotNull(format);
+        assertEquals(15, format.getFrameRate());
+        assertEquals(15f, format.getMaxFpsToEncoder(), 0f);
     }
 
     @Test

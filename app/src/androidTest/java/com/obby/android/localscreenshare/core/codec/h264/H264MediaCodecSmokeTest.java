@@ -66,7 +66,7 @@ public class H264MediaCodecSmokeTest {
                 (AndroidMediaCodecEncoderBridge) bridgeFactory.createEncoder(H264Codec.MIME);
         assertNotNull(encoder);
         try {
-            encoder.configure(new EncoderFormat(1280, 720, 4_000_000, 30, 1));
+            encoder.configure(new EncoderFormat(1280, 720, 4_000_000, 30, 1, 0f));
             Surface inputSurface = encoder.createInputSurface();
             assertNotNull(inputSurface);
         } finally {

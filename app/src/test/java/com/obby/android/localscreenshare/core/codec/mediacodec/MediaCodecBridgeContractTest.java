@@ -37,7 +37,7 @@ public class MediaCodecBridgeContractTest {
     private static final ColorInfo COLOR_INFO = new ColorInfo("bt709", "sdr", true);
 
     private static EncoderFormat encoderFormat() {
-        return new EncoderFormat(640, 480, 2_000_000, 30, 2);
+        return new EncoderFormat(640, 480, 2_000_000, 30, 2, 0f);
     }
 
     private static DecoderFormat decoderFormat() {
@@ -506,9 +506,9 @@ public class MediaCodecBridgeContractTest {
         assertEquals(30, encoderFormat.getFrameRate());
         assertEquals(2, encoderFormat.getKeyFrameIntervalSeconds());
         assertSingleConstructor(EncoderFormat.class, int.class, int.class, int.class, int.class,
-                int.class);
+                int.class, float.class);
         assertClosedGetters(EncoderFormat.class, "getWidth", "getHeight", "getBitrateBps",
-                "getFrameRate", "getKeyFrameIntervalSeconds");
+                "getFrameRate", "getKeyFrameIntervalSeconds", "getMaxFpsToEncoder");
         assertFalse(hasPublicMethod(EncoderFormat.class, "getColorInfo"));
 
         byte[] decoderCsd0 = csd0();

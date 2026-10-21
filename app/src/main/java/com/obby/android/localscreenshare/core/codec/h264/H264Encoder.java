@@ -200,12 +200,17 @@ public final class H264Encoder implements Encoder {
         MediaCodecEncoderBridge created = null;
         try {
             created = bridgeFactory.createEncoder(H264_MIME);
+            final int frameRate = Math.max(1, parameters.getFrameRateHint());
+            // The hint doubles as the pre-encode cap: KEY_FRAME_RATE alone is a rate-control target
+            // the hardware encoder does not throttle to, which is why a lower setting used to leave
+            // the output interval untouched. A bridge retries without the cap if a codec rejects it.
             EncoderFormat format = new EncoderFormat(
                     requestedDescriptor.getCodedWidth(),
                     requestedDescriptor.getCodedHeight(),
                     Math.max(1, parameters.getTargetBitrateBps()),
-                    Math.max(1, parameters.getFrameRateHint()),
-                    keyFrameIntervalSeconds(parameters.getKeyFrameIntervalMs()));
+                    frameRate,
+                    keyFrameIntervalSeconds(parameters.getKeyFrameIntervalMs()),
+                    frameRate);
             created.configure(format);
             Surface surface = created.createInputSurface();
             this.bridge = created;
