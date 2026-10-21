@@ -69,6 +69,8 @@ import com.obby.android.localscreenshare.core.audio.AudioAvailability;
 import com.obby.android.localscreenshare.core.audio.AudioCaptureException;
 import com.obby.android.localscreenshare.core.audio.AudioHub;
 import com.obby.android.localscreenshare.core.audio.AudioPipeline;
+import com.obby.android.localscreenshare.core.audio.AudioSendStats;
+import com.obby.android.localscreenshare.core.audio.AudioSessionState;
 import com.obby.android.localscreenshare.core.model.AudioAccessUnit;
 import com.obby.android.localscreenshare.core.model.AudioDescriptor;
 import com.obby.android.localscreenshare.core.audio.mediacodec.AndroidAudioEncoderBridge;
@@ -265,6 +267,7 @@ public class ScreenShareService extends Service {
                 metrics.snapshot(UPDATE_METRICS_INTERVAL_MS), null,
                 mRateSampler != null ? mRateSampler.sample() : null));
             logSessionMetrics(hub);
+            logAudioStats();
             if (++mMetricsLogCount % DEVICE_BLOCK_EVERY_N_LOGS == 0) {
                 Log.i(mTag, MetricsFormatter.toDeviceLine(MetricsFormatter.Role.SERVER,
                     mDeviceProfileSampler.get().sample()));
@@ -296,6 +299,10 @@ public class ScreenShareService extends Service {
     // Why sound is not being shared, for the notification; AVAILABLE while it is.
     @NonNull
     private AudioAvailability mAudioAvailability = AudioAvailability.AVAILABLE;
+
+    // Lifecycle of the audio track; the notification, the switch and this state must agree.
+    @NonNull
+    private AudioSessionState mAudioSessionState = AudioSessionState.OFF;
 
     @Nullable
     private StreamKey mStreamKey;
@@ -1542,6 +1549,7 @@ public class ScreenShareService extends Service {
             mAudioAvailability = AudioAvailability.AVAILABLE;
             return;
         }
+        transitionAudioState(AudioSessionState.STARTING);
         final AudioAvailability supported =
                 AudioAvailability.forApiLevel(Build.VERSION.SDK_INT);
         if (supported != AudioAvailability.AVAILABLE) {
@@ -1583,6 +1591,7 @@ public class ScreenShareService extends Service {
                 pipeline.start(1, sampleRate, channels, bitrate);
                 mAudioPipeline = pipeline;
                 mAudioAvailability = AudioAvailability.AVAILABLE;
+                transitionAudioState(AudioSessionState.ACTIVE);
                 Log.i(mTag, "startAudioPipeline: capturing at " + sampleRate + " Hz, "
                         + channels + " ch, " + bitrate + " bps");
                 updateNotification();
@@ -1604,6 +1613,7 @@ public class ScreenShareService extends Service {
         if (pipeline != null) {
             pipeline.stop();
         }
+        transitionAudioState(AudioSessionState.OFF);
     }
 
     /**
@@ -1637,9 +1647,48 @@ public class ScreenShareService extends Service {
      */
     private void markAudioUnavailable(@NonNull final AudioAvailability availability) {
         mAudioAvailability = availability;
+        transitionAudioState(AudioSessionState.UNAVAILABLE);
         Log.w(mTag, "audio unavailable: " + availability + " (retryable = "
                 + availability.isRetryable() + ")");
         updateNotification();
+    }
+
+    /**
+     * Moves the audio lifecycle to {@code next}, refusing illegal transitions.
+     *
+     * <p>Refusing instead of asserting keeps a race (toggle off while capture opens) from reaching
+     * a state the switch does not describe; the refusal is logged once so it can be diagnosed.</p>
+     */
+    private void transitionAudioState(@NonNull final AudioSessionState next) {
+        if (mAudioSessionState == next) {
+            return;
+        }
+        if (!mAudioSessionState.canTransitionTo(next)) {
+            Log.w(mTag, "audio state transition refused: " + mAudioSessionState + " -> " + next);
+            return;
+        }
+        Log.i(mTag, "audio state: " + mAudioSessionState + " -> " + next);
+        mAudioSessionState = next;
+    }
+
+    /**
+     * Writes one audio summary line per metrics interval.
+     *
+     * <p>The per-client sessions own their counters, so this line aggregates them instead of
+     * touching each session: sent frames, dropped frames and the current state answer "is the
+     * viewer getting sound" without a device.
+     */
+    private void logAudioStats() {
+        final AudioHub hub = mAudioHub;
+        if (hub == null) {
+            return;
+        }
+        final AudioSendStats stats = hub.getAggregateStats();
+        Log.i(mTag, "audio: state = " + mAudioSessionState + ", reason = " + mAudioAvailability
+                + ", sessions = " + hub.getSessionCount()
+                + ", queued = " + stats.getQueuedFrames()
+                + ", sent = " + stats.getSentFrames()
+                + ", dropped = " + stats.getDroppedFrames());
     }
 
     /**
