@@ -1,5 +1,7 @@
 package com.obby.android.localscreenshare.core.audio;
 
+import java.util.Locale;
+
 /**
  * Buffer policy of the client audio player: a pure decision engine with no I/O.
  *
@@ -226,7 +228,7 @@ public final class AudioJitterBuffer {
         if (started && depthMs > MAX_DEPTH_MS) {
             dropOldest = (int) Math.max(1L,
                     (depthMs - RECOVER_DEPTH_MS + frameMs - 1) / frameMs);
-            log.warn(String.format("dropping %d buffered frames, depth = %d ms",
+            log.warn(String.format(Locale.US, "dropping %d buffered frames, depth = %d ms",
                     dropOldest, depthMs));
         }
 
@@ -234,14 +236,14 @@ public final class AudioJitterBuffer {
         if (lastPtsUs != UNSET) {
             if (ptsUs <= lastPtsUs) {
                 droppedFrames++;
-                log.warn(String.format("dropping a late frame, pts = %d us after %d us",
+                log.warn(String.format(Locale.US, "dropping a late frame, pts = %d us after %d us",
                         ptsUs, lastPtsUs));
                 return Plan.rejected();
             }
             final long gapFrames = (ptsUs - lastPtsUs + frameUs / 2) / frameUs;
             if (gapFrames >= 2) {
                 silence = (int) Math.min(gapFrames - 1, MAX_SILENCE_FRAMES);
-                log.warn(String.format("gap: %d silence frames before pts = %d us",
+                log.warn(String.format(Locale.US, "gap: %d silence frames before pts = %d us",
                         silence, ptsUs));
             }
         }

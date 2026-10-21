@@ -7,6 +7,7 @@ import com.obby.android.localscreenshare.core.util.NanoClock;
 
 import java.util.ArrayDeque;
 import java.util.Arrays;
+import java.util.Locale;
 
 /**
  * Client-side audio session: decode, buffer, play, mute and degrade.
@@ -436,7 +437,7 @@ public final class ClientAudioSession {
             startWriterThread();
         }
         if (notifyPlayback) {
-            log.info(String.format("playback started, buffered = %d ms", startDepthMs));
+            log.info(String.format(Locale.US, "playback started, buffered = %d ms", startDepthMs));
             notifyState(State.ACTIVE, null);
         }
         if (!asyncWriter) {
@@ -644,7 +645,7 @@ public final class ClientAudioSession {
             }
         }
         if (applied) {
-            log.info(String.format("drift guard %s one frame, offset = %d ms",
+            log.info(String.format(Locale.US, "drift guard %s one frame, offset = %d ms",
                     correction > 0 ? "inserted" : "dropped", offsetMs));
         }
     }
@@ -832,7 +833,7 @@ public final class ClientAudioSession {
             }
             if (restart) {
                 metrics.increment(PipelineMetrics.Counter.AUDIO_STARVED);
-                log.warn(String.format("restarting playback after a %d ms gap", starvedGapMs));
+                log.warn(String.format(Locale.US, "restarting playback after a %d ms gap", starvedGapMs));
                 restartPlayback();
                 continue;
             }
@@ -874,7 +875,7 @@ public final class ClientAudioSession {
             written = writtenFrames;
             ptsUs = lastWrittenPtsUs;
         }
-        log.warn(String.format(
+        log.warn(String.format(Locale.US,
                 "starved: gap = %d ms, filled = %d frames, pts = %d us, pending = %d,"
                         + " written = %d, suppressed = %d", gapMs, frames, ptsUs,
                 pendingFrames, written, suppressed));

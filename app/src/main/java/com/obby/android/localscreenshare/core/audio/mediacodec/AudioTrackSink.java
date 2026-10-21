@@ -9,6 +9,7 @@ import android.util.Log;
 import com.obby.android.localscreenshare.core.audio.AudioPlayhead;
 import com.obby.android.localscreenshare.core.audio.AudioSink;
 import com.obby.android.localscreenshare.core.audio.AudioSinkException;
+import java.util.Locale;
 
 /**
  * {@link AudioSink} backed by a streaming {@code AudioTrack}.
@@ -88,7 +89,7 @@ public final class AudioTrackSink implements AudioSink {
             this.writtenBytes = 0L;
             this.reportedUnderrunCount = 0;
             this.lastUnderrunLogMs = 0L;
-            Log.i(tag, String.format("open: sampleRate = %d, channels = %d, bufferBytes = %d,"
+            Log.i(tag, String.format(Locale.US, "open: sampleRate = %d, channels = %d, bufferBytes = %d,"
                     + " bufferFrames = %d, bufferMs = %d", sampleRate, channels, bufferSize,
                 track.getBufferSizeInFrames(),
                 sampleRate > 0 ? track.getBufferSizeInFrames() * 1_000L / sampleRate : 0L));
@@ -149,7 +150,7 @@ public final class AudioTrackSink implements AudioSink {
         final int delta = underruns - reportedUnderrunCount;
         reportedUnderrunCount = underruns;
         lastUnderrunLogMs = nowMs;
-        Log.w(tag, String.format("track underrun: +%d since the last report, total = %d,"
+        Log.w(tag, String.format(Locale.US, "track underrun: +%d since the last report, total = %d,"
                 + " writtenBytes = %d", delta, underruns, writtenBytes));
     }
 
