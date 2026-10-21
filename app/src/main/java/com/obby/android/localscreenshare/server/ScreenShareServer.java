@@ -51,6 +51,7 @@ import com.obby.android.localscreenshare.grpc.screenstream.ServerMessage;
 import com.obby.android.localscreenshare.identity.DeviceIdentity;
 import com.obby.android.localscreenshare.identity.IdentityManager;
 import com.obby.android.localscreenshare.identity.IdentityUnavailableException;
+import com.obby.android.localscreenshare.identity.tls.TlsMaterialHolder;
 import com.obby.android.localscreenshare.settings.DiscoverySettings;
 import com.obby.android.localscreenshare.settings.Preferences;
 import com.obby.android.localscreenshare.settings.VisibilityPolicy;
@@ -93,11 +94,13 @@ import io.grpc.InsecureServerCredentials;
 import io.grpc.Metadata;
 import io.grpc.Server;
 import io.grpc.ServerCall;
+import io.grpc.ServerCredentials;
 import io.grpc.ServerCallHandler;
 import io.grpc.ServerInterceptor;
 import io.grpc.ServerStreamTracer;
 import io.grpc.ServerTransportFilter;
 import io.grpc.Status;
+import io.grpc.TlsServerCredentials;
 import io.grpc.okhttp.OkHttpServerBuilder;
 import io.grpc.stub.ServerCallStreamObserver;
 import io.grpc.stub.StreamObserver;
@@ -358,18 +361,13 @@ public final class ScreenShareServer {
         }
     };
 
-    // Built by the constructor; bound by start() and shut down by stop().
-    @NonNull
-    private final Server mGrpcServer =
-        OkHttpServerBuilder.forPort(Preferences.get().getServerPort(), InsecureServerCredentials.create())
-            .flowControlWindow(GrpcConstants.GRPC_FLOW_CONTROL_WINDOW)
-            .maxInboundMessageSize(GrpcConstants.GRPC_MAX_INBOUND_MESSAGE_SIZE)
-            .executor(mGrpcServerExecutor)
-            .addTransportFilter(mServerTransportFilter)
-            .addStreamTracerFactory(mServerStreamTracerFactory)
-            .intercept(REMOTE_ADDRESS_INTERCEPTOR)
-            .addService(mStreamService)
-            .build();
+    // Built by start() after the identity is available and shut down by stop(); null while
+    // stopped. Constructing it here would open the key store in a field initializer.
+    @Nullable
+    private Server mGrpcServer;
+
+    // True when the gRPC port is served over TLS; advertised as the discovery secure flag.
+    private volatile boolean mTransportSecure = true;
 
     // Re-resolves the own registration. Every caller goes through postResolveNsdServiceRunnable(),
     // which coalesces pending requests into one main-thread run.
@@ -622,6 +620,46 @@ public final class ScreenShareServer {
         mDeviceStore = deviceStore;
     }
 
+    // Builds and binds the gRPC server. TLS material is loaded here, never in a field initializer:
+    // opening the key store during construction is the pattern that crashed startup before (D-1).
+    private void startGrpcServer() throws IOException {
+        final boolean isPlaintext = Preferences.get().isTlsAllowPlaintext();
+        final ServerCredentials credentials;
+        if (isPlaintext) {
+            credentials = InsecureServerCredentials.create();
+        } else {
+            try {
+                credentials = TlsServerCredentials.newBuilder()
+                    .keyManager(TlsMaterialHolder.get().material().getKeyManager())
+                    .build();
+            } catch (IdentityUnavailableException e) {
+                throw new IOException("TLS material unavailable", e);
+            }
+        }
+
+        mGrpcServer = OkHttpServerBuilder
+            .forPort(Preferences.get().getServerPort(), credentials)
+            .flowControlWindow(GrpcConstants.GRPC_FLOW_CONTROL_WINDOW)
+            .maxInboundMessageSize(GrpcConstants.GRPC_MAX_INBOUND_MESSAGE_SIZE)
+            .executor(mGrpcServerExecutor)
+            .addTransportFilter(mServerTransportFilter)
+            .addStreamTracerFactory(mServerStreamTracerFactory)
+            .intercept(REMOTE_ADDRESS_INTERCEPTOR)
+            .addService(mStreamService)
+            .build();
+        mTransportSecure = !isPlaintext;
+        mGrpcServer.start();
+    }
+
+    @NonNull
+    private Server grpcServer() {
+        final Server server = mGrpcServer;
+        if (server == null) {
+            throw new IllegalStateException("gRPC server is not running");
+        }
+        return server;
+    }
+
     /**
      * Binds the gRPC port and starts advertising the service.
      *
@@ -633,7 +671,7 @@ public final class ScreenShareServer {
      * @throws IOException if the port cannot be bound or the server cannot start
      */
     public void start() throws IOException {
-        mGrpcServer.start();
+        startGrpcServer();
 
         // The identity comes from the AndroidKeyStore, never from a stored value; a changed key
         // shows up as a changed fingerprint on the peers that stored it.
@@ -650,7 +688,7 @@ public final class ScreenShareServer {
             .fingerprint(identity.getFingerprint())
             .name(Preferences.get().getServiceName())
             .hostAddress(Constants.UNKNOWN_HOST_ADDRESS)
-            .port(mGrpcServer.getPort())
+            .port(grpcServer().getPort())
             .build();
 
         final DeviceInfo advertisement = buildAdvertisement(mServerInfo);
@@ -802,17 +840,21 @@ public final class ScreenShareServer {
         // Shut the server down first and let its transports finish before terminating the callback
         // executor; a transport's close posts a context-closer task to that executor, and a
         // rejecting executor would crash the process here while a client is streaming.
-        GrpcServerShutdown.shutdown(new GrpcServerShutdown.ServerHandle() {
-            @Override
-            public void shutdownNow() {
-                mGrpcServer.shutdownNow();
-            }
+        final Server server = mGrpcServer;
+        mGrpcServer = null;
+        if (server != null) {
+            GrpcServerShutdown.shutdown(new GrpcServerShutdown.ServerHandle() {
+                @Override
+                public void shutdownNow() {
+                    server.shutdownNow();
+                }
 
-            @Override
-            public boolean awaitTermination(long timeoutMs) throws InterruptedException {
-                return mGrpcServer.awaitTermination(timeoutMs, TimeUnit.MILLISECONDS);
-            }
-        }, mGrpcServerExecutor, GRPC_STOP_TIMEOUT_MS);
+                @Override
+                public boolean awaitTermination(long timeoutMs) throws InterruptedException {
+                    return server.awaitTermination(timeoutMs, TimeUnit.MILLISECONDS);
+                }
+            }, mGrpcServerExecutor, GRPC_STOP_TIMEOUT_MS);
+        }
     }
 
     private void updateServerInfo(@NonNull final ServerInfo serverInfo) {
@@ -962,7 +1004,7 @@ public final class ScreenShareServer {
         nsdServiceInfo.setServiceName(DeviceInfo.NAME_PREFIX + advertisement.shortId());
         nsdServiceInfo.setServiceType(namespace == NsdTxtRecord.Namespace.LEGACY
             ? NsdConstants.NSD_SERVICE_TYPE_LEGACY : NsdConstants.NSD_SERVICE_TYPE);
-        nsdServiceInfo.setPort(mGrpcServer.getPort());
+        nsdServiceInfo.setPort(grpcServer().getPort());
 
         final Map<String, byte[]> attributes =
             NsdTxtRecord.encode(advertisement, namespace, Preferences.get().isShareNameEnabled());

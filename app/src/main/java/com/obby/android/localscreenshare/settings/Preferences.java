@@ -179,6 +179,11 @@ public final class Preferences {
      */
     public static final String KEY_VIEWER_HUD_ENABLED = "viewer_hud_enabled";
 
+    /**
+     * Hidden plaintext-transport override; see {@link #isTlsAllowPlaintext()}.
+     */
+    public static final String KEY_TLS_ALLOW_PLAINTEXT = "tls_allow_plaintext";
+
     private static final String KEY_IDENTITY_ID = "identity_id";
 
     private static final String KEY_IDENTITY_FINGERPRINT = "identity_fingerprint";
@@ -377,6 +382,25 @@ public final class Preferences {
      */
     public void setViewerHudEnabled(final boolean isEnabled) {
         mPreferences.edit().putBoolean(KEY_VIEWER_HUD_ENABLED, isEnabled).commit();
+    }
+
+    /**
+     * Whether the transport may fall back to plaintext; defaults to false.
+     *
+     * <p>This is an operations and device-verification switch, not a user preference: it has no UI
+     * entry and never flips automatically. When it is on, both endpoints advertise
+     * {@code secure=false} and a device that requires TLS refuses the connection instead of
+     * degrading silently.</p>
+     */
+    public boolean isTlsAllowPlaintext() {
+        return mPreferences.getBoolean(KEY_TLS_ALLOW_PLAINTEXT, false);
+    }
+
+    /**
+     * Persists the plaintext override; both endpoints apply it on their next connection.
+     */
+    public void setTlsAllowPlaintext(final boolean isAllowed) {
+        mPreferences.edit().putBoolean(KEY_TLS_ALLOW_PLAINTEXT, isAllowed).commit();
     }
 
     /**
