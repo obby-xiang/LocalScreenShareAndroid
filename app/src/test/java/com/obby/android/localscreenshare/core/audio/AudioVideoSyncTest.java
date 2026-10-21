@@ -31,7 +31,10 @@ import java.util.Collections;
  * <p>The offset is measured in stream microseconds on both sides. Three regressions that used to
  * make the guard fire on a healthy session are covered explicitly: the device uptime leaking into
  * the comparison, the output buffer counting as a constant lag, and a fixed offset being chased with
- * a silence frame every cooldown period for the whole session.</p>
+ * a silence frame every cooldown period for the whole session. Two more come from the device run of
+ * the audio-pulse fix: the frames still waiting for the writer have to be part of the audible
+ * position, and a playback that (re)starts on an already anchored timeline has to take a fresh
+ * baseline instead of letting the guard correct the prefill.</p>
  */
 public class AudioVideoSyncTest {
 
@@ -135,6 +138,48 @@ public class AudioVideoSyncTest {
     }
 
     @Test
+    public void mediaWaitingForTheWriterIsNotAudibleYet() {
+        Fixture fixture = new Fixture();
+        fixture.sessionClock.anchorIfUnset(0L, fixture.clock.nowNs());
+        fixture.session.onDescriptor(descriptor());
+        fixture.sink.setPresentedFrames(0L);
+        fixture.session.onAccessUnit(unit(0L));
+
+        // A twenty-frame gap queues nineteen silence frames plus the decoded frame; the session
+        // writes one of them and leaves the rest for the writer.
+        fixture.clock.setNs(3_200_000_000L);
+        fixture.session.onAccessUnit(unit(20 * FRAME_US));
+
+        // Audible = written end (42 666 us) - track queue (42 666 us) - media waiting for the
+        // writer (19 x 1 024 samples = 405 333 us), against a timeline at 2 200 000 us. Leaving the
+        // queued media out would report the audio 405 ms closer to the timeline than it is, which is
+        // the bias a deep prefill produced on the device.
+        assertEquals(-2_605L, fixture.session.getLastDriftMs());
+    }
+
+    @Test
+    public void playbackStartReanchorsTheDriftBaseline() {
+        Fixture fixture = new Fixture();
+        fixture.sessionClock.anchorIfUnset(0L, fixture.clock.nowNs());
+        fixture.session.onDescriptor(descriptor());
+        // Before play() the track presents nothing, so the first frames measure as audio at the very
+        // start of the timeline instead of as audio that runs late.
+        fixture.sink.setPresentedFrames(0L);
+
+        for (int index = 0; index < 6; index++) {
+            fixture.clock.setNs(1_000_000_000L + index * FRAME_US * 1_000L);
+            fixture.session.onAccessUnit(unit(index * FRAME_US));
+        }
+
+        // The sixth frame completes the 120 ms prefill and starts playback. Without a fresh baseline
+        // the offset below would be compared with the pre-playback one (-0) and the guard would drop
+        // a frame for what is only the reservoir filling, which is what a viewer reconnect showed.
+        assertEquals(-106L, fixture.session.getLastDriftMs());
+        assertEquals(0L, fixture.counter(PipelineMetrics.Counter.AUDIO_DRIFT_INSERT));
+        assertEquals(0L, fixture.counter(PipelineMetrics.Counter.AUDIO_DRIFT_DROP));
+    }
+
+    @Test
     public void audioThatMovesAheadOfTheTimelineIsDelayedWithSilence() {
         Fixture fixture = new Fixture();
         fixture.sessionClock.anchorIfUnset(0L, fixture.clock.nowNs());
@@ -143,7 +188,9 @@ public class AudioVideoSyncTest {
         fixture.sink.setPresentedFrames(Long.MAX_VALUE / 2L);
 
         // The audio clock runs ~4 % faster than the timeline: the offset grows by 0.9 ms per frame.
-        for (int index = 0; index < 110; index++) {
+        // Playback only starts once the prefill wait limit expires (the track never fills), so the
+        // drift baseline is taken there and 2 s of cooldown have to pass before the guard acts.
+        for (int index = 0; index < 180; index++) {
             fixture.clock.setNs(1_000_000_000L + index * (FRAME_US - 900L) * 1_000L);
             fixture.session.onAccessUnit(unit(index * FRAME_US));
         }
@@ -159,13 +206,16 @@ public class AudioVideoSyncTest {
         fixture.sessionClock.anchorIfUnset(0L, fixture.clock.nowNs());
         fixture.session.onDescriptor(descriptor());
         fixture.sink.setPresentedFrames(0L);
-        fixture.session.onAccessUnit(unit(0L));
-        fixture.sink.setPresentedFrames(FRAME_SAMPLES);
+        // Six frames fill the prefill, so the track plays before the timeline jumps.
+        for (int index = 0; index < 6; index++) {
+            fixture.clock.setNs(1_000_000_000L + index * FRAME_US * 1_000L);
+            fixture.session.onAccessUnit(unit(index * FRAME_US));
+        }
         // The timeline jumps 2.2 s ahead while the audio keeps its rate.
         fixture.clock.setNs(3_200_000_000L);
 
         // The gap leaves four silence frames and the decoded frame queued; playback writes one.
-        fixture.session.onAccessUnit(unit(5 * FRAME_US));
+        fixture.session.onAccessUnit(unit(10 * FRAME_US));
 
         assertTrue(fixture.session.getLastDriftMs() <= -1_000L);
         assertEquals(1L, fixture.counter(PipelineMetrics.Counter.AUDIO_DRIFT_DROP));
@@ -200,7 +250,7 @@ public class AudioVideoSyncTest {
         fixture.session.onDescriptor(descriptor());
         fixture.sink.setPresentedFrames(Long.MAX_VALUE / 2L);
 
-        for (int index = 0; index < 150; index++) {
+        for (int index = 0; index < 180; index++) {
             fixture.clock.setNs(1_000_000_000L + index * (FRAME_US - 900L) * 1_000L);
             fixture.session.onAccessUnit(unit(index * FRAME_US));
         }
@@ -231,16 +281,18 @@ public class AudioVideoSyncTest {
         fixture.session.onDescriptor(descriptor());
         fixture.sink.setPresentedFrames(Long.MAX_VALUE / 2L);
 
-        for (int index = 0; index < 110; index++) {
+        for (int index = 0; index < 180; index++) {
             fixture.clock.setNs(1_000_000_000L + index * (FRAME_US - 900L) * 1_000L);
             fixture.session.onAccessUnit(unit(index * FRAME_US));
         }
 
+        // Three samples fit in five seconds of frames; the last one is 0.9 ms per frame of drift
+        // accumulated after the baseline taken at playback start.
         MetricsSnapshot snapshot = fixture.metrics.snapshot(1_000L);
         assertNotNull(snapshot);
         assertTrue(snapshot.getWindow(PipelineMetrics.Window.AV_OFFSET).getCount() > 0);
         assertTrue(snapshot.getWindow(PipelineMetrics.Window.AV_OFFSET).getMax() >= 100_000_000L);
-        assertTrue(snapshot.getWindow(PipelineMetrics.Window.AV_OFFSET).getMax() <= 120_000_000L);
+        assertTrue(snapshot.getWindow(PipelineMetrics.Window.AV_OFFSET).getMax() <= 200_000_000L);
     }
 
     @Test

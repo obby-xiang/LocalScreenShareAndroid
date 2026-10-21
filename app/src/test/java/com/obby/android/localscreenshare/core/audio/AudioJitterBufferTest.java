@@ -66,16 +66,65 @@ public class AudioJitterBufferTest {
     }
 
     @Test
-    public void aDeepBacklogIsDrainedToTheRecoverDepth() {
+    public void aDeepBacklogIsDrainedTwoFramesAtATime() {
         AudioJitterBuffer buffer = new AudioJitterBuffer();
         buffer.plan(0L, FRAME_US, AudioJitterBuffer.TARGET_DEPTH_MS * 1_000L, 0L);
 
-        // Eleven buffered frames plus this one are 255 ms, above the 250 ms bound; the buffer is
-        // drained back to 150 ms, which is five frames.
-        AudioJitterBuffer.Plan plan = buffer.plan(FRAME_US, FRAME_US, 11 * FRAME_US, 0L);
+        // Twenty buffered frames plus this one are 447 ms, above the 400 ms bound. The drain is
+        // gradual: one plan sheds at most two frames (43 ms instead of the 128 ms hole the old
+        // drop-to-recover-depth rule opened).
+        AudioJitterBuffer.Plan plan = buffer.plan(FRAME_US, FRAME_US, 20 * FRAME_US, 0L);
 
-        assertEquals(5, plan.getDropOldestFrames());
+        assertEquals(AudioJitterBuffer.MAX_DROP_FRAMES_PER_PLAN, plan.getDropOldestFrames());
         assertTrue(plan.isAccept());
+    }
+
+    @Test
+    public void anOverflowDrainsTowardsTheRecoverDepthWithoutCuttingIntoIt() {
+        AudioJitterBuffer buffer = new AudioJitterBuffer();
+        buffer.plan(0L, FRAME_US, AudioJitterBuffer.TARGET_DEPTH_MS * 1_000L, 0L);
+
+        // A 900 ms backlog, as a video burst leaves it, drains within a second of frames; the sink
+        // keeps a reservoir of at least the recover depth the whole time.
+        long bufferedUs = 42 * FRAME_US;
+        int plans = 0;
+        while ((bufferedUs + FRAME_US) / 1_000L > AudioJitterBuffer.MAX_DEPTH_MS && plans < 100) {
+            AudioJitterBuffer.Plan plan =
+                    buffer.plan(plans * FRAME_US, FRAME_US, bufferedUs, plans * FRAME_MS);
+            final int dropped = plan.getDropOldestFrames();
+            assertTrue(dropped <= AudioJitterBuffer.MAX_DROP_FRAMES_PER_PLAN);
+            bufferedUs -= dropped * FRAME_US;
+            assertTrue(bufferedUs + FRAME_US
+                    >= AudioJitterBuffer.RECOVER_DEPTH_MS * 1_000L);
+            plans++;
+        }
+
+        assertTrue(plans < 20);
+        assertTrue((bufferedUs + FRAME_US) / 1_000L <= AudioJitterBuffer.MAX_DEPTH_MS);
+    }
+
+    @Test
+    public void theSteadyStateDepthOfAHealthySessionNeverDrops() {
+        AudioJitterBuffer buffer = new AudioJitterBuffer();
+        buffer.plan(0L, FRAME_US, AudioJitterBuffer.TARGET_DEPTH_MS * 1_000L, 0L);
+
+        // What the device measures on a healthy stream: the 128 ms track plus the ~106 ms of
+        // prefill, with a video burst on top of it. The previous 250 ms bound sat a few
+        // milliseconds above this, so every burst dropped six frames.
+        for (int index = 0; index < 5_000; index++) {
+            final long bufferedUs = (11 + index % 2) * FRAME_US;
+
+            assertEquals(0, buffer.plan(index * FRAME_US, FRAME_US, bufferedUs, index * FRAME_MS)
+                    .getDropOldestFrames());
+        }
+    }
+
+    @Test
+    public void theDepthBoundsLeaveRoomForTheTrackAndThePrefill() {
+        assertTrue(AudioJitterBuffer.TARGET_DEPTH_MS < AudioJitterBuffer.RECOVER_DEPTH_MS);
+        assertTrue(AudioJitterBuffer.RECOVER_DEPTH_MS < AudioJitterBuffer.MAX_DEPTH_MS);
+        // A full 128 ms track plus the 120 ms prefill target has to fit below the bound.
+        assertTrue(AudioJitterBuffer.MAX_DEPTH_MS >= 128L + AudioJitterBuffer.TARGET_DEPTH_MS);
     }
 
     @Test

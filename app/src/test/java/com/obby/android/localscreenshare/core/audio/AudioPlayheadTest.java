@@ -45,21 +45,37 @@ public class AudioPlayheadTest {
     @Test
     public void audiblePositionSubtractsTheFramesStillQueuedInTheTrack() {
         // 48 000 written frames, 43 200 presented: 100 ms are still in the track buffer.
-        long audible = AudioPlayhead.audiblePtsUs(1_000_000L, 48_000L, 43_200L, RATE);
+        long audible = AudioPlayhead.audiblePtsUs(1_000_000L, 48_000L, 43_200L, 0L, RATE);
 
         assertEquals(900_000L, audible);
     }
 
     @Test
+    public void audiblePositionAlsoSubtractsTheMediaWaitingForTheWriter() {
+        // 100 ms still in the track and 50 ms still queued for the writer: neither reaches the
+        // speaker before 150 ms of media has played.
+        long audible = AudioPlayhead.audiblePtsUs(1_000_000L, 48_000L, 43_200L, 2_400L, RATE);
+
+        assertEquals(850_000L, audible);
+    }
+
+    @Test
     public void audiblePositionIsTheEndOfTheWrittenAudioWhenNothingIsQueued() {
-        long audible = AudioPlayhead.audiblePtsUs(1_000_000L, 48_000L, 48_000L, RATE);
+        long audible = AudioPlayhead.audiblePtsUs(1_000_000L, 48_000L, 48_000L, 0L, RATE);
 
         assertEquals(1_000_000L, audible);
     }
 
     @Test
     public void audiblePositionClampsAPositionAheadOfTheWrittenCount() {
-        long audible = AudioPlayhead.audiblePtsUs(1_000_000L, 48_000L, 60_000L, RATE);
+        long audible = AudioPlayhead.audiblePtsUs(1_000_000L, 48_000L, 60_000L, 0L, RATE);
+
+        assertEquals(1_000_000L, audible);
+    }
+
+    @Test
+    public void audiblePositionIgnoresANegativeQueue() {
+        long audible = AudioPlayhead.audiblePtsUs(1_000_000L, 48_000L, 48_000L, -1_024L, RATE);
 
         assertEquals(1_000_000L, audible);
     }
@@ -67,11 +83,11 @@ public class AudioPlayheadTest {
     @Test
     public void audiblePositionIsUnknownWithoutATimelinePositionOrAFrameCount() {
         assertEquals(SessionClock.UNSET,
-                AudioPlayhead.audiblePtsUs(SessionClock.UNSET, 48_000L, 48_000L, RATE));
+                AudioPlayhead.audiblePtsUs(SessionClock.UNSET, 48_000L, 48_000L, 0L, RATE));
         assertEquals(SessionClock.UNSET,
-                AudioPlayhead.audiblePtsUs(1_000_000L, 48_000L, -1L, RATE));
+                AudioPlayhead.audiblePtsUs(1_000_000L, 48_000L, -1L, 0L, RATE));
         assertEquals(SessionClock.UNSET,
-                AudioPlayhead.audiblePtsUs(1_000_000L, 48_000L, 48_000L, 0));
+                AudioPlayhead.audiblePtsUs(1_000_000L, 48_000L, 48_000L, 0L, 0));
     }
 
     @Test
@@ -80,7 +96,7 @@ public class AudioPlayheadTest {
         long writtenFrames = 48_000L * 3_600L;
         long endPtsUs = 3_600_000_000L;
 
-        long audible = AudioPlayhead.audiblePtsUs(endPtsUs, writtenFrames, writtenFrames, RATE);
+        long audible = AudioPlayhead.audiblePtsUs(endPtsUs, writtenFrames, writtenFrames, 0L, RATE);
 
         assertEquals(endPtsUs, audible);
     }

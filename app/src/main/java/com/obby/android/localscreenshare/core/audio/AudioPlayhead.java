@@ -13,9 +13,10 @@ package com.obby.android.localscreenshare.core.audio;
  * the order of the device uptime. Keeping the arithmetic free of {@code AudioTrack} lets the units
  * be pinned on the JVM, where the platform cannot be asked.</p>
  *
- * <p><b>Buffer accounting.</b> {@link #audiblePtsUs(long, long, long, int)} subtracts the frames
- * still queued inside the track from the end of the last written buffer. The output buffer is
- * therefore measured rather than assumed, and it never appears as a constant offset.</p>
+ * <p><b>Buffer accounting.</b> {@link #audiblePtsUs(long, long, long, long, int)} subtracts the
+ * media still queued ahead of the playhead from the end of the last written buffer: the frames the
+ * track has not presented yet and the frames the writer has not handed to the track. Both parts are
+ * therefore measured rather than assumed, and neither shows up as a constant offset.</p>
  */
 public final class AudioPlayhead {
 
@@ -65,24 +66,28 @@ public final class AudioPlayhead {
      * Returns the stream timestamp audible once {@code presentedFrames} have been played.
      *
      * <p>{@code writtenEndPtsUs} is the end of the last buffer handed to the sink, so subtracting
-     * the duration still queued in the track gives the position leaving the speaker. Frames the
-     * device reports ahead of the written count are clamped to zero instead of producing a position
-     * beyond the last written sample.</p>
+     * the duration still queued in the track gives the position leaving the speaker. Media that has
+     * been decoded but not written yet is queued even further ahead of the playhead and is subtracted
+     * as well: a deep prefill is buffering, not audio that runs late, and leaving it out of the sum
+     * reports the whole prefill as a fixed offset. Frames the device reports ahead of the written
+     * count are clamped to zero instead of producing a position beyond the last written sample.</p>
      *
      * @param writtenEndPtsUs stream timestamp at the end of the last written buffer
      * @param writtenFrames   frames written since the sink was opened
      * @param presentedFrames frames presented, as returned by
      *                        {@link #presentedFrames(long, long, long, int)}
+     * @param pendingFrames   frames decoded and still waiting for the writer
      * @param sampleRate      frames per second; a non-positive value yields
      *                        {@link SessionClock#UNSET}
      * @return the audible stream timestamp in microseconds, or {@link SessionClock#UNSET}
      */
     public static long audiblePtsUs(long writtenEndPtsUs, long writtenFrames,
-                                    long presentedFrames, int sampleRate) {
+                                    long presentedFrames, long pendingFrames, int sampleRate) {
         if (writtenEndPtsUs == SessionClock.UNSET || presentedFrames < 0L || sampleRate <= 0) {
             return SessionClock.UNSET;
         }
         final long queuedFrames = Math.max(0L, writtenFrames - presentedFrames);
-        return writtenEndPtsUs - queuedFrames * MICROS_PER_SECOND / sampleRate;
+        final long aheadFrames = queuedFrames + Math.max(0L, pendingFrames);
+        return writtenEndPtsUs - aheadFrames * MICROS_PER_SECOND / sampleRate;
     }
 }

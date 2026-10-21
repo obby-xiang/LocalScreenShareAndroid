@@ -12,8 +12,9 @@ import java.util.Locale;
  *
  * <p><b>Why a buffer at all.</b> Audio is played from a sink that needs a small reservoir in front
  * of it: too little and every scheduling hiccup becomes a click, too much and the sound lags the
- * picture. The default is a 120 ms target, drained until it reaches 150 ms after exceeding 250 ms,
- * and at most 1500 ms of prefill wait before playback starts with whatever arrived.</p>
+ * picture. The default is a 120 ms target, drained towards 250 ms after exceeding 400 ms a couple of
+ * frames at a time, and at most 1500 ms of prefill wait before playback starts with whatever
+ * arrived.</p>
  *
  * <p><b>Depth.</b> {@link #plan(long, long, long, long)} is told how much media is actually
  * buffered ahead of the playhead - what was written to the sink and not yet presented, plus what
@@ -44,13 +45,33 @@ public final class AudioJitterBuffer {
 
     /**
      * Depth above which the oldest frames are dropped, in milliseconds.
+     *
+     * <p>It has to sit well above the steady state of a healthy stream - the 128 ms track plus the
+     * roughly 106 ms of prefill the writer still holds - otherwise every video burst that deepens the
+     * queue once crosses it. The previous 250 ms bound was only a few milliseconds above that steady
+     * state, so a burst dropped six frames (128 ms) of audible audio every 13-18 s. 400 ms leaves
+     * about 150 ms of headroom over the steady state and is still short enough not to turn a real
+     * backlog into permanent latency.</p>
      */
-    public static final long MAX_DEPTH_MS = 250L;
+    public static final long MAX_DEPTH_MS = 400L;
 
     /**
      * Depth the buffer is drained to when it exceeded {@link #MAX_DEPTH_MS}, in milliseconds.
+     *
+     * <p>It is just above the steady state, so the drain stops where the stream normally lives instead
+     * of cutting into the reservoir the sink needs.</p>
      */
-    public static final long RECOVER_DEPTH_MS = 150L;
+    public static final long RECOVER_DEPTH_MS = 250L;
+
+    /**
+     * Largest number of frames one {@link #plan(long, long, long, long)} call may drop.
+     *
+     * <p>An excess is shed a couple of frames at a time rather than in one cut: two frames are 43 ms,
+     * which is below the length of a note and far cheaper than the 128 ms hole the previous
+     * drop-to-recover-depth rule opened. The incoming frame rate removes an excess faster than real
+     * time even at this rate, so a backlog still drains.</p>
+     */
+    public static final int MAX_DROP_FRAMES_PER_PLAN = 2;
 
     /**
      * Longest wait for the target depth before playback starts anyway, in milliseconds.
@@ -226,10 +247,12 @@ public final class AudioJitterBuffer {
 
         int dropOldest = 0;
         if (started && depthMs > MAX_DEPTH_MS) {
-            dropOldest = (int) Math.max(1L,
+            final long excessFrames = Math.max(1L,
                     (depthMs - RECOVER_DEPTH_MS + frameMs - 1) / frameMs);
-            log.warn(String.format(Locale.US, "dropping %d buffered frames, depth = %d ms",
-                    dropOldest, depthMs));
+            dropOldest = (int) Math.min(MAX_DROP_FRAMES_PER_PLAN, excessFrames);
+            log.warn(String.format(Locale.US,
+                    "dropping %d buffered frames, excess = %d frames, depth = %d ms",
+                    dropOldest, excessFrames, depthMs));
         }
 
         int silence = 0;

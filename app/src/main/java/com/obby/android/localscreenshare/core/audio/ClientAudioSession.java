@@ -420,6 +420,7 @@ public final class ClientAudioSession {
                     if (plan.isStartPlayback() && !playing) {
                         playing = true;
                         sink.play();
+                        reanchorDriftBaselineLocked();
                         notifyPlayback = true;
                         startDepthMs = bufferedUs / 1_000L;
                     }
@@ -532,11 +533,40 @@ public final class ClientAudioSession {
         }
         final long presented = sink.getPresentedFrames(nowNs);
         final long queuedFrames = writtenSamples - Math.max(0L, presented);
-        long samples = Math.max(0L, queuedFrames);
+        final long samples = Math.max(0L, queuedFrames) + pendingSamplesLocked();
+        return samples * 1_000_000L / sampleRate;
+    }
+
+    /**
+     * Returns the sample frames decoded and still waiting for the writer.
+     *
+     * <p>They are media ahead of the playhead just like the frames inside the track, so both the
+     * buffer depth and the audible position have to count them.</p>
+     */
+    private long pendingSamplesLocked() {
+        if (channels <= 0) {
+            return 0L;
+        }
+        long samples = 0L;
         for (PcmFrame frame : pending) {
             samples += frame.data.length / (channels * 2);
         }
-        return samples * 1_000_000L / sampleRate;
+        return samples;
+    }
+
+    /**
+     * Re-arms the drift baseline of a playback that just (re)started.
+     *
+     * <p>A new or reconnected audio session joins a timeline that video usually anchored already, and
+     * the measurements taken before {@code play()} describe a track that has not played yet: their
+     * offset is dominated by the prefill still queued rather than by any real drift. Keeping such a
+     * measurement as the baseline turns the first measurement after playback into a large movement
+     * and makes the guard drop a frame for what is only the reservoir filling. The baseline is
+     * therefore taken again, as soon as the track actually plays.</p>
+     */
+    private void reanchorDriftBaselineLocked() {
+        referenceOffsetUs = SessionClock.UNSET;
+        lastDriftCheckMs = Long.MIN_VALUE;
     }
 
     /**
@@ -545,10 +575,11 @@ public final class ClientAudioSession {
      *
      * <p>Both sides are microseconds of the same session timeline: the sink reports which frames it
      * has presented, and the session turns that count into the stream timestamp leaving the speaker
-     * by subtracting the frames still queued inside the track from the end of the last written
-     * buffer. {@link SessionClock#unmap(long)} gives what the timeline says should be audible at the
-     * same instant. The output buffer therefore cancels out instead of showing up as a constant
-     * lag, and the comparison is a real measurement rather than a comparison of two clocks.</p>
+     * by subtracting the media still queued ahead of the playhead - the frames inside the track and
+     * the frames still waiting for the writer - from the end of the last written buffer.
+     * {@link SessionClock#unmap(long)} gives what the timeline says should be audible at the same
+     * instant. Both buffers therefore cancel out instead of showing up as a constant lag, and the
+     * comparison is a real measurement rather than a comparison of two clocks.</p>
      *
      * <p>A correction is one frame and the jitter buffer enforces the two-second cooldown, so only a
      * drift that actually exceeds the threshold moves the timeline. The guard corrects the
@@ -564,6 +595,7 @@ public final class ClientAudioSession {
         }
         final long endPtsUs;
         final long samples;
+        final long pendingSamples;
         final int rate;
         final long frameUs;
         synchronized (lock) {
@@ -572,6 +604,7 @@ public final class ClientAudioSession {
             }
             endPtsUs = writtenEndPtsUs;
             samples = writtenSamples;
+            pendingSamples = pendingSamplesLocked();
             rate = sampleRate;
             frameUs = frameDurationUsLocked();
         }
@@ -589,7 +622,7 @@ public final class ClientAudioSession {
             return;
         }
         final long audiblePtsUs = AudioPlayhead.audiblePtsUs(endPtsUs, samples, presentedFrames,
-                rate);
+                pendingSamples, rate);
         final long expectedPtsUs = shared.unmap(nowNs);
         if (audiblePtsUs == SessionClock.UNSET || expectedPtsUs == SessionClock.UNSET) {
             return;
