@@ -233,7 +233,7 @@ public class ScreenShareService extends Service {
                 metrics.snapshot(UPDATE_METRICS_INTERVAL_MS)));
             if (++mMetricsLogCount % DEVICE_BLOCK_EVERY_N_LOGS == 0) {
                 Log.i(mTag, MetricsFormatter.toDeviceLine(MetricsFormatter.Role.SERVER,
-                    mDeviceProfileSampler.sample()));
+                    mDeviceProfileSampler.get().sample()));
             }
             mMainHandler.postDelayed(mMetricsLogRunnable, UPDATE_METRICS_INTERVAL_MS);
         }
@@ -315,8 +315,11 @@ public class ScreenShareService extends Service {
     private boolean mCapToOutSuppressed;
 
     // Device readings emitted with the metric lines; platform lookups live in the service layer.
+    // Created on the first sample: a field initialiser runs before attachBaseContext, and the
+    // sampler reads the context in its constructor.
     @NonNull
-    private final DeviceProfileSampler mDeviceProfileSampler = new AndroidDeviceProfileSampler(this);
+    private final LazyContextValue<DeviceProfileSampler> mDeviceProfileSampler =
+        new LazyContextValue<>(this::getApplicationContext, AndroidDeviceProfileSampler::new);
 
     // Counts metric log lines so the device block is emitted every ten seconds.
     private int mMetricsLogCount;

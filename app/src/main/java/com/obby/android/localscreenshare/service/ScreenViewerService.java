@@ -230,8 +230,11 @@ public class ScreenViewerService extends Service {
     private int mMetricsLogCount;
 
     // Device readings emitted with the metric lines; platform lookups live in the service layer.
+    // Created on the first sample: a field initialiser runs before attachBaseContext, and the
+    // sampler reads the context in its constructor.
     @NonNull
-    private final DeviceProfileSampler mDeviceProfileSampler = new AndroidDeviceProfileSampler(this);
+    private final LazyContextValue<DeviceProfileSampler> mDeviceProfileSampler =
+        new LazyContextValue<>(this::getApplicationContext, AndroidDeviceProfileSampler::new);
 
     private final String mTag = "ScreenViewerService@" + hashCode();
 
@@ -739,7 +742,7 @@ public class ScreenViewerService extends Service {
 
         if (++mMetricsLogCount % DEVICE_BLOCK_EVERY_N_LOGS == 0) {
             Log.i(mTag, MetricsFormatter.toDeviceLine(MetricsFormatter.Role.CLIENT,
-                mDeviceProfileSampler.sample()));
+                mDeviceProfileSampler.get().sample()));
         }
 
         mMainHandler.postDelayed(mMetricsLogRunnable, UPDATE_METRICS_INTERVAL_MS);
