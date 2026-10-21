@@ -140,6 +140,11 @@ public final class ScreenShareClient {
     @NonNull
     private final PipelineMetrics mMetrics;
 
+    // TLS material of the channel this instance built; null when the plaintext override is on or
+    // the identity was unavailable. Kept so the HELLO can name the identity the handshake proves.
+    @Nullable
+    private final TlsMaterial mTlsMaterial;
+
     // Random per-run session id announced in the HELLO; logs print its tail only.
     @Nullable
     private String mClientId;
@@ -347,18 +352,23 @@ public final class ScreenShareClient {
         mMetrics = metrics;
         mRttEstimator = new RttEstimator(metrics, metrics.getClock());
         final boolean isPlaintext = Preferences.get().isTlsAllowPlaintext();
+        // The server requires a client certificate; the identity key signs the handshake. The
+        // material is kept for the HELLO, which must name the identity of the certificate this very
+        // channel presents and therefore cannot read the keystore again later.
+        TlsMaterial tlsMaterial = null;
         ChannelCredentials credentials = InsecureChannelCredentials.create();
         if (!isPlaintext) {
             final TlsChannelCredentials.Builder tls = TlsChannelCredentials.newBuilder()
                 .trustManager(new PinningTrustManager(expectedDeviceId, TlsPinStore.get()));
             try {
-                // The server requires a client certificate; the identity key signs the handshake.
-                tls.keyManager(TlsMaterialHolder.get().material().getKeyManager());
+                tlsMaterial = TlsMaterialHolder.get().material();
+                tls.keyManager(tlsMaterial.getKeyManager());
             } catch (IdentityUnavailableException e) {
                 Log.w(mTag, "constructor: identity unavailable, the peer will reject the call");
             }
             credentials = tls.build();
         }
+        mTlsMaterial = tlsMaterial;
         final OkHttpChannelBuilder builder = OkHttpChannelBuilder.forAddress(host, port, credentials)
             .flowControlWindow(GrpcConstants.GRPC_FLOW_CONTROL_WINDOW)
             .maxInboundMessageSize(GrpcConstants.GRPC_MAX_INBOUND_MESSAGE_SIZE)
@@ -496,13 +506,14 @@ public final class ScreenShareClient {
                 CodecCapabilityProbe.probeClientDecoders()));
         // The discovery identity binds this session to the device entry peers already know. The
         // client id above stays the stream hub's session key, so a reconnect of the same device is
-        // still a new session. The id comes from the TLS material, because the server compares it
-        // with the certificate of this very handshake and refuses the stream when the two disagree.
-        try {
-            final TlsMaterial material = TlsMaterialHolder.get().material();
+        // still a new session. The id is the one of the certificate this channel presents, because
+        // the server compares the HELLO with that very certificate and refuses the stream when the
+        // two disagree; reading the material again here could name a key the handshake never showed.
+        final TlsMaterial material = mTlsMaterial;
+        if (material != null) {
             hello.setDeviceId(material.getDeviceId()).setFingerprint(material.getFingerprint());
-        } catch (IdentityUnavailableException e) {
-            Log.w(mTag, "start: device identity unavailable, HELLO carries no discovery key");
+        } else {
+            Log.w(mTag, "start: identity unavailable, HELLO carries no discovery key");
         }
 
         mRequestObserver.onNext(ClientMessage.newBuilder()
