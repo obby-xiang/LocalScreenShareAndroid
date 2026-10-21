@@ -493,10 +493,10 @@
 <a id="db-win-003"></a>
 <details><summary>DB-WIN-003 方案 B 悬浮窗 ↔ 全屏 Activity（✔️ 已裁决·当前实现符合 · 2026-10-17，2026-10-21 改写）</summary>
 
-- **状态 / 主题 / 裁决日期 / 验证日期**：✔️ 已裁决·当前实现符合 / 窗口显示 / 2026-10-17（2026-10-21 改写）/ —
+- **状态 / 主题 / 裁决日期 / 验证日期**：✔️ 已裁决·当前实现符合 / 窗口显示 / 2026-10-17（2026-10-21 改写）/ 2026-10-21（设备复验 r2）
 - **当前裁决**：窗口切换用**方案 B**：悬浮窗与全屏 `ViewerActivity` 是同一会话的两个显示宿主，切换时只 attach/detach 宿主并把解码器输出面切到新宿主，经“末帧快照 + 缩放过渡（200 ms）”保持视觉连续；不重建网络会话、不重建认证、不新建客户端。方案 A（同一悬浮窗直接展开）不实现；PiP、分屏/freeform 不在本轮范围。
 - **改写原因**：用户 2026-10-20 提供的原始设计回答把方案 B 列为推荐路径（会话与界面解耦、`setOutputSurface` 或重建解码器、TextureView 优先、末帧快照过渡），本棒按该回答执行；原裁决“第一版用方案 A”不再成立。
-- **实施情况（2026-10-21，[TB-WIN-001](task-board.md#tb-win-001)）**：`render/SwitchableRenderTarget` + `ClientMediaSession.rebindSurface()` 实现“只重建解码器”；`ViewerActivity` 通过本地 Binder 以 `ViewerHost` 身份 attach，悬浮窗与 Activity 共用 `render/ViewerPanelView`（纹理、快照层、调试叠加）与 `render/ViewerMenuFactory`（显示模式、显示大小菜单）；Surface 切换走现有 `SurfaceRenderTarget` 重建路径，不使用 `MediaCodec.setOutputSurface`（见下）。设备验证未执行。
+- **实施情况（2026-10-21，[TB-WIN-001](task-board.md#tb-win-001)）**：`render/SwitchableRenderTarget` + `ClientMediaSession.rebindSurface()` 实现“只重建解码器”；`ViewerActivity` 通过本地 Binder 以 `ViewerHost` 身份 attach，悬浮窗与 Activity 共用 `render/ViewerPanelView`（纹理、快照层、调试叠加）与 `render/ViewerMenuFactory`（显示模式、显示大小菜单）；Surface 切换走现有 `SurfaceRenderTarget` 重建路径，不使用 `MediaCodec.setOutputSurface`（见下）。**设备验证（r2，2026-10-21）**：首轮被 P0 阻断（`ViewerActivity` 字段初始化器 `new GestureDetector(this, …)` 构造期读 Context → 展开即进程 FATAL），修复后 10 条点位 9 条通过、⑦ 通知动作不可脚本化需手测、⑧ 重连链路未跑完；连续 20 次切换无崩溃/ANR/解码器错误，单次切换（模拟器）点击 → attach 均值 3.37 s、全屏稳定 4.58 s。证据：[TB-WIN-001](task-board.md#tb-win-001) 与 `device-test-2026-10-21-windowing/r2/report.md`。
 - **Surface 切换方式**：`MediaCodec.setOutputSurface` 需要改动解码器桥接层的既有契约（`Decoder` 目前只有 configure/decode/flush/close），并且在目标厂商解码器上的成功率未知；沿用“新宿主 Surface 就绪后重建解码器 + 取新 IDR”的路径，风险最低且与既有 `retryConfigure()` 恢复路径同源。代价是每次切换有一次解码器重建与一次关键帧往返。
 - **重新评估条件 / 验证证据**：切换前后网络/会话/认证不重建、Service 不停、无长时间黑屏；Activity 生命周期、旋转、后台/前台与进程重建实测；目标设备上 `setOutputSurface` 是否值得替换重建路径。
 - **关联文档**：[窗口与会话设计方案对比](windowing-session-design.md)、[路线图阶段 3](optimization-roadmap.md)
@@ -645,7 +645,7 @@
 | DV-001 | TCP 是否需要升级为 RTP/UDP。 | 2026-10-17 | 第一版保持统一 gRPC 双向流（TCP 承载）；不做未测量的切换。仪表已就位，判据改为四类联合归因，见 DB-OBS-002。**全量基线待 Q-2 落地后执行**（[TB-CLIENT-005](task-board.md#tb-client-005) 的观看端追赶已落地代码、设备未验证），基线须同时记录 `rx.catchup`/`rx.catchup.lat`/`rx.converge.fail`。 | 同设备同网络的 TCP 基线：`rtt.p50/p95`（Ping/Pong）、`rx.arr.p95/p99`、`rx.rowd.p95`、`rx.stall`、`pres.late.p95`、`dec.deadlineMiss`、`tx.send.p95`、`enc.cap2out.p95`；重传次数不可见，用「到达空窗 + 延迟增长 + 发送阻塞且序号不缺」代替。 | DB-NET-001、DB-OBS-002、[TB-OBS-001](task-board.md#tb-obs-001)、[TB-OBS-002](task-board.md#tb-obs-002)、[TB-CLIENT-005](task-board.md#tb-client-005) |
 | DV-002 | 是否需要 WebRTC。 | 2026-10-17 | 不作为默认基线，保留为浏览器/跨网/完整栈的可选路径。 | 产品确认需要浏览器客户端、跨网/NAT 穿透或完整音视频栈；或 TCP/RTP 无法满足目标场景。 | DB-NET-001 |
 | DV-003 | HEVC 是否作为默认高档位启用。 | 2026-10-17 | 保持 H.264 兼容档保底，HEVC 仅在双方探测支持且实测有收益时启用。 | 服务端与客户端均探测支持；同场景实测相比 H.264 有明确码率或画质收益；专利与分发政策可接受。 | DB-CODEC-001、DB-CODEC-007 |
-| DV-004 | 窗口切换后的 Surface 恢复是否可靠；方案 B 的动画与生命周期在目标设备上是否成立。 | 2026-10-17 | 窗口切换按方案 B 落地（2026-10-21 改写，见 [DB-WIN-003](decision-board.md#db-win-003)）：切换只重建解码器、从新 IDR 恢复，网络会话不变。 | 目标设备上切换的主观连续性（黑屏/闪烁时长）、解码器重建失败率与恢复时间、Activity 启动是否被后台启动限制拦截、旋转与前后台切换表现；不再只以车机为测试前提。 | DB-WIN-003 |
+| DV-004 | 窗口切换后的 Surface 恢复是否可靠；方案 B 的动画与生命周期在目标设备上是否成立。 | 2026-10-17 | 窗口切换按方案 B 落地（2026-10-21 改写，见 [DB-WIN-003](decision-board.md#db-win-003)）：切换只重建解码器、从新 IDR 恢复，网络会话不变。**2026-10-21 设备复验（r2）**：同上点位的 ①–④ 有实测数据——无黑屏（快照层）、切换后画面恢复、Home/旋转/前后台均正常、20 次连续切换无解码器重建失败；仅模拟器单次切换耗时 3.4 s（attach）+ 1.2 s（首帧与动画），真机数据仍缺。 | 目标设备上切换的主观连续性（黑屏/闪烁时长）、解码器重建失败率与恢复时间、Activity 启动是否被后台启动限制拦截、旋转与前后台切换表现；不再只以车机为测试前提。 | DB-WIN-003 |
 | DV-005 | 音频是否纳入产品范围；API 25–28 是否接受麦克风降级。 | 2026-10-17 | 默认关闭音频；低版本默认无声，麦克风模式需显式选择。 | 场景访谈、可用性测试、目标设备的音频捕获与音画同步实测。 | DB-AUDIO-001 |
 | DV-006 | 反控是否纳入产品范围；无障碍覆盖是否足够。 | 2026-10-17 | 反控默认关闭，只做设计预留。 | 产品确认远程操作需求；目标 App 与系统界面的手势、文本输入、坐标与旋转实测；合规评估。 | DB-CTRL-001 |
 | DV-007 | 手机、平板、车机与多显示器的场景定位分别是什么。 | 2026-10-17 | 车机只是候选场景之一，不是能力基准；设备形态不决定媒体能力。 | 各目标机型与系统版本上的悬浮窗权限、网络、休眠、音频路由、屏幕布局与合规实测；旗舰平板/手机的能力需单独探测。 | DB-WIN-001、DB-CAP-003、[产品语境](product-context.md) |
