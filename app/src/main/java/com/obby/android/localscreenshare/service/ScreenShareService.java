@@ -1643,6 +1643,12 @@ public class ScreenShareService extends Service {
             return;
         }
         transitionAudioState(AudioSessionState.STARTING);
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            // Playback capture exists from Q onwards. The check stays explicit because lint cannot
+            // see the SDK gate inside forCaptureStart, and the classifier still owns the reason.
+            markAudioUnavailable(AudioAvailability.forApiLevel(Build.VERSION.SDK_INT));
+            return;
+        }
         final boolean isPermissionGranted =
                 ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
                         == PackageManager.PERMISSION_GRANTED;
