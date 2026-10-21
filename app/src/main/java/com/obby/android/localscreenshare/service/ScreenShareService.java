@@ -2006,6 +2006,11 @@ public class ScreenShareService extends Service {
      * support (the audio start path learned that the hard way). Below API 29 no status exists, so
      * the ladder stays at the user's settings and nothing is logged beyond one informational line;
      * on API 29+ a missing thermal service only disables the ladder, never the share.</p>
+     *
+     * <p>The status that is already current is applied here, synchronously: the first encoder
+     * configuration is created in {@link #onStartCommand} from the effective values, which runs
+     * before the listener's main-thread post, so a device that was hot before the share started
+     * would otherwise keep the unthrottled parameters until its next status transition.</p>
      */
     private void startThermalMonitor() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
@@ -2018,6 +2023,7 @@ public class ScreenShareService extends Service {
             return;
         }
         mThermalMonitor = monitor;
+        onThermalStatusChanged(monitor.getCurrentStatus());
     }
 
     /**
