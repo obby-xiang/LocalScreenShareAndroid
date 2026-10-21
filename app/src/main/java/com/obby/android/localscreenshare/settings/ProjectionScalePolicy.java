@@ -18,6 +18,21 @@ package com.obby.android.localscreenshare.settings;
  * floor. The rule is pure integer arithmetic with no Android type, so it is unit-tested on the
  * JVM.</p>
  *
+ * <p><b>Reported minimum.</b> The two minimums are read from the platform's advertised
+ * capabilities, {@code getSupportedWidths().getLower()} and
+ * {@code getSupportedHeights().getLower()}, and the binding edge is whichever yields the higher
+ * percentage. On the 2026-10-21 target (a 1080x2340 display) those are 176 and 144:
+ * {@code max(ceil(100 * 176 / 1080), ceil(100 * 144 / 2340)) = max(17, 7) = 17}, so the width edge
+ * dominates. The vendor encoder itself only refuses frames below 144x144
+ * ({@code VENC: ... should between [144 X 144] [4096 X 4096]}), and a capture forced to 14%
+ * (148x324) was accepted, so the floor computed here can be up to three points above what the
+ * hardware ends up enforcing. The declared capability is still the value used: it is the only
+ * range the platform API reports to callers, and a size outside it is by definition unsupported
+ * even when one vendor accepts it. A reader comparing the log line of
+ * {@code getMinimumProjectionScalePercent} with the vendor log should therefore expect 17 against
+ * 144, and that gap is the declared-versus-enforced difference, not an arithmetic error: 144 is
+ * the height minimum, and using it for the width edge would understate the floor.</p>
+ *
  * <p><b>Fallback.</b> When the encoder capabilities or the window bounds are unknown, the floor
  * stays at {@link ProjectionSettings#MIN_SCALE_PERCENT}, the value every encoder in the field has
  * accepted so far. The floor never exceeds {@link ProjectionSettings#MAX_SCALE_PERCENT}: a window
