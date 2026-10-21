@@ -28,6 +28,7 @@
     <string name="viewer_action_expand_full_screen">"Expand to full screen"</string>
     <string name="viewer_action_collapse_to_window">"Collapse to window"</string>
     <string name="viewer_action_stop_viewing">"Stop viewing"</string>
+    <string name="viewer_expand_error">"Full screen did not open, still showing in the small window"</string>
     <string name="keep_screen_on_setting_label">"Keep screen on"</string>
     <string name="viewer_opacity_setting_label">"Opacity"</string>
     <string name="viewer_scale_setting_label">"Display size"</string>

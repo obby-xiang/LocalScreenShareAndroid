@@ -38,6 +38,7 @@ import android.view.ViewConfiguration;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.ImageView;
+import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -149,11 +150,33 @@ public class ScreenViewerService extends Service {
 
     private static final int NOTIFICATION_ID = 2;
 
+    /**
+     * Running instance, used only by {@link #onViewerActivityCreated()} to cancel the expansion
+     * watchdogs from the activity's {@code onCreate}.
+     *
+     * <p>Main thread only: both the service callbacks and the activity that reports the creation run
+     * there. Null before {@link #onCreate()} and after {@link #onDestroy()}; a process holds at most
+     * one instance because the manifest declares a single service component.</p>
+     */
+    @Nullable
+    private static ScreenViewerService sInstance;
+
     // Cadence of the structured metric log line; slower than the three-second UI statistics.
     private static final long UPDATE_METRICS_INTERVAL_MS = 5000L;
 
     // Cadence of the debug overlay; only runs while the overlay is enabled.
     private static final long UPDATE_HUD_INTERVAL_MS = 1000L;
+
+    // Moment at which an expansion request that has not reached attachHost() yet is logged. The
+    // activity binds in onStart, which this deadline comfortably covers on a warm start; a miss
+    // here is the first sign of a launch that will not complete.
+    private static final long ACTIVITY_ATTACH_EXPECTED_MS = 200L;
+
+    // Deadline for the same request. The floating window keeps the picture for the whole switch, so
+    // a slow launch is not visible as a failure; the user is told only once the activity was never
+    // even created. The value covers the launch hand-off on the slowest tested device, where a
+    // working switch takes seconds.
+    private static final long ACTIVITY_ATTACH_TIMEOUT_MS = 2000L;
 
     // The device block is logged every other metric line, that is every ten seconds.
     private static final int DEVICE_BLOCK_EVERY_N_LOGS = 2;
@@ -267,6 +290,15 @@ public class ScreenViewerService extends Service {
     // Refreshes the debug overlay; reschedules itself only while the overlay stays enabled.
     @NonNull
     private final Runnable mHudRunnable = this::updateHud;
+
+    // Logs an expansion request that is slower than ACTIVITY_ATTACH_EXPECTED_MS; the deadline below
+    // confirms the failure.
+    @NonNull
+    private final Runnable mActivityAttachSlowRunnable = this::onActivityAttachSlow;
+
+    // Reports an expansion request whose activity never attached and leaves the window in charge.
+    @NonNull
+    private final Runnable mActivityAttachTimeoutRunnable = this::onActivityAttachTimeout;
 
     // Last resynchronization reason rendered, so the reason is logged once per change.
     @Nullable
@@ -455,12 +487,32 @@ public class ScreenViewerService extends Service {
     public void onCreate() {
         super.onCreate();
         Log.i(mTag, "onCreate: service created");
+        sInstance = this;
 
         final IntentFilter intentFilter = new IntentFilter();
         intentFilter.addAction(ServiceProtocol.ACTION_STOP_CLIENT_SERVICE);
         ContextCompat.registerReceiver(this, mBroadcastReceiver, intentFilter, ContextCompat.RECEIVER_NOT_EXPORTED);
 
         ensureMetrics();
+    }
+
+    /**
+     * Reports that the full-screen activity was created, which cancels the expansion watchdogs.
+     *
+     * <p>The activity runs in this process, so it can hand this signal over directly instead of
+     * going through the binder: a launch that reaches {@code onCreate} has succeeded, however long
+     * the bind and attach take afterwards. Without that distinction a slow device would show the
+     * failure message for a switch that works - the emulator used for the device test needs several
+     * seconds between the start request and the attach.</p>
+     *
+     * <p>Called from {@code ViewerActivity.onCreate}, on the main thread. A null instance means no
+     * session is running, in which case there is nothing to cancel.</p>
+     */
+    public static void onViewerActivityCreated() {
+        final ScreenViewerService service = sInstance;
+        if (service != null) {
+            service.cancelActivityAttachWatchdogs();
+        }
     }
 
     /**
@@ -489,6 +541,8 @@ public class ScreenViewerService extends Service {
     public void onDestroy() {
         super.onDestroy();
         Log.i(mTag, "onDestroy: service destroyed");
+        cancelActivityAttachWatchdogs();
+        sInstance = null;
 
         unregisterReceiver(mBroadcastReceiver);
     }
@@ -649,6 +703,7 @@ public class ScreenViewerService extends Service {
 
         mMainHandler.removeCallbacks(mMetricsLogRunnable);
         mMainHandler.removeCallbacks(mHudRunnable);
+        cancelActivityAttachWatchdogs();
         mMetrics = null;
         mHudRateSampler = null;
         mLogRateSampler = null;
@@ -961,6 +1016,14 @@ public class ScreenViewerService extends Service {
      * decoded frame, which is what keeps the switch free of a black screen. The activity binds back
      * to this service and attaches itself as the display host, so nothing here stops or restarts the
      * client. A failed or blocked activity start leaves the floating window in charge.</p>
+     *
+     * <p>Two watchdogs cover the failures that are observable from here: a start that throws is
+     * reported at once, and a start that never produces the activity is reported after
+     * {@value #ACTIVITY_ATTACH_TIMEOUT_MS} ms. Both watchdogs are dropped as soon as the activity
+     * reports its creation through {@link #onViewerActivityCreated()}, so a slow but working switch
+     * is never reported as a failure. In both failure cases the window keeps the decoder output and
+     * the session continues; without the report the user would only see an expansion that did
+     * nothing.</p>
      */
     private void expandToActivity() {
         if (mClientMediaSession == null || mActivityHost != null) {
@@ -974,7 +1037,62 @@ public class ScreenViewerService extends Service {
             startActivity(intent);
         } catch (RuntimeException e) {
             Log.w(mTag, "expandToActivity: starting the activity failed", e);
+            cancelActivityAttachWatchdogs();
+            showExpandFailed();
+            return;
         }
+        cancelActivityAttachWatchdogs();
+        mMainHandler.postDelayed(mActivityAttachSlowRunnable, ACTIVITY_ATTACH_EXPECTED_MS);
+        mMainHandler.postDelayed(mActivityAttachTimeoutRunnable, ACTIVITY_ATTACH_TIMEOUT_MS);
+    }
+
+    /**
+     * Logs an expansion request whose activity has not attached yet.
+     *
+     * <p>A slow launch is not a failure: the window still shows the session while the activity
+     * starts. The line exists so a device log tells a slow switch from a silent one; the deadline
+     * below only covers a launch that never gets created.</p>
+     */
+    private void onActivityAttachSlow() {
+        if (mActivityHost != null || mClientMediaSession == null) {
+            return;
+        }
+        Log.i(mTag, "onActivityAttachSlow: the full-screen viewer has not attached after "
+            + ACTIVITY_ATTACH_EXPECTED_MS + " ms, still waiting");
+    }
+
+    /**
+     * Reports an expansion request that never produced an activity.
+     *
+     * <p>The activity cancels this watchdog from its {@code onCreate}, so reaching it means the
+     * system never launched the component - a background-activity restriction, a disabled
+     * component or an exception thrown by the launch. The floating window was never removed (its
+     * removal requires an attached host), so the session is still visible and usable; only the
+     * user-facing report is missing. A session that ended in the meantime is not reported, because
+     * ending it is what the user asked for.</p>
+     */
+    private void onActivityAttachTimeout() {
+        if (mActivityHost != null || mClientMediaSession == null) {
+            return;
+        }
+        Log.w(mTag, "onActivityAttachTimeout: the full-screen viewer did not attach within "
+            + ACTIVITY_ATTACH_TIMEOUT_MS + " ms, keeping the floating window");
+        showExpandFailed();
+    }
+
+    /**
+     * Tells the user that the full-screen host could not be opened.
+     */
+    private void showExpandFailed() {
+        Toast.makeText(this, R.string.viewer_expand_error, Toast.LENGTH_LONG).show();
+    }
+
+    /**
+     * Drops both expansion watchdogs; called when the request settles or the session ends.
+     */
+    private void cancelActivityAttachWatchdogs() {
+        mMainHandler.removeCallbacks(mActivityAttachSlowRunnable);
+        mMainHandler.removeCallbacks(mActivityAttachTimeoutRunnable);
     }
 
     /**
@@ -1009,6 +1127,8 @@ public class ScreenViewerService extends Service {
         if (mActivityHost == host) {
             return true;
         }
+        // The activity made it; neither watchdog has anything left to report.
+        cancelActivityAttachWatchdogs();
 
         final SurfaceRenderTarget previous = mActivityRenderTarget;
         mActivityHost = host;
