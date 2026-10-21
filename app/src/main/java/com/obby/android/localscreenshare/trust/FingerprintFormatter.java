@@ -26,6 +26,11 @@ public final class FingerprintFormatter {
      */
     public static final int GROUP_LENGTH = 8;
 
+    /**
+     * Length of {@link #toShortDisplay(String)}: two groups plus the separating space.
+     */
+    public static final int SHORT_DISPLAY_LENGTH = GROUP_LENGTH * 2 + 1;
+
     private static final String BASE64_URL_ALPHABET =
         "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
@@ -54,6 +59,22 @@ public final class FingerprintFormatter {
             display.append(HEX_DIGITS[value >>> 4]).append(HEX_DIGITS[value & 0x0F]);
         }
         return display.toString();
+    }
+
+    /**
+     * Returns the first two display groups of the fingerprint, or an empty string when the input is
+     * not a canonical fingerprint.
+     *
+     * <p>This form is for prompts that only need a glanceable hint, such as the approval
+     * notification of a server and the request dialog next to the device name. It is never used for
+     * a trust decision: pinning compares the full canonical value, and the viewer's own settings
+     * still show all 64 hexadecimal characters for a character-by-character comparison.</p>
+     */
+    @NonNull
+    public static String toShortDisplay(@Nullable final String fingerprint) {
+        final String display = toDisplay(fingerprint);
+        final int length = Math.min(display.length(), SHORT_DISPLAY_LENGTH);
+        return display.substring(0, length);
     }
 
     /**

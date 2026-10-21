@@ -20,6 +20,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.core.content.ContextCompat;
 
+import com.obby.android.localscreenshare.authorization.AuthorizationGate;
 import com.obby.android.localscreenshare.core.audio.AudioHub;
 import com.obby.android.localscreenshare.core.codec.CodecRegistry;
 import com.obby.android.localscreenshare.core.model.ClientSessionKey;
@@ -256,6 +257,11 @@ public final class ScreenShareServer {
     // Reports a silently pinned viewer so the capture service can badge it; set by ScreenShareService.
     @Nullable
     private PeerTrustListener mPeerTrustListener;
+
+    // Viewing authorization gate; null when the server runs without authorization (tests, or a
+    // capture service that does not configure it).
+    @Nullable
+    private AuthorizationGate mAuthorizationGate;
 
     // Set by stop(); late stream calls become no-ops.
     private volatile boolean mIsStopped;
@@ -656,6 +662,19 @@ public final class ScreenShareServer {
      */
     public void setPeerTrustListener(@Nullable final PeerTrustListener listener) {
         mPeerTrustListener = listener;
+    }
+
+    /**
+     * Attaches the viewing authorization gate.
+     *
+     * <p>Must be called on the main thread before {@link #start()}. With a gate, a peer whose
+     * identity is not authorized is parked until the capture service's user answers; without one,
+     * every peer that passes the identity checks may watch, which is the behaviour before
+     * authorization existed. The gate is a pure JVM object so the decision, the approval window and
+     * the durable set are all testable without gRPC.</p>
+     */
+    public void setAuthorizationGate(@Nullable final AuthorizationGate authorizationGate) {
+        mAuthorizationGate = authorizationGate;
     }
 
     /**
@@ -1243,7 +1262,7 @@ public final class ScreenShareServer {
             final GrpcMediaTransport transport = new GrpcMediaTransport(responseObserver, mSecure);
             final StreamCallHandler handler = new StreamCallHandler(mStreamHub, mStreamRuntime,
                     transport, mStreamCallListener, remoteAddress, transport::sendPong, peer,
-                    mAudioHub, transport);
+                    mAudioHub, transport, mAuthorizationGate, transport::sendApprovalPending);
             mStreamCallHandlers.add(handler);
             final Thread drain = new Thread(() -> drainLoop(handler, responseObserver),
                     "lss-stream-drain-" + handler.hashCode());

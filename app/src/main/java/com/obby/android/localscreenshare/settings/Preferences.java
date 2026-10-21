@@ -201,6 +201,11 @@ public final class Preferences {
      */
     public static final String KEY_TLS_ALLOW_PLAINTEXT = "tls_allow_plaintext";
 
+    /**
+     * Viewing-authorization switch; see {@link #isAuthorizationEnabled()}.
+     */
+    public static final String KEY_AUTHORIZATION_ENABLED = "authorization_enabled";
+
     private static final String KEY_IDENTITY_ID = "identity_id";
 
     private static final String KEY_IDENTITY_FINGERPRINT = "identity_fingerprint";
@@ -492,6 +497,24 @@ public final class Preferences {
      */
     public void setTlsAllowPlaintext(final boolean isAllowed) {
         mPreferences.edit().putBoolean(KEY_TLS_ALLOW_PLAINTEXT, isAllowed).commit();
+    }
+
+    /**
+     * Whether an unknown device must be approved before it may watch; defaults to true.
+     *
+     * <p>Security first: a device whose identity was never allowed is parked and the user is asked.
+     * Turning it off returns to the behaviour before authorization existed, in which any device
+     * that can reach the port may watch; the settings sheet states that risk next to the switch.</p>
+     */
+    public boolean isAuthorizationEnabled() {
+        return mPreferences.getBoolean(KEY_AUTHORIZATION_ENABLED, true);
+    }
+
+    /**
+     * Persists the authorization switch; the gate reads it on every decision.
+     */
+    public void setAuthorizationEnabled(final boolean isEnabled) {
+        mPreferences.edit().putBoolean(KEY_AUTHORIZATION_ENABLED, isEnabled).commit();
     }
 
     /**

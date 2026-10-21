@@ -1,11 +1,13 @@
 package com.obby.android.localscreenshare.transport;
 
+import com.obby.android.localscreenshare.authorization.AuthorizationPolicy;
 import com.obby.android.localscreenshare.core.audio.AudioTransport;
 import com.obby.android.localscreenshare.core.model.AudioAccessUnit;
 import com.obby.android.localscreenshare.core.model.AudioDescriptor;
 import com.obby.android.localscreenshare.core.model.EncodedAccessUnit;
 import com.obby.android.localscreenshare.core.model.StreamDescriptor;
 import com.obby.android.localscreenshare.core.stream.MediaTransport;
+import com.obby.android.localscreenshare.grpc.screenstream.AuthorizationStatus;
 import com.obby.android.localscreenshare.grpc.screenstream.Pong;
 import com.obby.android.localscreenshare.grpc.screenstream.ServerMessage;
 
@@ -123,6 +125,27 @@ public final class GrpcMediaTransport implements MediaTransport, AudioTransport 
                     .build());
         } catch (IOException ignored) {
             // The transport is closing; the client simply records one lost sample.
+        }
+    }
+
+    /**
+     * Tells the client that the request is parked until the server user answers.
+     *
+     * <p>Serialized behind the same lock as media and probes, because the observer is not
+     * thread-safe and this notice is written while the client's own probes may still arrive. It is
+     * sent once per call, before any media; an old client ignores the unknown payload and keeps
+     * waiting, which is exactly the behaviour it had before the field existed.</p>
+     */
+    public void sendApprovalPending() {
+        try {
+            send(ServerMessage.newBuilder()
+                    .setAuthorization(AuthorizationStatus.newBuilder()
+                            .setState(AuthorizationStatus.State.PENDING)
+                            .setTimeoutSeconds((int) (AuthorizationPolicy.APPROVAL_TIMEOUT_MS / 1000L))
+                            .build())
+                    .build());
+        } catch (IOException e) {
+            throw new IllegalStateException("transport is closed", e);
         }
     }
 

@@ -26,6 +26,7 @@ import android.media.ImageReader;
 import android.media.projection.MediaProjection;
 import android.media.projection.MediaProjectionManager;
 import android.os.Build;
+import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.IBinder;
@@ -64,6 +65,11 @@ import com.google.android.material.chip.Chip;
 import com.google.android.material.color.MaterialColors;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.obby.android.localscreenshare.MainActivity;
+import com.obby.android.localscreenshare.authorization.ApprovalOutcome;
+import com.obby.android.localscreenshare.authorization.ApprovalRequest;
+import com.obby.android.localscreenshare.authorization.AuthorizationGate;
+import com.obby.android.localscreenshare.authorization.AuthorizationPolicy;
+import com.obby.android.localscreenshare.authorization.store.AuthorizationStore;
 import com.obby.android.localscreenshare.R;
 import com.obby.android.localscreenshare.core.audio.AacEncoder;
 import com.obby.android.localscreenshare.core.audio.AudioAvailability;
@@ -200,11 +206,17 @@ import java.util.concurrent.Executors;
 public class ScreenShareService extends Service {
     private static final String NOTIFICATION_CHANNEL_ID = "lss-service";
 
+    // Separate channel because an approval prompt is urgent: the default channel is low importance
+    // by design and would never surface as a heads-up notification.
+    private static final String NOTIFICATION_CHANNEL_APPROVAL_ID = "lss-authorization";
+
     private static final String VIRTUAL_DISPLAY_NAME = "LocalScreenShare";
 
     private static final String IMAGE_READER_HANDLER_THREAD_NAME = "lss-service-image-reader";
 
     private static final int NOTIFICATION_ID = 1;
+
+    private static final int NOTIFICATION_ID_APPROVAL = 2;
 
     private static final int IMAGE_READER_MAX_IMAGES = 2;
 
@@ -511,6 +523,9 @@ public class ScreenShareService extends Service {
             case ServiceProtocol.MSG_UNREGISTER_SERVICE_CLIENT:
                 unregisterServiceClient(msg.replyTo);
                 return true;
+            case ServiceProtocol.MSG_AUTHORIZATION_DECISION:
+                onAuthorizationDecision(msg.arg1, outcomeOf(msg.arg2));
+                return true;
             default:
                 return false;
         }
@@ -522,6 +537,35 @@ public class ScreenShareService extends Service {
     @NonNull
     private final ServerInfoListener mServerInfoListener =
         serverInfo -> mMainHandler.post(() -> onServerInfoChanged(serverInfo));
+
+    // Viewing authorization gate; built in onCreate() because it opens the preference file, which
+    // must not happen in a field initializer (component construction rule, naming conventions 8).
+    @Nullable
+    private AuthorizationGate mAuthorizationGate;
+
+    // The request the user was last asked about; main thread only.
+    @Nullable
+    private ApprovalRequest mPendingApproval;
+
+    // Gate callbacks arrive on a gRPC transport thread; everything visible happens on main.
+    @NonNull
+    private final AuthorizationGate.Listener mApprovalListener = new AuthorizationGate.Listener() {
+        @Override
+        public void onApprovalRequested(@NonNull final ApprovalRequest request) {
+            mMainHandler.post(() -> onApprovalRequested(request));
+        }
+
+        @Override
+        public void onApprovalResolved(@NonNull final ApprovalRequest request,
+                                       @NonNull final ApprovalOutcome outcome) {
+            mMainHandler.post(() -> onApprovalFinished(request));
+        }
+
+        @Override
+        public void onApprovalCancelled(@NonNull final ApprovalRequest request) {
+            mMainHandler.post(() -> onApprovalFinished(request));
+        }
+    };
 
     @NonNull
     private final ServerStatsListener mServerStatsListener = this::onServerStatsChanged;
@@ -646,6 +690,12 @@ public class ScreenShareService extends Service {
                 stopService();
             } else if (ServiceProtocol.ACTION_IDENTITY_RESET.equals(intent.getAction())) {
                 onIdentityResetCommand();
+            } else if (ServiceProtocol.ACTION_AUTHORIZATION_DECISION.equals(intent.getAction())) {
+                // The answer comes from an approval-notification button; the id and the answer are
+                // extras, and the receiver only resolves requests the gate still knows.
+                onAuthorizationDecision(intent.getLongExtra(
+                        ServiceProtocol.EXTRA_AUTHORIZATION_REQUEST_ID, -1L),
+                    outcomeOf(intent.getStringExtra(ServiceProtocol.EXTRA_AUTHORIZATION_OUTCOME)));
             }
         }
     };
@@ -867,8 +917,15 @@ public class ScreenShareService extends Service {
         final IntentFilter intentFilter = new IntentFilter();
         intentFilter.addAction(ServiceProtocol.ACTION_STOP_SERVICE);
         intentFilter.addAction(ServiceProtocol.ACTION_IDENTITY_RESET);
+        intentFilter.addAction(ServiceProtocol.ACTION_AUTHORIZATION_DECISION);
         ContextCompat.registerReceiver(this, mBroadcastReceiver, intentFilter, ContextCompat.RECEIVER_NOT_EXPORTED);
         TlsMaterialHolder.get().addIdentityChangeListener(mLocalIdentityListener);
+
+        // The gate reads the switch on every decision, so toggling it takes effect immediately and
+        // a switched-off feature never touches the stored authorizations.
+        mAuthorizationGate = new AuthorizationGate(AuthorizationStore.get(),
+            () -> Preferences.get().isAuthorizationEnabled(),
+            TimeSource.MONOTONIC::nowMs, mApprovalListener);
 
         mIsProjectionSecure = Preferences.get().isProjectionSecure();
         mProjectionScale = Preferences.get().getProjectionScale();
@@ -898,6 +955,8 @@ public class ScreenShareService extends Service {
         TlsMaterialHolder.get().removeIdentityChangeListener(mLocalIdentityListener);
         Preferences.get().removeObserver(mPreferencesObserver);
         mMainHandler.removeCallbacks(mEncoderRebuildRunnable);
+        mPendingApproval = null;
+        NotificationManagerCompat.from(this).cancel(NOTIFICATION_ID_APPROVAL);
         stopThermalMonitor();
         stopAnnouncements();
         // Queued work still runs; a start in flight finishes and stops its own server.
@@ -1013,6 +1072,7 @@ public class ScreenShareService extends Service {
         server.setAudioHub(mAudioHub);
         server.setSecure(mIsProjectionSecure);
         server.setDeviceStore(DiscoveryManager.get().getDeviceStore());
+        server.setAuthorizationGate(mAuthorizationGate);
         mServer = server;
 
         // Binding the port and preparing TLS material reach the AndroidKeyStore and have to stay
@@ -1588,6 +1648,13 @@ public class ScreenShareService extends Service {
             if (mServerStats != null) {
                 notifyServerStatsChanged(messenger);
             }
+
+            // A request that is still waiting is replayed, so an activity opened while the prompt
+            // is up shows the same three answers instead of nothing.
+            final ApprovalRequest pending = mPendingApproval;
+            if (pending != null) {
+                notifyAuthorizationRequested(messenger, pending);
+            }
         }
     }
 
@@ -1628,6 +1695,37 @@ public class ScreenShareService extends Service {
     private void notifyServerStatsChanged(@NonNull final Messenger messenger) {
         try {
             messenger.send(Message.obtain(null, ServiceProtocol.MSG_SERVER_STATS_CHANGED, mServerStats));
+        } catch (RemoteException e) {
+            // ignored
+        }
+    }
+
+    // The request travels as three display strings plus its id: the activity only renders it, and
+    // no identity type has to cross the messenger boundary.
+    private void notifyAuthorizationRequested(@NonNull final Messenger messenger,
+                                              @NonNull final ApprovalRequest request) {
+        final Message message = Message.obtain(null, ServiceProtocol.MSG_AUTHORIZATION_REQUEST);
+        final Bundle data = new Bundle();
+        data.putLong(ServiceProtocol.EXTRA_AUTHORIZATION_REQUEST_ID, request.getRequestId());
+        data.putString(ServiceProtocol.EXTRA_AUTHORIZATION_DEVICE_NAME,
+            approvalDeviceName(request));
+        data.putString(ServiceProtocol.EXTRA_AUTHORIZATION_DEVICE_ID, approvalDeviceShortId(request));
+        data.putString(ServiceProtocol.EXTRA_AUTHORIZATION_FINGERPRINT,
+            FingerprintFormatter.toShortDisplay(request.getFingerprint()));
+        message.setData(data);
+        try {
+            messenger.send(message);
+        } catch (RemoteException e) {
+            // ignored
+        }
+    }
+
+    private void notifyAuthorizationFinished(@NonNull final Messenger messenger,
+                                             final long requestId) {
+        final Message message = Message.obtain(null, ServiceProtocol.MSG_AUTHORIZATION_FINISHED);
+        message.arg1 = (int) requestId;
+        try {
+            messenger.send(message);
         } catch (RemoteException e) {
             // ignored
         }
@@ -2277,7 +2375,138 @@ public class ScreenShareService extends Service {
             new NotificationChannelCompat.Builder(NOTIFICATION_CHANNEL_ID, NotificationManagerCompat.IMPORTANCE_LOW)
                 .setName(getString(R.string.service_notification_channel_name))
                 .build();
-        NotificationManagerCompat.from(this).createNotificationChannel(notificationChannel);
+        final NotificationChannelCompat approvalChannel =
+            new NotificationChannelCompat.Builder(NOTIFICATION_CHANNEL_APPROVAL_ID,
+                NotificationManagerCompat.IMPORTANCE_HIGH)
+                .setName(getString(R.string.authorization_notification_channel_name))
+                .setDescription(getString(R.string.authorization_notification_channel_description))
+                .build();
+        NotificationManagerCompat.from(this)
+            .createNotificationChannel(notificationChannel);
+        NotificationManagerCompat.from(this).createNotificationChannel(approvalChannel);
+    }
+
+    /**
+     * Shows the approval prompt for one waiting viewer.
+     *
+     * <p>The prompt is a high-importance notification, not a dialog, because the person sharing may
+     * be in another app or with the screen locked; the buttons carry the three answers and the
+     * content intent opens the activity, which shows the same three answers as a dialog. The
+     * fingerprint is formatted for a human glance; the full value stays available in the settings
+     * sheet of the viewer, which is what the person can compare against.</p>
+     */
+    @SuppressLint("MissingPermission")
+    private void showAuthorizationNotification(@NonNull final ApprovalRequest request) {
+        final String name = approvalDeviceName(request);
+        final String shortId = approvalDeviceShortId(request);
+        final String fingerprint = FingerprintFormatter.toShortDisplay(request.getFingerprint());
+        final int timeoutSeconds = (int) (AuthorizationPolicy.APPROVAL_TIMEOUT_MS / 1000L);
+        final NotificationCompat.Builder builder =
+            new NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_APPROVAL_ID)
+                .setSmallIcon(R.mipmap.ic_launcher)
+                .setContentTitle(getString(R.string.authorization_notification_title, name))
+                .setContentText(getString(R.string.authorization_notification_text, shortId,
+                    fingerprint, timeoutSeconds))
+                .setStyle(new NotificationCompat.BigTextStyle().bigText(
+                    getString(R.string.authorization_notification_text, shortId, fingerprint,
+                        timeoutSeconds)))
+                .setContentIntent(PendingIntent.getActivity(this, 0,
+                    new Intent(this, MainActivity.class),
+                    PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT))
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setCategory(NotificationCompat.CATEGORY_CALL)
+                .setOngoing(true)
+                .setOnlyAlertOnce(true);
+        final ApprovalOutcome[] outcomes = {
+            ApprovalOutcome.ALLOW_ONCE, ApprovalOutcome.ALLOW_ALWAYS, ApprovalOutcome.DENY};
+        final int[] labels = {
+            R.string.authorization_action_allow_once, R.string.authorization_action_allow_always,
+            R.string.authorization_action_deny};
+        for (int i = 0; i < outcomes.length; i++) {
+            builder.addAction(0, getString(labels[i]),
+                authorizationDecisionIntent(request.getRequestId(), outcomes[i], i));
+        }
+        NotificationManagerCompat.from(this).notify(NOTIFICATION_ID_APPROVAL, builder.build());
+    }
+
+    // Each answer needs its own PendingIntent: extras are not part of a PendingIntent's identity,
+    // so three intents with the same action would otherwise collapse into one.
+    @NonNull
+    private PendingIntent authorizationDecisionIntent(final long requestId,
+                                                     @NonNull final ApprovalOutcome outcome,
+                                                     final int slot) {
+        final Intent intent = new Intent(ServiceProtocol.ACTION_AUTHORIZATION_DECISION)
+            .setPackage(getPackageName())
+            .putExtra(ServiceProtocol.EXTRA_AUTHORIZATION_REQUEST_ID, requestId)
+            .putExtra(ServiceProtocol.EXTRA_AUTHORIZATION_OUTCOME, outcome.name());
+        return PendingIntent.getBroadcast(this, (int) (requestId * 4L + slot), intent,
+            PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+    }
+
+    // Main thread. A new waiting viewer replaces the current prompt; the notification buttons stay
+    // usable because each of them carries its own request id.
+    private void onApprovalRequested(@NonNull final ApprovalRequest request) {
+        Log.i(mTag, "onApprovalRequested: a viewer is waiting for approval, identities = "
+            + request.hasVerifiedIdentity());
+        mPendingApproval = request;
+        showAuthorizationNotification(request);
+        mClientMessengers.forEach(messenger -> notifyAuthorizationRequested(messenger, request));
+    }
+
+    // Main thread. The prompt is withdrawn whatever the outcome was: answered, expired or the
+    // waiting call went away.
+    private void onApprovalFinished(@NonNull final ApprovalRequest request) {
+        final ApprovalRequest pending = mPendingApproval;
+        if (pending != null && pending.getRequestId() == request.getRequestId()) {
+            mPendingApproval = null;
+        }
+        NotificationManagerCompat.from(this).cancel(NOTIFICATION_ID_APPROVAL);
+        mClientMessengers.forEach(
+            messenger -> notifyAuthorizationFinished(messenger, request.getRequestId()));
+    }
+
+    // Main thread. Answers arriving from the notification or from the activity dialog both land
+    // here; the gate ignores an unknown or already settled request.
+    private void onAuthorizationDecision(final long requestId,
+                                         @Nullable final ApprovalOutcome outcome) {
+        final AuthorizationGate gate = mAuthorizationGate;
+        if (gate == null || outcome == null) {
+            Log.w(mTag, "onAuthorizationDecision: ignoring an unusable decision");
+            return;
+        }
+        gate.resolve(requestId, outcome);
+    }
+
+    @NonNull
+    private String approvalDeviceName(@NonNull final ApprovalRequest request) {
+        final String name = request.getDeviceName();
+        return name.isEmpty() ? getString(R.string.authorization_unknown_device) : name;
+    }
+
+    @NonNull
+    private static String approvalDeviceShortId(@NonNull final ApprovalRequest request) {
+        final String deviceId = request.getDeviceId();
+        return deviceId == null ? "" : deviceId.substring(0,
+            Math.min(DeviceIdentity.SHORT_ID_LENGTH, deviceId.length()));
+    }
+
+    @Nullable
+    private static ApprovalOutcome outcomeOf(@Nullable final String name) {
+        if (name == null) {
+            return null;
+        }
+        for (final ApprovalOutcome outcome : ApprovalOutcome.values()) {
+            if (outcome.name().equals(name)) {
+                return outcome;
+            }
+        }
+        return null;
+    }
+
+    @Nullable
+    private static ApprovalOutcome outcomeOf(final int ordinal) {
+        final ApprovalOutcome[] outcomes = ApprovalOutcome.values();
+        return ordinal >= 0 && ordinal < outcomes.length ? outcomes[ordinal] : null;
     }
 
     @NonNull

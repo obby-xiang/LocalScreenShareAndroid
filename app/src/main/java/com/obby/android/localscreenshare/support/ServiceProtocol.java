@@ -46,9 +46,44 @@ public final class ServiceProtocol {
         "com.obby.android.localscreenshare.ACTION_IDENTITY_RESET";
 
     /**
+     * Package-scoped broadcast carrying one answer to a waiting viewing request.
+     *
+     * <p>It is sent by the approval notification's action buttons and received by a not-exported
+     * receiver in the capture service. The request id and the answer travel as extras.</p>
+     */
+    @SuppressWarnings("SpellCheckingInspection")
+    public static final String ACTION_AUTHORIZATION_DECISION =
+        "com.obby.android.localscreenshare.ACTION_AUTHORIZATION_DECISION";
+
+    /**
      * Intent extra carrying the MediaProjection consent result passed to the capture service.
      */
     public static final String EXTRA_MEDIA_PROJECTION_RESULT = "mediaProjectionResult";
+
+    /**
+     * Intent extra carrying the id of a waiting viewing request.
+     */
+    public static final String EXTRA_AUTHORIZATION_REQUEST_ID = "authorizationRequestId";
+
+    /**
+     * Intent extra carrying the answer name of an {@code ApprovalOutcome}.
+     */
+    public static final String EXTRA_AUTHORIZATION_OUTCOME = "authorizationOutcome";
+
+    /**
+     * Message extra carrying the display name of the device that is waiting for approval.
+     */
+    public static final String EXTRA_AUTHORIZATION_DEVICE_NAME = "authorizationDeviceName";
+
+    /**
+     * Message extra carrying the short id of the device that is waiting for approval.
+     */
+    public static final String EXTRA_AUTHORIZATION_DEVICE_ID = "authorizationDeviceId";
+
+    /**
+     * Message extra carrying the display form of the waiting device's fingerprint.
+     */
+    public static final String EXTRA_AUTHORIZATION_FINGERPRINT = "authorizationFingerprint";
 
     /**
      * Intent extra carrying the device the client service connects to.
@@ -94,4 +129,22 @@ public final class ServiceProtocol {
      * Service-to-client message: {@code msg.obj} is the current server stats snapshot.
      */
     public static final int MSG_SERVER_STATS_CHANGED = 6;
+
+    /**
+     * Service-to-client message: a viewing request is waiting; {@code msg.getData()} carries the
+     * request id, the device name, the device id short code and the fingerprint.
+     */
+    public static final int MSG_AUTHORIZATION_REQUEST = 7;
+
+    /**
+     * Service-to-client message: a waiting request was answered elsewhere or expired;
+     * {@code msg.arg1} carries the request id.
+     */
+    public static final int MSG_AUTHORIZATION_FINISHED = 8;
+
+    /**
+     * Client-to-service message: the answer to a waiting request. {@code msg.arg1} carries the
+     * request id and {@code msg.arg2} the ordinal of an {@code ApprovalOutcome}.
+     */
+    public static final int MSG_AUTHORIZATION_DECISION = 9;
 }

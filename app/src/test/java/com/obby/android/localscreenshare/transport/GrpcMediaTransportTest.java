@@ -1,6 +1,7 @@
 package com.obby.android.localscreenshare.transport;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.fail;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
@@ -11,7 +12,9 @@ import com.obby.android.localscreenshare.core.model.AccessUnitFlags;
 import com.obby.android.localscreenshare.core.model.BitstreamFormat;
 import com.obby.android.localscreenshare.core.model.EncodedAccessUnit;
 import com.obby.android.localscreenshare.core.model.StreamDescriptor;
+import com.obby.android.localscreenshare.authorization.AuthorizationPolicy;
 import com.obby.android.localscreenshare.core.model.StreamKey;
+import com.obby.android.localscreenshare.grpc.screenstream.AuthorizationStatus;
 import com.obby.android.localscreenshare.grpc.screenstream.ServerMessage;
 
 import org.junit.Test;
@@ -53,6 +56,29 @@ public class GrpcMediaTransportTest {
 
         assertEquals("a closing transport drops the echo instead of throwing", 1,
                 observer.messages.size());
+    }
+
+    @Test
+    public void sendApprovalPendingEmitsOneNoticeAndFailsAfterClose() throws IOException {
+        RecordingObserver observer = new RecordingObserver();
+        GrpcMediaTransport transport = new GrpcMediaTransport(observer, false);
+
+        transport.sendApprovalPending();
+
+        assertEquals(1, observer.messages.size());
+        ServerMessage message = observer.messages.get(0);
+        assertEquals(ServerMessage.PayloadCase.AUTHORIZATION, message.getPayloadCase());
+        assertEquals(AuthorizationStatus.State.PENDING, message.getAuthorization().getState());
+        assertEquals(AuthorizationPolicy.APPROVAL_TIMEOUT_MS / 1000L,
+            message.getAuthorization().getTimeoutSeconds());
+
+        transport.close();
+        try {
+            transport.sendApprovalPending();
+            fail("a closed transport must not report a notice it did not send");
+        } catch (IllegalStateException expected) {
+            assertEquals(1, observer.messages.size());
+        }
     }
 
     @Test

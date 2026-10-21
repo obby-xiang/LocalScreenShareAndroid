@@ -72,4 +72,14 @@ public class FingerprintFormatterTest {
 
         assertFalse(FingerprintFormatter.isCanonical(malformed));
     }
+
+    @Test
+    public void theShortDisplayKeepsTwoGroups() {
+        final String shortDisplay = FingerprintFormatter.toShortDisplay(ASCENDING);
+
+        assertEquals(FingerprintFormatter.SHORT_DISPLAY_LENGTH, shortDisplay.length());
+        assertTrue(ASCENDING_DISPLAY.startsWith(shortDisplay));
+        assertEquals("", FingerprintFormatter.toShortDisplay(null));
+        assertEquals("", FingerprintFormatter.toShortDisplay("not-a-fingerprint"));
+    }
 }

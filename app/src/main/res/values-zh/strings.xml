@@ -159,4 +159,12 @@
     <string name="viewer_audio_hud_receiving">"声音：接收中"</string>
     <string name="viewer_audio_hud_muted">"声音：已静音"</string>
     <string name="viewer_audio_hud_unavailable">"声音：不可用"</string>
+    <string name="authorization_notification_channel_name">"观看请求"</string>
+    <string name="authorization_notification_channel_description">"设备请求观看你的屏幕时在这里询问你。"</string>
+    <string name="authorization_notification_title">"<xliff:g id="name">%1$s</xliff:g> 请求观看"</string>
+    <string name="authorization_notification_text">"ID <xliff:g id="id">%1$s</xliff:g> · 指纹 <xliff:g id="fingerprint">%2$s</xliff:g> · <xliff:g id="seconds">%3$d</xliff:g> 秒后自动拒绝"</string>
+    <string name="authorization_action_allow_once">"允许一次"</string>
+    <string name="authorization_action_allow_always">"总是允许"</string>
+    <string name="authorization_action_deny">"拒绝"</string>
+    <string name="authorization_unknown_device">"未知设备"</string>
 </resources>

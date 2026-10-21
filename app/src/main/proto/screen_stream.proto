@@ -31,6 +31,9 @@ message Hello {
   // not replace client_id as the session key.
   string device_id = 4;
   string fingerprint = 5;
+  // Display name the server may show in its approval prompt. Empty means "declared none": a
+  // client only fills this in when the user allows sharing its name.
+  string device_name = 6;
 }
 
 // Discovery handshake. announces=true means the caller announced itself over multicast, so the
@@ -127,7 +130,23 @@ message ServerMessage {
     // client can ignore it entirely and still decode video.
     AudioDescriptor audio_descriptor = 4;
     AudioAccessUnit audio_access_unit = 5;
+    // Tells the client that the server is waiting for its user to approve this request. Older
+    // clients treat the message as payload-not-set and simply keep waiting; a grant never travels
+    // here, it shows up as media, and a refusal ends the call with a reason.
+    AuthorizationStatus authorization = 6;
   }
+}
+
+message AuthorizationStatus {
+  enum State {
+    UNKNOWN = 0;
+    // The request is parked on the server until its user answers or the approval window elapses.
+    PENDING = 1;
+  }
+
+  State state = 1;
+  // Seconds the server keeps the request open, so the client can show the same bound it faces.
+  int32 timeout_seconds = 2;
 }
 
 // Decode configuration of the audio track. config_parts carries the AudioSpecificConfig (csd-0), so

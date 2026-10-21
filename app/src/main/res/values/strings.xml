@@ -159,4 +159,12 @@ This can happen after a reinstall, a data reset or a key reset. Connect only if 
     <string name="viewer_audio_hud_receiving">"Sound: receiving"</string>
     <string name="viewer_audio_hud_muted">"Sound: muted"</string>
     <string name="viewer_audio_hud_unavailable">"Sound: unavailable"</string>
+    <string name="authorization_notification_channel_name">"Viewing requests"</string>
+    <string name="authorization_notification_channel_description">"Asks you to approve a device that wants to watch your screen."</string>
+    <string name="authorization_notification_title">"<xliff:g id="name">%1$s</xliff:g> wants to watch"</string>
+    <string name="authorization_notification_text">"ID <xliff:g id="id">%1$s</xliff:g> · fingerprint <xliff:g id="fingerprint">%2$s</xliff:g> · refused automatically in <xliff:g id="seconds">%3$d</xliff:g> s"</string>
+    <string name="authorization_action_allow_once">"Allow once"</string>
+    <string name="authorization_action_allow_always">"Always allow"</string>
+    <string name="authorization_action_deny">"Deny"</string>
+    <string name="authorization_unknown_device">"Unknown device"</string>
 </resources>

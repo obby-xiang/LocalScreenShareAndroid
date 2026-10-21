@@ -1,5 +1,9 @@
 package com.obby.android.localscreenshare.server;
 
+import androidx.annotation.NonNull;
+
+import com.obby.android.localscreenshare.authorization.AuthorizationGate;
+import com.obby.android.localscreenshare.authorization.AuthorizationPolicy;
 import com.obby.android.localscreenshare.core.audio.AudioHub;
 import com.obby.android.localscreenshare.core.audio.AudioSendSession;
 import com.obby.android.localscreenshare.core.audio.AudioTransport;
@@ -70,6 +74,12 @@ public final class StreamCallHandler {
     // Echo target for round-trip probes; NO_OP when the caller does not measure round trips.
     private final PongTarget pongTarget;
 
+    // Approval gate; null when the call carries no authorization (tests, or a server without it).
+    private final AuthorizationGate authorizationGate;
+
+    // Output for the one "waiting for approval" notice; null when the call cannot send it.
+    private final ApprovalTarget approvalTarget;
+
     // Certificate identity of the transport, or null on a plaintext call or in a test.
     private final TlsCertificate peerCertificate;
 
@@ -85,6 +95,19 @@ public final class StreamCallHandler {
     private String deviceId;
 
     private String fingerprint;
+
+    // Display name the peer declared for the approval prompt, or null when it declared none.
+    private String deviceName;
+
+    // True while the call waits for the server user to answer the approval prompt.
+    private boolean pendingApproval;
+
+    // Id of the waiting approval request; only meaningful while pendingApproval is true.
+    private long approvalRequestId = -1L;
+
+    // True when the current approval was granted for this call only, so revoking a durable
+    // authorization must not end it.
+    private boolean oneTimeGrant;
 
     private boolean pendingJoin;
 
@@ -210,6 +233,38 @@ public final class StreamCallHandler {
                              StreamCallListener listener, InetSocketAddress remoteAddress,
                              PongTarget pongTarget, TlsCertificate peerCertificate,
                              AudioHub audioHub, AudioTransport audioTransport) {
+        this(hub, runtime, transport, listener, remoteAddress, pongTarget, peerCertificate,
+                audioHub, audioTransport, null, null);
+    }
+
+    /**
+     * Creates a handler that also asks the server user before letting the peer watch.
+     *
+     * <p>Without a gate the handler keeps the pre-authorization behaviour: the first HELLO joins.
+     * With one, a peer whose identity is not authorized is parked after its HELLO is bound to the
+     * certificate; the call then sends one notice (through {@code approvalTarget}), joins nothing,
+     * and waits in {@link #drainOnce()} for an answer. A refusal or the elapsed approval window
+     * closes the call with a reason the client can show, and revoking a durable authorization ends
+     * an attached call the same way.</p>
+     *
+     * @param hub             stream hub the client joins; required
+     * @param runtime         active stream runtime; required
+     * @param transport       transport owned by this call; required
+     * @param listener        receiver of call events; required
+     * @param remoteAddress   address the call arrived on, or null when unknown
+     * @param pongTarget      echo target for round-trip probes; required
+     * @param peerCertificate identity proven by the handshake, or null when unverified
+     * @param audioHub        audio fan-out of the session, or null when the call carries no audio
+     * @param audioTransport  audio transport of the call, or null when the call carries no audio
+     * @param authorizationGate approval gate, or null when this call is not gated
+     * @param approvalTarget  output for the waiting notice, or null when it cannot be sent
+     * @throws IllegalArgumentException if any required argument is null
+     */
+    public StreamCallHandler(StreamHub hub, StreamRuntime runtime, MediaTransport transport,
+                             StreamCallListener listener, InetSocketAddress remoteAddress,
+                             PongTarget pongTarget, TlsCertificate peerCertificate,
+                             AudioHub audioHub, AudioTransport audioTransport,
+                             AuthorizationGate authorizationGate, ApprovalTarget approvalTarget) {
         if (hub == null) {
             throw new IllegalArgumentException("hub must not be null");
         }
@@ -234,6 +289,8 @@ public final class StreamCallHandler {
         this.peerCertificate = peerCertificate;
         this.audioHub = audioHub;
         this.audioTransport = audioTransport;
+        this.authorizationGate = authorizationGate;
+        this.approvalTarget = approvalTarget;
     }
 
     /**
@@ -286,10 +343,26 @@ public final class StreamCallHandler {
             if (closed) {
                 return false;
             }
+            if (pendingApproval) {
+                switch (settleApproval()) {
+                    case PENDING:
+                        return false;
+                    case DENIED:
+                    case TIMED_OUT:
+                        return false;
+                    default:
+                        // Allowed: fall through and join on this very pass.
+                        break;
+                }
+            }
             if (!attached) {
                 tryJoin();
             }
             if (!attached) {
+                return false;
+            }
+            if (!isStillAllowed()) {
+                refuseAuthorization(AuthorizationPolicy.REASON_REVOKED);
                 return false;
             }
             sessionKey = key;
@@ -435,6 +508,13 @@ public final class StreamCallHandler {
             return;
         }
         closed = true;
+        if (pendingApproval) {
+            pendingApproval = false;
+            final AuthorizationGate gate = authorizationGate;
+            if (gate != null) {
+                gate.cancel(approvalRequestId);
+            }
+        }
         if (audioHub != null && key != null && audioSession != null) {
             audioHub.detachIfCurrent(key, audioSession);
         }
@@ -449,7 +529,7 @@ public final class StreamCallHandler {
 
     // Called under the handler monitor from onClientMessage or drainOnce; never called directly.
     private void onHello(Hello hello) {
-        if (attached || pendingJoin) {
+        if (attached || pendingJoin || pendingApproval) {
             return;
         }
         String clientId = hello.getClientId();
@@ -460,14 +540,96 @@ public final class StreamCallHandler {
         if (!bindDeclaredIdentity(hello)) {
             return;
         }
+        deviceName = emptyToNull(hello.getDeviceName());
         pendingCapabilities = ScreenStreamProtoMapper.toClientCapabilities(hello.getCapabilities());
         if (pendingCapabilities.getCodecIds().isEmpty()) {
             // Old clients that declare nothing are assumed to support the H.264 baseline.
             pendingCapabilities = new ClientCapabilities(
                     Collections.singleton("h264"));
         }
+        final AuthorizationGate gate = authorizationGate;
+        if (gate != null && !gate.isAuthorized(deviceId, fingerprint)) {
+            // The peer is parked, not joined: no session, no frame, no audio until the user answers.
+            pendingApproval = true;
+            approvalRequestId = gate.request(deviceId, fingerprint, deviceName);
+            sendApprovalNotice();
+            return;
+        }
         pendingJoin = true;
         tryJoin();
+    }
+
+    // Sends the one "waiting for approval" notice; a failing transport closes the parked call,
+    // because nothing can reach the peer any more.
+    private void sendApprovalNotice() {
+        final ApprovalTarget target = approvalTarget;
+        if (target == null) {
+            return;
+        }
+        try {
+            target.sendApprovalPending();
+        } catch (RuntimeException e) {
+            close();
+        }
+    }
+
+    /**
+     * Settles the waiting approval on a drain pass; called under the handler monitor.
+     *
+     * <p>An allowed request turns into a pending join on the same pass, so the first frame leaves
+     * as soon as the answer arrives. A refusal closes the call with the reason the client shows;
+     * the gate has already removed the request by the time this returns.</p>
+     */
+    @NonNull
+    private AuthorizationGate.State settleApproval() {
+        final AuthorizationGate.State state = authorizationGate.poll(approvalRequestId);
+        switch (state) {
+            case DENIED:
+                refuseAuthorization(AuthorizationPolicy.REASON_DENIED);
+                return state;
+            case TIMED_OUT:
+                refuseAuthorization(AuthorizationPolicy.REASON_TIMEOUT);
+                return state;
+            case ALLOWED_ONCE:
+                oneTimeGrant = true;
+                break;
+            case ALLOWED_ALWAYS:
+            default:
+                oneTimeGrant = false;
+                break;
+        }
+        pendingApproval = false;
+        approvalRequestId = -1L;
+        pendingJoin = true;
+        return state;
+    }
+
+    /**
+     * Returns whether this call may still be attached; called under the handler monitor.
+     *
+     * <p>A one-time grant is never re-checked: it does not live in the durable set, so revoking
+     * another device must not end it. A grant that disappears does: the next drain ends the call,
+     * which is what makes a revocation take effect immediately instead of on the next reconnect.</p>
+     */
+    private boolean isStillAllowed() {
+        if (oneTimeGrant) {
+            return true;
+        }
+        final AuthorizationGate gate = authorizationGate;
+        return gate == null || gate.isAuthorized(deviceId, fingerprint);
+    }
+
+    // Ends a call whose authorization was refused or withdrawn; called under the handler monitor.
+    private void refuseAuthorization(@NonNull final String reason) {
+        pendingApproval = false;
+        approvalRequestId = -1L;
+        pendingJoin = false;
+        joinFailure = reason;
+        if (pendingClientId != null) {
+            listener.onJoinRejected(new ClientSessionKey(runtime.getStreamKey(), pendingClientId),
+                transportId(), reason);
+        }
+        close();
     }
 
     /**
