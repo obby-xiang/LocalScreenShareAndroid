@@ -54,7 +54,9 @@
 
 ## 🚧 进行中
 
-当前无进行中任务。
+| ID | 状态 | 优先级 | 标题 | 创建 | 完成 | 关联 |
+| --- | --- | --- | --- | --- | --- | --- |
+| TB-WIN-001 | 🚧 进行中 | 🟠 P1 | 窗口切换（方案 B：悬浮窗 ↔ 全屏 ViewerActivity） | 2026-10-17 | — | [窗口与会话设计](windowing-session-design.md) |
 
 任务进入“进行中”时，应同时写清范围、交付物和验证方式；完成后先补验证证据，再移入“已完成”。
 
@@ -72,7 +74,6 @@
 | TB-OBS-001 | 🔶 部分完成 | 🔴 P0 | 可观测性与基线（O1–O6 已落地，O7 待设备） | 2026-10-17 | — | [本计划](superpowers/plans/2026-10-21-transport-observability.md) |
 | TB-FW-002 | 🔶 部分完成 | 🟠 P1 | JPEG 适配 | 2026-10-17 | — | [编码框架设计](codec-framework.md) |
 | TB-SEC-001 | 📋 待办 | 🟠 P1 | 配对与传输加密 | 2026-10-17 | — | [媒体架构](media-architecture.md) |
-| TB-WIN-001 | 📋 待办 | 🟠 P1 | 窗口切换 | 2026-10-17 | — | [窗口与会话设计](windowing-session-design.md) |
 | TB-AUDIO-001 | 📋 待办 | 🟡 P2 | 音频链路 | 2026-10-17 | — | [媒体架构](media-architecture.md) |
 | TB-CLIENT-001 | 📋 待办 | 🟡 P2 | 客户端画质与多客户端 | 2026-10-17 | — | [媒体架构](media-architecture.md) |
 | TB-CLIENT-002 | 📋 待办 | 🟡 P2 | 单流与多档流策略 | 2026-10-17 | — | [媒体架构](media-architecture.md) |
@@ -293,12 +294,15 @@
 </details>
 
 <a id="tb-win-001"></a>
-<details><summary>TB-WIN-001 窗口切换（📋 待办）</summary>
+<details><summary>TB-WIN-001 窗口切换（🚧 进行中 · 方案 B）</summary>
 
-- **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟠 P1 / 2026-10-17 / —
-- **任务**：窗口切换：第一版用同一悬浮窗展开/收起；`ViewerActivity` 作为需要沉浸式、返回键或输入法时的增强；最后帧快照过渡；Surface 失效后经 `retryConfigure()` 重建解码器恢复。
-- **交付物 / 验证证据**：交付：方案 A、方案 B、快照与失败回退。验证：切换前后网络/会话/认证不重建、Service 不停、无长时间黑屏；当前未执行。
-- **关联文档**：[路线图阶段 3](optimization-roadmap.md)、[窗口与会话设计](windowing-session-design.md)
+- **状态 / 优先级 / 创建 / 完成**：🚧 进行中 / 🟠 P1 / 2026-10-17 / —
+- **任务**：窗口切换：悬浮窗与全屏 `ViewerActivity` 之间 attach/detach 显示宿主，不重建连接；末帧快照 + 缩放/淡入过渡；Surface 切换按现有 `SurfaceRenderTarget`/重配置路径重建解码器恢复。
+- **裁决依据**：本棒按用户 2026-10-20 提供的原始设计回答（“窗口化 ↔ 界面化”一节，外部参考未入库）执行**方案 B**（悬浮窗 ↔ 全屏 `ViewerActivity`，经末帧快照过渡），其余范围（PiP、方案 A 直接展开、分屏/freeform）不做。这与 [DB-WIN-003](decision-board.md#db-win-003) 原先“第一版用方案 A”的表述不同，决策看板随本棒同步改写。
+- **交付物 / 验证证据**：
+  - **W1（2026-10-21，`render/SwitchableRenderTarget` + `ClientMediaSession.rebindSurface()`）**：会话改持稳定目标、宿主切换时只重建解码器；`ClientMediaSessionRebindTest` 6 条 + `SwitchableRenderTargetTest` 6 条；全量 **1081 tests / 100 classes / 0 failures**，`assembleDebug` 成功。设备验证未执行。
+  - W2（宿主抽象）、W3（`ViewerActivity` + 过渡 + 入口）待续。
+- **关联文档**：[窗口与会话设计](windowing-session-design.md)、[路线图阶段 3](optimization-roadmap.md)
 
 </details>
 

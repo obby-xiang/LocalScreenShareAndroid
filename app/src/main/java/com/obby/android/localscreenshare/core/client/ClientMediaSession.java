@@ -26,7 +26,9 @@ import com.obby.android.localscreenshare.core.stream.ClientCapabilities;
  * failure, a decoder configuration failure or an explicit catch-up moves the session to
  * {@code RESYNCING}, while a
  * unit from an older epoch is dropped without a state change. {@link ClientState#CLOSED} is
- * terminal and is reached through an unsupported codec or an explicit close.</p>
+ * terminal and is reached through an unsupported codec or an explicit close. A viewer that moves
+ * its display between two hosts re-creates the decoder against the new surface through
+ * {@link #rebindSurface()}, which runs in any non-closed state and leaves the stream untouched.</p>
  *
  * <p><b>Descriptor validation.</b> For an already known descriptor the epochs are compared first:
  * an older epoch is ignored, the same epoch with the same config hash is a duplicate, and the same
@@ -367,6 +369,43 @@ public final class ClientMediaSession {
         CodecRegistration registration = registry.require(currentDescriptor.getCodecId());
         if (registration.getDescriptor().isSurfaceOutputRequired()
                 && renderTarget.getSurface() == null) {
+            return false;
+        }
+        return applyDescriptor(currentDescriptor, registration);
+    }
+
+    /**
+     * Re-creates the decoder against whatever surface the render target exposes now.
+     *
+     * <p>Used when the viewer moves its output between two display hosts - a floating window and a
+     * full-screen activity - without ending the session. The render target is expected to forward to
+     * the new host already (see {@code SwitchableRenderTarget}); this method closes the decoder that
+     * still writes into the previous host's surface and configures a fresh one for the latest
+     * descriptor. The network stream, its authentication and its epoch are untouched: only the
+     * decoder and the output surface change, and the next random-access point resumes playback.</p>
+     *
+     * <p>Unlike {@link #retryConfigure()}, which is the recovery path after a surface was lost and
+     * only runs in {@code RESYNCING}, this method also runs while {@code STREAMING}. If the new host
+     * has no surface yet, the old decoder is closed, the session enters {@code RESYNCING} with
+     * {@link ResyncReason#MISSING_SURFACE}, and the caller is expected to call
+     * {@link #retryConfigure()} once the new host's surface exists. A session without a descriptor
+     * or a closed session has nothing to re-point and reports false without a state change.</p>
+     *
+     * @return true when a decoder was configured for the new surface
+     */
+    public synchronized boolean rebindSurface() {
+        if (closed || currentDescriptor == null) {
+            return false;
+        }
+        CodecRegistration registration = registry.require(currentDescriptor.getCodecId());
+        if (registration.getDescriptor().isSurfaceOutputRequired()
+                && renderTarget.getSurface() == null) {
+            // The old decoder must not keep writing into a surface its host is about to release.
+            if (decoder != null) {
+                decoder.close();
+                decoder = null;
+            }
+            enterResync(ResyncReason.MISSING_SURFACE);
             return false;
         }
         return applyDescriptor(currentDescriptor, registration);

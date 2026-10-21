@@ -100,6 +100,7 @@ import com.obby.android.localscreenshare.discovery.favorite.FavoriteStore;
 import com.obby.android.localscreenshare.discovery.model.DeviceAddress;
 import com.obby.android.localscreenshare.discovery.model.DeviceInfo;
 import com.obby.android.localscreenshare.render.SurfaceRenderTarget;
+import com.obby.android.localscreenshare.render.SwitchableRenderTarget;
 import com.obby.android.localscreenshare.render.ViewerFitPolicy;
 import com.obby.android.localscreenshare.render.ViewerScaleMenuModel;
 import com.obby.android.localscreenshare.render.ViewerZoomMenuModel;
@@ -190,8 +191,15 @@ public class ScreenViewerService extends Service {
     @Nullable
     private StreamKey mStreamKey;
 
+    // Output target of the floating window; released when the session is torn down.
     @Nullable
-    private SurfaceRenderTarget mSurfaceRenderTarget;
+    private SurfaceRenderTarget mOverlayRenderTarget;
+
+    // Stable target handed to the session. Its delegate is the display host that currently owns the
+    // decoder output, which is what makes a window <-> activity switch a decoder rebuild instead of
+    // a reconnect.
+    @Nullable
+    private SwitchableRenderTarget mRenderTarget;
 
     @Nullable
     private ClientMediaSession mClientMediaSession;
@@ -673,7 +681,7 @@ public class ScreenViewerService extends Service {
             mSurfaceShareViewer = new SurfaceShareViewer(this, mServiceInfo,
                 this::syncHudLoop);
         }
-        mSurfaceRenderTarget = new SurfaceRenderTarget(mSurfaceShareViewer.getTextureView(),
+        mOverlayRenderTarget = new SurfaceRenderTarget(mSurfaceShareViewer.getTextureView(),
                 () -> {
                     // A (re)available surface lets a resynchronizing session retry its decoder.
                     final ClientMediaSession session = mClientMediaSession;
@@ -681,10 +689,11 @@ public class ScreenViewerService extends Service {
                         session.retryConfigure();
                     }
                 });
+        mRenderTarget = new SwitchableRenderTarget(mOverlayRenderTarget);
         final ClientMediaSession session = new ClientMediaSession(
                 new ClientSessionKey(mStreamKey, "local"), mCodecRegistry,
                 new ClientCapabilities(Collections.singleton(CodecIds.H264)),
-                mSurfaceRenderTarget, mClientStateListener, mMetrics);
+                mRenderTarget, mClientStateListener, mMetrics);
         mClientMediaSession = session;
         mClientMediaReceiver = new ClientMediaReceiver(mStreamKey, session, mClientSecureListener,
             (visibleWidth, visibleHeight, rotationDegrees) -> mMainHandler.post(() -> {
@@ -812,7 +821,7 @@ public class ScreenViewerService extends Service {
     }
 
     /**
-     * Closes the media session and releases the surface target; idempotent.
+     * Closes the media session and releases the display targets; idempotent.
      */
     private void teardownMediaSession() {
         if (mClientMediaReceiver != null) {
@@ -820,9 +829,10 @@ public class ScreenViewerService extends Service {
             mClientMediaReceiver = null;
         }
         mClientMediaSession = null;
-        if (mSurfaceRenderTarget != null) {
-            mSurfaceRenderTarget.release();
-            mSurfaceRenderTarget = null;
+        mRenderTarget = null;
+        if (mOverlayRenderTarget != null) {
+            mOverlayRenderTarget.release();
+            mOverlayRenderTarget = null;
         }
     }
 
