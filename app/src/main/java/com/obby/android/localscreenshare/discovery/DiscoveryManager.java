@@ -172,7 +172,7 @@ public final class DiscoveryManager {
     private final ManualAddressProvider mManualAddressProvider = new ManualAddressProvider(
         new RegisterAddressProbe(new GrpcRegisterStub(), this::selfSummary, DiscoveryChannel.MANUAL),
         mFavoriteStore, ThreadUtils.getMainThreadExecutor(), this::onConfirmed,
-        ScanConstants.MANUAL_PROBE_TIMEOUT_MS);
+        ScanConstants.MANUAL_PROBE_TIMEOUT_MS, ScanConstants.MANUAL_PROBE_FIRST_TIMEOUT_MS);
 
     @NonNull
     private final ScanCoordinator.Listener mScanListener = new ScanCoordinator.Listener() {
@@ -480,7 +480,9 @@ public final class DiscoveryManager {
      * Probes an address typed by the user and, when it answers, adds it to the list.
      *
      * <p>Must be called on the main thread. The callback is delivered on the main thread; a
-     * successful probe is confirmed through the same path as a discovered device.</p>
+     * successful probe is confirmed through the same path as a discovered device. Every failure is
+     * logged here with its reason, because the callback only turns it into a toast and a probe that
+     * never reaches the callback leaves no trace at all.</p>
      *
      * @param input text such as {@code 192.168.1.7:8080}, {@code [fe80::1]:8080} or a bare address
      * @param callback outcome callback
@@ -488,6 +490,7 @@ public final class DiscoveryManager {
      */
     public boolean probeManualAddress(@NonNull final String input,
         @NonNull final ManualAddressProvider.ProbeCallback callback) {
+        final long startedMs = TimeSource.MONOTONIC.nowMs();
         return mManualAddressProvider.probeManual(input, Preferences.get().getServerPort(),
             new ManualAddressProvider.ProbeCallback() {
                 @Override
@@ -498,8 +501,9 @@ public final class DiscoveryManager {
 
                 @Override
                 public void onFailed(@NonNull final String reason) {
-                    Log.w(TAG, String.format("probeManualAddress: probe failed, input = %s, reason = %s",
-                        input, reason));
+                    Log.w(TAG, String.format("probeManualAddress: probe failed, input = %s, "
+                            + "reason = %s, elapsed = %d ms", input, reason,
+                        TimeSource.MONOTONIC.nowMs() - startedMs));
                     callback.onFailed(reason);
                 }
             });

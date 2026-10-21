@@ -32,4 +32,17 @@ public final class ScanConstants {
      * Deadline of one manual address or favorite probe, in milliseconds.
      */
     public static final long MANUAL_PROBE_TIMEOUT_MS = 2_000L;
+
+    /**
+     * Deadline of the probes issued before one probe of this process has been answered.
+     *
+     * <p>Wider than {@link #MANUAL_PROBE_TIMEOUT_MS} because the first probe after a cold start pays
+     * for work the later ones do not: the device identity key is loaded and probed in the
+     * AndroidKeyStore, the TLS stack initialises, and the handshake itself costs an extra round
+     * trip that plaintext did not have. On the device under test the first probe after a cold
+     * start occasionally hit the two-second deadline and the same address answered on the retry,
+     * which the user saw as "nothing happened". Once one probe is answered the short deadline
+     * applies again, so an unreachable address still fails fast.</p>
+     */
+    public static final long MANUAL_PROBE_FIRST_TIMEOUT_MS = 5_000L;
 }

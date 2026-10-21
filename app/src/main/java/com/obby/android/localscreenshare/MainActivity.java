@@ -816,7 +816,12 @@ public class MainActivity extends AppCompatActivity {
                     if ("invalid_address".equals(reason)) {
                         return;
                     }
-                    Toast.makeText(MainActivity.this, R.string.discovery_manual_failed,
+                    // A probe that ran out of time is reported as such: it means the address was
+                    // not answered in time, which is a different thing to tell the user than an
+                    // address that answered and refused.
+                    final int messageResId = isProbeTimeout(reason)
+                        ? R.string.discovery_manual_timeout : R.string.discovery_manual_failed;
+                    Toast.makeText(MainActivity.this, messageResId,
                         Toast.LENGTH_SHORT).show();
                 }
             });
@@ -824,6 +829,17 @@ public class MainActivity extends AppCompatActivity {
             Toast.makeText(this, R.string.discovery_manual_adding, Toast.LENGTH_SHORT).show();
         }
         return accepted;
+    }
+
+    /**
+     * Returns whether {@code reason} reports a probe that ran out of time.
+     *
+     * <p>Two layers report the same outcome with different names: the transport reports
+     * {@code DEADLINE_EXCEEDED} when the call deadline fires, and the probe reports {@code timeout}
+     * when its own wait ends before a callback arrives.</p>
+     */
+    private static boolean isProbeTimeout(@NonNull final String reason) {
+        return "DEADLINE_EXCEEDED".equals(reason) || "timeout".equals(reason);
     }
 
     /**

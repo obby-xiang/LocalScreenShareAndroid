@@ -43,6 +43,7 @@
     <string name="discovery_manual_adding">"Checking the address…"</string>
     <string name="discovery_manual_added">"Added the shared screen."</string>
     <string name="discovery_manual_failed">"No device answered at that address."</string>
+    <string name="discovery_manual_timeout">"Unable to reach that address: the device did not answer before the timeout."</string>
     <string name="discovery_invalid_address">"Enter a valid IP address, optionally with a port."</string>
     <string name="discovery_empty_manual_hint">"No devices found. Tap to add an address."</string>
     <string name="discovery_add_favorite">"Add to favorites"</string>

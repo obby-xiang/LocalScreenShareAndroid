@@ -89,6 +89,11 @@ public final class ManualAddressProvider implements DiscoveryProvider {
 
     private static final int FAVORITE_PROBE_QUEUE = 64;
 
+    /**
+     * Reason reported when the probe itself threw instead of returning a failed result.
+     */
+    private static final String REASON_PROBE_FAILED = "probe_failed";
+
     @NonNull
     private final AddressProbe mProbe;
 
@@ -102,6 +107,13 @@ public final class ManualAddressProvider implements DiscoveryProvider {
     private final ConfirmationSink mSink;
 
     private final long mProbeTimeoutMs;
+
+    private final long mFirstProbeTimeoutMs;
+
+    // Set once one probe has been answered. Until then every probe uses mFirstProbeTimeoutMs,
+    // because the first handshake of a process loads the identity key and initialises the TLS
+    // stack; see ScanConstants.MANUAL_PROBE_FIRST_TIMEOUT_MS. Written by probe threads.
+    private volatile boolean mIsWarm;
 
     @NonNull
     private final ThreadPoolExecutor mProbeExecutor;
@@ -118,7 +130,7 @@ public final class ManualAddressProvider implements DiscoveryProvider {
     private UnreachableSink mUnreachableSink;
 
     /**
-     * Creates the provider.
+     * Creates the provider, using one deadline for every probe.
      *
      * @param probe one-address probe
      * @param favorites favorites probed at start
@@ -129,11 +141,36 @@ public final class ManualAddressProvider implements DiscoveryProvider {
     public ManualAddressProvider(@NonNull final AddressProbe probe,
         @NonNull final FavoriteStore favorites, @NonNull final Executor mainExecutor,
         @NonNull final ConfirmationSink sink, final long probeTimeoutMs) {
+        this(probe, favorites, mainExecutor, sink, probeTimeoutMs, probeTimeoutMs);
+    }
+
+    /**
+     * Creates the provider with a separate cold-start deadline.
+     *
+     * <p>Every probe issued before one probe of this process has been answered uses
+     * {@code firstProbeTimeoutMs}; afterwards {@code probeTimeoutMs} applies. The wider first
+     * deadline covers the one-time cost of loading the identity key and initialising the TLS
+     * stack, which a cold probe otherwise reports as a timeout while the address is in fact
+     * reachable.</p>
+     *
+     * @param probe one-address probe
+     * @param favorites favorites probed at start
+     * @param mainExecutor executor that receives sink and callback invocations
+     * @param sink confirmation sink
+     * @param probeTimeoutMs deadline of a probe issued once the process is warm
+     * @param firstProbeTimeoutMs deadline of a probe issued before the process is warm; must not
+     *                            be shorter than {@code probeTimeoutMs} to be useful
+     */
+    public ManualAddressProvider(@NonNull final AddressProbe probe,
+        @NonNull final FavoriteStore favorites, @NonNull final Executor mainExecutor,
+        @NonNull final ConfirmationSink sink, final long probeTimeoutMs,
+        final long firstProbeTimeoutMs) {
         mProbe = Objects.requireNonNull(probe, "probe");
         mFavorites = Objects.requireNonNull(favorites, "favorites");
         mMainExecutor = Objects.requireNonNull(mainExecutor, "mainExecutor");
         mSink = Objects.requireNonNull(sink, "sink");
         mProbeTimeoutMs = probeTimeoutMs;
+        mFirstProbeTimeoutMs = firstProbeTimeoutMs;
         final AtomicInteger threadIds = new AtomicInteger();
         mProbeExecutor = new ThreadPoolExecutor(FAVORITE_PROBE_THREADS, FAVORITE_PROBE_THREADS,
             0L, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(FAVORITE_PROBE_QUEUE),
@@ -185,7 +222,16 @@ public final class ManualAddressProvider implements DiscoveryProvider {
         final int port = address.getPort();
         try {
             mProbeExecutor.execute(() -> {
-                final ProbeResult result = mProbe.probe(host, port, mProbeTimeoutMs);
+                final ProbeResult result;
+                try {
+                    result = probe(host, port);
+                } catch (RuntimeException e) {
+                    // The probe contract returns failures instead of throwing, but a transport that
+                    // breaks it used to leave the caller without a callback: no toast and no log,
+                    // which reads as "the address did nothing". Report the failure instead.
+                    mMainExecutor.execute(() -> callback.onFailed(REASON_PROBE_FAILED));
+                    return;
+                }
                 mMainExecutor.execute(() -> {
                     if (result.isConfirmed() && result.getSummary() != null) {
                         mManualTargets.put(addressKey(host, port), address);
@@ -234,7 +280,7 @@ public final class ManualAddressProvider implements DiscoveryProvider {
         if (!mStarted) {
             return;
         }
-        final ProbeResult result = mProbe.probe(target.getHost(), target.getPort(), mProbeTimeoutMs);
+        final ProbeResult result = probe(target.getHost(), target.getPort());
         if (!result.isConfirmed() || result.getSummary() == null || !mStarted) {
             final UnreachableSink sink = mUnreachableSink;
             if (sink != null && mStarted) {
@@ -268,7 +314,7 @@ public final class ManualAddressProvider implements DiscoveryProvider {
         if (!mStarted) {
             return;
         }
-        final ProbeResult result = mProbe.probe(target.getHost(), target.getPort(), mProbeTimeoutMs);
+        final ProbeResult result = probe(target.getHost(), target.getPort());
         if (!result.isConfirmed() || result.getSummary() == null || !mStarted) {
             return;
         }
@@ -280,5 +326,24 @@ public final class ManualAddressProvider implements DiscoveryProvider {
                 mSink.onConfirmed(DiscoveryChannel.FAVORITE, summary, host, port);
             }
         });
+    }
+
+    /**
+     * Probes one address with the deadline that matches how warm this process is.
+     *
+     * <p>Until one probe is answered the wider cold deadline applies; a confirmed probe marks the
+     * process warm, so every later probe fails fast again. Only runs on the probe executor.</p>
+     *
+     * @param host address to probe
+     * @param port port to probe
+     */
+    @NonNull
+    private ProbeResult probe(@NonNull final String host, final int port) {
+        final ProbeResult result = mProbe.probe(host, port,
+            mIsWarm ? mProbeTimeoutMs : mFirstProbeTimeoutMs);
+        if (result.isConfirmed()) {
+            mIsWarm = true;
+        }
+        return result;
     }
 }

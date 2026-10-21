@@ -1,5 +1,8 @@
 package com.obby.android.localscreenshare.discovery.scan;
 
+import android.os.SystemClock;
+import android.util.Log;
+
 import androidx.annotation.NonNull;
 
 import com.obby.android.localscreenshare.discovery.model.DeviceAddress;
@@ -31,6 +34,8 @@ import java.util.function.Supplier;
  */
 public final class RegisterAddressProbe implements AddressProbe {
 
+    private static final String TAG = "RegisterAddressProbe";
+
     @NonNull
     private final RegisterStub mStub;
 
@@ -58,6 +63,34 @@ public final class RegisterAddressProbe implements AddressProbe {
     @Override
     @NonNull
     public ProbeResult probe(@NonNull final String host, final int port, final long timeoutMs) {
+        final long startedMs = SystemClock.elapsedRealtime();
+        final ProbeResult result = probeOnce(host, port, timeoutMs);
+        if (!result.isConfirmed()) {
+            logFailure(host, port, timeoutMs, result, SystemClock.elapsedRealtime() - startedMs);
+        }
+        return result;
+    }
+
+    /**
+     * Logs a failed probe that a user asked for.
+     *
+     * <p>A scan probes every address of a subnet, where a failure is the normal case and the
+     * scanner reports plain counts; logging one warning per address would bury everything else. A
+     * manual or favorite probe is a single request the user is waiting on, and its failure is
+     * exactly the event that used to leave no trace at all.</p>
+     */
+    private void logFailure(@NonNull final String host, final int port, final long timeoutMs,
+                            @NonNull final ProbeResult result, final long elapsedMs) {
+        if (mChannel == DiscoveryChannel.SCAN) {
+            return;
+        }
+        Log.w(TAG, String.format("probe: address did not answer, address = %s:%d, channel = %s, "
+                + "reason = %s, timeout = %d ms, elapsed = %d ms", host, port, mChannel.name(),
+            result.getReason(), timeoutMs, elapsedMs));
+    }
+
+    @NonNull
+    private ProbeResult probeOnce(@NonNull final String host, final int port, final long timeoutMs) {
         final DeviceSummary self = mSelfSummarySupplier.get();
         if (self == null) {
             return ProbeResult.failed(host, port, "identity_unavailable");

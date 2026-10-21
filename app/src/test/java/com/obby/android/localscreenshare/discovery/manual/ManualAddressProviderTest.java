@@ -25,6 +25,10 @@ public class ManualAddressProviderTest {
 
     private static final long TIMEOUT_MS = 2_000L;
 
+    // Wider deadline used until one probe was answered; the production values come from
+    // ScanConstants.
+    private static final long COLD_TIMEOUT_MS = 5_000L;
+
     private FakeProbe mProbe;
 
     private FavoriteStore mFavorites;
@@ -190,6 +194,54 @@ public class ManualAddressProviderTest {
         waitFor(() -> !mCallback.failures.isEmpty());
 
         assertEquals("unreachable", mCallback.failures.get(0));
+        assertTrue(mSink.confirmations.isEmpty());
+    }
+
+    @Test
+    public void theColdDeadlineAppliesUntilOneProbeIsAnswered() throws InterruptedException {
+        mProvider.shutdown();
+        mProbe = FakeProbe.confirmingAll("remote-device");
+        mProvider = new ManualAddressProvider(mProbe, mFavorites, Runnable::run, mSink,
+            TIMEOUT_MS, COLD_TIMEOUT_MS);
+
+        assertTrue(mProvider.probeManual("192.168.1.9", 8080, mCallback));
+        waitFor(() -> mCallback.confirmed.size() == 1);
+        assertTrue(mProvider.probeManual("192.168.1.10", 8080, mCallback));
+        waitFor(() -> mCallback.confirmed.size() == 2);
+
+        assertEquals(COLD_TIMEOUT_MS, mProbe.calls().get(0).timeoutMs);
+        assertEquals(TIMEOUT_MS, mProbe.calls().get(1).timeoutMs);
+    }
+
+    @Test
+    public void unansweredProbesKeepTheColdDeadline() throws InterruptedException {
+        mProvider.shutdown();
+        mProbe = FakeProbe.alwaysFailing();
+        mProvider = new ManualAddressProvider(mProbe, mFavorites, Runnable::run, mSink,
+            TIMEOUT_MS, COLD_TIMEOUT_MS);
+
+        assertTrue(mProvider.probeManual("192.168.1.9", 8080, mCallback));
+        waitFor(() -> mCallback.failures.size() == 1);
+        assertTrue(mProvider.probeManual("192.168.1.10", 8080, mCallback));
+        waitFor(() -> mCallback.failures.size() == 2);
+
+        assertEquals(COLD_TIMEOUT_MS, mProbe.calls().get(0).timeoutMs);
+        assertEquals(COLD_TIMEOUT_MS, mProbe.calls().get(1).timeoutMs);
+    }
+
+    @Test
+    public void aProbeThatThrowsStillReportsAFailure() throws InterruptedException {
+        mProvider.shutdown();
+        mProbe = new FakeProbe((host, port) -> {
+            throw new IllegalStateException("transport broke");
+        });
+        mProvider = new ManualAddressProvider(mProbe, mFavorites, Runnable::run, mSink, TIMEOUT_MS);
+
+        assertTrue(mProvider.probeManual("192.168.1.9", 8080, mCallback));
+
+        waitFor(() -> !mCallback.failures.isEmpty());
+
+        assertEquals("probe_failed", mCallback.failures.get(0));
         assertTrue(mSink.confirmations.isEmpty());
     }
 

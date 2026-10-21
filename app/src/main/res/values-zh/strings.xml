@@ -43,6 +43,7 @@
     <string name="discovery_manual_adding">"正在探测该地址…"</string>
     <string name="discovery_manual_added">"已添加该共享屏幕。"</string>
     <string name="discovery_manual_failed">"该地址没有设备响应。"</string>
+    <string name="discovery_manual_timeout">"无法连接该地址：设备在超时前没有应答。"</string>
     <string name="discovery_invalid_address">"请输入有效的 IP 地址，可带端口。"</string>
     <string name="discovery_empty_manual_hint">"未发现设备，点此手动添加地址。"</string>
     <string name="discovery_add_favorite">"收藏"</string>
