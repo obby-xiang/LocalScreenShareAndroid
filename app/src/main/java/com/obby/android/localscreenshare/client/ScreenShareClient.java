@@ -17,6 +17,7 @@ import com.obby.android.localscreenshare.core.model.ClientState;
 import com.obby.android.localscreenshare.core.stream.ClientCapabilities;
 import com.obby.android.localscreenshare.grpc.screenstream.ClientMessage;
 import com.obby.android.localscreenshare.grpc.screenstream.Hello;
+import com.obby.android.localscreenshare.grpc.screenstream.MediaChannelEvent;
 import com.obby.android.localscreenshare.grpc.screenstream.Ping;
 import com.obby.android.localscreenshare.grpc.screenstream.RequestKeyframe;
 import com.obby.android.localscreenshare.grpc.screenstream.ScreenStreamServiceGrpc;
@@ -36,6 +37,7 @@ import com.obby.android.localscreenshare.transport.ScreenStreamProtoMapper;
 import org.apache.commons.lang3.concurrent.BasicThreadFactory;
 
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -175,6 +177,10 @@ public final class ScreenShareClient {
     // Round-trip estimator fed by the echo messages; only records into mMetrics.
     @NonNull
     private final RttEstimator mRttEstimator;
+
+    // State machine of the media channel negotiation; answers every offer of this call.
+    @NonNull
+    private final MediaChannelCoordinator mMediaChannelCoordinator = new MediaChannelCoordinator();
 
     // Sends one probe, sweeps the unanswered ones and reschedules itself; runs on the main thread.
     @NonNull
@@ -471,6 +477,21 @@ public final class ScreenShareClient {
                         ensureConnected();
                         return;
                     }
+                    if (value.getPayloadCase() == ServerMessage.PayloadCase.MEDIA_OFFER) {
+                        // Negotiation, not media: the answer leaves on the main thread because the
+                        // request observer is not thread safe, and the media stream is untouched.
+                        final MediaChannelEvent answer =
+                            mMediaChannelCoordinator.onOffer(value.getMediaOffer());
+                        if (answer != null) {
+                            mMainHandler.post(() -> sendMediaChannelEvent(answer));
+                        }
+                        ensureConnected();
+                        return;
+                    }
+                    if (value.getPayloadCase() == ServerMessage.PayloadCase.MEDIA_CLOSE) {
+                        mMediaChannelCoordinator.onMediaClose(value.getMediaClose());
+                        return;
+                    }
                     // One clock read marks the arrival; everything downstream measures from it.
                     final long arrivalNs = mMetrics.nowNs();
                     if (isAudio(value.getPayloadCase())) {
@@ -555,6 +576,7 @@ public final class ScreenShareClient {
                 }
             });
 
+        mMediaChannelCoordinator.reset();
         mClientId = "client-" + UUID.randomUUID();
         final ClientCapabilities advertised = mAdvertisedCapabilities != null
             ? mAdvertisedCapabilities : CodecCapabilityProbe.probeClientDecoders();
@@ -562,6 +584,11 @@ public final class ScreenShareClient {
             .setProtocolVersion(ScreenStreamProtoMapper.PROTOCOL_VERSION)
             .setClientId(mClientId)
             .setCapabilities(ScreenStreamProtoMapper.toProtoCapabilities(advertised));
+        // Declared even though this build implements neither channel: the server then walks the
+        // fallback chain, the coordinator refuses each offer, and the negotiation and its timeout
+        // are exercised in production before a channel exists.
+        hello.addAllMediaTransports(Arrays.asList(
+            MediaChannelCoordinator.declaredTransports()));
         // The discovery identity binds this session to the device entry peers already know. The
         // client id above stays the stream hub's session key, so a reconnect of the same device is
         // still a new session. The id is the one of the certificate this channel presents, because
@@ -620,6 +647,27 @@ public final class ScreenShareClient {
         observer.onNext(ClientMessage.newBuilder()
             .setRequestKeyframe(RequestKeyframe.getDefaultInstance())
             .build());
+    }
+
+    /**
+     * Sends one answer to a media channel offer; runs on the main thread only.
+     *
+     * <p>The request observer is not thread safe, which is why the answer is marshalled here
+     * instead of being written by the gRPC callback that read the offer. A post that arrives after
+     * {@link #stop()} sends nothing, exactly like the key-frame request path.</p>
+     */
+    private void sendMediaChannelEvent(@NonNull final MediaChannelEvent event) {
+        final StreamObserver<ClientMessage> observer = mRequestObserver;
+        if (observer == null || mIsStopped) {
+            return;
+        }
+        try {
+            observer.onNext(ClientMessage.newBuilder()
+                .setMediaChannelEvent(event)
+                .build());
+        } catch (RuntimeException ignored) {
+            // The stream is already terminating; the offer then times out on the server.
+        }
     }
 
     /**

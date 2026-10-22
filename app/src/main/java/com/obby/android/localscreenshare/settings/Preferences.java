@@ -206,6 +206,13 @@ public final class Preferences {
      */
     public static final String KEY_AUTHORIZATION_ENABLED = "authorization_enabled";
 
+    /**
+     * Hidden media-path override; see {@link #getMediaTransport()}.
+     */
+    public static final String KEY_MEDIA_TRANSPORT = "media_transport";
+
+    private static final String DEFAULT_MEDIA_TRANSPORT = "auto";
+
     private static final String KEY_IDENTITY_ID = "identity_id";
 
     private static final String KEY_IDENTITY_FINGERPRINT = "identity_fingerprint";
@@ -515,6 +522,26 @@ public final class Preferences {
      */
     public void setAuthorizationEnabled(final boolean isEnabled) {
         mPreferences.edit().putBoolean(KEY_AUTHORIZATION_ENABLED, isEnabled).commit();
+    }
+
+    /**
+     * Media path preference of the server, one of {@code auto}, {@code grpc}, {@code tcp} or
+     * {@code udp}.
+     *
+     * <p>Hidden on purpose: it exists for A/B measurement and for pinning a call to the
+     * control-plane carrier while a dedicated channel is evaluated, so it has no user-facing
+     * control. An unknown stored value reads back as {@code auto} through the policy.</p>
+     */
+    @NonNull
+    public String getMediaTransport() {
+        return mPreferences.getString(KEY_MEDIA_TRANSPORT, DEFAULT_MEDIA_TRANSPORT);
+    }
+
+    /**
+     * Persists the media path preference; it applies to calls that start afterwards.
+     */
+    public void setMediaTransport(@NonNull final String transport) {
+        mPreferences.edit().putString(KEY_MEDIA_TRANSPORT, transport).commit();
     }
 
     /**

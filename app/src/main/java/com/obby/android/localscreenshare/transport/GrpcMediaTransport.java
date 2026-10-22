@@ -6,6 +6,7 @@ import com.obby.android.localscreenshare.core.model.AudioAccessUnit;
 import com.obby.android.localscreenshare.core.model.AudioDescriptor;
 import com.obby.android.localscreenshare.core.model.EncodedAccessUnit;
 import com.obby.android.localscreenshare.core.model.StreamDescriptor;
+import com.obby.android.localscreenshare.core.net.MediaChannelOffer;
 import com.obby.android.localscreenshare.core.stream.MediaTransport;
 import com.obby.android.localscreenshare.grpc.screenstream.AuthorizationStatus;
 import com.obby.android.localscreenshare.grpc.screenstream.Pong;
@@ -146,6 +147,26 @@ public final class GrpcMediaTransport implements MediaTransport, AudioTransport 
                     .build());
         } catch (IOException e) {
             throw new IllegalStateException("transport is closed", e);
+        }
+    }
+
+    /**
+     * Offers one media channel to the client.
+     *
+     * <p>Serialized behind the same lock as media and probes. The offer is advisory: media keeps
+     * flowing on this stream until the client answers READY, so a failed send only means the
+     * negotiation falls back to the carrier after the offer window elapses. An old client ignores
+     * the unknown payload and never notices the message.</p>
+     *
+     * @param offer channel to offer; must not be null
+     */
+    public void sendMediaOffer(MediaChannelOffer offer) {
+        try {
+            send(ServerMessage.newBuilder()
+                    .setMediaOffer(MediaChannelOfferMapper.toProtoOffer(offer))
+                    .build());
+        } catch (IOException ignored) {
+            // The call is closing; the offer times out on the server and falls back to the carrier.
         }
     }
 

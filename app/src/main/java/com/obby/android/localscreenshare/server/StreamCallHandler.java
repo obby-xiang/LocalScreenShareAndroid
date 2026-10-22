@@ -9,20 +9,27 @@ import com.obby.android.localscreenshare.core.audio.AudioSendSession;
 import com.obby.android.localscreenshare.core.audio.AudioTransport;
 import com.obby.android.localscreenshare.core.audio.AudioCodecIds;
 import com.obby.android.localscreenshare.core.model.ClientSessionKey;
+import com.obby.android.localscreenshare.core.net.MediaTransportKind;
 import com.obby.android.localscreenshare.core.stream.ClientCapabilities;
 import com.obby.android.localscreenshare.core.stream.ClientSendSession;
 import com.obby.android.localscreenshare.core.stream.JoinDecision;
 import com.obby.android.localscreenshare.core.stream.MediaTransport;
+import com.obby.android.localscreenshare.core.stream.MediaTransportRecovery;
 import com.obby.android.localscreenshare.core.stream.StreamHub;
 import com.obby.android.localscreenshare.core.stream.StreamRuntime;
 import com.obby.android.localscreenshare.grpc.screenstream.ClientMessage;
 import com.obby.android.localscreenshare.grpc.screenstream.Hello;
+import com.obby.android.localscreenshare.grpc.screenstream.MediaChannelEvent;
 import com.obby.android.localscreenshare.identity.tls.TlsCertificate;
+import com.obby.android.localscreenshare.transport.MediaChannelOfferMapper;
 import com.obby.android.localscreenshare.transport.ScreenStreamProtoMapper;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.Collections;
+import java.util.EnumSet;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -59,6 +66,14 @@ import java.util.UUID;
  * request - a grant joins on that same pass, a refusal or the elapsed window closes the call with
  * the reason, and a revoked grant ends an attached call within one pass. A grant made for one call
  * only is never re-checked, because it does not live in the durable set.</p>
+ *
+ * <p><b>Media channel negotiation.</b> With a {@link MediaChannelNegotiator}, a successful join is
+ * followed by one offer of a dedicated channel, chosen from the transports the client declared in
+ * its HELLO and the deployment preference. Media keeps flowing on the control-plane carrier during
+ * the whole exchange, so an offer, a refusal, a timeout or a client that never answers costs
+ * nothing but a few control messages; the call settles on the carrier and stays there. A failed
+ * channel is never offered twice, and {@link #drainOnce()} is what expires an unanswered offer, so
+ * no timer is added to the call.</p>
  */
 public final class StreamCallHandler {
 
@@ -66,6 +81,32 @@ public final class StreamCallHandler {
      * Maximum audio frames drained before one video item in a single drain call.
      */
     private static final int AUDIO_DRAIN_BURST = 4;
+
+    /**
+     * Phase of the media channel negotiation of one call.
+     */
+    public enum MediaChannelPhase {
+
+        /**
+         * No join yet, so nothing was offered or decided.
+         */
+        NONE,
+
+        /**
+         * A channel was offered and the call waits for the client's answer or the offer window.
+         */
+        OFFERED,
+
+        /**
+         * The client reported the channel ready; media would leave on it.
+         */
+        ACTIVE,
+
+        /**
+         * The call sends media on the control-plane carrier and will not offer another channel.
+         */
+        GRPC
+    }
 
     private final StreamHub hub;
 
@@ -135,6 +176,27 @@ public final class StreamCallHandler {
     private AudioSendSession audioSession;
 
     private String audioUnavailableReason;
+
+    // Negotiation of the dedicated media channel; null when this call cannot negotiate one.
+    private final MediaChannelNegotiator mediaNegotiator;
+
+    // Carrier fallback of the call: a failed media channel returns media to the gRPC transport.
+    private final MediaTransportRecovery mediaRecovery;
+
+    // Transport names the client declared in its HELLO; empty means "control plane only".
+    private final Set<String> clientOfferedTransports = new HashSet<>();
+
+    // Channels that already failed in this call; the policy never offers one twice.
+    private final Set<MediaTransportKind> failedMediaTransports =
+            EnumSet.noneOf(MediaTransportKind.class);
+
+    private MediaChannelPhase mediaPhase = MediaChannelPhase.NONE;
+
+    // Channel currently offered or active; null once the call settles on the carrier.
+    private MediaTransportKind mediaKind;
+
+    // Why the last channel was dropped, or null when none was; informational for logs and tests.
+    private String mediaFailureReason;
 
     /**
      * Creates a handler for one client that reports no events to a listener.
@@ -273,6 +335,39 @@ public final class StreamCallHandler {
                              PongTarget pongTarget, TlsCertificate peerCertificate,
                              AudioHub audioHub, AudioTransport audioTransport,
                              AuthorizationGate authorizationGate, ApprovalTarget approvalTarget) {
+        this(hub, runtime, transport, listener, remoteAddress, pongTarget, peerCertificate,
+                audioHub, audioTransport, authorizationGate, approvalTarget, null);
+    }
+
+    /**
+     * Creates a handler that also negotiates a dedicated media channel for the call.
+     *
+     * <p>The negotiator owns the policy, the outstanding ticket and the offer window of this call;
+     * without one the handler never offers a channel and behaves exactly as before. The carrier
+     * fallback is built here rather than injected, because the only transport that may never be
+     * closed by a fallback is this call's own gRPC transport.</p>
+     *
+     * @param hub              stream hub the client joins; required
+     * @param runtime          active stream runtime; required
+     * @param transport        transport owned by this call; required
+     * @param listener         receiver of call events; required
+     * @param remoteAddress    address the call arrived on, or null when unknown
+     * @param pongTarget       echo target for round-trip probes; required
+     * @param peerCertificate  identity proven by the handshake, or null when unverified
+     * @param audioHub         audio fan-out of the session, or null when the call carries no audio
+     * @param audioTransport   audio transport of the call, or null when the call carries no audio
+     * @param authorizationGate approval gate, or null when this call is not gated
+     * @param approvalTarget   output for the waiting notice, or null when it cannot be sent
+     * @param mediaNegotiator  media channel negotiation of this call, or null when it stays on the
+     *                         control-plane carrier
+     * @throws IllegalArgumentException if any required argument is null
+     */
+    public StreamCallHandler(StreamHub hub, StreamRuntime runtime, MediaTransport transport,
+                             StreamCallListener listener, InetSocketAddress remoteAddress,
+                             PongTarget pongTarget, TlsCertificate peerCertificate,
+                             AudioHub audioHub, AudioTransport audioTransport,
+                             AuthorizationGate authorizationGate, ApprovalTarget approvalTarget,
+                             MediaChannelNegotiator mediaNegotiator) {
         if (hub == null) {
             throw new IllegalArgumentException("hub must not be null");
         }
@@ -299,6 +394,8 @@ public final class StreamCallHandler {
         this.audioTransport = audioTransport;
         this.authorizationGate = authorizationGate;
         this.approvalTarget = approvalTarget;
+        this.mediaNegotiator = mediaNegotiator;
+        this.mediaRecovery = new StreamMediaRecovery(transport, runtime::requestJoinPoint);
     }
 
     /**
@@ -330,6 +427,9 @@ public final class StreamCallHandler {
                 case REQUEST_KEYFRAME:
                     runtime.requestJoinPoint();
                     break;
+                case MEDIA_CHANNEL_EVENT:
+                    onMediaChannelEvent(message.getMediaChannelEvent());
+                    break;
                 case PAYLOAD_NOT_SET:
                 default:
                     break;
@@ -350,6 +450,12 @@ public final class StreamCallHandler {
         synchronized (this) {
             if (closed) {
                 return false;
+            }
+            // An unanswered offer expires here, on the pass that already exists, so the negotiation
+            // needs no timer and cannot keep a call waiting on a channel that will never come.
+            if (mediaPhase == MediaChannelPhase.OFFERED && mediaNegotiator != null
+                    && mediaNegotiator.isOfferExpired()) {
+                failMediaChannel("offer_timeout");
             }
             if (pendingApproval) {
                 switch (settleApproval()) {
@@ -545,6 +651,11 @@ public final class StreamCallHandler {
             key = null;
         }
         attachedSession = null;
+        if (mediaNegotiator != null) {
+            // A leaked token stops being usable the moment the call it belongs to is gone.
+            mediaNegotiator.revoke();
+        }
+        mediaKind = null;
         transport.close();
     }
 
@@ -562,6 +673,8 @@ public final class StreamCallHandler {
             return;
         }
         deviceName = emptyToNull(hello.getDeviceName());
+        clientOfferedTransports.clear();
+        clientOfferedTransports.addAll(hello.getMediaTransportsList());
         pendingCapabilities = ScreenStreamProtoMapper.toClientCapabilities(hello.getCapabilities());
         if (pendingCapabilities.getCodecIds().isEmpty()) {
             // Old clients that declare nothing are assumed to support the H.264 baseline.
@@ -702,13 +815,15 @@ public final class StreamCallHandler {
             return;
         }
         ClientSessionKey candidate = new ClientSessionKey(runtime.getStreamKey(), pendingClientId);
-        JoinDecision decision = hub.join(candidate, pendingCapabilities, transport);
+        JoinDecision decision = hub.join(candidate, pendingCapabilities, transport,
+                MediaTransportKind.GRPC, mediaRecovery);
         switch (decision.getStatus()) {
             case ACCEPTED:
                 key = candidate;
                 attachedSession = decision.getSession();
                 attached = true;
                 pendingJoin = false;
+                startMediaNegotiation();
                 attachAudio(candidate);
                 break;
             case NOT_READY:
@@ -750,6 +865,127 @@ public final class StreamCallHandler {
         } catch (RuntimeException e) {
             audioUnavailableReason = "audio join failed";
         }
+    }
+
+    /**
+     * Offers the first media channel of a joined call; called under the handler monitor.
+     *
+     * <p>A call without a negotiator, and a policy that has nothing better than the carrier, both
+     * settle on the control-plane carrier without sending anything.</p>
+     */
+    private void startMediaNegotiation() {
+        final MediaChannelNegotiator negotiator = mediaNegotiator;
+        if (negotiator == null) {
+            mediaPhase = MediaChannelPhase.GRPC;
+            return;
+        }
+        offerMediaChannel(negotiator.firstKind(clientOfferedTransports));
+    }
+
+    /**
+     * Offers one channel, or settles on the carrier when it cannot be offered; called under the
+     * handler monitor.
+     */
+    private void offerMediaChannel(@NonNull final MediaTransportKind kind) {
+        final MediaChannelNegotiator negotiator = mediaNegotiator;
+        if (negotiator == null || !negotiator.offer(kind, deviceId)) {
+            mediaKind = null;
+            mediaPhase = MediaChannelPhase.GRPC;
+            return;
+        }
+        mediaKind = kind;
+        mediaPhase = MediaChannelPhase.OFFERED;
+    }
+
+    /**
+     * Drops the current channel and moves to the next candidate; called under the handler monitor.
+     *
+     * <p>The failed channel is remembered, so the policy never offers it again in this call. When
+     * no candidate remains the call settles on the control-plane carrier, which is already carrying
+     * it, so the viewer loses nothing but the negotiation.</p>
+     *
+     * @param reason short English description kept for logs and tests
+     */
+    private void failMediaChannel(@NonNull final String reason) {
+        final MediaChannelNegotiator negotiator = mediaNegotiator;
+        final MediaTransportKind failed = mediaKind;
+        mediaFailureReason = reason;
+        mediaKind = null;
+        if (negotiator == null || failed == null) {
+            mediaPhase = MediaChannelPhase.GRPC;
+            return;
+        }
+        failedMediaTransports.add(failed);
+        negotiator.revoke();
+        mediaPhase = MediaChannelPhase.GRPC;
+        offerMediaChannel(negotiator.nextKind(clientOfferedTransports, failedMediaTransports));
+    }
+
+    /**
+     * Applies one answer to a channel offer; called under the handler monitor.
+     *
+     * <p>An answer for a channel that is no longer outstanding is stale - the offer expired, the
+     * call moved on, or another connection took it over - and is ignored, so a late answer can
+     * never pull the call back onto a channel the server already gave up on. READY cannot be
+     * honoured in this build because no media channel is implemented yet, so it is treated as a
+     * failure of that channel and the call keeps its carrier.</p>
+     */
+    private void onMediaChannelEvent(@NonNull final MediaChannelEvent event) {
+        final MediaChannelNegotiator negotiator = mediaNegotiator;
+        if (negotiator == null) {
+            return;
+        }
+        if (mediaPhase != MediaChannelPhase.OFFERED && mediaPhase != MediaChannelPhase.ACTIVE) {
+            return;
+        }
+        if (!MediaChannelOfferMapper.matchesChannel(event, negotiator.getChannelIdHex())) {
+            return;
+        }
+        switch (event.getType()) {
+            case READY:
+                failMediaChannel("channel_unsupported");
+                break;
+            case FAILED:
+                failMediaChannel(reasonOf(event, "channel_failed"));
+                break;
+            case CLOSED:
+                failMediaChannel(reasonOf(event, "channel_closed"));
+                break;
+            case UNKNOWN_EVENT:
+            default:
+                break;
+        }
+    }
+
+    /**
+     * Returns the phase of this call's media channel negotiation.
+     */
+    public synchronized MediaChannelPhase getMediaChannelPhase() {
+        return mediaPhase;
+    }
+
+    /**
+     * Returns the channel that is currently offered or active, or null when the call is on the
+     * control-plane carrier or has not negotiated yet.
+     */
+    public synchronized MediaTransportKind getMediaChannelKind() {
+        return mediaKind;
+    }
+
+    /**
+     * Returns why the last media channel was dropped, or null when no channel failed.
+     */
+    public synchronized String getMediaChannelFailureReason() {
+        return mediaFailureReason;
+    }
+
+    /**
+     * Returns the reason an answer carried, or {@code fallback} when it carried none.
+     */
+    private static String reasonOf(@NonNull final MediaChannelEvent event,
+                                   @NonNull final String fallback) {
+        final String reason = emptyToNull(event.getReason());
+        return reason == null ? fallback : reason;
     }
 
     /**

@@ -8,6 +8,7 @@ import com.obby.android.localscreenshare.core.model.EncodedAccessUnit;
 import com.obby.android.localscreenshare.core.model.StreamDescriptor;
 import com.obby.android.localscreenshare.core.model.StreamKey;
 import com.obby.android.localscreenshare.core.metrics.PipelineMetrics;
+import com.obby.android.localscreenshare.core.net.MediaTransportKind;
 import com.obby.android.localscreenshare.core.util.TimeSource;
 
 import java.io.IOException;
@@ -230,6 +231,28 @@ public final class StreamHub implements StreamRuntimeListener {
      */
     public JoinDecision join(ClientSessionKey key, ClientCapabilities caps,
                              MediaTransport transport) {
+        return join(key, caps, transport, MediaTransportKind.GRPC, null);
+    }
+
+    /**
+     * Attempts to attach a client to the active stream on a given media channel.
+     *
+     * <p>Same decision as {@link #join(ClientSessionKey, ClientCapabilities, MediaTransport)}; the
+     * channel and the recovery hook are carried into the new session, which is what lets a call
+     * start on a dedicated channel or fall back to its carrier without ending the stream. The hook
+     * is consulted by the session when a send fails, so a media channel fault no longer detaches
+     * the call.</p>
+     *
+     * @param key       client and stream identity; required
+     * @param caps      what the client can decode; required
+     * @param transport transport that serves this client; required
+     * @param kind      media channel {@code transport} belongs to; required
+     * @param recovery  hook consulted before a failed transport is fatal; may be null
+     * @throws IllegalArgumentException if a required argument is null
+     */
+    public JoinDecision join(ClientSessionKey key, ClientCapabilities caps,
+                             MediaTransport transport, MediaTransportKind kind,
+                             MediaTransportRecovery recovery) {
         if (key == null) {
             throw new IllegalArgumentException("key must not be null");
         }
@@ -238,6 +261,9 @@ public final class StreamHub implements StreamRuntimeListener {
         }
         if (transport == null) {
             throw new IllegalArgumentException("transport must not be null");
+        }
+        if (kind == null) {
+            throw new IllegalArgumentException("kind must not be null");
         }
 
         StreamRuntime toRequestJoin = null;
@@ -269,8 +295,8 @@ public final class StreamHub implements StreamRuntimeListener {
                 replacedSession = sessions.remove(key);
                 capabilities.remove(key);
                 createdSession =
-                        new ClientSendSession(key, registry, limits, transport, timeSource,
-                                metrics.newScope());
+                        new ClientSendSession(key, registry, limits, transport, kind, timeSource,
+                                metrics.newScope(), recovery);
                 createdSession.onDescriptor(activeDescriptor);
                 sessions.put(key, createdSession);
                 capabilities.put(key, caps);

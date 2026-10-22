@@ -21,6 +21,8 @@ import com.obby.android.localscreenshare.core.stream.CodecCapability;
 import com.obby.android.localscreenshare.grpc.screenstream.Capabilities;
 import com.obby.android.localscreenshare.grpc.screenstream.ClientMessage;
 import com.obby.android.localscreenshare.grpc.screenstream.Hello;
+import com.obby.android.localscreenshare.grpc.screenstream.MediaChannelEvent;
+import com.obby.android.localscreenshare.grpc.screenstream.MediaChannelEventType;
 import com.obby.android.localscreenshare.grpc.screenstream.Ping;
 import com.obby.android.localscreenshare.grpc.screenstream.Pong;
 import com.obby.android.localscreenshare.grpc.screenstream.Ready;
@@ -207,6 +209,22 @@ public class ScreenStreamProtoMapperTest {
     }
 
     @Test
+    public void dispatchRoutesMediaChannelEvent() {
+        RecordingListener listener = new RecordingListener();
+
+        ScreenStreamProtoMapper.dispatchClientMessage(ClientMessage.newBuilder()
+                .setMediaChannelEvent(MediaChannelEvent.newBuilder()
+                        .setChannelId(com.google.protobuf.ByteString.copyFrom(new byte[]{1, 2}))
+                        .setType(MediaChannelEventType.FAILED)
+                        .setReason("not_implemented")
+                        .build())
+                .build(), listener);
+
+        assertTrue(listener.mediaEventSeen);
+        assertEquals(MediaChannelEventType.FAILED, listener.mediaEventType);
+    }
+
+    @Test
     public void pingAndPong_roundTripThroughTheWireFormat() throws Exception {
         ClientMessage ping = ClientMessage.newBuilder()
                 .setPing(Ping.newBuilder().setSeq(3).setClientUptimeMs(123_456L).build())
@@ -244,10 +262,18 @@ public class ScreenStreamProtoMapperTest {
         boolean keyframeSeen;
         boolean pingSeen;
         int pingSeq;
+        boolean mediaEventSeen;
+        MediaChannelEventType mediaEventType;
 
         @Override
         public void onHello(Hello hello) {
             helloSeen = true;
+        }
+
+        @Override
+        public void onMediaChannelEvent(MediaChannelEvent event) {
+            mediaEventSeen = true;
+            mediaEventType = event.getType();
         }
 
         @Override

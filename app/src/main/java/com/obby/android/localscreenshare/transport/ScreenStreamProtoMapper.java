@@ -385,6 +385,9 @@ public final class ScreenStreamProtoMapper {
             case PING:
                 listener.onPing(message.getPing());
                 break;
+            case MEDIA_CHANNEL_EVENT:
+                listener.onMediaChannelEvent(message.getMediaChannelEvent());
+                break;
             case PAYLOAD_NOT_SET:
             default:
                 throw new IllegalArgumentException("client message has no recognized payload");

@@ -19,6 +19,9 @@ message ClientMessage {
     Ready ready = 2;
     RequestKeyframe request_keyframe = 3;
     Ping ping = 4;
+    // Answer to one media channel offer. A server that never offered anything ignores it, and a
+    // client that never heard of the field simply never sends it.
+    MediaChannelEvent media_channel_event = 5;
   }
 }
 
@@ -34,6 +37,25 @@ message Hello {
   // Display name the server may show in its approval prompt. Empty means "declared none": a
   // client only fills this in when the user allows sharing its name.
   string device_name = 6;
+  // Media channels this client can speak, by transport name ("tcp", "udp"). Empty means "the
+  // gRPC stream only", which is also what an old client reports and what an old server assumes.
+  repeated string media_transports = 7;
+}
+
+// Answer to one media channel offer. READY means the channel is established and the client waits
+// for media on it; FAILED and CLOSED both return the call to the next candidate transport.
+enum MediaChannelEventType {
+  UNKNOWN_EVENT = 0;
+  READY = 1;
+  FAILED = 2;
+  CLOSED = 3;
+}
+
+message MediaChannelEvent {
+  bytes channel_id = 1;
+  MediaChannelEventType type = 2;
+  // Short English description for logs; never carries peer identity or payload bytes.
+  string reason = 3;
 }
 
 // Discovery handshake. announces=true means the caller announced itself over multicast, so the
@@ -134,7 +156,37 @@ message ServerMessage {
     // clients treat the message as payload-not-set and simply keep waiting; a grant never travels
     // here, it shows up as media, and a refusal ends the call with a reason.
     AuthorizationStatus authorization = 6;
+    // Offer to move the media of this call onto a dedicated channel. Media keeps flowing on this
+    // stream until the client says READY, so an old client that ignores the message loses nothing.
+    MediaOffer media_offer = 7;
+    // The offered channel is gone; the client drops its state for it and expects no more frames on
+    // it. A call that never saw the offer ignores the message.
+    MediaClose media_close = 8;
   }
+}
+
+// One media channel offer. Everything the client needs to establish the channel travels here, so
+// the control stream stays the only negotiated path; the endpoint and key fields are empty for a
+// build that cannot bind a channel yet.
+message MediaOffer {
+  bytes channel_id = 1;
+  // Transport name, one of the values the client declared in its HELLO ("tcp", "udp").
+  string transport = 2;
+  string host = 3;
+  int32 port = 4;
+  bool secure = 5;
+  // One-shot credential that binds the channel to this very call.
+  bytes token = 6;
+  bytes key_s2c = 7;
+  bytes key_c2s = 8;
+  bytes nonce_salt = 9;
+  int32 mtu = 10;
+  int32 hold_ms = 11;
+}
+
+message MediaClose {
+  bytes channel_id = 1;
+  string reason = 2;
 }
 
 message AuthorizationStatus {

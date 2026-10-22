@@ -143,6 +143,33 @@ public final class ClientSendSession {
                              StreamQueueLimits limits, MediaTransport transport,
                              TimeSource timeSource, PipelineMetrics metrics,
                              MediaTransportRecovery recovery) {
+        this(key, registry, limits, transport, MediaTransportKind.GRPC, timeSource, metrics,
+                recovery);
+    }
+
+    /**
+     * Creates a session that starts on a given media channel.
+     *
+     * <p>The channel is fixed at construction and follows later swaps, so it reports where the
+     * frames actually left rather than what the call intended. A session that starts on the
+     * control-plane carrier passes {@link MediaTransportKind#GRPC}; a channel that is established
+     * before the join (or restored after a fallback) passes its own kind.</p>
+     *
+     * @param key         client and stream identity; required
+     * @param registry    codec registry used to resolve the per-codec policy; required
+     * @param limits      queue bounds applied to each epoch's queue; required
+     * @param transport   transport owned by this session; required
+     * @param kind        media channel of {@code transport}; required
+     * @param timeSource  clock used for queue residency and drops; required
+     * @param metrics     metric scope of this session; required, may be
+     *                    {@link PipelineMetrics#NONE}
+     * @param recovery    hook consulted before a failed transport is treated as fatal; may be null
+     * @throws IllegalArgumentException if a required argument is null
+     */
+    public ClientSendSession(ClientSessionKey key, CodecRegistry registry,
+                             StreamQueueLimits limits, MediaTransport transport,
+                             MediaTransportKind kind, TimeSource timeSource,
+                             PipelineMetrics metrics, MediaTransportRecovery recovery) {
         if (key == null) {
             throw new IllegalArgumentException("key must not be null");
         }
@@ -155,6 +182,9 @@ public final class ClientSendSession {
         if (transport == null) {
             throw new IllegalArgumentException("transport must not be null");
         }
+        if (kind == null) {
+            throw new IllegalArgumentException("kind must not be null");
+        }
         if (timeSource == null) {
             throw new IllegalArgumentException("timeSource must not be null");
         }
@@ -165,6 +195,7 @@ public final class ClientSendSession {
         this.registry = registry;
         this.limits = limits;
         this.transport = transport;
+        this.transportKind = kind;
         this.timeSource = timeSource;
         this.metrics = metrics;
         this.recovery = recovery;

@@ -7,6 +7,7 @@ import com.obby.android.localscreenshare.core.model.ClientState;
 import com.obby.android.localscreenshare.core.model.StreamDescriptor;
 import com.obby.android.localscreenshare.core.model.StreamKey;
 import com.obby.android.localscreenshare.core.model.StreamParameters;
+import com.obby.android.localscreenshare.core.net.MediaTransportKind;
 import com.obby.android.localscreenshare.core.support.FakeCodec;
 import com.obby.android.localscreenshare.core.support.FakeTransport;
 import com.obby.android.localscreenshare.core.support.MutableClock;
@@ -116,6 +117,49 @@ public class StreamHubTransportSwapTest {
         assertNull(hub.swapTransportIfCurrent(CLIENT_A, null, new FakeTransport()));
         assertNull(hub.swapTransportIfCurrent(CLIENT_A, session, null));
         assertFalse(session.isDetached());
+    }
+
+    @Test
+    public void joinWithAChannel_recordsTheChannel() throws Exception {
+        FakeCodec codec = new FakeCodec(CODEC_ID, 0, false, false);
+        StreamHub hub = newHub(registry(codec));
+        FakeTransport transport = new FakeTransport();
+
+        assertEquals(JoinDecision.Status.ACCEPTED, hub.join(CLIENT_A, capabilities(), transport,
+                MediaTransportKind.TCP, null).getStatus());
+
+        ClientSendSession session = hub.getSession(CLIENT_A);
+        assertEquals(MediaTransportKind.TCP, session.getTransportKind());
+        assertEquals("tcp", session.snapshot().getChannel());
+    }
+
+    @Test
+    public void joinWithARecovery_recoversAFailedSendWithoutDetaching() throws Exception {
+        FakeCodec codec = new FakeCodec(CODEC_ID, 0, false, false);
+        codec.setAutoEmitJoinOnRequest(false);
+        StreamHub hub = newHub(registry(codec));
+        FakeTransport carrier = new FakeTransport();
+        FakeTransport channel = new FakeTransport();
+        hub.join(CLIENT_A, capabilities(), channel, MediaTransportKind.TCP,
+                (failed, cause) -> carrier);
+        codec.emitJoin(new byte[]{0x41});
+        assertTrue(hub.drainOne(CLIENT_A));
+        assertTrue(hub.drainOne(CLIENT_A));
+
+        channel.failNextSend();
+        codec.emitJoin(new byte[]{0x42});
+
+        assertFalse(hub.drainOne(CLIENT_A));
+        assertFalse(hub.getSession(CLIENT_A).isDetached());
+        assertTrue(channel.isClosed());
+
+        assertTrue(hub.drainOne(CLIENT_A));
+        assertTrue(carrier.getEvents().get(0).isDescriptor());
+        assertEquals(ClientState.WAIT_RANDOM_ACCESS, hub.getSession(CLIENT_A).getState());
+
+        codec.emitJoin(new byte[]{0x43});
+        assertTrue(hub.drainOne(CLIENT_A));
+        assertEquals(ClientState.STREAMING, hub.getSession(CLIENT_A).getState());
     }
 
     private static StreamHub newHub(CodecRegistry registry) {

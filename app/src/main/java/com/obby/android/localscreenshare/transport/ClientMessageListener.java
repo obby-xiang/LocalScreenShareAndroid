@@ -1,6 +1,7 @@
 package com.obby.android.localscreenshare.transport;
 
 import com.obby.android.localscreenshare.grpc.screenstream.Hello;
+import com.obby.android.localscreenshare.grpc.screenstream.MediaChannelEvent;
 import com.obby.android.localscreenshare.grpc.screenstream.Ping;
 import com.obby.android.localscreenshare.grpc.screenstream.Ready;
 import com.obby.android.localscreenshare.grpc.screenstream.RequestKeyframe;
@@ -37,4 +38,16 @@ public interface ClientMessageListener {
      * clock only.</p>
      */
     void onPing(Ping ping);
+
+    /**
+     * A client answered an offer of a dedicated media channel.
+     *
+     * <p>The default implementation ignores the answer, which is what a listener written before the
+     * negotiation existed does: a call that never offered a channel receives no answer, and one
+     * that did simply sees its offer window elapse and keeps the control-plane carrier.</p>
+     *
+     * @param event answer carrying the channel id, its outcome and a short reason
+     */
+    default void onMediaChannelEvent(MediaChannelEvent event) {
+    }
 }

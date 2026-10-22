@@ -40,4 +40,28 @@ public enum MediaTransportKind {
     public String getLabel() {
         return label;
     }
+
+    /**
+     * Resolves a wire label to its channel.
+     *
+     * <p>The comparison is case insensitive because the label travels as a string in the
+     * negotiation messages, where a peer may not preserve the case. An unknown value returns null
+     * instead of throwing, so a peer that declares a channel this build does not implement is
+     * simply not a candidate.</p>
+     *
+     * @param label wire label to resolve; null or blank returns null
+     * @return the matching kind, or null when no kind carries that label
+     */
+    public static MediaTransportKind fromLabel(String label) {
+        if (label == null) {
+            return null;
+        }
+        String trimmed = label.trim();
+        for (MediaTransportKind kind : values()) {
+            if (kind.label.equalsIgnoreCase(trimmed)) {
+                return kind;
+            }
+        }
+        return null;
+    }
 }

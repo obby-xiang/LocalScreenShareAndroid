@@ -24,6 +24,7 @@ import com.obby.android.localscreenshare.authorization.AuthorizationGate;
 import com.obby.android.localscreenshare.core.audio.AudioHub;
 import com.obby.android.localscreenshare.core.codec.CodecRegistry;
 import com.obby.android.localscreenshare.core.model.ClientSessionKey;
+import com.obby.android.localscreenshare.core.net.MediaTransportPolicy;
 import com.obby.android.localscreenshare.core.stream.SessionSnapshot;
 import com.obby.android.localscreenshare.core.stream.StreamHub;
 import com.obby.android.localscreenshare.core.stream.StreamRuntime;
@@ -1272,9 +1273,15 @@ public final class ScreenShareServer {
             }
             final InetSocketAddress remoteAddress = REMOTE_ADDRESS.get();
             final GrpcMediaTransport transport = new GrpcMediaTransport(responseObserver, mSecure);
+            final MediaTransportPolicy.Mode mediaMode = MediaTransportPolicy.Mode.parse(
+                Preferences.get().getMediaTransport());
+            final MediaChannelNegotiator mediaNegotiator = new MediaChannelNegotiator(mediaMode,
+                    MediaTransportPolicy.allowsUdp(mediaMode), transport::sendMediaOffer,
+                    TimeSource.MONOTONIC);
             final StreamCallHandler handler = new StreamCallHandler(mStreamHub, mStreamRuntime,
                     transport, mStreamCallListener, remoteAddress, transport::sendPong, peer,
-                    mAudioHub, transport, mAuthorizationGate, transport::sendApprovalPending);
+                    mAudioHub, transport, mAuthorizationGate, transport::sendApprovalPending,
+                    mediaNegotiator);
             mStreamCallHandlers.add(handler);
             final Thread drain = new Thread(() -> drainLoop(handler, responseObserver),
                     "lss-stream-drain-" + handler.hashCode());
