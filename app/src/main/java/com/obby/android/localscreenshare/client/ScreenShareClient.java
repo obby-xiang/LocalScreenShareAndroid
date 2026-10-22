@@ -18,6 +18,8 @@ import com.obby.android.localscreenshare.core.model.EncodedAccessUnit;
 import com.obby.android.localscreenshare.core.model.StreamDescriptor;
 import com.obby.android.localscreenshare.core.net.MediaChannelListener;
 import com.obby.android.localscreenshare.core.net.MediaChannelOffer;
+import com.obby.android.localscreenshare.core.net.MediaChannelStatusListener;
+import com.obby.android.localscreenshare.core.net.MediaTransportKind;
 import com.obby.android.localscreenshare.core.stream.ClientCapabilities;
 import com.obby.android.localscreenshare.grpc.screenstream.ClientMessage;
 import com.obby.android.localscreenshare.grpc.screenstream.Hello;
@@ -39,6 +41,7 @@ import com.obby.android.localscreenshare.transport.GrpcConstants;
 import com.obby.android.localscreenshare.transport.MediaTlsFactory;
 import com.obby.android.localscreenshare.transport.ScreenStreamProtoMapper;
 import com.obby.android.localscreenshare.transport.TcpMediaReceiver;
+import com.obby.android.localscreenshare.transport.UdpMediaReceiver;
 
 import org.apache.commons.lang3.concurrent.BasicThreadFactory;
 
@@ -742,8 +745,14 @@ public final class ScreenShareClient {
     private MediaChannelLink createMediaChannel(@NonNull final ClientMediaReceiver receiver,
                                                 @NonNull final MediaChannelListener listener,
                                                 @NonNull final MediaChannelOffer offer,
-                                                @NonNull final TcpMediaReceiver.StatusListener status) {
+                                                @NonNull final MediaChannelStatusListener status) {
         final String host = offer.getHost().isEmpty() ? mHost : offer.getHost();
+        if (offer.getTransport() == MediaTransportKind.UDP) {
+            // Datagrams authenticate every packet with the keys of the offer, so the media channel
+            // needs no TLS context of its own.
+            return new UdpMediaReceiver(receiver.getStreamKey(), host, offer, listener, status,
+                mMetrics.getClock(), mMetrics);
+        }
         final SSLContext context;
         if (offer.isSecure()) {
             final TlsMaterial material = mTlsMaterial;
@@ -841,6 +850,25 @@ public final class ScreenShareClient {
             @Override
             public void onChannelFailed(@NonNull final String reason) {
                 Log.w(mTag, "media channel: failed, reason = " + reason);
+            }
+
+            @Override
+            public void onCatchUp() {
+                // A datagram channel lost a whole unit: the units queued behind it reference a
+                // picture that will never arrive, so they are discarded on the decode thread before
+                // the next one is applied, and the session waits for the join point the loss
+                // tracker asked for.
+                try {
+                    mDecodeExecutor.execute(() -> {
+                        if (mIsStopped) {
+                            return;
+                        }
+                        mCatchUpGeneration.incrementAndGet();
+                        receiver.getSession().onCatchUp();
+                    });
+                } catch (RejectedExecutionException e) {
+                    Log.w(mTag, "media channel: decode queue full, dropping the catch-up");
+                }
             }
         };
     }

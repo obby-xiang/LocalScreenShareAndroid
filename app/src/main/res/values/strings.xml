@@ -79,6 +79,8 @@
     <string name="video_settings_rebuild_hint">"Changing the screen size, frame rate or key-frame interval rebuilds the encoder; the picture may pause briefly and resynchronize."</string>
     <string name="video_settings_frame_rate_note">"Rates above 60 fps require encoder support on this device."</string>
     <string name="video_settings_codec_note">"Applies the next time sharing starts. JPEG is a compatibility mode: any device can display it, but it costs more CPU and bandwidth than H.264."</string>
+    <string name="media_udp_setting_label">"Experimental UDP channel"</string>
+    <string name="media_udp_setting_note">"Weak-network experiment, off by default. When it is on, a share first tries a UDP media channel and falls back to TCP or the standard stream automatically. Picture quality on a congested network can suffer."</string>
     <string name="thermal_throttle_setting_label">"Reduce load when hot"</string>
     <string name="thermal_throttle_setting_note">"Lowers the frame rate when the device reports a severe thermal status and halves the screen size at a critical one. Your video settings come back once the device cools down."</string>
     <string name="service_notification_thermal_reduced">"Thermal limit: <xliff:g id="fps">%1$d</xliff:g> fps"</string>

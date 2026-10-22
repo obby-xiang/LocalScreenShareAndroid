@@ -80,6 +80,41 @@ public class MediaChannelNegotiatorTest {
     }
 
     @Test
+    public void datagramOffer_carriesItsPortTokenAndKeys() {
+        List<MediaChannelOffer> offers = new ArrayList<>();
+        MediaChannelNegotiator negotiator = new MediaChannelNegotiator(
+                MediaTransportPolicy.Mode.UDP, true, offers::add, new MutableClock(),
+                new MediaChannelEndpoint("10.0.0.5", 9100, 9200, true));
+
+        assertTrue(negotiator.offer(MediaTransportKind.UDP, "device-1"));
+
+        MediaChannelOffer offer = offers.get(0);
+        assertEquals(MediaTransportKind.UDP, offer.getTransport());
+        assertEquals(9200, offer.getPort());
+        assertEquals(32, offer.getKeyS2c().length);
+        assertEquals(32, offer.getKeyC2s().length);
+        assertEquals(4, offer.getNonceSalt().length);
+        assertEquals(1400, offer.getMtu());
+        assertEquals(10, offer.getHoldMs());
+        assertNotNull(negotiator.getOfferedKeys());
+        assertEquals(32, negotiator.getOfferedKeys().getKeyS2c().length);
+    }
+
+    @Test
+    public void streamOffer_hasNoKeys() {
+        List<MediaChannelOffer> offers = new ArrayList<>();
+        MediaChannelNegotiator negotiator = new MediaChannelNegotiator(
+                MediaTransportPolicy.Mode.TCP, true, offers::add, new MutableClock(),
+                new MediaChannelEndpoint("10.0.0.5", 9100, 9200, true));
+
+        assertTrue(negotiator.offer(MediaTransportKind.TCP, null));
+
+        assertEquals(9100, offers.get(0).getPort());
+        assertTrue(offers.get(0).getKeyS2c().length == 0);
+        assertNull(negotiator.getOfferedKeys());
+    }
+
+    @Test
     public void offer_windowExpiresOnTheStreamTimeout() {
         MutableClock clock = new MutableClock(1_000L);
         MediaChannelNegotiator negotiator = negotiator(MediaTransportPolicy.Mode.TCP, true, clock);

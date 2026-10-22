@@ -115,11 +115,17 @@ public class MediaTransportPolicyTest {
     }
 
     @Test
-    public void allowsUdp_isOnlyTrueForTheExplicitDatagramMode() {
-        assertFalse(MediaTransportPolicy.allowsUdp(null));
-        assertFalse(MediaTransportPolicy.allowsUdp(MediaTransportPolicy.Mode.AUTO));
-        assertFalse(MediaTransportPolicy.allowsUdp(MediaTransportPolicy.Mode.TCP));
-        assertTrue(MediaTransportPolicy.allowsUdp(MediaTransportPolicy.Mode.UDP));
+    public void allowsUdp_followsTheExplicitSettingFirst() {
+        assertFalse(MediaTransportPolicy.allowsUdp(null, false));
+        assertFalse(MediaTransportPolicy.allowsUdp(MediaTransportPolicy.Mode.TCP, true));
+        assertFalse(MediaTransportPolicy.allowsUdp(MediaTransportPolicy.Mode.GRPC, true));
+        assertTrue(MediaTransportPolicy.allowsUdp(MediaTransportPolicy.Mode.UDP, false));
+    }
+
+    @Test
+    public void allowsUdp_inAutoMode_followsTheUserSwitch() {
+        assertFalse(MediaTransportPolicy.allowsUdp(MediaTransportPolicy.Mode.AUTO, false));
+        assertTrue(MediaTransportPolicy.allowsUdp(MediaTransportPolicy.Mode.AUTO, true));
     }
 
     private static Set<String> offered(String... names) {

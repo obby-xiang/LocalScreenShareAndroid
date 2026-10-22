@@ -1,5 +1,6 @@
 package com.obby.android.localscreenshare.transport;
 
+import com.obby.android.localscreenshare.core.net.DatagramKeys;
 import com.obby.android.localscreenshare.core.net.MediaChannelTicket;
 import com.obby.android.localscreenshare.core.stream.MediaTransport;
 
@@ -32,4 +33,16 @@ public interface MediaChannelTicketAuthority {
      * @param transport    established channel; never null
      */
     void onChannelEstablished(String channelIdHex, MediaTransport transport);
+
+    /**
+     * Returns the datagram keys of an outstanding channel.
+     *
+     * <p>The socket that accepts a bind needs the client-to-server key to authenticate it, and the
+     * key only exists while the offer is outstanding; a channel that is not a datagram channel, or
+     * no longer outstanding, returns null.</p>
+     *
+     * @param channelIdHex channel id in lowercase hexadecimal; may be null
+     * @return the keys, or null
+     */
+    DatagramKeys udpKeysFor(String channelIdHex);
 }

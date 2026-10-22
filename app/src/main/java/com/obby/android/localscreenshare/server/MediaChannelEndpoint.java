@@ -1,5 +1,7 @@
 package com.obby.android.localscreenshare.server;
 
+import com.obby.android.localscreenshare.core.net.MediaTransportKind;
+
 /**
  * Where a media channel of this sharing session can be reached, or that it cannot be reached at
  * all.
@@ -13,21 +15,36 @@ public final class MediaChannelEndpoint {
 
     private final String host;
 
-    private final int port;
+    private final int tcpPort;
+
+    private final int udpPort;
 
     private final boolean secure;
 
     /**
-     * Creates an endpoint.
+     * Creates an endpoint with a stream channel only.
      *
      * @param host   address to advertise, or an empty string to mean "the address the control
      *               plane is already using"
-     * @param port   bound port, or zero when no listener is running
-     * @param secure whether the channel is TLS
+     * @param port   bound stream port, or zero when no listener is running
+     * @param secure whether the stream channel is TLS
      */
     public MediaChannelEndpoint(String host, int port, boolean secure) {
+        this(host, port, 0, secure);
+    }
+
+    /**
+     * Creates an endpoint with both channels.
+     *
+     * @param host       address to advertise, or an empty string for the control-plane address
+     * @param tcpPort    bound stream port, or zero
+     * @param udpPort    bound datagram port, or zero
+     * @param secure     whether the stream channel is TLS
+     */
+    public MediaChannelEndpoint(String host, int tcpPort, int udpPort, boolean secure) {
         this.host = host == null ? "" : host;
-        this.port = port;
+        this.tcpPort = tcpPort;
+        this.udpPort = udpPort;
         this.secure = secure;
     }
 
@@ -46,10 +63,32 @@ public final class MediaChannelEndpoint {
     }
 
     /**
-     * Returns the bound port, or zero when no listener is running.
+     * Returns the bound stream port, or zero when no stream listener is running.
      */
     public int getPort() {
-        return port;
+        return tcpPort;
+    }
+
+    /**
+     * Returns the bound datagram port, or zero when no datagram listener is running.
+     */
+    public int getUdpPort() {
+        return udpPort;
+    }
+
+    /**
+     * Returns the port of one channel, or zero when that channel has no listener.
+     *
+     * @param kind channel to ask for; a null kind returns zero
+     */
+    public int getPort(MediaTransportKind kind) {
+        if (kind == MediaTransportKind.TCP) {
+            return tcpPort;
+        }
+        if (kind == MediaTransportKind.UDP) {
+            return udpPort;
+        }
+        return 0;
     }
 
     /**
@@ -60,9 +99,18 @@ public final class MediaChannelEndpoint {
     }
 
     /**
-     * Returns whether a channel can be offered on this endpoint.
+     * Returns whether a stream channel can be offered on this endpoint.
      */
     public boolean isAvailable() {
-        return port > 0;
+        return tcpPort > 0;
+    }
+
+    /**
+     * Returns whether the given channel can be offered on this endpoint.
+     *
+     * @param kind channel to ask for
+     */
+    public boolean isAvailable(MediaTransportKind kind) {
+        return getPort(kind) > 0;
     }
 }

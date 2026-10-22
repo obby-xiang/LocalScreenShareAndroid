@@ -1,13 +1,17 @@
 package com.obby.android.localscreenshare.server;
 
+import com.obby.android.localscreenshare.core.net.AccessUnitReassembler;
+import com.obby.android.localscreenshare.core.net.DatagramKeys;
 import com.obby.android.localscreenshare.core.net.MediaChannelOffer;
 import com.obby.android.localscreenshare.core.net.MediaChannelTicket;
 import com.obby.android.localscreenshare.core.net.MediaTransportKind;
 import com.obby.android.localscreenshare.core.net.MediaTransportPolicy;
 import com.obby.android.localscreenshare.core.util.TimeSource;
+import com.obby.android.localscreenshare.core.net.UdpMediaPacketCodec;
 import com.obby.android.localscreenshare.transport.TcpMediaConstants;
 import com.obby.android.localscreenshare.transport.UdpMediaConstants;
 
+import java.security.SecureRandom;
 import java.util.Set;
 
 /**
@@ -47,6 +51,9 @@ public final class MediaChannelNegotiator {
     private MediaChannelTicket ticket;
 
     private MediaTransportKind offeredKind;
+
+    // Keys of the outstanding datagram offer, or null while no datagram channel is outstanding.
+    private DatagramKeys offeredKeys;
 
     private long offerDeadlineMs;
 
@@ -140,25 +147,34 @@ public final class MediaChannelNegotiator {
      */
     public boolean offer(MediaTransportKind kind, String peerDeviceId) {
         revoke();
-        if (kind == null || kind == MediaTransportKind.GRPC || !endpoint.isAvailable()) {
+        if (kind == null || kind == MediaTransportKind.GRPC || !endpoint.isAvailable(kind)) {
             return false;
         }
         long nowMs = timeSource.nowMs();
         MediaChannelTicket issued = MediaChannelTicket.issue(kind, peerDeviceId, nowMs);
-        MediaChannelOffer offer = MediaChannelOffer
+        DatagramKeys keys = kind == MediaTransportKind.UDP
+                ? DatagramKeys.generate(RandomHolder.INSTANCE) : null;
+        MediaChannelOffer.Builder builder = MediaChannelOffer
                 .builder(issued.getChannelId(), kind)
                 .host(endpoint.getHost())
-                .port(endpoint.getPort())
-                .secure(endpoint.isSecure())
-                .token(issued.getToken())
-                .build();
+                .port(endpoint.getPort(kind))
+                .secure(kind == MediaTransportKind.TCP && endpoint.isSecure())
+                .token(issued.getToken());
+        if (keys != null) {
+            builder.keyS2c(keys.getKeyS2c())
+                    .keyC2s(keys.getKeyC2s())
+                    .nonceSalt(keys.getNonceSalt())
+                    .mtu(UdpMediaPacketCodec.MAX_DATAGRAM_BYTES)
+                    .holdMs((int) AccessUnitReassembler.HOLD_UP_MS);
+        }
         try {
-            offerTarget.sendOffer(offer);
+            offerTarget.sendOffer(builder.build());
         } catch (RuntimeException e) {
             return false;
         }
         ticket = issued;
         offeredKind = kind;
+        offeredKeys = keys;
         offerDeadlineMs = nowMs + offerTimeoutMs(kind);
         return true;
     }
@@ -197,12 +213,35 @@ public final class MediaChannelNegotiator {
     }
 
     /**
+     * Returns the keys of the outstanding datagram offer, or null when the offer is not a datagram
+     * one or nothing is outstanding.
+     *
+     * <p>The bind listener needs them while the offer is open, and the call's registry entry is
+     * what keeps them reachable.</p>
+     */
+    public DatagramKeys getOfferedKeys() {
+        return offeredKeys;
+    }
+
+    /**
      * Drops the outstanding ticket so its token can never be consumed; idempotent.
      */
     public void revoke() {
         ticket = null;
         offeredKind = null;
+        offeredKeys = null;
         offerDeadlineMs = 0L;
+    }
+
+    /**
+     * Holds the one secure random source of this process.
+     */
+    private static final class RandomHolder {
+
+        private static final SecureRandom INSTANCE = new SecureRandom();
+
+        private RandomHolder() {
+        }
     }
 
     /**

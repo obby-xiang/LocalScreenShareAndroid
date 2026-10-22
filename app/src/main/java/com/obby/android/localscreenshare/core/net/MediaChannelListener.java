@@ -47,4 +47,15 @@ public interface MediaChannelListener {
      * @param reason short English description of the failure; never null
      */
     void onChannelFailed(String reason);
+
+    /**
+     * Asks the receiver to abandon what it has queued and resume at a join point.
+     *
+     * <p>A datagram channel reports this when it had to drop a whole access unit, because the units
+     * that reference it decode into garbage. The receiver runs it on the same thread that applies
+     * access units, so the queued ones are discarded before the next unit is applied. A channel
+     * whose transport cannot lose data never calls it.</p>
+     */
+    default void onCatchUp() {
+    }
 }

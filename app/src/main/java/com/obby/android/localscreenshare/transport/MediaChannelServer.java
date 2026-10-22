@@ -1,8 +1,12 @@
 package com.obby.android.localscreenshare.transport;
 
+import com.obby.android.localscreenshare.core.metrics.PipelineMetrics;
+import com.obby.android.localscreenshare.core.net.DatagramCipher;
+import com.obby.android.localscreenshare.core.net.DatagramKeys;
 import com.obby.android.localscreenshare.core.net.MediaChannelHandshake;
 import com.obby.android.localscreenshare.core.net.MediaChannelTicket;
 import com.obby.android.localscreenshare.core.net.MediaTransportKind;
+import com.obby.android.localscreenshare.core.net.UdpBindPacket;
 import com.obby.android.localscreenshare.core.util.TimeSource;
 import com.obby.android.localscreenshare.identity.SpkiId;
 
@@ -11,6 +15,8 @@ import org.apache.commons.lang3.concurrent.BasicThreadFactory;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
@@ -18,6 +24,8 @@ import java.security.cert.Certificate;
 import java.security.cert.X509Certificate;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -50,6 +58,13 @@ import javax.net.ssl.SSLSocket;
  *
  * <p><b>One channel per call.</b> A second socket for the same channel is refused as busy; the
  * registry hands the first one out and forgets it, which is what makes the ticket single use.</p>
+ *
+ * <p><b>Datagram listener.</b> One datagram socket per session carries every datagram channel, so
+ * it is bound next to the stream port and lives just as long. The only datagrams it receives are
+ * binds: the client announces the channel id in the clear, the keys of that channel authenticate
+ * the token of the offer, and the source address becomes the address of the channel. An unknown
+ * channel id, a missing key, a replayed token or a second bind for an already bound channel are all
+ * dropped before anything is sent, which is why a forged bind cannot steal a channel.</p>
  */
 public final class MediaChannelServer {
 
@@ -64,7 +79,12 @@ public final class MediaChannelServer {
 
     private final TimeSource timeSource;
 
+    private final PipelineMetrics metrics;
+
     private final List<TcpMediaTransport> channels = new CopyOnWriteArrayList<>();
+
+    // Datagram channels by their channel id; also the address filter of the bind listener.
+    private final Map<String, UdpMediaTransport> datagramChannels = new ConcurrentHashMap<>();
 
     private final ExecutorService connectionExecutor = Executors.newCachedThreadPool(
             new BasicThreadFactory.Builder().namingPattern("lss-media-rx-%d").build());
@@ -78,8 +98,12 @@ public final class MediaChannelServer {
 
     private int port;
 
+    private DatagramSocket datagramSocket;
+
+    private int udpPort;
+
     /**
-     * Creates a listener that has not bound a port yet.
+     * Creates a listener that has not bound a port yet and counts no datagrams.
      *
      * @param serverContext TLS context of the media channel, or null to serve the plaintext debug
      *                      transport
@@ -89,15 +113,35 @@ public final class MediaChannelServer {
      */
     public MediaChannelServer(SSLContext serverContext, MediaChannelTicketAuthority authority,
                               TimeSource timeSource) {
+        this(serverContext, authority, timeSource, PipelineMetrics.NONE);
+    }
+
+    /**
+     * Creates a listener that counts the fragments it sends on datagram channels.
+     *
+     * @param serverContext TLS context of the media channel, or null to serve the plaintext debug
+     *                      transport
+     * @param authority     lookup of the outstanding offers; required
+     * @param timeSource    clock used by the watchdog; required
+     * @param metrics       scope that counts sent fragments; required, may be
+     *                      {@link PipelineMetrics#NONE}
+     * @throws IllegalArgumentException if a required argument is null
+     */
+    public MediaChannelServer(SSLContext serverContext, MediaChannelTicketAuthority authority,
+                              TimeSource timeSource, PipelineMetrics metrics) {
         if (authority == null) {
             throw new IllegalArgumentException("authority must not be null");
         }
         if (timeSource == null) {
             throw new IllegalArgumentException("timeSource must not be null");
         }
+        if (metrics == null) {
+            throw new IllegalArgumentException("metrics must not be null");
+        }
         this.serverContext = serverContext;
         this.authority = authority;
         this.timeSource = timeSource;
+        this.metrics = metrics;
     }
 
     /**
@@ -108,20 +152,50 @@ public final class MediaChannelServer {
      * @throws IOException if neither the preferred nor an ephemeral port can be bound
      */
     public int start(int preferredPort) throws IOException {
+        return start(preferredPort, preferredPort);
+    }
+
+    /**
+     * Binds both listeners.
+     *
+     * <p>The stream listener is mandatory - without it no channel can be offered - while the
+     * datagram listener is best effort: a session whose datagram port is taken simply offers the
+     * stream channel and the carrier.</p>
+     *
+     * @param preferredStreamPort   stream port to try first; zero binds an ephemeral port
+     * @param preferredDatagramPort datagram port to try first; zero binds an ephemeral port
+     * @return the stream port the listener actually bound
+     * @throws IOException if neither the preferred nor an ephemeral stream port can be bound
+     */
+    public int start(int preferredStreamPort, int preferredDatagramPort) throws IOException {
         ServerSocket bound;
         try {
-            bound = bind(preferredPort);
+            bound = bind(preferredStreamPort);
         } catch (IOException preferredFailure) {
             bound = bind(0);
         }
         serverSocket = bound;
         port = bound.getLocalPort();
+        datagramSocket = bindDatagram(preferredDatagramPort);
+        udpPort = datagramSocket == null ? 0 : datagramSocket.getLocalPort();
         running = true;
         Thread accept = new Thread(this::acceptLoop, "lss-media-accept");
         accept.setDaemon(true);
         accept.start();
         watchdogExecutor.execute(this::watchdogLoop);
+        if (datagramSocket != null) {
+            Thread datagrams = new Thread(this::datagramLoop, "lss-media-udp");
+            datagrams.setDaemon(true);
+            datagrams.start();
+        }
         return port;
+    }
+
+    /**
+     * Returns the bound datagram port, or zero when no datagram listener is running.
+     */
+    public int getUdpPort() {
+        return udpPort;
     }
 
     /**
@@ -142,6 +216,15 @@ public final class MediaChannelServer {
             transport.close();
         }
         channels.clear();
+        DatagramSocket datagrams = datagramSocket;
+        datagramSocket = null;
+        if (datagrams != null) {
+            datagrams.close();
+        }
+        for (UdpMediaTransport transport : datagramChannels.values()) {
+            transport.close();
+        }
+        datagramChannels.clear();
         connectionExecutor.shutdownNow();
         watchdogExecutor.shutdownNow();
     }
@@ -165,6 +248,101 @@ public final class MediaChannelServer {
      */
     public int getChannelCount() {
         return channels.size();
+    }
+
+    /**
+     * Binds the datagram socket, or returns null when no port is available.
+     */
+    private DatagramSocket bindDatagram(int requestedPort) {
+        for (int attempt = 0; attempt < 2; attempt++) {
+            int candidate = attempt == 0 ? requestedPort : 0;
+            try {
+                DatagramSocket socket = new DatagramSocket(null);
+                socket.setReuseAddress(true);
+                socket.bind(new InetSocketAddress(candidate));
+                return socket;
+            } catch (IOException | RuntimeException e) {
+                // Try the ephemeral port next; a session without datagrams is supported.
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Accepts binds on the datagram socket until the listener stops.
+     */
+    private void datagramLoop() {
+        byte[] buffer = new byte[UdpBindPacket.BIND_BYTES + UdpMediaConstants.RECEIVE_SLACK_BYTES];
+        while (running) {
+            DatagramSocket socket = datagramSocket;
+            if (socket == null) {
+                return;
+            }
+            DatagramPacket datagram = new DatagramPacket(buffer, buffer.length);
+            try {
+                socket.receive(datagram);
+            } catch (IOException e) {
+                if (running) {
+                    continue;
+                }
+                return;
+            }
+            try {
+                handleBind(datagram);
+            } catch (RuntimeException e) {
+                // A single malformed bind must never stop the listener.
+            }
+        }
+    }
+
+    /**
+     * Binds one datagram channel to the call that offered it, or drops the packet.
+     */
+    private void handleBind(DatagramPacket datagram) {
+        byte[] bytes = new byte[datagram.getLength()];
+        System.arraycopy(datagram.getData(), datagram.getOffset(), bytes, 0, bytes.length);
+        byte[] channelId = UdpBindPacket.peekChannelId(bytes);
+        if (channelId == null) {
+            return;
+        }
+        StringBuilder hex = new StringBuilder(channelId.length * 2);
+        for (byte value : channelId) {
+            hex.append(Character.forDigit((value >> 4) & 0x0f, 16));
+            hex.append(Character.forDigit(value & 0x0f, 16));
+        }
+        String channelIdHex = hex.toString();
+        if (datagramChannels.containsKey(channelIdHex)) {
+            // One channel per call: a second bind, whatever its source, is dropped.
+            return;
+        }
+        DatagramKeys keys = authority.udpKeysFor(channelIdHex);
+        if (keys == null) {
+            // Unknown or already bound channel: dropped before any decryption.
+            return;
+        }
+        DatagramCipher cipher = new DatagramCipher(keys.getKeyC2s(), keys.getNonceSalt());
+        UdpBindPacket.BindRequest request;
+        try {
+            request = UdpBindPacket.decode(bytes, cipher);
+        } catch (IOException e) {
+            return;
+        }
+        MediaChannelTicket ticket = authority.ticketFor(channelIdHex);
+        if (ticket == null || ticket.isConsumed() || ticket.isExpired(timeSource.nowMs())) {
+            return;
+        }
+        if (!ticket.consume(request.getToken(), timeSource.nowMs())) {
+            return;
+        }
+        InetSocketAddress source = new InetSocketAddress(datagram.getAddress(), datagram.getPort());
+        DatagramCipher s2c = new DatagramCipher(keys.getKeyS2c(), keys.getNonceSalt());
+        DatagramSocket socket = datagramSocket;
+        if (socket == null) {
+            return;
+        }
+        UdpMediaTransport transport = new UdpMediaTransport(socket, source, s2c, metrics);
+        datagramChannels.put(channelIdHex, transport);
+        authority.onChannelEstablished(channelIdHex, transport);
     }
 
     private ServerSocket bind(int requestedPort) throws IOException {

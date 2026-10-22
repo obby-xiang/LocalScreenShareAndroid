@@ -23,6 +23,7 @@ import androidx.core.content.ContextCompat;
 import com.obby.android.localscreenshare.authorization.AuthorizationGate;
 import com.obby.android.localscreenshare.core.audio.AudioHub;
 import com.obby.android.localscreenshare.core.codec.CodecRegistry;
+import com.obby.android.localscreenshare.core.metrics.PipelineMetrics;
 import com.obby.android.localscreenshare.core.model.ClientSessionKey;
 import com.obby.android.localscreenshare.core.net.MediaTransportPolicy;
 import com.obby.android.localscreenshare.core.stream.SessionSnapshot;
@@ -401,6 +402,10 @@ public final class ScreenShareServer {
     // Outstanding channel offers of this session, shared by its calls; null when unavailable.
     private MediaChannelRegistry mMediaChannelRegistry;
 
+    // Metric scope of the session's pipeline; datagram transports count their fragments here.
+    @NonNull
+    private PipelineMetrics mMetrics = PipelineMetrics.NONE;
+
     // True when the gRPC port is served over TLS; advertised as the discovery secure flag.
     private volatile boolean mTransportSecure = true;
 
@@ -708,6 +713,20 @@ public final class ScreenShareServer {
         mDeviceStore = deviceStore;
     }
 
+    /**
+     * Binds the session's metric scope, so transport-level counters reach the same line as the
+     * encoder and the send sessions.
+     *
+     * @param metrics scope of this session; required
+     * @throws IllegalArgumentException if {@code metrics} is null
+     */
+    public void setMetrics(@NonNull final PipelineMetrics metrics) {
+        if (metrics == null) {
+            throw new IllegalArgumentException("metrics must not be null");
+        }
+        mMetrics = metrics;
+    }
+
     // Builds and binds the gRPC server. TLS material is loaded here, never in a field initializer:
     // opening the key store during construction is the pattern that crashed startup before (D-1).
     private void startGrpcServer() throws IOException {
@@ -766,8 +785,9 @@ public final class ScreenShareServer {
                         TlsPinStore.get());
             }
             final MediaChannelServer server = new MediaChannelServer(context,
-                    mMediaChannelRegistry, TimeSource.MONOTONIC);
-            final int port = server.start(Preferences.get().getServerPort() + 1);
+                    mMediaChannelRegistry, TimeSource.MONOTONIC, mMetrics);
+            final int port = server.start(Preferences.get().getServerPort() + 1,
+                    Preferences.get().getServerPort());
             mMediaChannelServer = server;
             Log.i(mTag, "media channel: listening, port = " + port + ", secure = "
                     + !isPlaintext);
@@ -790,7 +810,8 @@ public final class ScreenShareServer {
         if (server == null || !server.isRunning()) {
             return MediaChannelEndpoint.unavailable();
         }
-        return new MediaChannelEndpoint("", server.getPort(), mTransportSecure);
+        return new MediaChannelEndpoint("", server.getPort(), server.getUdpPort(),
+                mTransportSecure);
     }
 
     @NonNull
@@ -1342,8 +1363,9 @@ public final class ScreenShareServer {
             final MediaTransportPolicy.Mode mediaMode = MediaTransportPolicy.Mode.parse(
                 Preferences.get().getMediaTransport());
             final MediaChannelNegotiator mediaNegotiator = new MediaChannelNegotiator(mediaMode,
-                    MediaTransportPolicy.allowsUdp(mediaMode), transport::sendMediaOffer,
-                    TimeSource.MONOTONIC, mediaChannelEndpoint());
+                    MediaTransportPolicy.allowsUdp(mediaMode,
+                            Preferences.get().isMediaUdpEnabled()),
+                    transport::sendMediaOffer, TimeSource.MONOTONIC, mediaChannelEndpoint());
             final StreamCallHandler handler = new StreamCallHandler(mStreamHub, mStreamRuntime,
                     transport, mStreamCallListener, remoteAddress, transport::sendPong, peer,
                     mAudioHub, transport, mAuthorizationGate, transport::sendApprovalPending,

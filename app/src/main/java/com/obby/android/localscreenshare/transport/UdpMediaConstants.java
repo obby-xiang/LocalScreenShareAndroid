@@ -17,6 +17,25 @@ public final class UdpMediaConstants {
      */
     public static final long OFFER_TIMEOUT_MS = 1_000L;
 
+    /**
+     * How long the client waits for the first datagram of a bound channel, in milliseconds.
+     *
+     * <p>A datagram channel has no acknowledgement of its own: the first datagram that arrives is
+     * the proof that the bind reached the server, so a silent socket means the bind was lost and
+     * the call falls back.</p>
+     */
+    public static final long BIND_TIMEOUT_MS = 300L;
+
+    /**
+     * Datagram size the client expects when the offer names none, in bytes.
+     */
+    public static final int DEFAULT_MTU = 1400;
+
+    /**
+     * Headroom of the receive buffer beyond the offered datagram size, in bytes.
+     */
+    public static final int RECEIVE_SLACK_BYTES = 512;
+
     private UdpMediaConstants() {
     }
 }

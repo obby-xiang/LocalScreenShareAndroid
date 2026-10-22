@@ -10,6 +10,7 @@ import com.obby.android.localscreenshare.core.model.StreamKey;
 import com.obby.android.localscreenshare.core.model.StreamParameters;
 import com.obby.android.localscreenshare.core.net.MediaChannelListener;
 import com.obby.android.localscreenshare.core.net.MediaChannelOffer;
+import com.obby.android.localscreenshare.core.net.MediaChannelStatusListener;
 import com.obby.android.localscreenshare.core.net.MediaTransportKind;
 import com.obby.android.localscreenshare.core.net.MediaTransportPolicy;
 import com.obby.android.localscreenshare.core.stream.StreamHub;
@@ -27,6 +28,7 @@ import com.obby.android.localscreenshare.grpc.screenstream.MediaChannelEventType
 import com.obby.android.localscreenshare.identity.tls.TlsMaterial;
 import com.obby.android.localscreenshare.transport.MediaChannelServer;
 import com.obby.android.localscreenshare.transport.MediaTlsFactory;
+import com.obby.android.localscreenshare.transport.UdpMediaReceiver;
 import com.obby.android.localscreenshare.transport.TcpMediaReceiver;
 import com.obby.android.localscreenshare.trust.TlsPin;
 import com.obby.android.localscreenshare.trust.TlsPinLookup;
@@ -132,6 +134,60 @@ public class MediaChannelNegotiationEndToEndTest {
         assertTrue(hasCarrierAccessUnit(fixture));
         assertEquals(ClientState.STREAMING, fixture.hub.getSession(CLIENT).getState());
         assertEquals("grpc", fixture.hub.getSession(CLIENT).snapshot().getChannel());
+    }
+
+    @Test
+    public void datagramChannelIsChosenFirstWhenTheTierIsEnabled() throws Exception {
+        Fixture fixture = fixture(MediaTransportPolicy.Mode.AUTO);
+        fixture.handler.onClientMessage(hello("tcp", "udp"));
+
+        assertEquals(1, fixture.offers.size());
+        assertEquals(MediaTransportKind.UDP, fixture.offers.get(0).getTransport());
+        assertEquals(fixture.mediaServer.getUdpPort(), fixture.offers.get(0).getPort());
+        assertEquals(32, fixture.offers.get(0).getKeyS2c().length);
+        assertEquals(32, fixture.offers.get(0).getKeyC2s().length);
+        assertEquals(4, fixture.offers.get(0).getNonceSalt().length);
+
+        UdpClientChannel channel = new UdpClientChannel(fixture, fixture.offers.get(0));
+        channel.start();
+        assertTrue("session did not move onto the datagram channel",
+                awaitChannelKind(fixture, MediaTransportKind.UDP));
+        assertEquals("udp", fixture.hub.getSession(CLIENT).snapshot().getChannel());
+
+        fixture.codec.emitJoin(new byte[]{0x71});
+        drainUntil(fixture, channel::hasAccessUnit);
+        assertTrue(channel.hasAccessUnit());
+        assertEquals(ClientState.STREAMING, fixture.hub.getSession(CLIENT).getState());
+
+        // Killing the listener closes the datagram transport; the next send fails and falls back.
+        mServer.stop();
+        mServer = null;
+        long deadline = System.currentTimeMillis() + TIMEOUT_MS;
+        while (System.currentTimeMillis() < deadline
+                && fixture.handler.getMediaChannelPhase()
+                        != StreamCallHandler.MediaChannelPhase.GRPC) {
+            fixture.codec.emitJoin(new byte[]{0x72});
+            fixture.handler.drainOnce();
+            Thread.sleep(5L);
+        }
+        assertEquals(StreamCallHandler.MediaChannelPhase.GRPC,
+                fixture.handler.getMediaChannelPhase());
+        assertFalse(fixture.handler.isClosed());
+        drainUntil(fixture, () -> {
+            fixture.codec.emitJoin(new byte[]{0x73});
+            return hasCarrierAccessUnit(fixture);
+        });
+        assertTrue(hasCarrierAccessUnit(fixture));
+        assertEquals("grpc", fixture.hub.getSession(CLIENT).snapshot().getChannel());
+        channel.close();
+    }
+
+    @Test
+    public void datagramTierOffKeepsTheDatagramChannelOutOfTheCandidates() throws Exception {
+        Fixture fixture = fixture(MediaTransportPolicy.Mode.TCP);
+        fixture.handler.onClientMessage(hello("tcp", "udp"));
+
+        assertEquals(MediaTransportKind.TCP, fixture.offers.get(0).getTransport());
     }
 
     @Test
@@ -248,6 +304,9 @@ public class MediaChannelNegotiationEndToEndTest {
 
         private final javax.net.ssl.SSLContext clientContext;
 
+        private final com.obby.android.localscreenshare.core.support.MutableNanoClock clock =
+                new com.obby.android.localscreenshare.core.support.MutableNanoClock();
+
         private final StreamCallHandler handler;
 
         private Fixture(MediaTransportPolicy.Mode mode) throws Exception {
@@ -278,8 +337,8 @@ public class MediaChannelNegotiationEndToEndTest {
                     serverMaterial.getDeviceId(), pins);
 
             MediaChannelNegotiator negotiator = new MediaChannelNegotiator(mode,
-                    MediaTransportPolicy.allowsUdp(mode), offers::add, TimeSource.MONOTONIC,
-                    new MediaChannelEndpoint("127.0.0.1", port, true));
+                    MediaTransportPolicy.allowsUdp(mode, true), offers::add, TimeSource.MONOTONIC,
+                    new MediaChannelEndpoint("127.0.0.1", port, mediaServer.getUdpPort(), true));
             handler = new StreamCallHandler(hub, runtime, transport, StreamCallListener.NO_OP,
                     null, PongTarget.NO_OP, null, null, null, null, null, negotiator, registry);
         }
@@ -292,6 +351,79 @@ public class MediaChannelNegotiationEndToEndTest {
                             .setReason(reason)
                             .build())
                     .build();
+        }
+    }
+
+    /**
+     * Minimal client of a datagram offer: binds and records what the channel delivered.
+     */
+    private static final class UdpClientChannel {
+
+        private final Fixture fixture;
+
+        private final MediaChannelOffer offer;
+
+        private final CountDownLatch ready = new CountDownLatch(1);
+
+        private final AtomicReference<String> failure = new AtomicReference<>();
+
+        private final java.util.List<EncodedAccessUnit> units =
+                java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+
+        private final UdpMediaReceiver receiver;
+
+        private volatile boolean closed;
+
+        private UdpClientChannel(Fixture fixture, MediaChannelOffer offer) {
+            this.fixture = fixture;
+            this.offer = offer;
+            this.receiver = new UdpMediaReceiver(STREAM_KEY, "127.0.0.1", offer,
+                    new MediaChannelListener() {
+                        @Override
+                        public void onDescriptor(StreamDescriptor descriptor, boolean secure) {
+                            // Datagram channels carry no descriptors.
+                        }
+
+                        @Override
+                        public void onAccessUnit(EncodedAccessUnit accessUnit, long arrivalNs) {
+                            units.add(accessUnit);
+                        }
+
+                        @Override
+                        public void onChannelFailed(String reason) {
+                            failure.compareAndSet(null, reason);
+                        }
+                    }, new MediaChannelStatusListener() {
+                        @Override
+                        public void onChannelReady() {
+                            ready.countDown();
+                            fixture.handler.onClientMessage(fixture.answer(
+                                    MediaChannelEventType.READY, offer.getChannelId(), ""));
+                        }
+
+                        @Override
+                        public void onChannelFailed(String reason) {
+                            failure.compareAndSet(null, reason);
+                        }
+                    }, fixture.clock, com.obby.android.localscreenshare.core.metrics
+                            .PipelineMetrics.NONE);
+        }
+
+        private void start() throws InterruptedException {
+            Thread thread = new Thread(receiver::start, "negotiation-udp-client");
+            thread.setDaemon(true);
+            thread.start();
+            assertTrue("datagram channel did not bind", ready.await(TIMEOUT_MS,
+                    TimeUnit.MILLISECONDS));
+        }
+
+        private boolean hasAccessUnit() {
+            return !units.isEmpty();
+        }
+
+        private void close() {
+            closed = true;
+            receiver.close();
         }
     }
 
@@ -321,7 +453,7 @@ public class MediaChannelNegotiationEndToEndTest {
             this.fixture = fixture;
             this.offer = offer;
             this.receiver = new TcpMediaReceiver(STREAM_KEY, "127.0.0.1", offer, this,
-                    new TcpMediaReceiver.StatusListener() {
+                    new MediaChannelStatusListener() {
                         @Override
                         public void onChannelReady() {
                             ready.countDown();

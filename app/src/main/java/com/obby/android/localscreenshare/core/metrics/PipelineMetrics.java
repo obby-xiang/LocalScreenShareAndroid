@@ -287,7 +287,47 @@ public final class PipelineMetrics {
         /**
          * Buffered audio frames the drift guard dropped because the audio ran behind the timeline.
          */
-        AUDIO_DRIFT_DROP
+        AUDIO_DRIFT_DROP,
+
+        /**
+         * Datagrams received on a media channel.
+         */
+        DATAGRAMS_RECEIVED,
+
+        /**
+         * Datagram sequence numbers the receiver never saw, as reported by its reorder window.
+         */
+        DATAGRAMS_LOST,
+
+        /**
+         * Datagrams the receiver already had.
+         */
+        DATAGRAMS_DUPLICATE,
+
+        /**
+         * Datagrams that arrived out of order but were still usable.
+         */
+        DATAGRAMS_REORDERED,
+
+        /**
+         * Access units abandoned because at least one fragment never arrived.
+         */
+        ACCESS_UNITS_INCOMPLETE,
+
+        /**
+         * Times a send session moved to a different media channel.
+         */
+        MEDIA_CHANNEL_SWITCHES,
+
+        /**
+         * Datagrams sent by a media channel, one per fragment of an access unit.
+         */
+        FRAGMENTS_SENT,
+
+        /**
+         * Datagrams refused by authentication.
+         */
+        MEDIA_AUTH_FAILURES
     }
 
     /**

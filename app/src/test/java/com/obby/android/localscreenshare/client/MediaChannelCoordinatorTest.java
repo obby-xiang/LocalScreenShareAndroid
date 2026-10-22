@@ -1,6 +1,7 @@
 package com.obby.android.localscreenshare.client;
 
 import com.obby.android.localscreenshare.core.net.MediaChannelOffer;
+import com.obby.android.localscreenshare.core.net.MediaChannelStatusListener;
 import com.obby.android.localscreenshare.core.net.MediaTransportKind;
 import com.obby.android.localscreenshare.grpc.screenstream.MediaChannelEvent;
 import com.obby.android.localscreenshare.grpc.screenstream.MediaChannelEventType;
@@ -85,7 +86,7 @@ public class MediaChannelCoordinatorTest {
         RecordingSink sink = new RecordingSink();
         MediaChannelCoordinator coordinator = coordinator(sink, new FakeLink(true, null));
 
-        coordinator.onOffer(offer(CHANNEL_ID, "udp"));
+        coordinator.onOffer(offer(CHANNEL_ID, "quic"));
 
         assertEquals(1, sink.events.size());
         assertEquals(MediaChannelEventType.FAILED, sink.events.get(0).getType());
@@ -271,7 +272,7 @@ public class MediaChannelCoordinatorTest {
 
         private final CountDownLatch released = new CountDownLatch(1);
 
-        private TcpMediaReceiver.StatusListener status;
+        private MediaChannelStatusListener status;
 
         private volatile boolean block;
 
@@ -294,7 +295,7 @@ public class MediaChannelCoordinatorTest {
             return released.await(2, TimeUnit.SECONDS);
         }
 
-        void attach(TcpMediaReceiver.StatusListener status) {
+        void attach(MediaChannelStatusListener status) {
             this.status = status;
         }
 

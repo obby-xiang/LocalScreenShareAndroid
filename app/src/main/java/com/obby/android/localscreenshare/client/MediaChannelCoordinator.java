@@ -7,7 +7,7 @@ import com.obby.android.localscreenshare.grpc.screenstream.MediaChannelEventType
 import com.obby.android.localscreenshare.grpc.screenstream.MediaClose;
 import com.obby.android.localscreenshare.grpc.screenstream.MediaOffer;
 import com.obby.android.localscreenshare.transport.MediaChannelOfferMapper;
-import com.obby.android.localscreenshare.transport.TcpMediaReceiver;
+import com.obby.android.localscreenshare.core.net.MediaChannelStatusListener;
 
 import java.util.HashMap;
 import java.util.HashSet;
@@ -75,7 +75,7 @@ public final class MediaChannelCoordinator {
          * @param status receiver of the channel outcome; never null
          * @return the channel, or null when this installation cannot build one
          */
-        MediaChannelLink create(MediaChannelOffer offer, TcpMediaReceiver.StatusListener status);
+        MediaChannelLink create(MediaChannelOffer offer, MediaChannelStatusListener status);
     }
 
     private final AnswerSink answerSink;
@@ -146,7 +146,7 @@ public final class MediaChannelCoordinator {
             closedSent = false;
             lastFailureReason = null;
         }
-        if (parsed == null || parsed.getTransport() != MediaTransportKind.TCP) {
+        if (parsed == null || !isChannelSupported(parsed.getTransport())) {
             answerFailed(channelIdHex, REASON_UNSUPPORTED);
             return;
         }
@@ -237,10 +237,21 @@ public final class MediaChannelCoordinator {
         };
     }
 
+    /**
+     * Returns whether this build can open the given transport.
+     *
+     * <p>The control plane is never offered - the call already runs on it - so it is the one
+     * unrecognised answer here; every unknown value is refused with a reason instead of being
+     * ignored, which is what lets the server move on quickly.</p>
+     */
+    private static boolean isChannelSupported(MediaTransportKind transport) {
+        return transport == MediaTransportKind.TCP || transport == MediaTransportKind.UDP;
+    }
+
     private void open(String channelIdHex, MediaChannelOffer offer) {
         final MediaChannelLink link;
         try {
-            link = channelFactory.create(offer, new TcpMediaReceiver.StatusListener() {
+            link = channelFactory.create(offer, new MediaChannelStatusListener() {
                 @Override
                 public void onChannelReady() {
                     answerReady(channelIdHex);

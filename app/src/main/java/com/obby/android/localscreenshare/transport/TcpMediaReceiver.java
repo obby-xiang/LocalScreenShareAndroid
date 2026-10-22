@@ -5,6 +5,7 @@ import com.obby.android.localscreenshare.core.model.StreamDescriptor;
 import com.obby.android.localscreenshare.core.model.StreamKey;
 import com.obby.android.localscreenshare.client.MediaChannelLink;
 import com.obby.android.localscreenshare.core.net.MediaChannelHandshake;
+import com.obby.android.localscreenshare.core.net.MediaChannelStatusListener;
 import com.obby.android.localscreenshare.core.net.MediaChannelListener;
 import com.obby.android.localscreenshare.core.net.MediaChannelOffer;
 import com.obby.android.localscreenshare.core.net.MediaFrame;
@@ -42,24 +43,6 @@ import javax.net.ssl.SSLSocket;
  */
 public final class TcpMediaReceiver implements MediaChannelLink {
 
-    /**
-     * Receiver of the lifecycle events of the channel, distinct from the media callbacks.
-     */
-    public interface StatusListener {
-
-        /**
-         * The channel is bound and will deliver frames from now on.
-         */
-        void onChannelReady();
-
-        /**
-         * The channel failed before delivering everything; reported at most once.
-         *
-         * @param reason short English description for logs
-         */
-        void onChannelFailed(String reason);
-    }
-
     private final StreamKey streamKey;
 
     private final String host;
@@ -68,7 +51,7 @@ public final class TcpMediaReceiver implements MediaChannelLink {
 
     private final MediaChannelListener listener;
 
-    private final StatusListener statusListener;
+    private final MediaChannelStatusListener statusListener;
 
     private final SSLContext sslContext;
 
@@ -97,7 +80,7 @@ public final class TcpMediaReceiver implements MediaChannelLink {
      * @throws IllegalArgumentException if a required argument is null
      */
     public TcpMediaReceiver(StreamKey streamKey, String host, MediaChannelOffer offer,
-                            MediaChannelListener listener, StatusListener statusListener,
+                            MediaChannelListener listener, MediaChannelStatusListener statusListener,
                             SSLContext sslContext) {
         if (streamKey == null) {
             throw new IllegalArgumentException("streamKey must not be null");

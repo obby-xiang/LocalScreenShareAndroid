@@ -1129,6 +1129,7 @@ public class ScreenShareService extends Service {
         // are invoked on the main thread. The discovery store is shared with the activity side so
         // Register-learned peers appear in the device list.
         final ScreenShareServer server = new ScreenShareServer(this);
+        server.setMetrics(mMetrics != null ? mMetrics : PipelineMetrics.NONE);
         server.setServerInfoListener(mServerInfoListener);
         server.setServerStatsListener(mServerStatsListener);
         server.setPeerTrustListener(new ScreenShareServer.PeerTrustListener() {

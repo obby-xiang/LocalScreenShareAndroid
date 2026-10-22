@@ -93,7 +93,12 @@ public final class UdpMediaPacketCodec {
      */
     public static final int VERSION = 1;
 
-    private static final int FLAG_VERSION = 1 << 6;
+    /**
+     * The version bits of the flag byte, as they appear on the wire.
+     */
+    public static final int VERSION_FLAGS = 1 << 6;
+
+    private static final int FLAG_VERSION = VERSION_FLAGS;
 
     private static final int FLAG_CONFIG = 1 << 5;
 

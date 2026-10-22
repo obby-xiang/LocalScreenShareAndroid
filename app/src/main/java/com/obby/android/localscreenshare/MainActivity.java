@@ -1871,6 +1871,16 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
+        // The datagram channel is opt-in: the switch decides whether an otherwise automatic
+        // negotiation may offer it, and an explicit media-transport setting still wins over it.
+        final MaterialSwitch mediaUdpSettingView =
+            settingsDialog.findViewById(R.id.media_udp_setting);
+        mediaUdpSettingView.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            if (Preferences.get().isMediaUdpEnabled() != isChecked) {
+                Preferences.get().setMediaUdpEnabled(isChecked);
+            }
+        });
+
         // Thermal throttling is a temporary override of the two sliders above, never a stored
         // video value, so it lives at the bottom of the sheet with its own explanation.
         final MaterialSwitch thermalThrottleSettingView =
@@ -1886,6 +1896,8 @@ public class MainActivity extends AppCompatActivity {
             applyVideoSettingsControls();
             thermalThrottleSettingView.setChecked(Preferences.get().isThermalThrottleEnabled());
             thermalThrottleSettingView.jumpDrawablesToCurrentState();
+            mediaUdpSettingView.setChecked(Preferences.get().isMediaUdpEnabled());
+            mediaUdpSettingView.jumpDrawablesToCurrentState();
         });
         settingsDialog.setOnDismissListener(dialog -> {
             mTrackingSliders.clear();

@@ -964,7 +964,8 @@ public final class StreamCallHandler {
         mediaKind = kind;
         mediaPhase = MediaChannelPhase.OFFERED;
         if (mediaRegistry != null) {
-            mediaRegistry.register(negotiator.getTicket(), this::onMediaChannelReady);
+            mediaRegistry.register(negotiator.getTicket(), negotiator.getOfferedKeys(),
+                    this::onMediaChannelReady);
         }
     }
 
@@ -992,7 +993,7 @@ public final class StreamCallHandler {
             return;
         }
         final MediaTransport previous = hub.swapTransportIfCurrent(sessionKey, session, channel,
-                MediaTransportKind.TCP);
+                null);
         if (previous == null) {
             // The session is gone or was taken over; this channel has nobody to carry.
             channel.close();
@@ -1000,7 +1001,9 @@ public final class StreamCallHandler {
         }
         activeMediaTransport = channel;
         mediaPhase = MediaChannelPhase.ACTIVE;
-        mediaKind = MediaTransportKind.TCP;
+        // The channel label comes from the transport itself, so the session row reports tcp or
+        // udp without the handler having to guess.
+        mediaKind = session.getTransportKind();
         if (previous != transport) {
             previous.close();
         }

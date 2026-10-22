@@ -8,6 +8,7 @@ import com.obby.android.localscreenshare.core.model.StreamDescriptor;
 import com.obby.android.localscreenshare.core.model.StreamKey;
 import com.obby.android.localscreenshare.core.net.MediaChannelHandshake;
 import com.obby.android.localscreenshare.core.net.MediaChannelListener;
+import com.obby.android.localscreenshare.core.net.MediaChannelStatusListener;
 import com.obby.android.localscreenshare.core.net.MediaChannelOffer;
 import com.obby.android.localscreenshare.core.net.MediaChannelTicket;
 import com.obby.android.localscreenshare.core.net.MediaTransportKind;
@@ -274,6 +275,12 @@ public class TcpMediaLoopbackTest {
         }
 
         @Override
+        public com.obby.android.localscreenshare.core.net.DatagramKeys udpKeysFor(
+                String channelIdHex) {
+            return null;
+        }
+
+        @Override
         public void onChannelEstablished(String channelIdHex, MediaTransport channel) {
             transport = channel;
             established.countDown();
@@ -329,7 +336,7 @@ public class TcpMediaLoopbackTest {
     /**
      * Records the lifecycle of the channel.
      */
-    private static final class RecordingStatus implements TcpMediaReceiver.StatusListener {
+    private static final class RecordingStatus implements MediaChannelStatusListener {
 
         private final CountDownLatch ready = new CountDownLatch(1);
 

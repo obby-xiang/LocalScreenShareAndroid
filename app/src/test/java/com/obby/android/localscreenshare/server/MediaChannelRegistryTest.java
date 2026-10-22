@@ -83,6 +83,34 @@ public class MediaChannelRegistryTest {
     }
 
     @Test
+    public void datagramKeys_travelWithTheOfferAndAreForgottenWithIt() {
+        MediaChannelRegistry registry = new MediaChannelRegistry();
+        MediaChannelTicket ticket = ticket(0x11);
+        com.obby.android.localscreenshare.core.net.DatagramKeys keys =
+                com.obby.android.localscreenshare.core.net.DatagramKeys.generate(
+                        new java.security.SecureRandom());
+        registry.register(ticket, keys, transport -> {
+        });
+
+        assertSame(keys, registry.udpKeysFor(ticket.getChannelIdHex()));
+        assertNull(registry.udpKeysFor("unknown"));
+
+        registry.revoke(ticket.getChannelIdHex());
+
+        assertNull(registry.udpKeysFor(ticket.getChannelIdHex()));
+    }
+
+    @Test
+    public void streamOffer_hasNoDatagramKeys() {
+        MediaChannelRegistry registry = new MediaChannelRegistry();
+        MediaChannelTicket ticket = ticket(0x11);
+        registry.register(ticket, transport -> {
+        });
+
+        assertNull(registry.udpKeysFor(ticket.getChannelIdHex()));
+    }
+
+    @Test
     public void register_rejectsMissingArguments() {
         MediaChannelRegistry registry = new MediaChannelRegistry();
 

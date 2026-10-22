@@ -211,6 +211,11 @@ public final class Preferences {
      */
     public static final String KEY_MEDIA_TRANSPORT = "media_transport";
 
+    /**
+     * Experimental datagram media channel; see {@link #isMediaUdpEnabled()}.
+     */
+    public static final String KEY_MEDIA_UDP_ENABLED = "media_udp_enabled";
+
     private static final String DEFAULT_MEDIA_TRANSPORT = "auto";
 
     private static final String KEY_IDENTITY_ID = "identity_id";
@@ -542,6 +547,24 @@ public final class Preferences {
      */
     public void setMediaTransport(@NonNull final String transport) {
         mPreferences.edit().putString(KEY_MEDIA_TRANSPORT, transport).commit();
+    }
+
+    /**
+     * Whether the experimental datagram media channel may be offered; defaults to false.
+     *
+     * <p>It is an opt-in on purpose: the tier trades reliability controls for latency, so a device
+     * that never enables it keeps negotiating exactly the channels it had before. Only the default
+     * {@code auto} path consults it; an explicit {@code media_transport} value wins.</p>
+     */
+    public boolean isMediaUdpEnabled() {
+        return mPreferences.getBoolean(KEY_MEDIA_UDP_ENABLED, false);
+    }
+
+    /**
+     * Persists the experimental datagram switch; it applies to calls that start afterwards.
+     */
+    public void setMediaUdpEnabled(final boolean isEnabled) {
+        mPreferences.edit().putBoolean(KEY_MEDIA_UDP_ENABLED, isEnabled).commit();
     }
 
     /**

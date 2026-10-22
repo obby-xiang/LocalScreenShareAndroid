@@ -1,5 +1,6 @@
 package com.obby.android.localscreenshare.server;
 
+import com.obby.android.localscreenshare.core.net.DatagramKeys;
 import com.obby.android.localscreenshare.core.net.MediaChannelTicket;
 import com.obby.android.localscreenshare.transport.MediaChannelTicketAuthority;
 import com.obby.android.localscreenshare.core.stream.MediaTransport;
@@ -33,13 +34,26 @@ public final class MediaChannelRegistry implements MediaChannelTicketAuthority {
      * @throws IllegalArgumentException if an argument is null
      */
     public void register(MediaChannelTicket ticket, MediaChannelReadyTarget target) {
+        register(ticket, null, target);
+    }
+
+    /**
+     * Registers the ticket of one offer together with the keys of a datagram channel.
+     *
+     * @param ticket ticket issued with the offer; required
+     * @param keys   datagram keys of a datagram offer, or null for a stream channel
+     * @param target receiver of the established channel; required
+     * @throws IllegalArgumentException if a required argument is null
+     */
+    public void register(MediaChannelTicket ticket, DatagramKeys keys,
+                         MediaChannelReadyTarget target) {
         if (ticket == null) {
             throw new IllegalArgumentException("ticket must not be null");
         }
         if (target == null) {
             throw new IllegalArgumentException("target must not be null");
         }
-        entries.put(ticket.getChannelIdHex(), new Entry(ticket, target));
+        entries.put(ticket.getChannelIdHex(), new Entry(ticket, keys, target));
     }
 
     /**
@@ -70,6 +84,15 @@ public final class MediaChannelRegistry implements MediaChannelTicketAuthority {
     }
 
     @Override
+    public DatagramKeys udpKeysFor(String channelIdHex) {
+        if (channelIdHex == null) {
+            return null;
+        }
+        Entry entry = entries.get(channelIdHex);
+        return entry == null ? null : entry.keys;
+    }
+
+    @Override
     public void onChannelEstablished(String channelIdHex, MediaTransport transport) {
         Entry entry = channelIdHex == null ? null : entries.remove(channelIdHex);
         if (entry == null) {
@@ -87,10 +110,14 @@ public final class MediaChannelRegistry implements MediaChannelTicketAuthority {
 
         private final MediaChannelTicket ticket;
 
+        private final DatagramKeys keys;
+
         private final MediaChannelReadyTarget target;
 
-        private Entry(MediaChannelTicket ticket, MediaChannelReadyTarget target) {
+        private Entry(MediaChannelTicket ticket, DatagramKeys keys,
+                      MediaChannelReadyTarget target) {
             this.ticket = ticket;
+            this.keys = keys;
             this.target = target;
         }
     }

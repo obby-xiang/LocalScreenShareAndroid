@@ -172,6 +172,23 @@
                 android:textColor="?attr/colorOnSurfaceVariant" />
 
             <com.google.android.material.materialswitch.MaterialSwitch
+                android:id="@+id/media_udp_setting"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="24dp"
+                android:text="@string/media_udp_setting_label"
+                android:textAppearance="?attr/textAppearanceBodyMedium"
+                android:textColor="?attr/colorOnSurface" />
+
+            <com.google.android.material.textview.MaterialTextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="@string/media_udp_setting_note"
+                android:textAppearance="?attr/textAppearanceBodySmall"
+                android:textColor="?attr/colorOnSurfaceVariant" />
+
+            <com.google.android.material.materialswitch.MaterialSwitch
                 android:id="@+id/thermal_throttle_setting"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"

@@ -116,15 +116,25 @@ public final class MediaTransportPolicy {
     }
 
     /**
-     * Returns whether {@code mode} selects the experimental datagram tier.
+     * Returns whether the datagram tier may be offered.
      *
-     * <p>In this build the tier has no user-facing switch yet, so only an explicit {@code udp}
-     * setting turns it on. A later batch adds the settings switch and passes its own gate here.</p>
+     * <p>The explicit settings win: {@code udp} turns the tier on, {@code tcp} and {@code grpc}
+     * turn it off. The default {@code auto} follows the user-facing switch of the server, which is
+     * off until the user opts into the experimental tier - so a device that never touches the
+     * setting keeps the behaviour it had before the tier existed.</p>
      *
-     * @param mode configured preference; null resolves to {@link Mode#AUTO}
+     * @param mode            configured preference; null resolves to {@link Mode#AUTO}
+     * @param udpTierEnabled  whether the user turned the experimental tier on
      */
-    public static boolean allowsUdp(Mode mode) {
-        return (mode == null ? Mode.AUTO : mode) == Mode.UDP;
+    public static boolean allowsUdp(Mode mode, boolean udpTierEnabled) {
+        Mode resolved = mode == null ? Mode.AUTO : mode;
+        if (resolved == Mode.UDP) {
+            return true;
+        }
+        if (resolved == Mode.TCP || resolved == Mode.GRPC) {
+            return false;
+        }
+        return udpTierEnabled;
     }
 
     /**
