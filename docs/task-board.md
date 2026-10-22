@@ -301,13 +301,19 @@
 </details>
 
 <a id="tb-core-001"></a>
-<details><summary>TB-CORE-001 正确性与资源清理（📋 待办）</summary>
+<details><summary>TB-CORE-001 正确性与资源清理（🔶 部分完成 · B1 已落地 · 2026-10-22）</summary>
 
-- **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🔴 P0 / 2026-10-17 / —
+- **状态 / 优先级 / 创建 / 完成**：🔶 部分完成 / 🔴 P0 / 2026-10-17 / —（B1 完成 2026-10-22）
 - **任务**：正确性与资源清理：幂等停止、单一生命周期所有者、线程池终止、缩短临界区、媒体路径移除 `CallerRunsPolicy`、resize 代次隔离、权限撤销降级、重连退避、IPv6 地址与 NSD 服务类型修正、服务名隐私。
-- **交付物 / 验证证据**：交付：代码改动与单元/仪器/压力测试。验证：阶段 1 的启动停止、旋转尺寸、网络、慢客户端、权限、回归各项通过；当前未执行。
-- **已观察实例**：`StreamRuntime.start()` 中 `registry.require(...)` 在 try 之外，未注册 codecId 会使 attempt 停在 `CONFIGURING`，且 runtime 无法重试 `start()`（只能 `close()`）；2026-10-19 验收抽审时记录，未改行为。
-- **关联文档**：[路线图阶段 1](optimization-roadmap.md)、[项目现状风险清单](project-assessment.md)
+- **交付物 / 验证证据**：交付：代码改动与单元/仪器/压力测试。验证：阶段 1 的启动停止、旋转尺寸、网络、慢客户端、权限、回归各项通过；JVM 分批执行，设备项待棒。
+- **子项核对（2026-10-22，代码复核，计划见[实施计划](superpowers/plans/2026-10-22-core-correctness-cleanup.md)）**：
+  - ✅ ⑤ `CallerRunsPolicy`：全仓库已无该拒绝策略（B/C 批次移除）。
+  - ✅ ⑨ NSD 服务类型 / 服务名隐私 / IPv6 格式：`discovery/nsd/NsdConstants.NSD_SERVICE_TYPE = "_lss._tcp"`（legacy 类型过渡期双注册）；TXT 记录的 `n`（名称）仅在用户开启共享设备名时写入；`support/NetUtils` 对 IPv6 字面量加方括号。证据见 [TB-DISC-003](#tb-disc-003)（提交 `a90358a`、`99cbc03`）。
+  - ✅ 发现侧重连退避：`support/BackoffPolicy` 按服务类型各自持有，由 `NsdDiscoveryCoordinator` 使用（同上提交）。
+  - 🔶 ①③⑥⑦ 部分完成、②④⑧ 未做；逐项状态与位置见计划第 2 章。
+- **B1 完成（2026-10-22，提交 `6ee4790`）**：`StreamRuntime.start()` 在分配 attempt 后的所有步骤（关旧编码器、`registry.require`、工厂创建、surface 校验、`start`）收敛到 `failAttempt` 失败出口——状态置 `FAILED`、清 `publishedDescriptor` 与 `deferred`、清 `activeEncoder`、锁外关闭编码器、监听器只通知一次；`CodecNotFoundException` 保持原类型，其余包成 `EncoderException`，`FAILED && 未发布` 因此可重试，不再只能 `close()`。旧编码器 `close()` 失败也按失败处理，并把该编码器移入 retired 列表由后续 `close()` 重试释放。`switchDescriptor()` 的 `registry.require` 移出状态锁，未注册 codec 包成 `CodecSwitchException`，旧编码器/descriptor/epoch 不变、同一 epoch 可重试。`updateParameters()` 不再在状态锁内调用编码器（锁内取 encoder+generation → 锁外调用 → 锁内按代次提交缓存），代次已变时对新编码器重试一次；编码器抛异常仍保持缓存不变并上抛。JVM 证据：新增 `StreamRuntimeStartFailureTest` 8 条（未注册 codec 的 `FAILED` 与可重试、注册后重试成功、旧编码器关闭失败仍可重试、`READY` 再启动被拒、switch 到未注册 codec 保状态并同 epoch 重试、`updateParameters` 不持状态锁、编码器更新失败保缓存、并发 switch 后重放到新编码器）；全量 **1389 tests / 133 classes / 0 failures / 0 errors / 0 skipped**（基线 1381/132，+8 条 / +1 类）。`./gradlew :app:assembleDebug` 通过；`:app:lintDebug` **0 errors / 146 warnings**（与基线同数）。
+- **未完成部分**：按计划第 3 章分 B2–B6，依次为采集线程代次 + 缩短临界区（①④⑥ 的服务侧部分）、单一生命周期所有者 + 幂等停止（①②）、线程池与线程收尾（③）、悬浮窗/权限撤销降级（⑦）、重连退避与上限（⑧）。设备/仪器/长时验证归 [TB-ENG-013](#tb-eng-013)。
+- **关联文档**：[实施计划](superpowers/plans/2026-10-22-core-correctness-cleanup.md)、[路线图阶段 1](optimization-roadmap.md)、[项目现状风险清单](project-assessment.md)
 
 </details>
 
