@@ -21,6 +21,7 @@
 
 ## 🎯 当前焦点
 
+- 2026-10-22 · TB-NET-003 第 16 项设备验证（三档媒体通道）：gRPC 档回归通过，**TCP/UDP 两档在设备上一次也没激活**——offer 的 `host` 恒空串 vs 客户端 `isEndpointPresent()` 要求非空 ⇒ 全部被判 `no_endpoint`；条目转 🔶 部分完成，修复后重跑（[TB-NET-003](#tb-net-003)、[TB-ENG-013](#tb-eng-013) 第 16 项）
 - 2026-10-22 · TB-NET-003 B6 收尾（指标与文档收口），双媒体传输专项收官并转已完成（[TB-NET-003](#tb-net-003)）
 - 2026-10-22 · TB-NET-003 B5 落地（UDP 接线与弱网实验开关），回环真 socket 证据通过（[TB-NET-003](#tb-net-003)）
 - 2026-10-22 · TB-NET-003 B4 落地（UDP 内核，纯 JVM 不接线），零行为变化（[TB-NET-003](#tb-net-003)）
@@ -125,7 +126,7 @@
 
 | ID | 状态 | 优先级 | 标题 | 创建 | 完成 | 关联 |
 | --- | --- | --- | --- | --- | --- | --- |
-| TB-NET-003 | ✅ 已完成 | 🟠 P1 | 双媒体传输：裸 TCP 主力 + UDP 实验档（B1–B6 全部落地：抽象层 / 协商回退 / 裸 TCP / UDP 内核 / UDP 接线与开关 / 指标与文档收口；回环 E2E 与双变体全绿，设备点位归 TB-ENG-013 第 16 项） | 2026-10-22 | 2026-10-22 | [实施计划](superpowers/plans/2026-10-22-media-transports.md) |
+| TB-NET-003 | 🔶 部分完成 | 🟠 P1 | 双媒体传输：裸 TCP 主力 + UDP 实验档（B1–B6 代码全落地、JVM 双变体全绿；**2026-10-22 设备验证发现三档通道从未激活**——服务端 offer 的 `host` 恒为空串、客户端 `isEndpointPresent()` 却要求非空，每份 offer 被判 `no_endpoint`，会话恒 `chan=grpc`，详见条目「设备验证」） | 2026-10-22 | — | [实施计划](superpowers/plans/2026-10-22-media-transports.md) |
 | TB-CLIENT-006 | ✅ 已完成 | ⚪ P3 | 小窗 HUD 折行与字号自适应（字号随窗口宽度在 11sp–9sp 间缩小、每行单行截断；纯 JVM 策略已测，设备点位归 TB-ENG-013） | 2026-10-21 | 2026-10-22 | [TB-OBS-001](#tb-obs-001) |
 | TB-ENG-001 | ✅ 已完成 | 🟡 P2 | 测试与发布工程（B1 CI 独立测试 job、B2 R8/keep、B3 仪器测试链路、B4 签名分离全落地；设备点位归 TB-ENG-013） | 2026-10-17 | 2026-10-22 | [实施计划](superpowers/plans/2026-10-22-release-engineering.md) |
 | TB-ENG-002 | ✅ 已完成 | 🟡 P2 | 发布签名加固（签名材料条件化、示例材料移出仓库、发布流程断言；覆盖安装实测归 TB-ENG-013） | 2026-10-17 | 2026-10-22 | [启动与签名清单](startup-checklist.md) |
@@ -549,7 +550,7 @@
   14. **首帧绿色花屏点位（TB-MEDIA-004）**（来源[TB-MEDIA-004](#tb-media-004)）：在服务端已开始共享的机器上，观看端**首次**连接并记录 ① 首帧出现时刻与首帧画面是否正常（录屏逐帧核对，不用主观描述）② 关掉声音开关后同样首连一次对照（无音频锚点时首帧映射不会被提前，两轮对比可区分"映射超前"与"编码端内容退化"）③ 日志与 HUD 里 `dec.lat`、`pres.interval`、重连后 `SWITCH_BLACKOUT` 窗口 ④ 播放中改变分辨率/旋转一轮，确认换宿主与重配后第一帧立即出现（不再等待映射时间）⑤ 重连（不重启共享）一次对照，确认"重连未复现"现象是否仍在。**阻塞：无**；判据为录屏 + 日志，且出现花屏时须同时给出②的对照结论（关音频仍花屏 ⇒ 指向编码端首个 IDR 内容，另立条目/移交服务端）。
 - **执行口径**：一次统一棒只装一个已推送 HEAD、仓库零改动；每项记录取数窗口、宿主负载与 guest `top`；不得把“没测到”写成“没问题”；运行前后偏好/输入法/方向逐字节还原；不得放宽判据，判据不可达时须写明机制理由。
   15. **手动条目重启后的安全能力（TB-DISC-011 回归修复）**（来源[TB-DISC-011](#tb-disc-011) 的 2026-10-22 回归与修复）：① 冷启动（杀进程重开）后，手动添加的行在**首次周期探测之前**即显示为加密（地址后无「· 未加密传输」），点按直接进入「正在连接」而不再弹 `tls_device_not_encrypted_message` ② 同一设备的收藏行（若有）冷启动后同样立即可连 ③ **反向判据**：本地构建写入一条**无指纹**的 `lss-manual` 记录（不提交）→ 行仍显示「未加密传输」、点按仍被拦截，证明安全判据未被放松 ④ 播种不是确认：设备离线时该行在下一次重探后转不可达（不因播种的 `secure=true` 而一直装成可连）。**阻塞：无**；判据为截图 + `logcat`（点按时无闸门弹框）+ `shared_prefs/lss-manual.xml` 内容。
-  16. **UDP 实验档点位（TB-NET-003 B5）**（来源 [TB-NET-003](#tb-net-003) 的 B5 文案与开关）：服务端视频设置里「UDP 实验档」默认关；开启后 ① 同网真机一对开始共享，服务端日志出现 `media channel: listening … secure=true` 且会话行 `chan=udp`（或先 `tcp` 再按握手结果回落，记录**实际最终** `chan`）② 观看端出画、`rx.auRate` 与 `rx.bitrate` 与 gRPC 档同量级，`udp.recv`/`udp.lost`/`udp.auIncomplete` 有读数 ③ 反向判据：开关关闭重启共享后会话行恒 `chan=grpc`（或 `tcp`，若 `media_transport` 显式设过），不出现 `udp.*` ④ 拔掉 AP / 让服务端离网，1 s 内观看端恢复出帧且控制面 RPC 未断（`pres` 恢复、无重连横幅）⑤ 弱网（`tc`/路由器限速到 1–2 Mbps 或灌丢包）下观察 `udp.auIncomplete` 与 `kf.request` 相关性，确认丢 AU → IDR 链路真的动作（HUD `kf` 增长）⑥ 高频片（1080p60）一轮，确认无花屏、无「半截帧」可辨现象。**阻塞：无**（需一对真机 + 可关的路由器）；判据为两端日志 + HUD 截图，读数与窗口一并与 [TB-OBS-001](#tb-obs-001) 的口径对齐。
+  16. **UDP 实验档点位（TB-NET-003 B5）**（来源 [TB-NET-003](#tb-net-003) 的 B5 文案与开关）：服务端视频设置里「UDP 实验档」默认关；开启后 ① 同网真机一对开始共享，服务端日志出现 `media channel: listening … secure=true` 且会话行 `chan=udp`（或先 `tcp` 再按握手结果回落，记录**实际最终** `chan`）② 观看端出画、`rx.auRate` 与 `rx.bitrate` 与 gRPC 档同量级，`udp.recv`/`udp.lost`/`udp.auIncomplete` 有读数 ③ 反向判据：开关关闭重启共享后会话行恒 `chan=grpc`（或 `tcp`，若 `media_transport` 显式设过），不出现 `udp.*` ④ 拔掉 AP / 让服务端离网，1 s 内观看端恢复出帧且控制面 RPC 未断（`pres` 恢复、无重连横幅）⑤ 弱网（`tc`/路由器限速到 1–2 Mbps 或灌丢包）下观察 `udp.auIncomplete` 与 `kf.request` 相关性，确认丢 AU → IDR 链路真的动作（HUD `kf` 增长）⑥ 高频片（1080p60）一轮，确认无花屏、无「半截帧」可辨现象。**阻塞：无**（需一对真机 + 可关的路由器）；判据为两端日志 + HUD 截图，读数与窗口一并与 [TB-OBS-001](#tb-obs-001) 的口径对齐。**本轮结果（2026-10-22，报告 `handoff/device-test-2026-10-22-transports/report.md`）**：①❌ 三档一次也未激活——TCP 档（`auto`）38/38 行、UDP 档（开关开 + `auto`）39/39 行**均 `chan=grpc`**，`tx.chanSwitch` 从未出现，观看端对 8081 零 TCP 连接，而服务端每次都 `media channel: listening, port = 8081, secure = true`；根因是 offer 的 `host` 恒空串 vs 客户端 `isEndpointPresent()` 要求非空（详见 [TB-NET-003](#tb-net-003) 的「设备验证」条），**属产品缺陷，不是环境**。②③⑤⑥ 因此**全部未测到**（`udp.*` 一条未打印 = 未测量，不等于零丢包；无花屏现象不能读成丢片恢复正常）。④ 兜底成立（媒体 47 fps 未断、RPC 未断、无重连横幅）但**真实故障注入未做**：模拟器是 production build，`adb root` 被拒，无法只掐 UDP/TCP 媒体端口。gRPC 档回归 ✅（`chan=grpc` 36/36、`enc.auRate` 53.4 fps、`dec.lat.p50` 19.6 ms）。**本项保持待办**：待 §3 缺陷修复后，按 ①②⑤⑥ 与明文调试档重跑；「没测到」不得写成「没问题」。
 - **完成判据**：以上 16 项均有可核对证据（截图/日志/读数）并按[维护方式](#-维护方式)写回各自条目；阻塞未解除的项保持 📋 待办并注明阻塞原因。
 - **关联文档**：[TB-WIN-001](#tb-win-001)、[TB-OBS-001](#tb-obs-001)、[TB-CLIENT-005](#tb-client-005)、[TB-DISC-010](#tb-disc-010)、[DV-001](decision-board.md)、[路线图](optimization-roadmap.md)
 
@@ -568,9 +569,9 @@
 ### ✅ 已完成条目
 
 <a id="tb-net-003"></a>
-<details><summary>TB-NET-003 双媒体传输：裸 TCP 主力 + UDP 实验档（✅ 已完成 · B1–B6 全部落地）</summary>
+<details><summary>TB-NET-003 双媒体传输：裸 TCP 主力 + UDP 实验档（🔶 部分完成 · 代码 B1–B6 全部落地，设备验证发现三档通道从未激活）</summary>
 
-- **状态 / 优先级 / 创建 / 完成**：✅ 已完成（B1–B6 六批全部落地，JVM 1701 tests / 175 classes 双变体全绿；设备点位归 [TB-ENG-013](#tb-eng-013) 第 16 项）/ 🟠 P1 / 2026-10-22 / 2026-10-22
+- **状态 / 优先级 / 创建 / 完成**：🔶 部分完成（B1–B6 六批代码全部落地，JVM 1701 tests / 175 classes 双变体全绿；**2026-10-22 设备验证：三档通道一次也未激活，缺陷见下条「设备验证」，未完成**）/ 🟠 P1 / 2026-10-22 / —
 - **来源**：用户要求按[实施计划](superpowers/plans/2026-10-22-media-transports.md)分批实现双媒体传输；计划依据主 K3 的六条裁决与 [DB-NET-001](decision-board.md#db-net-001)/[DB-NET-002](decision-board.md#db-net-002)、[DB-OBS-001](decision-board.md#db-obs-001)/[DB-OBS-002](decision-board.md#db-obs-002)、[DB-SEC-005](decision-board.md#db-sec-005)。
 - **范围（六批）**：B1 抽象层补齐与接收侧对称化；B2 协商协议与选路策略（proto 纯增量 + `MediaTransportPolicy`）；B3 裸 TCP 媒体通道（16 字节帧头、复用 mTLS + 每 RPC 凭证绑定、写停滞看门狗）；B4 UDP 内核（AEAD 包格式、重排窗、重装、丢包统计）；B5 UDP 接线与回退链（丢包 → IDR/catch-up，实验档默认关）；B6 指标、日志与文档收口。FEC/RS、NACK、WebRTC/SRT/QUIC、拥塞控制明确不做（计划 §8）。
 - **B1 交付物**（提交 `906638f`，行为零变化，仍只用 gRPC）：
@@ -623,6 +624,7 @@
   - 打点：`MEDIA_CHANNEL_SWITCHES` 落在 `ClientSendSession.swapTransportLocked()`（每次真正换通道 +1，含恢复回退），而不是 handler 激活处——会话自己持有 metric scope，换通道本就是会话事件；`FRAGMENTS_SENT`、`DATAGRAMS_*`、`ACCESS_UNITS_INCOMPLETE`、`MEDIA_AUTH_FAILURES` 已在 B5 接线。
   - 文档：决策板 [DB-NET-001](#db-net-001) 按「裁决演进」改写（保留 ID 与历史、演进表加行）+ 新增 [DB-NET-003](decision-board.md#db-net-003) 三分工裁决 + [DB-OBS-002](decision-board.md#db-obs-002) 补 UDP 口径；[媒体架构](media-architecture.md) 新增 §6.0「当前实现：三通道架构」；[传输方式调研](transport-research.md) 新增 §8 实施状态对照表。
 - **完成判据逐条核对**：①B1–B6 六批均落地并有独立提交（`906638f`、`8c90027`、`fbd85b4`+`73d68fa`、`a40c000`、`523a319`、`ca31f28`）；②回环 E2E 断言成立——descriptor 先于首个 AU、AU 序号不重复不倒退、杀通道 1 s 内回 gRPC 且 RPC 未断、`media_transport=grpc` 行为与旧版一致（`MediaChannelNegotiationEndToEndTest`，含 UDP 档）；③双变体全量 **1701 tests / 175 classes / 0 failures**，lint 双变体 0 errors，三项 checks 通过；④指标与日志收口完成（`chan=`、`udp.*`、`tx.frag`、`tx.chanSwitch`）；⑤决策板与设计文档同步（DB-NET-001 演进、DB-NET-003、DB-OBS-002、媒体架构 §6.0、调研 §8）。**设备回归不属完成判据**：真机三档行为、拔 AP 回退、`udp.*` 读数按 [TB-ENG-013](#tb-eng-013) 第 16 项执行。
+- **设备验证（2026-10-22，真机 YAL-AL10 / API 29 服务端 + API 36 模拟器观看端，HEAD `bec9cf6`；报告 `handoff/device-test-2026-10-22-transports/report.md`）**：**三档通道在设备上一次也没激活**——①gRPC 档回归 ✅（`chan=grpc` 36/36 行，`enc.auRate` 53.4 fps / `rx.auRate` 47.9 / `dec.lat.p50` 19.6 ms，与旧版一致）②TCP 档 ❌ `media_transport=auto` 下 38/38 行仍 `chan=grpc`、`tx.chanSwitch` 从未出现、观看端对媒体端口 8081 **零 TCP 连接**（20 s 采样 0 条 socket；同端口 `nc` rc=0 证明可达），而服务端每次都打印 `media channel: listening, port = 8081, secure = true` ③UDP 档 ❌ 开关开启 + `auto` 下 39/39 行仍 `chan=grpc`，观看端**没有任何 `udp.*` 键**、服务端无 `tx.frag`（"未测量"而非"为零"）④回退兜底成立（媒体 47 fps 未断、RPC 未断、无重连横幅），但**真实故障注入未做**（模拟器 production build 无 root，无法只掐单档端口）⑤切换透明度与明文档均**未测到**（无切换；明文丢失 mTLS 身份 ⇒ 人工审批超时 `authorization_timeout`）。**根因（代码级）**：`server/ScreenShareServer.java:813` 按设计发 `new MediaChannelEndpoint("", …)`（空串语义见 `server/MediaChannelEndpoint.java:33/39`「用控制面地址」，客户端 `ScreenShareClient.java:749` 也有同样的空 host 回退），但 `core/net/MediaChannelOffer.java:150` 的 `isEndpointPresent()` 要求 `host` 非空，`client/MediaChannelCoordinator.java:153` 因此对每份 offer 直接回 `FAILED(no_endpoint)`，**根本不会去建 socket**。回环 JVM 用例全部用非空 host（`MediaChannelNegotiationEndToEndTest:341` `127.0.0.1`、`MediaChannelNegotiatorTest:87`、`StreamCallHandlerMediaChannelTest:193` `10.0.0.5`），只覆盖了"host 与 port 都不设"的负例（`MediaChannelCoordinatorTest:97`），故"回环全绿、设备全死"。**修复方向（未改代码，待裁决）**：服务端填对端可达地址，或客户端只按 `port > 0` 判 endpoint、空 host 回退控制面地址，并补一条"host 空 + port 有效"的协调器与端到端用例。**附带缺口**：两端都不打印 offer/READY/FAILED 的原因，本轮定位靠源码对读 + socket 负证据，建议补三行协商日志。
 - **关联文档**：[实施计划](superpowers/plans/2026-10-22-media-transports.md)、[传输方式调研](transport-research.md)、[决策 DB-NET-001](decision-board.md#db-net-001)、[媒体架构](media-architecture.md)
 
 </details>
