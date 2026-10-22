@@ -290,7 +290,12 @@ public class ClientAudioSessionTest {
     public void aStarvedWriterKeepsTheOutputFed() throws Exception {
         Fixture fixture = new Fixture(true, NanoClock.MONOTONIC);
         fixture.session.onDescriptor(descriptor(1));
-        for (int i = 0; i < 6; i++) {
+        // Seven frames, not six: the asynchronous writer can be inside the write of the fifth frame
+        // when the sixth arrives. That frame has already left the queue but is not counted as
+        // written yet, so the measured depth is 107 ms - just below the 120 ms target - and no
+        // further access unit would re-evaluate it. Seven frames stay above the target even with
+        // one frame in flight, which is what made this case fail intermittently on a loaded runner.
+        for (int i = 0; i < 7; i++) {
             fixture.session.onAccessUnit(unit(1, i, i * FRAME_US));
         }
         assertTrue(awaitPlayback(fixture));
@@ -299,9 +304,10 @@ public class ClientAudioSessionTest {
         // silence instead of letting the track run dry.
         Thread.sleep(100L);
 
-        // Six frames were received, so every frame beyond the sixth is silence the writer produced.
+        // Seven frames were received, so every frame beyond the seventh is silence the writer
+        // produced.
         assertTrue("the writer must keep the track fed",
-                fixture.session.getWrittenFrames() > 6L);
+                fixture.session.getWrittenFrames() > 7L);
         // The starvation is counted once per episode, which is the rate the device report reads.
         assertTrue(fixture.metrics.count(PipelineMetrics.Counter.AUDIO_STARVED) >= 1L);
         fixture.session.close();
