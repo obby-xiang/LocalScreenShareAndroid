@@ -21,6 +21,7 @@
 
 ## 🎯 当前焦点
 
+- 2026-10-22 **TB-ENG-014 落地（H.264 编码器启动失败自动回退 JPEG）**：诊断确认失败发生在任何采集面创建之前——`startStreamPipeline()` 建 registry/runtime/hub 并 `runtime.start()`，失败出口（B1 的 `failAttempt`）抛 `EncoderException`（工厂/实例/Surface/`start` 统一包装）或 `CodecNotFoundException`，runtime 进 `FAILED` 且未发布 descriptor，而 `onStartCommand` 只弹通用「启动失败」并停服；采集面要到 `onServerStarted()` 才按 `mIsH264` 选，因此回退只需在 `startStreamPipeline()` 里改 `mIsH264` 的下游分支与重建 runtime/hub。新增纯 JVM `service/ProjectionCodecStartupCoordinator`：首次按偏好启动，**仅** `CodecNotFoundException` / `EncoderException` 触发、**只回退一次**、其余异常原样上抛；`startStreamPipeline()` 拆成「指标 scope + 协调器」与「单次尝试 `startStreamPipelineFor(h264)`」，重试前用既有 `closeStreamPipeline()` 释放失败尝试的 runtime/hub 注册/stream key。可见性：`Log.w`（带原因）+ 新增双语 toast `projection_codec_fallback_toast` + 通知副标题常驻 `service_notification_jpeg_fallback`（「JPEG 兼容模式」，`resetSessionState()` 清除）。**不记忆偏好**：协调器无 `Preferences` 依赖、启动路径不调用 `setProjectionCodec(...)`，由源码契约用例守住；下次共享仍先试 H.264。新增 `ProjectionCodecStartupCoordinatorTest` 12 例（含回退触发集、单次回退、JPEG 再失败原样上抛、偏好不被写入的源码断言），全量 **1495 tests / 148 classes / 0 failures**（基线 1483/147，`test_baseline.json` 同批更新）；`build :app:assembleDebugAndroidTest`、lint 双变体 0 errors（新文件零告警）、三项 checks 通过。本批 `fe8ebe4`；[TB-ENG-014](#tb-eng-014) 转已完成，设备点位（失败注入、回退出画、提示可见、偏好未改写、JPEG 再失败、恢复回 H.264）归 [TB-ENG-013](#tb-eng-013) 第 13 项。
 - 2026-10-22 **TB-DISC-011 落地（手动添加条目跨重启持久化）**：诊断确认「手动」身份有两份内存状态——`ManualAddressProvider.mManualTargets`（周期重探集合）与 `DeviceStore` 的 `pinned` 标记——都没有落盘，`FavoriteStore.sync()` 又只更新已存在的收藏，所以重启后手动条目既不在列表也不会被任何通道带回。按裁决「手动添加默认保留」，新增与 `favorite` 同构的落盘层：`discovery/manual/ManualDevice`（值对象）+ `ManualDeviceStorage`/`SharedPreferencesManualDeviceStorage`（独立文件 `lss-manual`）+ `ManualDeviceStore`（Gson 反射 DTO、构造期加载、损坏文档按空处理、写失败保留内存、`synchronized`），并在 `app/proguard-rules.pro` 加 `ManualDeviceStore$ManualRecord` 的 keep 规则、在 `BuildEngineeringContractTest` 补断言（R8 教训）。接线：`onConfirmed(MANUAL, …)` 成功即 upsert（内容不变不重写，避免每 15 s 重探落盘）；`startDiscoveryProviders()` 在 `seedFavorites()` 之后 `seedManualDevices()` 以**握手返回的设备 id** 播种 `DeviceStore`（id 是 store 的去重键，故重启后同设备被组播/NSD 发现只落一行、地址合并）并恢复 `ManualAddressProvider` 的周期重探；同地址换身份时新记录顶替旧记录并清掉旧行。移除路径：`DeviceStore.remove(id)` + `ManualAddressProvider.forgetManualTarget()` + `DiscoveryManager.removeManualDevice(id)`，`DeviceInfo` 新增 `manual` 标记（由 `pinned` 投影，含 Parcel），发现页长按菜单改为动作列表（收藏切换 / 移除手动添加 / 清除信任）；手动条目若同时是收藏，只去掉手动标记、保留收藏行。新增 `ManualDeviceStoreTest` 13 例与 4 个既有测试类共 9 条用例，全量 **1483 tests / 147 classes / 0 failures**（基线 1461/146，`test_baseline.json` 同批更新）；`build :app:assembleDebugAndroidTest`、lint 双变体 0 errors（新增 1 条仅版本目录联网检查）、三项 checks（177 键双语一致）通过。本批 `a2e3f94`（落盘与恢复）、`55ba35c`（移除竞态修复），`a2e3f94` 的 Build run [39718136280](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39718136280) 与 Checks run [39718136354](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39718136354) 双绿；[TB-DISC-011](#tb-disc-011) 转已完成，设备点位（重启后仍在、与网络发现合并、移除后不复现、离线重启、R8 包）归 [TB-ENG-013](#tb-eng-013) 第 12 项。
 - 2026-10-22 **TB-CLIENT-006 落地（小窗 HUD 折行与字号自适应，Q-3）**：诊断确认 HUD 一直是**一个** `TextView` 装四行（`"\n"` 拼接）、`11sp` 定值、`WRAP_CONTENT`，与窗口尺寸无关；60% 窗口（630×1364，density 2.75）可用宽度约 229dp，而最宽行约 254sp，于是 `TextView` 在 `AT_MOST` 下软换行、三行变五行。改为 `ViewerPanelView` 的 `hudView` 为纵向 `LinearLayout`（背景与 12/8 内边距移到容器），每行一个 `singleLine` + `ellipsize(END)` 的 `TextView`，四行共用一个字号；字号由新增纯 JVM `render/ViewerHudTextPolicy` 按可用宽度在 **11sp–9sp** 间确定性缩小（线性缩放、向下取整像素、宽度未知保持最大），在 `setHudLines`/`onSizeChanged`/`onConfigurationChanged` 三处重算，缩到 9sp 仍超出则行尾 `…` 截断、**永不折行**（60% 小窗下最宽行按 440dpi/0.6em 推算需 ≈7.8sp，故该档会以 `…` 结尾；判据是「不折行、不重叠」）。大窗与全屏上限即原 `11sp`，字号/行数/内容不变。与 K3 裁决的一处出入：autosize 依赖与属性均可用（appcompat 1.7.0），但 uniform autosize 是每 `TextView` 独立字号、多行 autosize 靠折行收敛，无法满足「四行同一字号 + 单行截断」，故用最小自研策略（可 JVM 测试）。新增 `ViewerHudTextPolicyTest` 12 例，全量 **1461 tests / 146 classes / 0 failures**（基线 1449/145，`test_baseline.json` 同批更新）；`build :app:assembleDebugAndroidTest`、lint 双变体 0 errors、三项 checks 通过。本批 `9e6fe3a`（代码）、`db06d5f`（看板），Build run [39716615668](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39716615668) 与 Checks run [39716615660](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39716615660) 双绿；[TB-CLIENT-006](#tb-client-006) 转已完成，设备外观点位（60% 小窗、最小窗口、拖大/全屏、横竖屏、手势穿透、关闭态）归 [TB-ENG-013](#tb-eng-013) 第 11 项。
 - 2026-10-22 **TB-ENG-001 / TB-ENG-002 收官（B4 签名分离与发布加固）**：release 签名改为条件化——读取顺序为 `signing.properties` → `-Psigning.*` → 无材料则不签名（产物 `app-release-unsigned.apk`，缺任一值只 warn 且不打印值），新增 `-PrequireSigning=true` 在无材料时配置期末尾抛错；`gradle.properties` 删除示例签名四行、`.gitignore` 覆盖 `*.jks`/`*.keystore`/`signing/`、`signing/example.jks` 移出仓库。`build.yml` 的 keystore 改落 `$RUNNER_TEMP` 并在 `always()` 删除、非 PR 带 `-PrequireSigning=true`、PR 补回 `:app:assembleRelease`（unsigned，R8 在 PR 也覆盖）；`release.yml` 断言只存在签名版 `app-release.apk`、拒绝 `*-unsigned.apk`、tag 校验 `vX.Y.Z`、`--target "$GITHUB_SHA"`。`startup-checklist.md` §C 重写（三档矩阵、密钥生成/离线双备份/不轮换、键名清单、覆盖安装预期、agent 不读密钥不发布）。新增 3 条契约测试，全量 **1449 tests / 145 classes / 0 failures**（基线 1446/145）；有材料 / 无材料 / `-PrequireSigning` 三条签名路径本地实测，`build :app:assembleDebugAndroidTest`、lint 双变体 0 errors、三项 checks 通过。本批 `d517fcb`、`0b7a089`、`7675f73`、`d64dbdb`；[TB-ENG-001](#tb-eng-001) 与 [TB-ENG-002](#tb-eng-002) 转已完成，R8 冒烟、androidTest 执行与覆盖安装实测归 [TB-ENG-013](#tb-eng-013)。
@@ -85,7 +86,6 @@
 
 | ID | 状态 | 优先级 | 标题 | 创建 | 完成 | 关联 |
 | --- | --- | --- | --- | --- | --- | --- |
-| TB-ENG-014 | 📋 待办 | ⚪ P3 | H.264 编码器失败自动回退 JPEG（TB-ENG-006 的后续条目） | 2026-10-22 | — | [TB-ENG-006](#tb-eng-006) |
 | TB-SEC-002 | 🔶 部分完成 | 🔴 P0 | 身份密钥瞬时故障静默删键与三份身份快照（N3；代码完成，设备复测待棒） | 2026-10-21 | — | [决策 DB-SEC-003](decision-board.md#db-sec-003) |
 | TB-DISC-013 | 🔶 部分完成 | 🟠 P1 | 发现行首连的证书指纹引导（N2；代码完成，设备复测待棒） | 2026-10-21 | — | [TB-DISC-012](#tb-disc-012) |
 | TB-SEC-003 | 🔶 部分完成 | 🟠 P1 | 公告传输安全字段与「画面私密」分离（N1；代码完成，设备复测待棒） | 2026-10-21 | — | [决策 DB-SEC-002](decision-board.md#db-sec-002) |
@@ -119,6 +119,7 @@
 | TB-ENG-002 | ✅ 已完成 | 🟡 P2 | 发布签名加固（签名材料条件化、示例材料移出仓库、发布流程断言；覆盖安装实测归 TB-ENG-013） | 2026-10-17 | 2026-10-22 | [启动与签名清单](startup-checklist.md) |
 | TB-ENG-006 | ✅ 已完成 | 🟡 P2 | JPEG 降级客户端查看器接回与死代码清理（B1–B4 全落地；设备点位归 TB-ENG-013） | 2026-10-19 | 2026-10-22 | [实施计划](superpowers/plans/2026-10-22-jpeg-viewer-reconnect.md) |
 | TB-DISC-011 | ✅ 已完成 | 🟡 P3 | 手动添加条目跨重启持久化（`ManualDeviceStore` 落盘 + 启动播种 + 长按移除；设备点位归 TB-ENG-013） | 2026-10-20 | 2026-10-22 | [发现调研](discovery-research.md) |
+| TB-ENG-014 | ✅ 已完成 | ⚪ P3 | H.264 编码器启动失败自动回退 JPEG 兼容模式（单次回退、Toast + 通知副标题可见、不记忆偏好；设备点位归 TB-ENG-013） | 2026-10-22 | 2026-10-22 | [TB-ENG-006](#tb-eng-006) |
 | TB-DISC-010 | ✅ 已完成 | 🟠 P1 | 自签 TLS 与 TOFU 身份 pinning | 2026-10-20 | 2026-10-21 | [实施计划](superpowers/plans/2026-10-21-tls-tofu.md) |
 | TB-CLIENT-003 | ✅ 已完成 | 🟠 P1 | 查看器宽高比与缩放质量 | 2026-10-20 | 2026-10-20 | [实施计划](superpowers/plans/2026-10-21-viewer-quality-and-settings.md) |
 | TB-OBS-002 | ✅ 已完成 | 🟠 P1 | RTT 探针（Ping/Pong）与估计器 | 2026-10-21 | 2026-10-21 | [本计划](superpowers/plans/2026-10-21-transport-observability.md) |
@@ -281,18 +282,6 @@
 </details>
 
 - **关联文档**：[问题3接线计划](superpowers/plans/2026-10-19-media-path-wiring.md)
-
-</details>
-
-<a id="tb-eng-014"></a>
-<details><summary>TB-ENG-014 H.264 编码器失败自动回退 JPEG（📋 待办）</summary>
-
-- **状态 / 优先级 / 创建 / 完成**：📋 待办 / ⚪ P3 / 2026-10-22 / —
-- **任务**：服务端只在开始共享时按偏好决定编码格式（`ScreenShareService` 的 `mIsH264`），运行时不做 H.264↔JPEG 切换。[TB-ENG-006](#tb-eng-006) B3 把设置项改成 h264/jpeg 二选一后，用户一旦选中 H.264 而本机硬编创建或配置失败，当前没有任何回退路径：`StreamRuntime.start()` 抛 `EncoderException`，`onStartCommand` 的 `catch (RuntimeException)` 只弹通用「启动失败」toast 并停服（`start_service_failed`），用户只能自己发现并改设置重开。本条目实现「开始共享时 H.264 失败 → 自动改走 JPEG 兼容模式」，并在通知/悬浮条标注当前为降级格式。
-- **边界**：只做启动失败回退，不做运行时切换（服务端采集路径不支持）；JPEG 是兼容模式，编码开销更高，回退必须对用户可见，不能静默降档；不改变 `StreamHub`、协议或客户端能力协商口径（[TB-ENG-006](#tb-eng-006) B1 已让客户端恒声明 JPEG）。自动回退是否记忆到偏好、重试次数与失败文案需在实施时按产品口径裁决。
-- **交付物 / 验证证据**：交付：启动失败回退编排与 JVM 用例（失败 → 以 JPEG 重建运行时、成功后通知标注降级、JPEG 也失败时如实报错）。验证：未实施；设备点位归 [TB-ENG-013](#tb-eng-013)。
-- **来源**：2026-10-22 [JPEG 接回计划](superpowers/plans/2026-10-22-jpeg-viewer-reconnect.md) §7 产品口径与 §8 裁决 4（自动回退另立条目）。
-- **关联文档**：[TB-ENG-006](#tb-eng-006)、[JPEG 接回计划](superpowers/plans/2026-10-22-jpeg-viewer-reconnect.md)
 
 </details>
 
@@ -576,8 +565,9 @@
   10. **androidTest 手动执行（TB-ENG-001 B3）**（来源[启动与签名检查清单 D 节](startup-checklist.md#d-仪器测试androidtest)）：在 API 25+ 设备与一台模拟器上分别执行 `./gradlew :app:connectedDebugAndroidTest`，记录 `ExampleInstrumentedTest`、`H264MediaCodecSmokeTest` 的通过与失败原因；`H264MediaCodecSmokeTest` 的失败须按设备归类（`null` CSD 被拒 / 软解 / 硬解），不得记成实现缺陷。**阻塞：无**；判据为原始结果与报告路径可用、结论按设备区分。
   11. **HUD 字号自适应外观点位（TB-CLIENT-006）**（来源[TB-CLIENT-006](#tb-client-006)）：开 HUD 后逐档截图对照——① 60% 小窗（约 630×1364）四行不折行、不互相遮挡；最宽行（`rowd …` 与音频行）在 9sp 下限下**可能**以 `…` 结尾，须记录被截断的是哪几行，判据是「不折行、不重叠」而不是「内容全显示」（440dpi 侧算：47 字符在 605px 内需 ≈7.8sp，低于 9sp 下限）② 拖到最小窗口（`screen_share_viewer_min_size` 起）字号停在 9sp、行尾 `…` 更长（不得换行）③ 拖大回 80%/100% 与展开全屏后字号回到 11sp、行数与内容与改动前一致 ④ 横竖屏各取一组（旋转后重算且与 `ViewerFitPolicy` 的窗口尺寸一致）⑤ HUD 不遮挡单击 / 双击 / 拖拽手势 ⑥ 关闭 HUD 后不再刷新（1 s 节奏停止）。**阻塞：无**；判据为截图 + 无 `FATAL`/`ANR`，且「行数 = 内容行数」在每一档都成立。
   12. **手动条目重启后仍在（TB-DISC-011）**（来源[TB-DISC-011](#tb-disc-011)）：① 手动添加一台设备（`IP:port`）→ 杀进程重启 App → 该条目仍在列表且地址正确（播种后先 HEARD，15 s 无确认转 STALE、90 s 后 UNREACHABLE，重探成功回 CONFIRMED）② 重启后同一设备同时被组播/NSD 发现 → 列表只有一行，两个地址落在同一行 ③ 长按「移除手动添加」→ 行消失，再重启不再出现 ④ 设备离线时重启 → 显示为不可达、不自动消失 ⑤ 手动 + 收藏同设备时移除手动条目 → 行仍在（收藏标记保留），重启后以收藏恢复 ⑥ R8 release 包（`assembleRelease`）复跑 ①③，确认 `ManualDeviceStore$ManualRecord` 的 keep 规则生效（未混淆则重启后仍在）。**阻塞：无**；判据为截图 + `adb shell run-as` 下 `shared_prefs/lss-manual.xml` 内容，且重启前后列表行数与身份一致。
+  13. **H.264 启动失败回退 JPEG 点位（TB-ENG-014）**（来源[TB-ENG-014](#tb-eng-014)）：① 注入 H.264 启动失败（本机硬编正常时用不提交的本地构建把 H.264 注册替换为不存在的 id，或占用硬编实例）→ 开始共享后应用不退出、toast 提示、通知副标题出现「JPEG 兼容模式」、观看端以 JPEG 出画 ② 同次启动日志含 `H.264 encoder failed to start, falling back to the JPEG compatibility mode` 与原因 ③ 停服再启动 → 仍先试 H.264，设置页仍为 H.264（偏好未改写）④ 让 JPEG 也失败 → 只有「启动失败」并停服，无第三次尝试 ⑤ 手动设为 JPEG → 无回退提示、通知无「JPEG 兼容模式」行 ⑥ 释放编码器/重启设备 → 下次启动回到 H.264 且通知行消失。**阻塞：无**（失败注入方式见条目；未注入也可先跑 ⑤⑥ 两档）；判据为截图 + 日志 + `dumpsys notification` 副标题。
 - **执行口径**：一次统一棒只装一个已推送 HEAD、仓库零改动；每项记录取数窗口、宿主负载与 guest `top`；不得把“没测到”写成“没问题”；运行前后偏好/输入法/方向逐字节还原；不得放宽判据，判据不可达时须写明机制理由。
-- **完成判据**：以上 12 项均有可核对证据（截图/日志/读数）并按[维护方式](#-维护方式)写回各自条目；阻塞未解除的项保持 📋 待办并注明阻塞原因。
+- **完成判据**：以上 13 项均有可核对证据（截图/日志/读数）并按[维护方式](#-维护方式)写回各自条目；阻塞未解除的项保持 📋 待办并注明阻塞原因。
 - **关联文档**：[TB-WIN-001](#tb-win-001)、[TB-OBS-001](#tb-obs-001)、[TB-CLIENT-005](#tb-client-005)、[TB-DISC-010](#tb-disc-010)、[DV-001](decision-board.md)、[路线图](optimization-roadmap.md)
 
 </details>
@@ -603,6 +593,26 @@
 </details>
 
 ### ✅ 已完成条目
+
+<a id="tb-eng-014"></a>
+<details><summary>TB-ENG-014 H.264 编码器启动失败自动回退 JPEG（✅ 2026-10-22）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：✅ 已完成 / ⚪ P3 / 2026-10-22 / 2026-10-22
+- **任务（原始登记）**：服务端只在开始共享时按偏好决定编码格式（`ScreenShareService` 的 `mIsH264`），运行时不做 H.264↔JPEG 切换。用户选中 H.264 而本机硬编创建或启动失败时没有回退路径：`StreamRuntime.start()` 抛 `EncoderException`，`onStartCommand` 的 `catch (RuntimeException)` 只弹通用「启动失败」toast 并停服。本条目实现「开始共享时 H.264 失败 → 自动改走 JPEG 兼容模式」，并对用户可见。
+- **诊断（2026-10-22，按代码现状）**：启动编排是 `onStartCommand` → `startStreamPipeline()`（此时 `mIsH264` 由偏好决定，注册 H.264、建 runtime/hub、`runtime.start()`）→ 前台通知 → `startServer()` → `onServerStarted()`（此时才按 `mIsH264` 选采集面：H.264 用编码器输入 Surface，JPEG 建 `ImageReader` + RGBA_8888）。因此**失败发生在任何采集面创建之前**：`start()` 的失败出口（B1 的 `failAttempt()`）抛 `EncoderException`（工厂/建实例/Surface 校验/`start` 均包装）或 `CodecNotFoundException`（id 未注册原样抛），runtime 进 `FAILED` 且未发布 descriptor；`onStartCommand` 捕获后只有 `start_service_failed` toast + `stopService()`，日志仅一行 generic 的 `start onStartCommand: start stream pipeline failed`。回退需要切换的只有三样：`mIsH264` 的下游分支（采集面、尺寸处理、`rebuildEncoder`、`buildRequestedDescriptor`）、registry（`CodecRegistry.withDefaults()` 本就注册 JPEG，H.264 需显式注册）、以及 runtime/hub 的重建（失败 runtime 可以 `start()` 重试，但它绑定的 descriptor 仍是 H.264，直接重建更简单）。最小改动面就在 `startStreamPipeline()`：它早于服务器与采集面，改在这里即可让 `onServerStarted` 自然走 JPEG 分支。
+- **已落地（`fe8ebe4`）**：
+  - 新增纯 JVM `service/ProjectionCodecStartupCoordinator`（无状态、不碰 Android 与偏好）：`start(h264Requested, starter, fallbackListener)` 首次按偏好启动，捕获 `RuntimeException`；**仅** `CodecNotFoundException` 与 `EncoderException` 触发回退（其余异常原样抛，避免把调用方/平台缺陷伪装成编码问题），回退只尝试**一次**并以 JPEG 重建，JPEG 再失败则原样上抛给既有的「启动失败」路径。
+  - `ScreenShareService.startStreamPipeline()` 拆成两层：外层创建指标 scope（跨尝试复用，回退不重置计数）→ 交给协调器 → 内层 `startStreamPipelineFor(boolean h264)` 建 registry/runtime/hub 并 `start()`；重试前用既有 `closeStreamPipeline()` 释放失败尝试留下的 runtime、hub 注册与 stream key，保证与 teardown 对称。
+  - 可见性：回退成功即 `Log.w` 打出触发原因（带 stack）、弹新增双语 toast `projection_codec_fallback_toast`，并在通知副标题加常驻一行 `service_notification_jpeg_fallback`（「JPEG 兼容模式」）——toast 会消失，降级却持续整个会话，通知行让它在会话期间始终可见；`resetSessionState()` 清除该标记。
+  - 不记忆偏好：协调器无 `Preferences` 依赖，启动路径不调用 `setProjectionCodec(...)`，下一次共享仍先试 H.264（用户要长期 JPEG 走 TB-ENG-006 B3 的设置项）。
+- **验证**：新增 `ProjectionCodecStartupCoordinatorTest` 12 例（H.264 成功不动回退 / `CodecNotFoundException` 回退一次 / `EncoderException` 回退一次 / 包装后的编码失败同样回退 / 直接选 JPEG 不走回退 / JPEG 失败原样上抛且不重试 / 裸 `IllegalStateException` 不回退 / 其他 `RuntimeException` 不回退 / JPEG 重试失败原样上抛且已报过回退 / 只尝试两次 / 空回调拒绝 / 源码契约：协调器无 `Preferences`、服务端不写 `setProjectionCodec(`、启动确实经协调器）。全量 **1495 tests / 148 classes / 0 failures / 0 errors / 0 skipped**（基线 1483/147，`test_baseline.json` 同批更新为 1495/148）；`./gradlew build :app:assembleDebugAndroidTest` 成功；`:app:lintDebug` 0 errors / 145 warnings、`:app:lintRelease` 0 errors / 135 warnings（与上批持平，新文件零告警）；`check_strings`（179 键、双语一致）/`check_cjk`/`check_docs` 通过。
+- **完成判据核对（2026-10-22）**：① 只在启动时回退 → 逻辑全部在 `startStreamPipeline()`，运行期切换路径（`switchDescriptor`）未改；② 回退可见 → toast + 通知副标题 + `Log.w`；③ 不记忆偏好 → 源码契约用例 + 服务端无写入口；④ JPEG 也失败时如实报错 → 原样上抛到既有 `start_service_failed` 路径，只尝试两次。
+- **设备点位（归 [TB-ENG-013](#tb-eng-013)）**：① 注入 H.264 启动失败（本机硬编正常时可用**不提交的本地构建**把 H.264 注册替换为不存在的 codec id，或占用硬编实例复现）后开始共享 → 应用不退出、toast 明确提示、通知副标题出现「JPEG 兼容模式」、观看端出画（JPEG、首帧时延与帧率另记）② 同一次启动的日志含 `H.264 encoder failed to start, falling back to the JPEG compatibility mode` 及原因 ③ 停服再启动 → 仍先试 H.264，设置页编码格式仍为 H.264（偏好未被改写）④ 让 JPEG 也失败 → 只有「启动失败」toast 并停服，无第三次尝试 ⑤ 手动把设置改为 JPEG → 无回退提示、通知无「JPEG 兼容模式」行（那是用户选择而非降级）⑥ 释放编码器/重启设备后 → 下次启动回到 H.264，通知行消失。JVM 无法覆盖真实 `MediaCodec` 失败注入、Toast/通知渲染与 JPEG 出画，均未实测。
+- **与裁决口径的出入**：裁决允许「Toast 或状态文案」，本批两者都做（toast + 通知副标题），因为 toast 会消失而降级持续整个会话；不记忆偏好与「只启动时回退」按裁决执行。原条目的「在通知/悬浮条标注」按通知副标题落实，悬浮条（chip）未改文案。
+- **来源**：2026-10-22 [JPEG 接回计划](superpowers/plans/2026-10-22-jpeg-viewer-reconnect.md) §7 产品口径与 §8 裁决 4（自动回退另立条目）。
+- **关联文档**：[TB-ENG-006](#tb-eng-006)、[JPEG 接回计划](superpowers/plans/2026-10-22-jpeg-viewer-reconnect.md)、[媒体架构 §12 失败模式](media-architecture.md)
+
+</details>
 
 <a id="tb-disc-011"></a>
 <details><summary>TB-DISC-011 手动添加条目跨重启持久化（✅ 2026-10-22）</summary>
