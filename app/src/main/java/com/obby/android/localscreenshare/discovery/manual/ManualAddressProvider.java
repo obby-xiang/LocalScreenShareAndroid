@@ -354,23 +354,36 @@ public final class ManualAddressProvider implements DiscoveryProvider {
         mUnreachableSink = sink;
     }
 
+    /**
+     * Re-probes one registered manual target and reports the outcome on the main executor.
+     *
+     * <p>The outcome is only reported while the target is still registered: the user can remove a
+     * manual entry while a re-probe of its address is in flight, and a late confirmation would put
+     * the removed entry back into the list and into storage. The registry is read on the main
+     * executor, next to the mutations, never on the probe thread.</p>
+     */
     private void probeManualTarget(@NonNull final ManualAddress target) {
         if (!mStarted) {
             return;
         }
-        final ProbeResult result = probe(target.getHost(), target.getPort());
+        final String host = target.getHost();
+        final int port = target.getPort();
+        final String key = addressKey(host, port);
+        final ProbeResult result = probe(host, port);
         if (!result.isConfirmed() || result.getSummary() == null || !mStarted) {
             final UnreachableSink sink = mUnreachableSink;
             if (sink != null && mStarted) {
-                mMainExecutor.execute(() -> sink.onUnreachable(target.getHost(), target.getPort()));
+                mMainExecutor.execute(() -> {
+                    if (mManualTargets.containsKey(key)) {
+                        sink.onUnreachable(host, port);
+                    }
+                });
             }
             return;
         }
         final DeviceSummary summary = result.getSummary();
-        final String host = target.getHost();
-        final int port = target.getPort();
         mMainExecutor.execute(() -> {
-            if (mStarted) {
+            if (mStarted && mManualTargets.containsKey(key)) {
                 mSink.onConfirmed(DiscoveryChannel.MANUAL, summary, host, port);
             }
         });

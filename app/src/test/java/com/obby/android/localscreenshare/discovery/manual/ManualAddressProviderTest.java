@@ -247,6 +247,22 @@ public class ManualAddressProviderTest {
     }
 
     @Test
+    public void aTargetForgottenWhileItsProbeRunsIsNotConfirmed() throws InterruptedException {
+        mProbe.setDelayMs(100L);
+        mProvider.addManualTarget(ManualAddress.create("192.168.1.9", 9000));
+        mProvider.start(noopListener());
+
+        mProvider.probeManualTargets();
+        // The user removes the entry before the re-probe answers.
+        assertTrue(mProvider.forgetManualTarget("192.168.1.9", 9000));
+
+        waitFor(() -> mProbe.callCount() == 1);
+        Thread.sleep(200L);
+
+        assertTrue(mSink.confirmations.isEmpty());
+    }
+
+    @Test
     public void aFailedProbeIsReportedWithoutAConfirmation() throws InterruptedException {
         mProvider.shutdown();
         mProbe = FakeProbe.alwaysFailing();
