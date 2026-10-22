@@ -10,6 +10,7 @@
 - **Debug 启动不要求 release 证书**：Debug 使用 AGP 自动签名；缺的是可用的 Android 设备/模拟器和 adb 安装通道，以及设备上的运行时授权。
 - **正式发布不能使用仓库内示例签名**：示例签名只够技术打包，不具备正式分发所需的私密性与升级连续性。正式发布必须换成私有 keystore 或 CI secrets。
 - **单设备只能做启动与界面检查**：完整服务端/客户端流程至少需要两台设备、同一局域网和可用的 NSD/mDNS。
+- **仪器测试只编译不运行**：CI 覆盖 `:app:assembleDebugAndroidTest`，`connectedDebugAndroidTest` 从未执行；`H264MediaCodecSmokeTest` 的失败不等于实现缺陷（见 D 节）。
 
 ## A. 当前环境与构建
 
@@ -111,7 +112,42 @@ CI 的 Build workflow 已通过 secrets 注入签名材料并成功构建，说�
 - 应优先让新包使用与已安装版本相同的签名；如果确实需要换签名，必须先告知用户会清数据，由用户决定是否卸载。
 - 本次没有检查任何已安装 App 的签名，也没有卸载或修改设备。
 
-## D. 清单
+## D. 仪器测试（androidTest）
+
+> 口径核对：2026-10-22。CI **只编译**仪器测试、不运行；设备执行按“逐棒授权”处理——只有用户明确发起时才可执行。
+
+### 已具备什么
+
+- `app/src/androidTest` 有两个类：`ExampleInstrumentedTest`（模板）与 `core/codec/h264/H264MediaCodecSmokeTest`（MediaCodec 桥冒烟）。
+- 编译已进 CI：Build workflow 的 `build` job 执行 `./gradlew :app:assembleDebugAndroidTest`，androidTest 源码与生产类不匹配时 CI 直接失败。
+- 没有 CI 模拟器 job（已裁决）：仪器测试不在 CI 门禁内，也不作为任何条目的完成证据。
+
+### 命令
+
+```bash
+# 只编译仪器测试 APK（CI 已覆盖，不需要设备）
+./gradlew :app:assembleDebugAndroidTest
+
+# 在已连接设备/模拟器上运行（需要 adb 可用、API 25+，且用户明确授权）
+./gradlew :app:connectedDebugAndroidTest
+```
+
+### `H264MediaCodecSmokeTest` 的边界
+
+- 它验证的是“能创建 / 配置 / 释放”：AVC 编解码器出现在系统列表、`H264Codec.androidRegistration()` 的描述符正确、编码器能拿到输入 Surface、解码器能配置并幂等释放。
+- 解码器配置时 CSD 传 `null`（不伪造 SPS/PPS 字节）。部分设备与软解实现会因此直接拒绝配置，**失败不等于实现缺陷**。
+- 通过也不证明真实出画、帧率、SPS/PPS 时序或硬解路径可用；这些点位归[任务看板](task-board.md)中 TB-ENG-013 的统一回归。
+- 手动运行的结果只作为排查线索，不构成本仓库任何条目的完成证据。
+
+### 结果与日志位置
+
+| 输出 | 路径 |
+| --- | --- |
+| 原始结果（XML 与二进制） | `app/build/outputs/androidTest-results/` |
+| HTML 报告 | `app/build/reports/androidTests/` |
+| 失败时的设备日志 | `logcat`（自行抓取；文档不记录设备标识） |
+
+## E. 清单
 
 ### 当前已经具备
 
@@ -163,6 +199,12 @@ CI 的 Build workflow 已通过 secrets 注入签名材料并成功构建，说�
 # 本地 Release 打包（签名来源见上文）
 ./gradlew assembleRelease
 
+# 编译仪器测试 APK（CI 已覆盖，不需要设备）
+./gradlew assembleDebugAndroidTest
+
+# 在受权设备上运行仪器测试（需要 adb 与设备，见 D 节边界说明）
+./gradlew connectedDebugAndroidTest
+
 # 查看设备是否可用（只报告有无/数量，不记录标识）
 adb devices
 ```
@@ -176,4 +218,5 @@ Windows 环境可将 `./gradlew` 换成 `gradlew.bat`。
 - 设备上的权限弹窗、悬浮窗显示、MediaProjection 采集与 NSD 发现：未实机验证。
 - 两台设备之间的端到端共享、API 25 行为和不同厂商限制：未验证。
 - 已安装 App 的签名与覆盖安装结果：未检查。
+- `connectedDebugAndroidTest` 从未在设备或模拟器上执行，两个仪器测试（`ExampleInstrumentedTest`、`H264MediaCodecSmokeTest`）的实际结果未知。
 - Release workflow 的实际发布：未执行。

@@ -22,14 +22,21 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
 /**
- * Compile-only smoke test for the Android MediaCodec bridge produced by Task 8.
+ * Smoke test for the Android MediaCodec bridge behind {@link H264Codec}.
  *
- * <p><b>This test is never executed in this batch.</b> It is compiled against the production
- * classes so that the build fails while the Android bridge and {@code H264Codec.androidRegistration()}
- * are missing, and compiles once they exist. Passing compilation is the only evidence it produces:
- * it is not device evidence and does not prove that encoding, decoding, Surface output or SPS/PPS
- * timing work on a real device. No {@code connectedAndroidTest}, adb, emulator or physical device
- * run accompanies it.</p>
+ * <p>CI only compiles this test: the Build workflow runs
+ * {@code :app:assembleDebugAndroidTest}, so the production bridge and
+ * {@code H264Codec.androidRegistration()} cannot disappear without breaking the build.
+ * Compilation is not device evidence.</p>
+ *
+ * <p>The test can be run by hand on an authorized device with
+ * {@code ./gradlew :app:connectedDebugAndroidTest}, and only then does it prove that an
+ * AVC encoder and decoder can be created, configured and released. The decoder is
+ * configured with a {@code null} codec-specific data buffer on purpose (no fabricated
+ * SPS/PPS bytes), which some devices and software decoders reject: a failure here is not
+ * an implementation defect, and a pass does not prove that encoding, decoding, Surface
+ * output or SPS/PPS timing work. Real codec verification belongs to the device regression
+ * list (TB-ENG-013).</p>
  */
 @RunWith(AndroidJUnit4.class)
 public class H264MediaCodecSmokeTest {
@@ -85,7 +92,7 @@ public class H264MediaCodecSmokeTest {
             AndroidMediaCodecBridgeFactory bridgeFactory = new AndroidMediaCodecBridgeFactory();
             decoder = (AndroidMediaCodecDecoderBridge) bridgeFactory.createDecoder(H264Codec.MIME);
             assertNotNull(decoder);
-            // CSD is null only to keep this compile-only test free of fabricated SPS/PPS bytes;
+            // CSD is null only to keep this smoke test free of fabricated SPS/PPS bytes;
             // this is not a claim that a decoder can be configured without CSD.
             decoder.configure(new DecoderFormat(1280, 720, null, null, outputSurface));
         } finally {
