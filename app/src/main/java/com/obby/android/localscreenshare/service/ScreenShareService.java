@@ -527,8 +527,12 @@ public class ScreenShareService extends Service {
     @Nullable
     private volatile ProjectionSettings mCaptureSettings;
 
-    // True for the H.264 surface path, false for the JPEG fallback path; read at start.
+    // True for the H.264 surface path, false for the JPEG path; read at start.
     private boolean mIsH264;
+
+    // True when the session runs the JPEG compatibility mode because the H.264 encoder could not
+    // start; the notification carries the line so the downgrade stays visible for the whole session.
+    private boolean mIsJpegFallback;
 
     private final String mTag = "ScreenShareService@" + hashCode();
 
@@ -1337,6 +1341,7 @@ public class ScreenShareService extends Service {
         mServerStats = null;
         mConnectionCount = 0;
         mOutboundDataRate = 0L;
+        mIsJpegFallback = false;
     }
 
     /**
@@ -1944,6 +1949,57 @@ public class ScreenShareService extends Service {
     }
 
     /**
+     * Starts the capture pipeline with the configured codec and publishes the fallback if it happens.
+     *
+     * <p>The codec comes from {@code Preferences.KEY_PROJECTION_CODEC}: H.264 is the primary mode and
+     * JPEG the compatibility mode the user can choose explicitly. A device that cannot start its
+     * H.264 encoder still gets a running share: {@link ProjectionCodecStartupCoordinator} retries
+     * once with the JPEG pipeline, which the virtual display feeds through an image reader instead of
+     * an encoder surface. The failure is logged where it happens and reported to the user as a toast,
+     * and the preference is left alone so the next share tries H.264 again.</p>
+     *
+     * <p>The metric scope is created before the attempts and survives them, so a fallback does not
+     * reset the counters of the session. The rest of the start - the rate sampler and the periodic
+     * metric line - only runs once a pipeline is actually up.</p>
+     */
+    private void startStreamPipeline() {
+        final boolean h264Requested = !"jpeg".equals(Preferences.get().getProjectionCodec());
+
+        mMetrics = Preferences.get().isMetricsEnabled()
+            ? PipelineMetrics.create(NanoClock.MONOTONIC)
+            : PipelineMetrics.NONE;
+        mCapToOutSuppressed = false;
+
+        final ProjectionCodecStartupCoordinator.Codec codec =
+            ProjectionCodecStartupCoordinator.start(h264Requested, h264 -> {
+                if (!h264) {
+                    // The failed H.264 attempt left a runtime, a hub registration and a stream key
+                    // behind; they are released before the JPEG pipeline is built so the retry
+                    // starts from nothing and the teardown of the session stays symmetric.
+                    closeStreamPipeline();
+                }
+                startStreamPipelineFor(h264);
+            }, failure -> Log.w(mTag, "startStreamPipeline: H.264 encoder failed to start, "
+                + "falling back to the JPEG compatibility mode for this session", failure));
+
+        if (h264Requested && codec == ProjectionCodecStartupCoordinator.Codec.JPEG) {
+            mIsJpegFallback = true;
+            Toast.makeText(this, R.string.projection_codec_fallback_toast, Toast.LENGTH_LONG).show();
+            // The toast is transient and the downgrade lasts the whole session, so the notification
+            // carries the same statement as a sub-text until the session ends.
+            updateNotification();
+        }
+
+        // The sampler closes an interval over the encoder output counters; created with the scope so
+        // the first five-second line already reports one full period.
+        mRateSampler = mMetrics.isEnabled() ? new RateSampler(mMetrics) : null;
+
+        if (mMetrics.isEnabled()) {
+            mMainHandler.postDelayed(mMetricsLogRunnable, UPDATE_METRICS_INTERVAL_MS);
+        }
+    }
+
+    /**
      * Builds the codec registry, the stream runtime and the stream hub, then starts the encoder.
      *
      * <p>The registry registers JPEG by default and adds H.264 explicitly; H.264 is the primary
@@ -1951,17 +2007,18 @@ public class ScreenShareService extends Service {
      * method returns. The stream identity uses the configured service id as its session instance.
      * Parameters are the validated projection preferences, so an out-of-range stored value never
      * reaches the encoder.</p>
+     *
+     * <p>Called once per attempt by {@link #startStreamPipeline()}, so every field it writes belongs
+     * to the attempt: a failing H.264 attempt leaves a runtime in {@code FAILED} that the caller
+     * releases through {@link #closeStreamPipeline()} before the retry.</p>
+     *
+     * @param h264 {@code true} to start the H.264 pipeline, {@code false} for JPEG
      */
-    private void startStreamPipeline() {
-        mIsH264 = !"jpeg".equals(Preferences.get().getProjectionCodec());
-
-        mMetrics = Preferences.get().isMetricsEnabled()
-            ? PipelineMetrics.create(NanoClock.MONOTONIC)
-            : PipelineMetrics.NONE;
-        mCapToOutSuppressed = false;
+    private void startStreamPipelineFor(final boolean h264) {
+        mIsH264 = h264;
 
         mCodecRegistry = CodecRegistry.withDefaults();
-        if (mIsH264) {
+        if (h264) {
             mCodecRegistry.register(H264Codec.androidRegistration(mMetrics, NanoClock.MONOTONIC));
         }
 
@@ -1977,14 +2034,6 @@ public class ScreenShareService extends Service {
         mStreamHub.activate(mStreamKey);
         mAudioHub = new AudioHub();
         mStreamRuntime.start();
-
-        // The sampler closes an interval over the encoder output counters; created with the scope so
-        // the first five-second line already reports one full period.
-        mRateSampler = mMetrics.isEnabled() ? new RateSampler(mMetrics) : null;
-
-        if (mMetrics.isEnabled()) {
-            mMainHandler.postDelayed(mMetricsLogRunnable, UPDATE_METRICS_INTERVAL_MS);
-        }
     }
 
     /**
@@ -2750,8 +2799,8 @@ public class ScreenShareService extends Service {
     }
 
     /**
-     * Returns the notification's sub-text: the thermal override, the new-peer badge, the audio
-     * reason and the fingerprint guide, whichever apply. Null when none does.
+     * Returns the notification's sub-text: the thermal override, the JPEG fallback, the new-peer
+     * badge, the audio reason and the fingerprint guide, whichever apply. Null when none does.
      */
     @Nullable
     private String notificationSubText() {
@@ -2766,6 +2815,13 @@ public class ScreenShareService extends Service {
         final String thermal = thermalStatusText();
         if (thermal != null) {
             details = details == null ? thermal : thermal + " · " + details;
+        }
+
+        // The JPEG fallback lasts for the whole session, so the notification states it too; the
+        // toast shown at start is already gone by the time the user unlocks the phone.
+        if (mIsJpegFallback) {
+            final String fallback = getString(R.string.service_notification_jpeg_fallback);
+            details = details == null ? fallback : fallback + " · " + details;
         }
 
         if (mAudioAvailability != AudioAvailability.AVAILABLE) {

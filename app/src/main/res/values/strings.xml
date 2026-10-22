@@ -84,6 +84,8 @@
     <string name="service_notification_thermal_reduced">"Thermal limit: <xliff:g id="fps">%1$d</xliff:g> fps"</string>
     <string name="service_notification_thermal_minimal">"Thermal limit: <xliff:g id="fps">%1$d</xliff:g> fps, <xliff:g id="scale">%2$d</xliff:g>%% screen"</string>
     <string name="projection_size_rejected">"This screen size could not be applied; sharing stays at <xliff:g id="width">%1$d</xliff:g>×<xliff:g id="height">%2$d</xliff:g>."</string>
+    <string name="projection_codec_fallback_toast">"This device could not start the H.264 encoder. Sharing continues in JPEG compatibility mode for this session; the codec setting is unchanged."</string>
+    <string name="service_notification_jpeg_fallback">"JPEG compatibility mode"</string>
     <string name="start_service_failed">"Failed to start the screen sharing service."</string>
     <string name="tls_first_connect_message">"Key fingerprint (SHA-256):
 

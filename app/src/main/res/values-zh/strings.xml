@@ -84,6 +84,8 @@
     <string name="service_notification_thermal_reduced">"过热降档：<xliff:g id="fps">%1$d</xliff:g> fps"</string>
     <string name="service_notification_thermal_minimal">"过热降档：<xliff:g id="fps">%1$d</xliff:g> fps，画面 <xliff:g id="scale">%2$d</xliff:g>%%"</string>
     <string name="projection_size_rejected">"该画面大小无法应用，共享画面保持 <xliff:g id="width">%1$d</xliff:g>×<xliff:g id="height">%2$d</xliff:g>。"</string>
+    <string name="projection_codec_fallback_toast">"本机无法启动 H.264 编码器，本次共享改用 JPEG 兼容模式；编码设置保持不变。"</string>
+    <string name="service_notification_jpeg_fallback">"JPEG 兼容模式"</string>
     <string name="start_service_failed">"启动共享屏幕服务失败。"</string>
     <string name="tls_first_connect_message">"密钥指纹（SHA-256）：
 
