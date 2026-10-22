@@ -97,6 +97,9 @@ public final class FakeAudioEncoderBridge implements AudioEncoderBridge {
         if (configureFailure != null) {
             throw configureFailure;
         }
+        // A configure creates a new codec on the real bridge, so a closed bridge becomes usable
+        // again; keeping the flag would make a pipeline restart fail on its first queued frame.
+        closed = false;
         configured = true;
         configureCount++;
     }
