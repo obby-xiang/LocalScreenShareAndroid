@@ -420,8 +420,9 @@ public final class MetricsFormatter {
     /**
      * Renders the fourth overlay line: the audio offset distribution and the audio counters.
      *
-     * <p>The line is short on purpose, because the overlay already wraps at the narrowest window
-     * width the viewer offers. {@code av} is the absolute audio/video offset against the shared
+     * <p>The line is short on purpose, because the overlay shrinks its text and truncates a line
+     * that still overflows the narrowest window the viewer offers, rather than wrapping it.
+     * {@code av} is the absolute audio/video offset against the shared
      * session clock, {@code af} the accepted audio frames, {@code ad} the frames the player dropped
      * and {@code as} the starvations it filled with silence; a viewer that receives no audio still
      * sees the fixed shape with {@code n/a} and zero counters.</p>

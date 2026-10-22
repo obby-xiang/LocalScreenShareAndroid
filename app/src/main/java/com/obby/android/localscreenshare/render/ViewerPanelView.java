@@ -6,6 +6,7 @@ import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.Matrix;
 import android.graphics.Outline;
+import android.graphics.Paint;
 import android.graphics.Typeface;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.ColorDrawable;
@@ -19,6 +20,7 @@ import android.view.ViewGroup;
 import android.view.ViewOutlineProvider;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
@@ -58,6 +60,12 @@ import java.util.List;
  * and then drops it with {@link #fadeOutSnapshot(long)}. The snapshot layer is UI only: it is not a
  * second decoder output, and it never starts or stops decoding.</p>
  *
+ * <p><b>Debug overlay.</b> The overlay is one vertical stack of single-line text views over the
+ * picture. Every line gets the same text size, chosen by {@link ViewerHudTextPolicy} from the width
+ * the panel actually has: the normal window and the full-screen host keep the legacy size, a window
+ * dragged smaller shrinks the text first, and a line that still does not fit is truncated with an
+ * ellipsis instead of wrapping onto a second visual line, which used to cover the lines below.</p>
+ *
  * <p><b>Threading.</b> Every method is called on the main thread; the decoder writes into the
  * texture on its own thread and never touches this view.</p>
  */
@@ -66,13 +74,28 @@ public final class ViewerPanelView extends FrameLayout {
     // Corner radius as a fraction of the shorter side, matching the legacy bitmap viewer.
     private static final float CORNER_SIZE_RATIO = 1 / 16f;
 
+    // Overlay padding in pixels, as the single legacy text view used it.
+    private static final int HUD_PADDING_HORIZONTAL_PX = 12;
+
+    private static final int HUD_PADDING_VERTICAL_PX = 8;
+
+    // Baseline-to-baseline spacing of the overlay lines.
+    private static final float HUD_LINE_SPACING_MULT = 1.1f;
+
+    // One spare pixel so a line measured by the overlay paint cannot wrap through the difference
+    // between that measurement and the line width the layout computes.
+    private static final int HUD_WIDTH_SAFETY_MARGIN_PX = 1;
+
     private final TextureView textureView;
 
     private final ImageView frameView;
 
     private final ImageView snapshotView;
 
-    private final TextView hudView;
+    private final LinearLayout hudView;
+
+    // Measures the overlay lines at the maximum size; the size policy scales that measurement.
+    private final Paint hudMeasurePaint;
 
     private int contentWidth;
 
@@ -159,18 +182,19 @@ public final class ViewerPanelView extends FrameLayout {
         snapshotView.setScaleType(ImageView.ScaleType.MATRIX);
         snapshotView.setVisibility(View.GONE);
 
-        hudView = new TextView(context);
-        hudView.setTextColor(Color.WHITE);
-        hudView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f);
-        hudView.setTypeface(Typeface.MONOSPACE);
+        hudView = new LinearLayout(context);
+        hudView.setOrientation(LinearLayout.VERTICAL);
         hudView.setBackground(new ColorDrawable(0x99000000));
-        hudView.setPadding(12, 8, 12, 8);
-        hudView.setLineSpacing(0f, 1.1f);
+        hudView.setPadding(HUD_PADDING_HORIZONTAL_PX, HUD_PADDING_VERTICAL_PX,
+            HUD_PADDING_HORIZONTAL_PX, HUD_PADDING_VERTICAL_PX);
         // The overlay never consumes input: without a click listener and with clickable false, a
         // touch falls through to the texture view underneath.
         hudView.setClickable(false);
         hudView.setFocusable(false);
         hudView.setVisibility(View.GONE);
+
+        hudMeasurePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        hudMeasurePaint.setTypeface(Typeface.MONOSPACE);
 
         addView(textureView, new LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
@@ -307,6 +331,7 @@ public final class ViewerPanelView extends FrameLayout {
     protected void onSizeChanged(int width, int height, int oldWidth, int oldHeight) {
         super.onSizeChanged(width, height, oldWidth, oldHeight);
         applyCornerSize();
+        applyHudTextSize();
         updateContentTransform();
     }
 
@@ -314,6 +339,7 @@ public final class ViewerPanelView extends FrameLayout {
     protected void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
         applyCornerSize();
+        applyHudTextSize();
         updateContentTransform();
         if (configurationListener != null) {
             configurationListener.onViewConfigurationChanged();
@@ -332,6 +358,13 @@ public final class ViewerPanelView extends FrameLayout {
     /**
      * Replaces the debug overlay text.
      *
+     * <p>Each line gets its own single-line text view, so a line that does not fit the window is
+     * truncated with an end ellipsis instead of wrapping onto a second visual line and covering the
+     * lines below it. All lines share one text size, recomputed from the width the panel actually
+     * has: the normal window and the full-screen host keep the legacy size, a window dragged smaller
+     * shrinks the overlay down to {@link ViewerHudTextPolicy#MIN_TEXT_SIZE_SP} before anything is
+     * truncated.</p>
+     *
      * <p>An empty list hides the overlay instead of leaving stale numbers on screen, which is what a
      * disabled overlay or a disabled metric scope looks like.</p>
      *
@@ -339,12 +372,83 @@ public final class ViewerPanelView extends FrameLayout {
      */
     public void setHudLines(List<String> lines) {
         if (lines.isEmpty()) {
-            hudView.setText(null);
+            hudView.removeAllViews();
             hudView.setVisibility(View.GONE);
             return;
         }
-        hudView.setText(TextUtils.join("\n", lines));
+        // The metric lines are stable per session, so the views are rebuilt only when the line count
+        // changes; the once-per-second refresh then only swaps the text.
+        if (hudView.getChildCount() != lines.size()) {
+            hudView.removeAllViews();
+            for (int i = 0; i < lines.size(); i++) {
+                hudView.addView(createHudLineView(), new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            }
+        }
+        for (int i = 0; i < lines.size(); i++) {
+            ((TextView) hudView.getChildAt(i)).setText(lines.get(i));
+        }
         hudView.setVisibility(View.VISIBLE);
+        applyHudTextSize();
+    }
+
+    /**
+     * Creates one overlay line: monospaced, white, single line and truncated at the end.
+     */
+    private TextView createHudLineView() {
+        final TextView view = new TextView(getContext());
+        view.setTextColor(Color.WHITE);
+        view.setTypeface(Typeface.MONOSPACE);
+        view.setTextSize(TypedValue.COMPLEX_UNIT_SP, ViewerHudTextPolicy.MAX_TEXT_SIZE_SP);
+        view.setLineSpacing(0f, HUD_LINE_SPACING_MULT);
+        // Single line plus an end ellipsis is what guarantees the overlay never wraps; the size
+        // policy makes the ellipsis unnecessary at the normal window size.
+        view.setSingleLine(true);
+        view.setEllipsize(TextUtils.TruncateAt.END);
+        view.setClickable(false);
+        view.setFocusable(false);
+        return view;
+    }
+
+    /**
+     * Applies one text size to every overlay line, chosen from the width the panel has.
+     *
+     * <p>The widest line is measured with the overlay paint at the maximum size, which is the input
+     * {@link ViewerHudTextPolicy} scales down; measuring with the same monospace typeface keeps the
+     * decision equal to the size the layout will use. Before the first layout the panel has no
+     * width, and the policy then keeps the maximum size.</p>
+     */
+    private void applyHudTextSize() {
+        final int lineCount = hudView.getChildCount();
+        if (lineCount == 0) {
+            return;
+        }
+        final int maxTextSizePx = hudTextSizePx(ViewerHudTextPolicy.MAX_TEXT_SIZE_SP);
+        final int minTextSizePx = Math.min(maxTextSizePx,
+            hudTextSizePx(ViewerHudTextPolicy.MIN_TEXT_SIZE_SP));
+        hudMeasurePaint.setTextSize(maxTextSizePx);
+        int widestLineWidthPx = 0;
+        for (int i = 0; i < lineCount; i++) {
+            final CharSequence text = ((TextView) hudView.getChildAt(i)).getText();
+            widestLineWidthPx = Math.max(widestLineWidthPx,
+                (int) Math.ceil(hudMeasurePaint.measureText(text, 0, text.length())));
+        }
+        final int availableWidthPx = getWidth() - hudView.getPaddingLeft()
+            - hudView.getPaddingRight() - HUD_WIDTH_SAFETY_MARGIN_PX;
+        final int textSizePx = ViewerHudTextPolicy.fitTextSizePx(availableWidthPx, maxTextSizePx,
+            minTextSizePx, widestLineWidthPx);
+        for (int i = 0; i < lineCount; i++) {
+            ((TextView) hudView.getChildAt(i)).setTextSize(TypedValue.COMPLEX_UNIT_PX, textSizePx);
+        }
+    }
+
+    /**
+     * Converts {@code sizeSp} to whole pixels with the current font scale.
+     */
+    private int hudTextSizePx(float sizeSp) {
+        final float sizePx = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, sizeSp,
+            getResources().getDisplayMetrics());
+        return Math.max(1, Math.round(sizePx));
     }
 
     /**
