@@ -80,7 +80,7 @@
 | TB-SEC-003 | 🔶 部分完成 | 🟠 P1 | 公告传输安全字段与「画面私密」分离（N1；代码完成，设备复测待棒） | 2026-10-21 | — | [决策 DB-SEC-002](decision-board.md#db-sec-002) |
 | TB-POWER-001 | 🔶 部分完成 | 🟠 P1 | 无观看者懒停与热降档（代码完成，设备验证待棒） | 2026-10-21 | — | [决策 DB-POWER-001](decision-board.md#db-power-001) |
 | TB-ENG-013 | 📋 待办 | 🟡 P2 | 统一回归：稳定性/长时测试清单（功能全部完成后执行） | 2026-10-21 | — | [TB-WIN-001](#tb-win-001) |
-| TB-DISC-012 | 📋 待办 | 🟡 P2 | 双真机联机验证 | 2026-10-20 | — | [发现调研](discovery-research.md) |
+| TB-DISC-012 | 🔶 部分完成 | 🟡 P2 | 双真机联机验证（首测组播互见 + 1080×2340 出画通过；跨机 NSD、分级扫描/收藏/身份跨机、多轮稳定性与 TLS 剩余项待补） | 2026-10-20 | — | [发现调研](discovery-research.md) |
 | TB-DISC-011 | 📋 待办 | 🟡 P3 | 手动添加条目跨重启持久化 | 2026-10-20 | — | [发现调研](discovery-research.md) |
 | TB-MEDIA-004 | 📋 待办 | 🟡 P3 | 首帧绿色花屏自愈 | 2026-10-20 | — | [媒体架构](media-architecture.md) |
 | TB-MEDIA-005 | 📋 待办 | 🟢 P3 | 停止共享时编码器输入面 abandoned 噪声（良性） | 2026-10-20 | — | [媒体架构](media-architecture.md) |
@@ -88,7 +88,7 @@
 | TB-CORE-001 | 📋 待办 | 🔴 P0 | 正确性与资源清理 | 2026-10-17 | — | [路线图阶段 1](optimization-roadmap.md) |
 | TB-CORE-002 | 🔶 部分完成 | 🔴 P0 | 会话与渲染目标解耦（解耦已落地，关窗不停会话待 DV-008） | 2026-10-17 | — | [窗口与会话设计](windowing-session-design.md) |
 | TB-WIN-001 | 🔶 部分完成 | 🟠 P1 | 窗口切换（方案 B；功能冒烟通过，全项回归待统一棒） | 2026-10-17 | — | [窗口与会话设计](windowing-session-design.md) |
-| TB-OBS-001 | 🔶 部分完成 | 🔴 P0 | 可观测性与基线（O1–O6 已落地，O7 待设备） | 2026-10-17 | — | [本计划](superpowers/plans/2026-10-21-transport-observability.md) |
+| TB-OBS-001 | 🔶 部分完成 | 🔴 P0 | 可观测性与基线（O1–O6 已落地，O7 待设备；N3/N4/S-2 口径遗留已登记） | 2026-10-17 | — | [本计划](superpowers/plans/2026-10-21-transport-observability.md) |
 | TB-FW-002 | 🔶 部分完成 | 🟠 P1 | JPEG 适配 | 2026-10-17 | — | [编码框架设计](codec-framework.md) |
 | TB-SEC-001 | 🔶 部分完成 | 🟠 P1 | 配对与授权（默认拒绝 + 审批 + 持久授权；四条核心路径真机复验通过，PIN/配对、音频授权与反控仍未实施） | 2026-10-17 | — | [实施计划](superpowers/plans/2026-10-21-sec-pairing.md) |
 | TB-AUDIO-001 | 🔶 部分完成 | 🟡 P2 | 音频链路（A1–A7 代码完成，设备验证待 TB-AUDIO-003） | 2026-10-17 | — | [音频计划](superpowers/plans/2026-10-21-audio.md) |
@@ -97,7 +97,6 @@
 | TB-CLIENT-001 | 📋 待办 | 🟡 P2 | 客户端画质与多客户端 | 2026-10-17 | — | [媒体架构](media-architecture.md) |
 | TB-CLIENT-002 | 📋 待办 | 🟡 P2 | 单流与多档流策略 | 2026-10-17 | — | [媒体架构](media-architecture.md) |
 | TB-CLIENT-006 | 📋 待办 | ⚪ P3 | 小窗 HUD 折行与字号自适应 | 2026-10-21 | — | [TB-OBS-001](#tb-obs-001) |
-| TB-CTRL-001 | 📋 待办 | 🟡 P2 | 单客户端反控 | 2026-10-17 | — | [媒体架构](media-architecture.md) |
 | TB-ENG-001 | 📋 待办 | 🟡 P2 | 测试与发布工程 | 2026-10-17 | — | [项目现状](project-assessment.md) |
 | TB-ENG-002 | 📋 待办 | 🟡 P2 | 发布签名加固 | 2026-10-17 | — | [启动与签名清单](startup-checklist.md) |
 | TB-FW-007 | 📋 待办 | 🟡 P2 | HEVC 扩展验证 | 2026-10-17 | — | [编码框架设计](codec-framework.md) |
@@ -162,6 +161,7 @@
 
 | ID | 状态 | 优先级 | 标题 | 创建 | 完成 | 关联 |
 | --- | --- | --- | --- | --- | --- | --- |
+| TB-CTRL-001 | ⏸️ 暂缓 | 🟡 P2 | 单客户端反控（用户 2026-10-21 裁决暂缓，大概率不做） | 2026-10-17 | — | [媒体架构](media-architecture.md) |
 | TB-CLOUD-001 | ⏸️ 暂缓 | ⚪ P3 | 云端中继与账号 | 2026-10-17 | — | [路线图](optimization-roadmap.md) |
 | TB-CTRL-002 | ⏸️ 暂缓 | ⚪ P3 | 多客户端并发控制 | 2026-10-17 | — | [媒体架构](media-architecture.md) |
 | TB-DISPLAY-001 | ⏸️ 暂缓 | ⚪ P3 | 4K/120/HDR 默认目标 | 2026-10-17 | — | [路线图](optimization-roadmap.md) |
@@ -250,14 +250,22 @@
 </details>
 
 <a id="tb-disc-012"></a>
-<details><summary>TB-DISC-012 双真机联机验证（📋 待办）</summary>
+<details><summary>TB-DISC-012 双真机联机验证（🔶 部分完成 · 首测组播互见与出画通过，剩余项待补）</summary>
 
-- **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟡 P2 / 2026-10-20 / —
+- **状态 / 优先级 / 创建 / 完成**：🔶 部分完成（两台真机首测：组播互见 + 1080×2340 观看通过；跨机 NSD、分级扫描/收藏/身份跨机行为、多轮稳定性与 TLS 剩余 D2/D7/D10 未覆盖）/ 🟡 P2 / 2026-10-20 / —
 - **任务**：需第二台真机才能验证的事项：跨机 NSD/组播/分级扫描互见（模拟器 NAT 不转发组播，已实测确认）、双真机完整联机行为（真实 LAN RTT/丢包、双端互操作）、收藏与身份跨机行为、多观看者（依赖 [TB-CLIENT-001](#tb-client-001)）。**TLS 专项**（[计划 9.7 D1–D10](superpowers/plans/2026-10-21-tls-tofu.md)）：AndroidKeyStore 私钥握手、API 25 的 TLS 1.2、证书字段解析、首次确认流程、指纹变更拒绝、首连 MITM 演练、TLS 下的扫描预算、性能 A/B、功耗/温升、备份恢复后身份变化。
-- **交付物 / 验证证据**：交付：第二台真机下的互见与联机证据。验证：待用户提供第二台真机后执行；当前仅真机↔模拟器联机（媒体链路双向跑通，发现跨 NAT 不可用）。
+- **交付物 / 验证证据**：交付：第二台真机下的互见与联机证据。验证：两台真机首测已执行（2026-10-21，见下）；此前只有真机↔模拟器联机（媒体链路双向跑通，发现跨 NAT 不可用）。
   - **2026-10-21 进展**：T6 设备棒报出的阻塞项 N-t6-1（AndroidKeyStore 私钥无法签 TLS 摘要）、P1 N-t6-2（主线程 keystore/服务启动触发 ANR）、P3 N-t6-3（重置身份后通知指纹不刷新）已修复并取得设备证据，详见 [TB-DISC-010](#tb-disc-010)：D1（私钥握手）在 API 29 服务端 → API 36 观看端以 TLS 1.3 双向握手出画通过，D4 首次确认框与管理探测链路一并打通。仍待复测：API 25 的 TLS 1.2（D2）、D5 观看端半程、同二层伪造公告拒绝（D6）、TLS 下扫描预算（D7）、TLS 侧性能 A/B（D8）、备份恢复（D10），以及 T6 报告的 B 轮（观看端单帧成本、`rx.catchup` 判据）与 N2 线程尖峰。
   - **2026-10-21 复测（r2）结果**：✅ D1（API 29 服务端 → API 36 观看端 mTLS 出画）、D4（首连确认全流程：64 hex 与真机逐字节一致、可复制、"这不是配对"、取消不可看、信任后出画）、D6（同机伪造公告 + 持另一把密钥的端点 → `identity_mismatch`，两条路径都无绕过入口）、D8（TLS vs 明文各 60 s：服务端 `enc.cap2out.p50` 17.6 vs 17.1 ms、`tx.send.p95` 2.3 vs 4.4 ms，无可测回退）、B 回归（TLS 1080p30 2 min：`dec.lat.p50=99.6 ms`、`rx.catchup +6`、无掉线、FATAL/ANR 0）；⚠️ D5 行为通过、判据改写（见 [TB-DISC-010](#tb-disc-010) 的 N-r2-2）；⚠️ D2 手动添加与 mTLS 握手通过、出画受 API 25 模拟器软解 `0x80001019` 限制（N-r2-5）；⚠️ D7 手动 IP 通过、NSD/组播在模拟器 NAT 后不可达（需同二层双真机）；⚠️ D9 仅缩短版（36→39 ℃、`thermal=0`）。剩余覆盖缺口：API 25 出画、双真机 NSD/组播、30 min 功耗基线、D10 备份/恢复，以及本批 N-r2-1/N-r2-3 的修复后设备复验。
-- **关联文档**：[发现调研](discovery-research.md)
+  - **2026-10-21 双真机首测（两台真机：API 29 服务端 / API 31 观看端，同二层局域网）**：证据 handoff 目录 `device-test-2026-10-21-dual/`（`report.md`、`logs/`、`shots/`、`prefs/`）。
+    - **发现互见 ✅**：观看端进程启动 → 列表出现服务端 **336 ms**（公告周期 5 s，首帧到达即入表，同进程时间戳可直接相减）；服务端重启共享换身份后列表自动更新，无需手动添加。同网段第三方主机监听稳定收到该公告，间隔 5.000 s —— 通道确认为**组播 UDP 224.0.0.167**，公告不含指纹与明文设备名（未开「广播设备名」）。
+    - **跨机 NSD ❌（N6）**：两台真机之间 `onScanCompleted: scanned = 0, confirmed = 0`，即同二层下 mDNS 互不可见（模拟器那轮是 NAT 不转发，这次同二层仍为 0，疑为系统级 mDNS 过滤）。当前由组播兜底，登记为遗留 **N6**，`TB-DISC-003` 不改状态。
+    - **跨机视频 ✅（1080×2340 全屏镜像 → 悬浮窗 956×2072）**：观看端 `dec.lat.p50` **17.9–19.2 ms**（p95 33.7–40.8，重连瞬间 max 91–319）、`rx.auRate` **≈60 fps**（2.47–2.50 Mbps）、`rx.qWait.p50` 0.1 ms、`pres.late.p95` 0 ms、`pres.interval.p50` 17.4 ms、`rtt.p50` **18.6 ms**（p95 110–112）；服务端 `enc.auRate` 59.6–60.2、`enc.cap2out.p50` 15.4–16.0 ms、`tx.send.p95` 1.8–2.8 ms、`tx.clients=1`。观看流畅，无掉帧。
+    - **口径修正（重要）**：`device-test-2026-10-21-catchup/report.md` 由**模拟器**读数得出的「观看端每帧 85–92 ms ⇒ 算力赤字」判断被真机**证伪**——真机硬解 `dec.lat.p50` 只有 17.9–19.2 ms（约模拟器的 1/5），1080×2340 观看流畅；模拟器的低吞吐属**环境/软解瓶颈**，不是客户端实现算力不足。[TB-CLIENT-005](#tb-client-005) 的「1080p 滞后 <1 s」目标因此不能以模拟器结论定论，须在真机对上复测后才能判（归 [TB-ENG-013](#tb-eng-013) 第 2 项）。
+    - **附带证据**：TOFU 首连在真机↔真机之间真正跑通（两端 64 hex 逐字符一致后点「信任此设备」，双方 pin 互写）；跨机音频 `av.offset.p50` 26.8 ms / p95 58.9 ms、服务端 `audio: ACTIVE, sessions=1, dropped=0`。
+    - **首测暴露的缺陷**已另立条目并修复：身份密钥瞬时故障（N3）→ [TB-SEC-002](#tb-sec-002)；发现行首连指纹引导（N2）→ [TB-DISC-013](#tb-disc-013)；公告 `sec` 字段误用（N1）→ [TB-SEC-003](#tb-sec-003)。
+  - **剩余项（本条转「部分完成」后仍需覆盖）**：① **跨机 NSD（N6）**——先定位两台同二层真机间 mDNS 为 0 的原因（系统级过滤或其他），当前组播兜底；② **分级扫描 / 收藏 / 上次成功地址**在真机跨机场景下的行为（本轮走的是组播互见与手动地址，分级扫描未单独取证）；③ **身份跨机行为**——身份重置/换钥后的公告与握手一致性已由 [TB-SEC-002](#tb-sec-002) 修复，仍需真机复测；④ **多轮稳定性**（重复接入/断开、长时间观看，并入 [TB-ENG-013](#tb-eng-013)）；⑤ 承接 **TLS 剩余 D2**（API 25 的 TLS 1.2 出画）、**D7**（TLS 下扫描预算）、**D10**（备份恢复后身份变化）。
+- **关联文档**：[发现调研](discovery-research.md)、[TLS 实施计划 9.7](superpowers/plans/2026-10-21-tls-tofu.md)、[TB-ENG-013](#tb-eng-013)
 
 </details>
 
@@ -342,7 +350,7 @@
 </details>
 
 <a id="tb-obs-001"></a>
-<details><summary>TB-OBS-001 可观测性与基线（🔶 部分完成 · O1–O6 已落地，O7 待设备）</summary>
+<details><summary>TB-OBS-001 可观测性与基线（🔶 部分完成 · O1–O6 已落地，O7 待设备；N3/N4/S-2 口径遗留已登记）</summary>
 
 - **状态 / 优先级 / 创建 / 完成**：🔶 部分完成 / 🔴 P0 / 2026-10-17 / —
 - **任务**：可观测性与基线：统一指标接口，覆盖服务端采集/编码/发送、客户端接收/解码/渲染、网络与设备状态；建立测试矩阵并记录基线。范围按 [本计划](superpowers/plans/2026-10-21-transport-observability.md) 第 10 章细化为 O1–O7，交付物为「指标定义 + 结构化日志 + HUD + 基线报告」，验收沿用阶段 0 五项并补「关闭态零开销」。
@@ -361,7 +369,11 @@
     - **I-2（P2）观看端 HUD 首行恒 0**：根因是全仓只有 `StreamRuntime`（服务端）累加 `ACCESS_UNITS`/`ACCESS_UNIT_BYTES`，观看端从不累加。修法：`ClientMediaReceiver` 增加 `PipelineMetrics` 依赖，在 `ACCESS_UNIT` 分支用**已反序列化**的 `EncodedAccessUnit.getPayloadLength()` 计数（无新增时钟读取、无重复反序列化；关闭态只是一次 volatile 读）；观看端 5 s 行同时新增 `rx.auRate`/`rx.bitrate`（`ClientMetricNames`），HUD 首行与日志从此同源。
     - **I-3（P1，取证缺口）`tx.send`/`tx.qResidency`/`tx.qDepth` 不进服务端日志**：根因是 `StreamHub.join()` 给每个 `ClientSendSession` 发的是 `metrics.newScope()` 返回的**独立实例**，服务端 5 s 行只快照服务自己那份 scope。修法：新增 `core/stream/SessionMetricsSnapshot` 与 `StreamHub.snapshotSessionMetrics(periodMs)`（会话表在锁内拷贝、每个 scope 锁外读取，与既有 `snapshotSessions()` 同一模式），`ClientSendSession.snapshotMetrics()` 直接读自己的 scope；新增 `MetricsFormatter.toSessionLogLine()` 复用同一套键输出 `role=server period=5000 sid=… tx.send.p50/p95/max tx.qResidency.p95/max tx.qDepth.max tx.sent tx.resync`，服务端 5 s 循环为每个会话各打一行（无样本的会话跳过）。会话 scope 的 `SENT_UNITS`/`RESYNCS` 在既有计数点补写，`tx.drop` 仍无来源（丢弃数在队列内部、读取需进同步块，按热路径纪律本棒不加探针）。`sid` 口径抽到 `ClientSessionKey.tailOf()`，两端同一实现。
     - **验证**：新增 `RateSamplerTest`（差分口径、实测周期、零帧、无区间、关闭态、双读者独立基线）与 `AndroidMediaCodecEncoderBridgeTest`（Q-1 回退）；`MetricsFormatterTest` 覆盖速率省略/零速率/会话行/客户端速率，`StreamHubTest` 覆盖会话指标导出与排序，`ClientMediaReceiverTest` 覆盖计数与关闭态，`ClientSessionKeyTest` 覆盖 sid 尾截取；全量 **928 tests / 0 failures / 0 errors / 0 skipped**（82 个测试类），`:app:assembleDebug` 与 `:app:compileDebugAndroidTestJavaWithJavac` 成功。**设备复测未执行**：真机/模拟器上「速率读数是否回到 <2 Mbps 量级」「HUD 首行是否有数」「服务端日志是否出现 sid 行」三个点位留给验证棒。
-  - **未完成（O7）**：基线执行、注入拥塞对照实验、基线报告与 [DV-001](decision-board.md) 裁决全部未做；本节所有指标都没有设备数值。**DV-001 全量基线待 Q-2（[TB-CLIENT-005](#tb-client-005)）落地后执行**：其代码已于 2026-10-21 落地（追赶 + `rx.catchup*` 指标），但设备未验证，因此基线必须等该条通过设备棒、并在 1080p 读数里同时记录 `rx.catchup`/`rx.catchup.lat`/`rx.converge.fail`，否则观看端积压会冒充传输结论。
+  - **未完成（O7）**：基线执行、注入拥塞对照实验、基线报告与 [DV-001](decision-board.md) 裁决全部未做；本节所有指标都没有设备数值。**DV-001 全量基线待 Q-2（[TB-CLIENT-005](#tb-client-005)）的设备口径收口后执行**：其代码已于 2026-10-21 落地（追赶 + `rx.catchup*` 指标），机制已在模拟器观看端走通（`device-test-2026-10-21-catchup/report.md`：82 次 `startCatchUp`、77 次恢复，p50 436 ms），但 1080p30 滞后目标未达成（6.8–43.9 s）；该轮「观看端算力赤字」的归因已被双真机首测证伪（真机 `dec.lat.p50` 17.9–19.2 ms，模拟器低吞吐属环境/软解瓶颈，见 [TB-DISC-012](#tb-disc-012)），因此基线必须（a）在**真机对**上跑，（b）1080p 读数同时记录 `rx.catchup`/`rx.catchup.lat`/`rx.converge.fail`/`rx.qDepth`，否则观看端积压会冒充传输结论。
+  - **观测口径遗留（N3/N4/S-2，登记在本条，不新立卡；来源 `device-test-2026-10-21-catchup/report.md` §5 与 `device-test-2026-10-21-sec/r2/report.md` §5）**：
+    - **N3 `rx.catchup*` 是进程级计数**：不随会话清零，**重连不换 `sid`**（改变画面大小 / 重建编码器才换），因此「每次会话从 0 开始」的判据会误判。基线口径：每轮基线前 `force-stop` 起新进程，或按相位差分读数（对 [DV-001](decision-board.md) 基线与 [TB-ENG-013](#tb-eng-013) 第 3 项同时生效）。
+    - **N4 观看端 5 s 日志行缺 `rx.qDepth`**：`ClientMetricNames.RX_QUEUE_DEPTH` 只出现在 HUD（`q`）与 `startCatchUp … depth=` 行，5 s 行只有 `rx.qWait.*`；补一行成本可忽略，但在此之前「队列深度不长期贴 256」只能靠截图与触发日志间接取证。
+    - **S-2 授权拒绝后的探测 transport 与媒体流在日志/端口上不可分**：拒绝路径本身没有重连入口（[TB-SEC-001](#tb-sec-001) 已补负向用例钉住分类边界），但发现侧 `GrpcRegisterStub.register()` 每次新建 channel，只能靠存活时长（27–36 ms）与「无 `join` 日志」区分。若要求「任何被拒原因都不产生新 transport」，需把发现探测与媒体流的日志/端口分开（可观测性改进，不是连通性缺陷）。
 - **边界与风险**：`enc.cap2out` 依赖「采集 PTS 与单调钟同基」的假设（已自校准 + 越界停用）；`rx.rowd` 依赖 30 s 滑动最小值抵消时钟差；TCP 上没有丢帧只有晚到，因此 DV-001 的判据是卡顿时长与频率而不是丢包率；`ServerStats` 的 `Parcel` 往返只能在设备上验证。
 - **关联文档**：[本计划](superpowers/plans/2026-10-21-transport-observability.md)、[路线图阶段 0](optimization-roadmap.md)、[项目现状](project-assessment.md)、[DV-001](decision-board.md)、[DV-018](decision-board.md)
 
@@ -399,7 +411,7 @@
 - **构建证据**：`./gradlew :app:assembleDebug --offline` 通过；`:app:lintDebug` **0 errors / 146 warnings**（与基线同数；新增计数文案的 `PluralsCandidate` 已按 lint 口径改写）；`check_strings.py`（174 键双一致）、`check_cjk.py`、`check_docs.py` 通过。
 - **设备判据（待验证棒）**：① 未授权设备请求观看 → 服务端 ≤1 s 出现审批通知（名称 + id 短码 + 指纹短码），客户端显示「等待对方批准」，`ServerStats` 会话数与 `lss.metrics` 的 `enc.*` 不因等待而变化；②「允许一次」→ 出画，断开重连再次审批；③「总是允许」→ 出画，重连不再审批，`shared_prefs/lss-authorization.xml` 出现该 id；④「拒绝」→ 客户端弹出「对方拒绝了这次观看请求」并结束会话（无重试入口）；⑤ 60 s 不操作 → 客户端弹出超时文案，服务端通知消失；⑥ 设置 →「已授权设备」撤销正在观看的设备 → 客户端 ≤1 s 内断流并显示「对方已撤销观看授权」（`logcat` 有 `reason = authorization_revoked`）；⑦ 关闭开关 → 新设备直接出画（旧行为），设置里出现风险说明，重新打开后既有授权仍生效；⑧ 客户端未开启「共享设备名」→ 审批显示「未知设备」+ id 短码。
 - **设备四路径复验（r2，2026-10-21 23:03–23:06，双真机 A=YAL-AL10 服务端 / B=ALN-AL00 观看端）**：①✅ 审批通知（`lss-authorization` 通道 id=2，三键）与主界面「观看请求」对话框在同一秒出现（A `onApprovalRequested` 23:03:04.740，B `onApprovalPending` .763），等待期间 `enc.auRate=0.0`、`kf.joins` 不增、0 位观看者；②✅「总是允许」→ A `1 个连接 | 30.75 KB/s`、B `ClientStats(mInboundDataRate≈31.9 KB/s)`，`lss-authorization.xml` 写入 B 的 id；重连后审批请求 0 次、无等待提示、直接出画；③✅「拒绝」→ A `reason = authorization_denied`、B「对方拒绝了这次观看请求。」，其后 20 s 内 B 无 `onStartCommand` / 客户端启动，A 无新审批请求；④✅ 撤销 → A 拒绝 23:04:30.709、B `onError` .740（**31 ms**），B 显示「对方已撤销观看授权，连接已断开。」，已授权列表清零。证据目录 `device-test-2026-10-21-sec/r2/`（`logs/`、`shots/`）。
-- **已知取舍 / 遗留**：① **PIN/扫码配对与会话令牌未实施**（DV-022 仍维持人工比对口径，DV-026 登记审批体验参数）；② 反控（TB-CTRL-001）未实施，因此「观看/音频/反控分级授权」只剩观看一项落地，**音频按 D11 不单设许可**，不得写成「分级授权已完成」；③ 待批准期间占用一条 gRPC 流与一个 5 ms 轮询的 drain 线程（不占编码器与会话），最多 60 s；④ 会话进行中把开关从关改为开，未授权的当前观看者会按 `authorization_revoked` 断开并需重新批准（刻意保守，未单独设「即时生效」提示）；⑤ 明文调试开关下的无身份对端每次都只能「允许一次」（无可持久化的身份）；⑥ 「已授权设备」计数只在设置 sheet 显示时与撤销后刷新，不订阅存储变更。
+- **已知取舍 / 遗留**：① **PIN/扫码配对与会话令牌未实施**（DV-022 仍维持人工比对口径，DV-026 登记审批体验参数）；② 反控（[TB-CTRL-001](#tb-ctrl-001)，用户 2026-10-21 裁决暂缓）未实施，因此「观看/音频/反控分级授权」只剩观看一项落地，**音频按 D11 不单设许可**，不得写成「分级授权已完成」；③ 待批准期间占用一条 gRPC 流与一个 5 ms 轮询的 drain 线程（不占编码器与会话），最多 60 s；④ 会话进行中把开关从关改为开，未授权的当前观看者会按 `authorization_revoked` 断开并需重新批准（刻意保守，未单独设「即时生效」提示）；⑤ 明文调试开关下的无身份对端每次都只能「允许一次」（无可持久化的身份）；⑥ 「已授权设备」计数只在设置 sheet 显示时与撤销后刷新，不订阅存储变更。
 - **关联文档**：[实施计划](superpowers/plans/2026-10-21-sec-pairing.md)、[决策 DB-SEC-001](decision-board.md#db-sec-001)、[DB-SEC-004](decision-board.md#db-sec-004)、[DV-026](decision-board.md)、[媒体架构安全模型](media-architecture.md)、[TB-DISC-010 实施计划](superpowers/plans/2026-10-21-tls-tofu.md)、[音频计划第 8 章](superpowers/plans/2026-10-21-audio.md)、[项目现状安全边界](project-assessment.md)
 
 </details>
@@ -511,22 +523,15 @@
 
 </details>
 
-<a id="tb-ctrl-001"></a>
-<details><summary>TB-CTRL-001 单客户端反控（📋 待办）</summary>
-
-- **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟡 P2 / 2026-10-17 / —
-- **任务**：单客户端反控：`AccessibilityService.dispatchGesture`；默认关闭、用户手动开启；单客户端租约、心跳、epoch fencing；归一化坐标；敏感界面不注入。
-- **交付物 / 验证证据**：交付：反控授权、租约、坐标与可见指示。验证：阶段 4 的反控授权、租约、坐标、安全项通过；当前未执行。
-- **关联文档**：[路线图阶段 4](optimization-roadmap.md)、[媒体架构反控](media-architecture.md)
-
-</details>
-
 <a id="tb-eng-001"></a>
-<details><summary>TB-ENG-001 测试与发布工程（📋 待办）</summary>
+<details><summary>TB-ENG-001 测试与发布工程（📋 待办 · 单测已成规模，R8/仪器/CI 测试步骤未做）</summary>
 
 - **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟡 P2 / 2026-10-17 / —
 - **任务**：测试与发布工程：补齐状态机、停止幂等、队列、协议、重连与坐标测试；仪器与压力测试；R8/keep 规则；CI 增加独立测试步骤。
-- **交付物 / 验证证据**：交付：测试用例、CI 配置、混淆规则。验证：测试可重复运行并阻断回归；当前仅模板测试，未执行新增测试。
+- **交付物 / 验证证据**：交付：测试用例、CI 配置、混淆规则。
+  - **现状（2026-10-22 核对）**：JVM 单测**已不是模板规模**——全量 **1381 tests / 132 个测试类 / 0 failures / 0 errors / 0 skipped**（数字与逐条证据见 [TB-SEC-001](#tb-sec-001) 条目），覆盖客户端六状态机、停止幂等、有界队列、协议映射与兼容、重连/追赶、身份与授权路径，`./gradlew :app:testDebugUnitTest` 可重复运行且只增不减。原表述「当前仅模板测试」已过期，故改写为本条。
+  - **仍未做（本条保持 📋 待办）**：① **R8/keep 规则**——`app/build.gradle` 的 `release` 仍是 `minifyEnabled false`，收缩与 keep 规则从未启用或验证；② **仪器与压力测试**——`app/src/androidTest` 只有 2 个文件（`ExampleInstrumentedTest`、`H264MediaCodecSmokeTest`），`connectedAndroidTest` 从未在设备/模拟器上跑过，也没有压力用例；③ **CI 无独立测试步骤**——`checks.yml` 只有 `check_strings.py`/`check_cjk.py`/`check_docs.py` 三项资源与文档检查；单测只在 `build.yml` 的 `Build with Gradle` 步骤里随 `./gradlew build` 隐式执行（PR 触发时该步骤显式列出 `:app:testDebugUnitTest`），没有单独的 job/step、失败归因或独立的测试报表对比。
+  - **验证口径**：以上三项完成前，本条不得写成「测试工程已完成」；设备侧压力/长时为另一条线（[TB-ENG-013](#tb-eng-013)），两者不互相替代。
 - **关联文档**：[项目现状工程审查](project-assessment.md)、[路线图阶段 1](optimization-roadmap.md)
 
 </details>
@@ -556,7 +561,7 @@
   7. **API 25 出画兼容性**（来源 `N-r2-5`）：API 25 模拟器软解 `0x80001019` 导致握手正常、有数据无画面；**阻塞：需要 API 25 真机或带硬解镜像**，否则只能验证“握手 + 有数据”，出画判据不闭环。
   8. **音频长时/压力项**（来源 [TB-AUDIO-003](#tb-audio-003) 与[音频计划 6.10](superpowers/plans/2026-10-21-audio.md) 的 A8-4/5/6/8）：10 分钟漂移量（`AV_OFFSET` P50/P95）、3 台观看端同时播放与慢客户端音频丢弃、同一 TCP 上音频被视频大帧阻塞的可感知度（`tx.send.p95` 与主观卡顿）、开关音频各 30 分钟的电池/温度/CPU 对比。**阻塞：音频功能设备冒烟通过后**；判据为 `|Δ|` 观感 ≤100 ms、无视频回归。
 - **执行口径**：一次统一棒只装一个已推送 HEAD、仓库零改动；每项记录取数窗口、宿主负载与 guest `top`；不得把“没测到”写成“没问题”；运行前后偏好/输入法/方向逐字节还原；不得放宽判据，判据不可达时须写明机制理由。
-- **完成判据**：以上 7 项均有可核对证据（截图/日志/读数）并按[维护方式](#-维护方式)写回各自条目；阻塞未解除的项保持 📋 待办并注明阻塞原因。
+- **完成判据**：以上 8 项均有可核对证据（截图/日志/读数）并按[维护方式](#-维护方式)写回各自条目；阻塞未解除的项保持 📋 待办并注明阻塞原因。
 - **关联文档**：[TB-WIN-001](#tb-win-001)、[TB-OBS-001](#tb-obs-001)、[TB-CLIENT-005](#tb-client-005)、[TB-DISC-010](#tb-disc-010)、[DV-001](decision-board.md)、[路线图](optimization-roadmap.md)
 
 </details>
@@ -1078,12 +1083,23 @@
 
 </details>
 
+<a id="tb-ctrl-001"></a>
+<details><summary>TB-CTRL-001 单客户端反控（⏸️ 暂缓 · 用户 2026-10-21 裁决大概率不做）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：⏸️ 暂缓 / 🟡 P2 / 2026-10-17 / —
+- **事项（原始范围）**：单客户端反控：`AccessibilityService.dispatchGesture`；默认关闭、用户手动开启；单客户端租约、心跳、epoch fencing；归一化坐标；敏感界面不注入。
+- **暂缓理由 / 重新评估条件**：用户 2026-10-21 裁决第 6 问（客户端能否反控服务端）为**暂缓、大概率不做**：无障碍手势只能覆盖点击/滑动/拖拽，高频拖动、多指与键盘体验有限，且必须由用户在系统设置里手动开启无障碍服务，产品收益不足以覆盖合规与体验成本。条目保留（不删原始范围与点位），优先级维持 🟡 P2 而不是降为 ⚪ P3——一旦重启，工作量与风险直接落在 P1/P2 量级——但**不排期**。
+- **若重启需重新评审**：① **无障碍合规**——目标 App 与系统界面的可注入范围、敏感界面（支付/密码/权限页）不注入的判定依据、无障碍服务的应用商店分发政策；② **租约协议设计**——单客户端租约的授予/续租/回收、心跳超时与 `epoch` fencing、断线重连后的租约归属，以及与 [TB-SEC-001](#tb-sec-001) 授权分级的边界（当前只有「观看」一项落地，音频按 D11 不单设许可；反控若做必须单列许可）。验证方式沿用原条目：阶段 4 的反控授权、租约、坐标与安全项实测；当前未执行。
+- **关联文档**：[路线图阶段 4](optimization-roadmap.md)、[媒体架构反控](media-architecture.md)、[决策 DB-CTRL-001](decision-board.md#db-ctrl-001)、[DV-006](decision-board.md)
+
+</details>
+
 <a id="tb-ctrl-002"></a>
 <details><summary>TB-CTRL-002 多客户端并发控制（⏸️ 暂缓）</summary>
 
 - **状态 / 优先级 / 创建 / 完成**：⏸️ 暂缓 / ⚪ P3 / 2026-10-17 / —
 - **事项**：多客户端并发控制。
-- **暂缓理由 / 重新评估条件**：冲突、权限与审计复杂；先落地单客户端控制租约，再评估是否放开。
+- **暂缓理由 / 重新评估条件**：冲突、权限与审计复杂；先落地单客户端控制租约，再评估是否放开。**注（2026-10-21）**：单客户端反控已由用户裁决暂缓（[TB-CTRL-001](#tb-ctrl-001)），本条在反控范围重启前没有前提。
 - **关联文档**：[媒体架构反控](media-architecture.md)
 
 </details>
