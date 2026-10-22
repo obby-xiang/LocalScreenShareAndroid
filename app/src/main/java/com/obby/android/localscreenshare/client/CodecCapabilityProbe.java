@@ -24,26 +24,25 @@ import java.util.Map;
  */
 public final class CodecCapabilityProbe {
 
-    private static final String JPEG_MIME = "image/jpeg";
-
     private CodecCapabilityProbe() {
     }
 
     /**
      * Probes the device's decoders for the codecs this client can receive, for the HELLO message.
      *
-     * <p>H.264 is the compatibility baseline and JPEG is the fallback; each is included only when a
-     * decoder is actually present. The AAC-LC decoder is declared in the audio list: it is required
-     * on every Android device that defines a microphone, but probing keeps the advertisement honest
-     * on devices where it is missing.</p>
+     * <p>Only H.264 is probed as a video codec, because it is the one codec that reaches a
+     * {@code MediaCodec} decoder. JPEG is not probed: the viewer draws it with
+     * {@code BitmapFactory}, so {@link ClientCapabilitiesFactory} adds it unconditionally. The
+     * AAC-LC decoder is declared in the audio list: it is required on every Android device that
+     * defines a microphone, but probing keeps the advertisement honest on devices where it is
+     * missing.</p>
      */
     public static ClientCapabilities probeClientDecoders() {
         Map<String, CodecCapability> capabilities = new LinkedHashMap<>();
         probeDecoder(capabilities, CodecIds.H264, H264Codec.MIME);
-        probeDecoder(capabilities, CodecIds.JPEG, JPEG_MIME);
         Map<String, AudioCodecCapability> audioCapabilities = new LinkedHashMap<>();
         probeAudioDecoder(audioCapabilities, AudioCodecIds.AAC, AudioCodecIds.AAC_MIME);
-        return new ClientCapabilities(capabilities, audioCapabilities);
+        return ClientCapabilitiesFactory.advertised(capabilities, audioCapabilities);
     }
 
     /**

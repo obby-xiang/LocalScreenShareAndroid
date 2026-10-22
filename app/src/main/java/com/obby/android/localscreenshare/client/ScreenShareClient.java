@@ -14,6 +14,7 @@ import com.obby.android.localscreenshare.core.metrics.PipelineMetrics;
 import com.obby.android.localscreenshare.core.metrics.RttEstimator;
 import com.obby.android.localscreenshare.core.model.ClientSessionKey;
 import com.obby.android.localscreenshare.core.model.ClientState;
+import com.obby.android.localscreenshare.core.stream.ClientCapabilities;
 import com.obby.android.localscreenshare.grpc.screenstream.ClientMessage;
 import com.obby.android.localscreenshare.grpc.screenstream.Hello;
 import com.obby.android.localscreenshare.grpc.screenstream.Ping;
@@ -164,6 +165,12 @@ public final class ScreenShareClient {
     // Random per-run session id announced in the HELLO; logs print its tail only.
     @Nullable
     private String mClientId;
+
+    // Capability set announced in the HELLO; null means "probe at start()". The viewer service
+    // passes the same instance it hands to its media session, so the server can never pick a codec
+    // the session then refuses.
+    @Nullable
+    private final ClientCapabilities mAdvertisedCapabilities;
 
     // Round-trip estimator fed by the echo messages; only records into mMetrics.
     @NonNull
@@ -362,9 +369,31 @@ public final class ScreenShareClient {
     public ScreenShareClient(@NonNull final String host, final int port,
                              @NonNull final PipelineMetrics metrics,
                              @Nullable final String expectedDeviceId) {
+        this(host, port, metrics, expectedDeviceId, null);
+    }
+
+    /**
+     * Creates the gRPC channel and announces {@code advertised} in the HELLO.
+     *
+     * <p>Passing the capability set keeps the HELLO and the caller's media session on one instance:
+     * the server chooses from exactly what the session accepts. A null set means "probe when
+     * {@link #start} runs", which is what the shorter constructors do.</p>
+     *
+     * @param host             remote host address
+     * @param port             remote gRPC port
+     * @param metrics          metric scope of the receiving pipeline; required
+     * @param expectedDeviceId device id selected in discovery, or null in tests
+     * @param advertised       capabilities announced in the HELLO; null probes at start
+     * @throws IllegalArgumentException if {@code metrics} is null
+     */
+    public ScreenShareClient(@NonNull final String host, final int port,
+                             @NonNull final PipelineMetrics metrics,
+                             @Nullable final String expectedDeviceId,
+                             @Nullable final ClientCapabilities advertised) {
         if (metrics == null) {
             throw new IllegalArgumentException("metrics must not be null");
         }
+        mAdvertisedCapabilities = advertised;
         mMetrics = metrics;
         mRttEstimator = new RttEstimator(metrics, metrics.getClock());
         final boolean isPlaintext = Preferences.get().isTlsAllowPlaintext();
@@ -401,9 +430,9 @@ public final class ScreenShareClient {
      *
      * <p>Returns immediately. {@link ClientObserver#onConnected()} is reported on the main thread
      * when the first server message arrives, which means the transport is established; the session's
-     * own state listener reports the transition to streaming. A HELLO carries this client's id; the
-     * capability set is left empty until runtime probing lands, which the server treats as the
-     * H.264 baseline.</p>
+     * own state listener reports the transition to streaming. The HELLO carries this client's id and
+     * the advertised capabilities: the set given to the constructor, or a fresh probe when none was
+     * given. The server selects a codec from that very set.</p>
      *
      * <p>Call once, on the main thread. The observer is retained until the stream terminates or
      * {@link #stop()} is called, and it is never called after {@code stop()} returns.</p>
@@ -527,11 +556,12 @@ public final class ScreenShareClient {
             });
 
         mClientId = "client-" + UUID.randomUUID();
+        final ClientCapabilities advertised = mAdvertisedCapabilities != null
+            ? mAdvertisedCapabilities : CodecCapabilityProbe.probeClientDecoders();
         final Hello.Builder hello = Hello.newBuilder()
             .setProtocolVersion(ScreenStreamProtoMapper.PROTOCOL_VERSION)
             .setClientId(mClientId)
-            .setCapabilities(ScreenStreamProtoMapper.toProtoCapabilities(
-                CodecCapabilityProbe.probeClientDecoders()));
+            .setCapabilities(ScreenStreamProtoMapper.toProtoCapabilities(advertised));
         // The discovery identity binds this session to the device entry peers already know. The
         // client id above stays the stream hub's session key, so a reconnect of the same device is
         // still a new session. The id is the one of the certificate this channel presents, because

@@ -76,6 +76,7 @@ import com.obby.android.localscreenshare.core.audio.mediacodec.AudioTrackSink;
 import com.obby.android.localscreenshare.authorization.AuthorizationPolicy;
 import com.obby.android.localscreenshare.client.ClientMediaReceiver;
 import com.obby.android.localscreenshare.client.ClientSecureListener;
+import com.obby.android.localscreenshare.client.CodecCapabilityProbe;
 import com.obby.android.localscreenshare.client.KeyFrameRequestThrottle;
 import com.obby.android.localscreenshare.client.ReconnectPolicy;
 import com.obby.android.localscreenshare.client.ScreenShareClient;
@@ -86,7 +87,6 @@ import com.obby.android.localscreenshare.client.StreamFailure;
 import com.obby.android.localscreenshare.client.StreamGeometryListener;
 import com.obby.android.localscreenshare.core.client.ClientMediaSession;
 import com.obby.android.localscreenshare.core.client.ClientStateListener;
-import com.obby.android.localscreenshare.core.codec.CodecIds;
 import com.obby.android.localscreenshare.core.codec.CodecRegistry;
 import com.obby.android.localscreenshare.core.codec.h264.H264Codec;
 import com.obby.android.localscreenshare.core.metrics.ArrivalTracker;
@@ -222,8 +222,8 @@ public class ScreenViewerService extends Service {
     @Nullable
     private ScreenShareViewer mScreenShareViewer;
 
-    // Media session wiring: the registry resolves the H.264 decoder, the session drives it, and
-    // the receiver feeds it from the wire on the client's dedicated decode thread.
+    // Media session wiring: the registry resolves the active codec's decoder, the session drives
+    // it, and the receiver feeds it from the wire on the client's dedicated decode thread.
     @Nullable
     private CodecRegistry mCodecRegistry;
 
@@ -242,6 +242,12 @@ public class ScreenViewerService extends Service {
 
     @Nullable
     private ClientMediaSession mClientMediaSession;
+
+    // Capabilities announced in the HELLO and enforced by the media session. Probed once per service
+    // instance and reused by retries, because the device's decoders cannot change between attempts
+    // and the server must never be offered a codec this session would refuse.
+    @Nullable
+    private ClientCapabilities mAdvertisedCapabilities;
 
     // Optional audio track of the viewing session. Created with the media session and released with
     // it; audio never shares state with the video session.
@@ -747,7 +753,7 @@ public class ScreenViewerService extends Service {
 
         final ClientMediaReceiver receiver = startMediaSession();
         mClient = new ScreenShareClient(hostOf(mServiceInfo), portOf(mServiceInfo), viewerMetrics(),
-                    mServiceInfo.getId());
+                    mServiceInfo.getId(), advertisedCapabilities());
         mClient.setClientStatsListener(mClientStatsListener);
         mScreenShareLoading = new ScreenShareLoading(this, mServiceInfo);
         mScreenShareLoading.show();
@@ -987,7 +993,7 @@ public class ScreenViewerService extends Service {
         }
         final ClientMediaReceiver receiver = startMediaSession();
         mClient = new ScreenShareClient(hostOf(mServiceInfo), portOf(mServiceInfo), viewerMetrics(),
-            mServiceInfo.getId());
+            mServiceInfo.getId(), advertisedCapabilities());
         mClient.setClientStatsListener(mClientStatsListener);
         if (mScreenShareLoading != null) {
             mScreenShareLoading.show();
@@ -1073,21 +1079,40 @@ public class ScreenViewerService extends Service {
     }
 
     /**
+     * Returns the capability set this viewer advertises, probing the decoders on first use.
+     *
+     * <p>One instance serves the HELLO and the media session of every attempt. A retry reuses it for
+     * the same reason the probe itself runs once: the device's decoders do not change while the
+     * service lives, and two independent results would let the HELLO offer a codec the session then
+     * refuses. The probe runs on the main thread and is pure bookkeeping apart from the
+     * {@code MediaCodecList} query.</p>
+     */
+    @NonNull
+    private ClientCapabilities advertisedCapabilities() {
+        if (mAdvertisedCapabilities == null) {
+            mAdvertisedCapabilities = CodecCapabilityProbe.probeClientDecoders();
+        }
+        return mAdvertisedCapabilities;
+    }
+
+    /**
      * Builds the client media session for the current target.
      *
-     * <p>The registry resolves the H.264 decoder; capabilities are pinned to H.264 until runtime
-     * probing and JPEG fallback land. The receiver drives the session from wire messages on the
-     * client's decode thread, and the session receives one stable {@link SwitchableRenderTarget}
-     * whose delegate is the display host that currently owns the output: the floating window's
-     * texture normally, the activity's texture while the session is expanded. When the window owns
-     * the output it is mounted immediately, so its texture view exposes the surface the decoder
-     * needs. The registration carries a key-frame requester, so a decoder that had to shed a frame
-     * asks the server for a fresh join point.</p>
+     * <p>The registry resolves the active codec's decoder, and the session is gated on the same
+     * capabilities the client announces in its HELLO ({@link #advertisedCapabilities()}), so a
+     * descriptor the server selected can never be refused here. The receiver drives the session from
+     * wire messages on the client's decode thread, and the session receives one stable
+     * {@link SwitchableRenderTarget} whose delegate is the display host that currently owns the
+     * output: the floating window's texture normally, the activity's texture while the session is
+     * expanded. When the window owns the output it is mounted immediately, so its texture view
+     * exposes the surface the decoder needs. The registration carries a key-frame requester, so a
+     * decoder that had to shed a frame asks the server for a fresh join point.</p>
      */
     @NonNull
     private ClientMediaReceiver startMediaSession() {
         ensureMetrics();
         mSessionClock.reset();
+        final ClientCapabilities advertised = advertisedCapabilities();
         if (mCodecRegistry == null) {
             mCodecRegistry = CodecRegistry.withDefaults();
             mCodecRegistry.register(H264Codec.androidRegistration(
@@ -1111,7 +1136,7 @@ public class ScreenViewerService extends Service {
             mActivityRenderTarget != null ? mActivityRenderTarget : mOverlayRenderTarget);
         final ClientMediaSession session = new ClientMediaSession(
                 new ClientSessionKey(mStreamKey, "local"), mCodecRegistry,
-                new ClientCapabilities(Collections.singleton(CodecIds.H264)),
+                advertised,
                 mRenderTarget, mClientStateListener, mMetrics);
         mClientMediaSession = session;
         mClientAudioSession = createAudioSession();
