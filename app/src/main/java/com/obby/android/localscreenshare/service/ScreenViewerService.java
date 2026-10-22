@@ -24,6 +24,7 @@ import android.os.Binder;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.text.format.Formatter;
 import android.util.DisplayMetrics;
 import android.util.Log;
@@ -37,6 +38,7 @@ import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.ViewGroup;
 import android.view.WindowManager;
+import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -75,6 +77,7 @@ import com.obby.android.localscreenshare.authorization.AuthorizationPolicy;
 import com.obby.android.localscreenshare.client.ClientMediaReceiver;
 import com.obby.android.localscreenshare.client.ClientSecureListener;
 import com.obby.android.localscreenshare.client.KeyFrameRequestThrottle;
+import com.obby.android.localscreenshare.client.ReconnectPolicy;
 import com.obby.android.localscreenshare.client.ScreenShareClient;
 import com.obby.android.localscreenshare.client.ClientObserver;
 import com.obby.android.localscreenshare.client.ClientStats;
@@ -356,6 +359,18 @@ public class ScreenViewerService extends Service {
     @NonNull
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
 
+    // Backoff of the reconnect prompt; a successful connection starts the schedule over.
+    @NonNull
+    private final ReconnectPolicy mReconnectPolicy = new ReconnectPolicy();
+
+    // Pending automatic reconnect and its countdown. The teardown removes both, so a retry cannot
+    // start a session after the viewer was stopped.
+    @Nullable
+    private Runnable mReconnectRunnable;
+
+    @Nullable
+    private Runnable mRetryCountdownRunnable;
+
     // Limits key-frame requests raised by decode failures and queue overflows.
     @NonNull
     private final KeyFrameRequestThrottle mKeyFrameRequestThrottle = new KeyFrameRequestThrottle();
@@ -369,6 +384,9 @@ public class ScreenViewerService extends Service {
         @Override
         public void onConnected() {
             mIsConnected = true;
+            // A working connection is what ends a failure streak: the next drop starts at the
+            // immediate retry again.
+            mReconnectPolicy.reset();
             // The address that just worked becomes the first favorite probe next time.
             if (mServiceInfo != null) {
                 FavoriteStore.get().recordSuccess(mServiceInfo.getId(),
@@ -392,13 +410,25 @@ public class ScreenViewerService extends Service {
                 + ", authorizationRejected = " + isAuthorizationRejected
                 + ", " + failure.toLogText());
 
+            // A new disconnect supersedes whatever the previous prompt scheduled.
+            cancelPendingRetry();
+
+            // One attempt is consumed per disconnect, so the schedule advances even when the user
+            // dismisses the dialog and reconnects from the list. A refused connection never
+            // consumes one: it is not a transient failure and is not retried.
+            final boolean canRetry = !isRefused && mReconnectPolicy.canRetry();
+            final long retryDelayMs = canRetry ? mReconnectPolicy.nextDelayMs() : 0L;
+
             // A session that was connected reports a reconnect prompt; a failed first connection
-            // reports a retry prompt. A refusal reports its own reason instead.
+            // reports a retry prompt; an exhausted schedule reports that the peer stayed
+            // unreachable. A refusal reports its own reason instead.
             final int messageResId;
             if (isIdentityRejected) {
                 messageResId = R.string.screen_share_identity_rejected_message;
             } else if (isAuthorizationRejected) {
                 messageResId = authorizationRejectedMessage(failure.getReason());
+            } else if (!canRetry) {
+                messageResId = R.string.screen_share_retry_exhausted_message;
             } else {
                 messageResId = mIsConnected ? R.string.screen_share_reconnect_confirm
                     : R.string.screen_share_retry_connect_confirm;
@@ -439,7 +469,7 @@ public class ScreenViewerService extends Service {
             // may not be visible.
             final Context themedContext = new ContextThemeWrapper(ScreenViewerService.this, R.style.Theme_ScreenShare);
             final MaterialAlertDialogBuilder builder = new MaterialAlertDialogBuilder(themedContext)
-                .setMessage(HtmlCompat.fromHtml(isRefused
+                .setMessage(HtmlCompat.fromHtml(isRefused || !canRetry
                         ? getString(messageResId)
                         : getString(messageResId, nameOf(mServiceInfo)),
                     HtmlCompat.FROM_HTML_MODE_LEGACY))
@@ -448,17 +478,22 @@ public class ScreenViewerService extends Service {
                 builder.setTitle(nameOf(mServiceInfo))
                     .setPositiveButton(android.R.string.ok, (dialog, which) -> sendBroadcast(
                         new Intent(ServiceProtocol.ACTION_STOP_CLIENT_SERVICE).setPackage(getPackageName())));
+            } else if (canRetry) {
+                builder.setTitle(nameOf(mServiceInfo))
+                    .setPositiveButton(android.R.string.ok, (dialog, which) ->
+                        scheduleRetry((AlertDialog) dialog, retryDelayMs))
+                    .setNegativeButton(android.R.string.cancel, (dialog, which) -> {
+                        cancelPendingRetry();
+                        sendBroadcast(new Intent(ServiceProtocol.ACTION_STOP_CLIENT_SERVICE)
+                            .setPackage(getPackageName()));
+                    });
             } else {
-                builder.setPositiveButton(android.R.string.ok, (dialog, which) -> {
-                        final ClientMediaReceiver receiver = startMediaSession();
-                        mClient = new ScreenShareClient(hostOf(mServiceInfo), portOf(mServiceInfo), viewerMetrics(),
-                        mServiceInfo.getId());
-                        mClient.setClientStatsListener(mClientStatsListener);
-                        mScreenShareLoading.show();
-                        mClient.start(mClientObserver, receiver);
-                    })
-                    .setNegativeButton(android.R.string.cancel, (dialog, which) -> sendBroadcast(
-                        new Intent(ServiceProtocol.ACTION_STOP_CLIENT_SERVICE).setPackage(getPackageName())));
+                // The schedule is exhausted: the only remaining action ends the session, and the
+                // list is where the user starts a fresh one.
+                builder.setTitle(nameOf(mServiceInfo))
+                    .setPositiveButton(R.string.viewer_action_stop_viewing, (dialog, which) ->
+                        sendBroadcast(new Intent(ServiceProtocol.ACTION_STOP_CLIENT_SERVICE)
+                            .setPackage(getPackageName())));
             }
             mDialog = builder.create();
             mDialog.getWindow().setType(ServiceProtocol.FLOATING_WINDOW_TYPE);
@@ -664,6 +699,11 @@ public class ScreenViewerService extends Service {
         // would release nothing.
         mTeardown = createTeardownCoordinator();
 
+        // A retry the previous prompt scheduled must not start a second session next to this one,
+        // and a session the user starts from the list gets the full retry schedule again.
+        cancelPendingRetry();
+        mReconnectPolicy.reset();
+
         mServiceInfo = serviceInfo;
         mIsConnected = false;
         mClientStats = null;
@@ -842,18 +882,117 @@ public class ScreenViewerService extends Service {
     }
 
     /**
-     * Drops every main-thread task that would otherwise re-arm itself or report a stale expansion,
-     * then releases the metric scope.
+     * Drops every main-thread task that would otherwise re-arm itself, retry the connection or
+     * report a stale expansion, then releases the metric scope.
      */
     private void cancelScheduledWork() {
         mMainHandler.removeCallbacks(mMetricsLogRunnable);
         mMainHandler.removeCallbacks(mHudRunnable);
         cancelActivityAttachWatchdogs();
+        cancelPendingRetry();
         mMetrics = null;
         mHudRateSampler = null;
         mLogRateSampler = null;
         mLoggedResyncReason = null;
         mMetricsLogCount = 0;
+    }
+
+    /**
+     * Schedules the retry behind its backoff delay and shows the wait on the button.
+     *
+     * <p>The user asks for the retry, the confirmation stays open, the button is disabled and its
+     * label counts the remaining seconds down. The connection starts from the main-thread callback
+     * after the delay, so a stop in the meantime removes the callback through
+     * {@link #cancelPendingRetry()} and no session can start after the viewer was closed.</p>
+     *
+     * @param dialog  confirmation that asked for the retry; required
+     * @param delayMs backoff delay of this attempt
+     */
+    private void scheduleRetry(@NonNull final AlertDialog dialog, final long delayMs) {
+        cancelPendingRetry();
+        if (delayMs <= 0L) {
+            OverlayWindow.dismiss(dialog);
+            if (mDialog == dialog) {
+                mDialog = null;
+            }
+            startNewSession();
+            return;
+        }
+
+        final Button retry = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
+        if (retry != null) {
+            retry.setEnabled(false);
+            retry.setText(getString(R.string.screen_share_retry_countdown,
+                (delayMs + 999L) / 1_000L));
+        }
+        final long deadlineMs = SystemClock.elapsedRealtime() + delayMs;
+        mRetryCountdownRunnable = new Runnable() {
+            @Override
+            public void run() {
+                final long remainingMs = deadlineMs - SystemClock.elapsedRealtime();
+                if (remainingMs <= 0L) {
+                    mRetryCountdownRunnable = null;
+                    return;
+                }
+                if (retry != null) {
+                    retry.setText(getString(R.string.screen_share_retry_countdown,
+                        (remainingMs + 999L) / 1_000L));
+                }
+                mMainHandler.postDelayed(this, 1_000L);
+            }
+        };
+        mReconnectRunnable = () -> {
+            mReconnectRunnable = null;
+            cancelRetryCountdown();
+            OverlayWindow.dismiss(dialog);
+            if (mDialog == dialog) {
+                mDialog = null;
+            }
+            startNewSession();
+        };
+        mMainHandler.postDelayed(mReconnectRunnable, delayMs);
+        mMainHandler.post(mRetryCountdownRunnable);
+    }
+
+    /**
+     * Cancels a retry that was scheduled but has not started yet; safe when none is pending.
+     */
+    private void cancelPendingRetry() {
+        if (mReconnectRunnable != null) {
+            mMainHandler.removeCallbacks(mReconnectRunnable);
+            mReconnectRunnable = null;
+        }
+        cancelRetryCountdown();
+    }
+
+    /**
+     * Stops the countdown that rewrites the retry button; safe when none is running.
+     */
+    private void cancelRetryCountdown() {
+        if (mRetryCountdownRunnable != null) {
+            mMainHandler.removeCallbacks(mRetryCountdownRunnable);
+            mRetryCountdownRunnable = null;
+        }
+    }
+
+    /**
+     * Builds a fresh client for the current target and shows the loading overlay again.
+     *
+     * <p>A {@link ScreenShareClient} is single-use, so a retry is a new instance over a new media
+     * receiver; the target itself is unchanged.</p>
+     */
+    private void startNewSession() {
+        if (mServiceInfo == null) {
+            return;
+        }
+        final ClientMediaReceiver receiver = startMediaSession();
+        mClient = new ScreenShareClient(hostOf(mServiceInfo), portOf(mServiceInfo), viewerMetrics(),
+            mServiceInfo.getId());
+        mClient.setClientStatsListener(mClientStatsListener);
+        if (mScreenShareLoading != null) {
+            mScreenShareLoading.show();
+        }
+        mClient.start(mClientObserver, receiver);
     }
 
     /**
