@@ -59,6 +59,24 @@ public class MediaChannelNegotiatorTest {
         assertEquals(MediaTransportKind.TCP, offers.get(0).getTransport());
         assertEquals(ticket.getChannelIdHex(), offers.get(0).getChannelIdHex());
         assertEquals(500L, ticket.getCreatedAtMs());
+        assertEquals("10.0.0.5", offers.get(0).getHost());
+        assertEquals(9100, offers.get(0).getPort());
+        assertTrue(offers.get(0).isSecure());
+        assertEquals(32, offers.get(0).getToken().length);
+        assertTrue(offers.get(0).isEndpointPresent());
+    }
+
+    @Test
+    public void offer_isSkippedWhenNoEndpointIsReachable() {
+        List<MediaChannelOffer> offers = new ArrayList<>();
+        MediaChannelNegotiator negotiator = new MediaChannelNegotiator(
+                MediaTransportPolicy.Mode.TCP, true, offers::add, new MutableClock(),
+                MediaChannelEndpoint.unavailable());
+
+        assertFalse(negotiator.offer(MediaTransportKind.TCP, null));
+
+        assertTrue(offers.isEmpty());
+        assertNull(negotiator.getTicket());
     }
 
     @Test
@@ -123,15 +141,21 @@ public class MediaChannelNegotiatorTest {
 
     @Test
     public void nextKind_skipsTheFailedChannel() {
-        MediaChannelNegotiator negotiator = negotiator(MediaTransportPolicy.Mode.AUTO, true,
+        MediaChannelNegotiator negotiator = negotiator(MediaTransportPolicy.Mode.UDP, true,
                 new MutableClock());
         Set<String> declared = offered("tcp", "udp");
 
         assertEquals(MediaTransportKind.UDP, negotiator.firstKind(declared));
-        assertEquals(MediaTransportKind.TCP, negotiator.nextKind(declared,
-                EnumSet.of(MediaTransportKind.UDP)));
         assertEquals(MediaTransportKind.GRPC, negotiator.nextKind(declared,
-                EnumSet.of(MediaTransportKind.UDP, MediaTransportKind.TCP)));
+                EnumSet.of(MediaTransportKind.UDP)));
+    }
+
+    @Test
+    public void autoMode_staysOnTheCarrierInThisBuild() {
+        MediaChannelNegotiator negotiator = negotiator(MediaTransportPolicy.Mode.AUTO, true,
+                new MutableClock());
+
+        assertEquals(MediaTransportKind.GRPC, negotiator.firstKind(offered("tcp", "udp")));
     }
 
     private static MediaChannelNegotiator negotiator(MediaTransportPolicy.Mode mode,
@@ -142,7 +166,11 @@ public class MediaChannelNegotiatorTest {
     private static MediaChannelNegotiator negotiator(MediaTransportPolicy.Mode mode,
                                                      boolean udpEnabled, MutableClock clock,
                                                      List<MediaChannelOffer> offers) {
-        return new MediaChannelNegotiator(mode, udpEnabled, offers::add, clock);
+        return new MediaChannelNegotiator(mode, udpEnabled, offers::add, clock, endpoint());
+    }
+
+    private static MediaChannelEndpoint endpoint() {
+        return new MediaChannelEndpoint("10.0.0.5", 9100, true);
     }
 
     private static Set<String> offered(String... names) {

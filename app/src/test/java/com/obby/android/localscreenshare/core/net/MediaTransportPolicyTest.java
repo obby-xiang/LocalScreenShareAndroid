@@ -111,7 +111,8 @@ public class MediaTransportPolicyTest {
                 .containsAll(Arrays.asList(MediaTransportKind.TCP, MediaTransportKind.GRPC)));
         assertTrue(MediaTransportPolicy.available(MediaTransportPolicy.Mode.UDP)
                 .containsAll(Arrays.asList(MediaTransportKind.UDP, MediaTransportKind.GRPC)));
-        assertEquals(3, MediaTransportPolicy.available(MediaTransportPolicy.Mode.AUTO).size());
+        assertEquals(Collections.singleton(MediaTransportKind.GRPC),
+                MediaTransportPolicy.available(MediaTransportPolicy.Mode.AUTO));
     }
 
     @Test

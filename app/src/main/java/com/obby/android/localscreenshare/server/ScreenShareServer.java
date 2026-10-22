@@ -72,13 +72,17 @@ import com.obby.android.localscreenshare.support.ServiceProtocol;
 import com.obby.android.localscreenshare.support.ThreadUtils;
 import com.obby.android.localscreenshare.transport.GrpcConstants;
 import com.obby.android.localscreenshare.transport.GrpcMediaTransport;
+import com.obby.android.localscreenshare.transport.MediaChannelServer;
+import com.obby.android.localscreenshare.transport.MediaTlsFactory;
 import com.obby.android.localscreenshare.transport.ScreenStreamProtoMapper;
+import com.obby.android.localscreenshare.trust.TlsPinStore;
 
 import org.apache.commons.lang3.concurrent.BasicThreadFactory;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.security.GeneralSecurityException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -95,6 +99,8 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.LockSupport;
+
+import javax.net.ssl.SSLContext;
 
 import io.grpc.Attributes;
 import io.grpc.Contexts;
@@ -388,6 +394,12 @@ public final class ScreenShareServer {
     // stopped. Constructing it here would open the key store in a field initializer.
     @Nullable
     private Server mGrpcServer;
+
+    // Dedicated media channel listener; null when this session could not bind one.
+    private MediaChannelServer mMediaChannelServer;
+
+    // Outstanding channel offers of this session, shared by its calls; null when unavailable.
+    private MediaChannelRegistry mMediaChannelRegistry;
 
     // True when the gRPC port is served over TLS; advertised as the discovery secure flag.
     private volatile boolean mTransportSecure = true;
@@ -730,6 +742,55 @@ public final class ScreenShareServer {
             .build();
         mTransportSecure = !isPlaintext;
         mGrpcServer.start();
+        startMediaChannelServer(isPlaintext);
+    }
+
+    /**
+     * Binds the media channel listener of this sharing session.
+     *
+     * <p>The listener is optional by design: a port that cannot be bound, a keystore that cannot
+     * build the second context or a platform that refuses the socket only marks the channel
+     * unavailable, and every call then stays on the control-plane carrier. Sharing itself never
+     * fails because of the media path.</p>
+     *
+     * @param isPlaintext whether the session runs the plaintext debug transport
+     */
+    private void startMediaChannelServer(final boolean isPlaintext) {
+        mMediaChannelRegistry = new MediaChannelRegistry();
+        try {
+            final SSLContext context;
+            if (isPlaintext) {
+                context = null;
+            } else {
+                context = MediaTlsFactory.serverContext(TlsMaterialHolder.get().material(),
+                        TlsPinStore.get());
+            }
+            final MediaChannelServer server = new MediaChannelServer(context,
+                    mMediaChannelRegistry, TimeSource.MONOTONIC);
+            final int port = server.start(Preferences.get().getServerPort() + 1);
+            mMediaChannelServer = server;
+            Log.i(mTag, "media channel: listening, port = " + port + ", secure = "
+                    + !isPlaintext);
+        } catch (IdentityUnavailableException | GeneralSecurityException | IOException e) {
+            mMediaChannelServer = null;
+            mMediaChannelRegistry = null;
+            // One line, because a session without the media channel is a supported configuration
+            // and repeating it would drown the log of a call that works.
+            Log.w(mTag, "media channel: unavailable, calls stay on the control plane: "
+                    + e.getMessage());
+        }
+    }
+
+    /**
+     * Returns the endpoint a call of this session can be offered, or an unavailable one.
+     */
+    @NonNull
+    private MediaChannelEndpoint mediaChannelEndpoint() {
+        final MediaChannelServer server = mMediaChannelServer;
+        if (server == null || !server.isRunning()) {
+            return MediaChannelEndpoint.unavailable();
+        }
+        return new MediaChannelEndpoint("", server.getPort(), mTransportSecure);
     }
 
     @NonNull
@@ -972,6 +1033,11 @@ public final class ScreenShareServer {
         // Shut the server down first and let its transports finish before terminating the callback
         // executor; a transport's close posts a context-closer task to that executor, and a
         // rejecting executor would crash the process here while a client is streaming.
+        if (mMediaChannelServer != null) {
+            mMediaChannelServer.stop();
+            mMediaChannelServer = null;
+        }
+        mMediaChannelRegistry = null;
         final Server server = mGrpcServer;
         mGrpcServer = null;
         if (server != null) {
@@ -1277,11 +1343,11 @@ public final class ScreenShareServer {
                 Preferences.get().getMediaTransport());
             final MediaChannelNegotiator mediaNegotiator = new MediaChannelNegotiator(mediaMode,
                     MediaTransportPolicy.allowsUdp(mediaMode), transport::sendMediaOffer,
-                    TimeSource.MONOTONIC);
+                    TimeSource.MONOTONIC, mediaChannelEndpoint());
             final StreamCallHandler handler = new StreamCallHandler(mStreamHub, mStreamRuntime,
                     transport, mStreamCallListener, remoteAddress, transport::sendPong, peer,
                     mAudioHub, transport, mAuthorizationGate, transport::sendApprovalPending,
-                    mediaNegotiator);
+                    mediaNegotiator, mMediaChannelRegistry);
             mStreamCallHandlers.add(handler);
             final Thread drain = new Thread(() -> drainLoop(handler, responseObserver),
                     "lss-stream-drain-" + handler.hashCode());

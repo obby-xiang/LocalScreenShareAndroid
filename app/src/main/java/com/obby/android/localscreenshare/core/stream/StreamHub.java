@@ -395,6 +395,22 @@ public final class StreamHub implements StreamRuntimeListener {
      */
     public MediaTransport swapTransportIfCurrent(ClientSessionKey key, ClientSendSession session,
                                                  MediaTransport next) {
+        return swapTransportIfCurrent(key, session, next, null);
+    }
+
+    /**
+     * Replaces the transport of an attached session and records the channel it belongs to.
+     *
+     * <p>Same guarantees as {@link #swapTransportIfCurrent(ClientSessionKey, ClientSendSession,
+     * MediaTransport)}; the channel is what the session row prints as {@code chan} from then on, so
+     * a swap onto a dedicated channel is visible in the log line without reading the transport.</p>
+     *
+     * @param kind channel of {@code next}, or null to derive it from the transport itself
+     * @return the replaced transport, or null when nothing was swapped
+     */
+    public MediaTransport swapTransportIfCurrent(ClientSessionKey key, ClientSendSession session,
+                                                 MediaTransport next,
+                                                 MediaTransportKind kind) {
         if (key == null || session == null || next == null) {
             return null;
         }
@@ -403,7 +419,7 @@ public final class StreamHub implements StreamRuntimeListener {
                 return null;
             }
         }
-        return session.swapTransport(next);
+        return kind == null ? session.swapTransport(next) : session.swapTransport(next, kind);
     }
 
     /**

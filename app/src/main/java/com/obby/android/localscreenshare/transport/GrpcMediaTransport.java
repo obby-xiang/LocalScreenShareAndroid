@@ -6,7 +6,9 @@ import com.obby.android.localscreenshare.core.model.AudioAccessUnit;
 import com.obby.android.localscreenshare.core.model.AudioDescriptor;
 import com.obby.android.localscreenshare.core.model.EncodedAccessUnit;
 import com.obby.android.localscreenshare.core.model.StreamDescriptor;
+import com.obby.android.localscreenshare.core.net.MediaChannelAware;
 import com.obby.android.localscreenshare.core.net.MediaChannelOffer;
+import com.obby.android.localscreenshare.core.net.MediaTransportKind;
 import com.obby.android.localscreenshare.core.stream.MediaTransport;
 import com.obby.android.localscreenshare.grpc.screenstream.AuthorizationStatus;
 import com.obby.android.localscreenshare.grpc.screenstream.Pong;
@@ -44,7 +46,7 @@ import io.grpc.stub.StreamObserver;
  * audio frame by the duration of that send, which is bounded by one access unit on a local
  * network.</p>
  */
-public final class GrpcMediaTransport implements MediaTransport, AudioTransport {
+public final class GrpcMediaTransport implements MediaTransport, AudioTransport, MediaChannelAware {
 
     private final StreamObserver<ServerMessage> observer;
 
@@ -185,6 +187,11 @@ public final class GrpcMediaTransport implements MediaTransport, AudioTransport 
                 // The observer was already completed or the client cancelled the call.
             }
         }
+    }
+
+    @Override
+    public MediaTransportKind getMediaTransportKind() {
+        return MediaTransportKind.GRPC;
     }
 
     private void send(ServerMessage message) throws IOException {

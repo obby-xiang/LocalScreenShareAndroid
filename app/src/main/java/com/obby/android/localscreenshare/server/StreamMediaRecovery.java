@@ -24,6 +24,8 @@ public final class StreamMediaRecovery implements MediaTransportRecovery {
 
     private final Runnable joinPointRequester;
 
+    private final Runnable onFallback;
+
     /**
      * Creates the recovery of one call.
      *
@@ -33,6 +35,24 @@ public final class StreamMediaRecovery implements MediaTransportRecovery {
      * @throws IllegalArgumentException if an argument is null
      */
     public StreamMediaRecovery(MediaTransport carrier, Runnable joinPointRequester) {
+        this(carrier, joinPointRequester, null);
+    }
+
+    /**
+     * Creates the recovery of one call that reports the fallback to its owner.
+     *
+     * <p>The callback lets the call close the negotiation down - revoke the ticket, forget the
+     * channel, record the reason - before the session has even re-sent its descriptor. It runs on
+     * the thread whose send failed and must not block.</p>
+     *
+     * @param carrier           transport that also carries the control stream; required
+     * @param joinPointRequester asks the runtime for a random-access point after a fallback;
+     *                           required
+     * @param onFallback        notified when a media channel is abandoned; may be null
+     * @throws IllegalArgumentException if a required argument is null
+     */
+    public StreamMediaRecovery(MediaTransport carrier, Runnable joinPointRequester,
+                               Runnable onFallback) {
         if (carrier == null) {
             throw new IllegalArgumentException("carrier must not be null");
         }
@@ -41,12 +61,16 @@ public final class StreamMediaRecovery implements MediaTransportRecovery {
         }
         this.carrier = carrier;
         this.joinPointRequester = joinPointRequester;
+        this.onFallback = onFallback;
     }
 
     @Override
     public MediaTransport onTransportFailed(MediaTransport failed, IOException cause) {
         if (failed == carrier) {
             return null;
+        }
+        if (onFallback != null) {
+            onFallback.run();
         }
         joinPointRequester.run();
         return carrier;

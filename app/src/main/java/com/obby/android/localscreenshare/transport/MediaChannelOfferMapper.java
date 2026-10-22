@@ -103,6 +103,29 @@ public final class MediaChannelOfferMapper {
     }
 
     /**
+     * Parses a lowercase hexadecimal channel id back into bytes.
+     *
+     * @param channelIdHex channel id in lowercase hexadecimal; required
+     * @return the channel id bytes
+     * @throws IllegalArgumentException if the text is not an even-length hexadecimal string
+     */
+    public static byte[] toOfferChannelId(String channelIdHex) {
+        if (channelIdHex == null || channelIdHex.isEmpty() || channelIdHex.length() % 2 != 0) {
+            throw new IllegalArgumentException("channelIdHex must be hexadecimal");
+        }
+        byte[] bytes = new byte[channelIdHex.length() / 2];
+        for (int i = 0; i < bytes.length; i++) {
+            int high = Character.digit(channelIdHex.charAt(i * 2), 16);
+            int low = Character.digit(channelIdHex.charAt(i * 2 + 1), 16);
+            if (high < 0 || low < 0) {
+                throw new IllegalArgumentException("channelIdHex must be hexadecimal");
+            }
+            bytes[i] = (byte) ((high << 4) | low);
+        }
+        return bytes;
+    }
+
+    /**
      * Returns whether an answer refers to the channel identified by {@code channelIdHex}.
      *
      * @param event          answer to inspect; may be null

@@ -36,10 +36,10 @@ import static org.junit.Assert.assertTrue;
 /**
  * Unit tests for the media channel negotiation of {@link StreamCallHandler}.
  *
- * <p>This batch has no media channel, so every test ends on the control-plane carrier: what is
- * asserted is that the offer goes out, that a refusal, a timeout, an unsupported READY and a stale
- * answer all settle the call without stopping the media that is already flowing on the gRPC
- * transport.</p>
+ * <p>The negotiation half is asserted here: the offer goes out, a refusal, a timeout and a stale
+ * answer all settle the call on the control-plane carrier, and the outstanding ticket is registered
+ * and revoked with the call. Binding a real socket and swapping the session onto it is covered by
+ * the loopback end-to-end test, because that needs a real TLS channel.</p>
  */
 public class StreamCallHandlerMediaChannelTest {
 
@@ -49,14 +49,16 @@ public class StreamCallHandlerMediaChannelTest {
     public void offerIsSentAfterJoinWhenTheClientDeclaresAChannel() {
         Fixture fixture = fixture();
         List<MediaChannelOffer> offers = new ArrayList<>();
-        MutableClock clock = new MutableClock();
-        StreamCallHandler handler = handler(fixture, MediaTransportPolicy.Mode.TCP, true, clock,
-                offers);
+        StreamCallHandler handler = handler(fixture, MediaTransportPolicy.Mode.TCP, true,
+                new MutableClock(), offers);
 
         handler.onClientMessage(hello("tcp"));
 
         assertEquals(1, offers.size());
         assertEquals(MediaTransportKind.TCP, offers.get(0).getTransport());
+        assertEquals(9100, offers.get(0).getPort());
+        assertTrue(offers.get(0).isSecure());
+        assertEquals(1, fixture.registry.size());
         assertEquals(StreamCallHandler.MediaChannelPhase.OFFERED, handler.getMediaChannelPhase());
         assertEquals(MediaTransportKind.TCP, handler.getMediaChannelKind());
     }
@@ -76,6 +78,7 @@ public class StreamCallHandlerMediaChannelTest {
         assertEquals(StreamCallHandler.MediaChannelPhase.GRPC, handler.getMediaChannelPhase());
         assertNull(handler.getMediaChannelKind());
         assertEquals("not_implemented", handler.getMediaChannelFailureReason());
+        assertEquals(0, fixture.registry.size());
 
         fixture.codec.emitJoin(new byte[]{0x31});
         assertTrue(handler.drainOnce());
@@ -99,6 +102,7 @@ public class StreamCallHandlerMediaChannelTest {
 
         assertTrue(offers.isEmpty());
         assertEquals(StreamCallHandler.MediaChannelPhase.GRPC, handler.getMediaChannelPhase());
+        assertEquals(0, fixture.registry.size());
     }
 
     @Test
@@ -130,10 +134,11 @@ public class StreamCallHandlerMediaChannelTest {
         assertEquals(StreamCallHandler.MediaChannelPhase.GRPC, handler.getMediaChannelPhase());
         assertEquals("offer_timeout", handler.getMediaChannelFailureReason());
         assertNull(handler.getMediaChannelKind());
+        assertEquals(0, fixture.registry.size());
     }
 
     @Test
-    public void readyIsTreatedAsUnsupportedInThisBuild() {
+    public void readyWithoutABoundChannelKeepsTheOfferOpen() {
         Fixture fixture = fixture();
         List<MediaChannelOffer> offers = new ArrayList<>();
         StreamCallHandler handler = handler(fixture, MediaTransportPolicy.Mode.TCP, true,
@@ -143,8 +148,10 @@ public class StreamCallHandlerMediaChannelTest {
         handler.onClientMessage(answer(offers.get(0).getChannelId(),
                 MediaChannelEventType.READY, ""));
 
-        assertEquals(StreamCallHandler.MediaChannelPhase.GRPC, handler.getMediaChannelPhase());
-        assertEquals("channel_unsupported", handler.getMediaChannelFailureReason());
+        // The socket has not been handed over yet, so nothing can be swapped; the drain pass will
+        // pick it up when it arrives, and the offer window still bounds the wait.
+        assertEquals(StreamCallHandler.MediaChannelPhase.OFFERED, handler.getMediaChannelPhase());
+        assertNull(handler.getMediaChannelFailureReason());
     }
 
     @Test
@@ -159,38 +166,44 @@ public class StreamCallHandlerMediaChannelTest {
 
         assertEquals(StreamCallHandler.MediaChannelPhase.OFFERED, handler.getMediaChannelPhase());
         assertNull(handler.getMediaChannelFailureReason());
+        assertEquals(1, fixture.registry.size());
     }
 
     @Test
-    public void closeRevokesTheOutstandingTicket() {
+    public void closeRevokesTheOutstandingOffer() {
         Fixture fixture = fixture();
         List<MediaChannelOffer> offers = new ArrayList<>();
         MutableClock clock = new MutableClock();
         MediaChannelNegotiator negotiator = new MediaChannelNegotiator(
-                MediaTransportPolicy.Mode.TCP, true, offers::add, clock);
+                MediaTransportPolicy.Mode.TCP, true, offers::add, clock, endpoint());
         StreamCallHandler handler = handler(fixture, negotiator);
 
         handler.onClientMessage(hello("tcp"));
         assertNotNull(negotiator.getTicket());
+        assertEquals(1, fixture.registry.size());
 
         handler.close();
 
         assertNull(negotiator.getTicket());
         assertNull(negotiator.getChannelIdHex());
+        assertEquals(0, fixture.registry.size());
+    }
+
+    private static MediaChannelEndpoint endpoint() {
+        return new MediaChannelEndpoint("10.0.0.5", 9100, true);
     }
 
     private static StreamCallHandler handler(Fixture fixture, MediaTransportPolicy.Mode mode,
                                              boolean udpEnabled, MutableClock clock,
                                              List<MediaChannelOffer> offers) {
-        return handler(fixture, new FakeTransport(),
-                new MediaChannelNegotiator(mode, udpEnabled, offers::add, clock));
+        return handler(fixture, new FakeTransport(), mode, udpEnabled, clock, offers);
     }
 
     private static StreamCallHandler handler(Fixture fixture, FakeTransport transport,
                                              MediaTransportPolicy.Mode mode, boolean udpEnabled,
                                              MutableClock clock, List<MediaChannelOffer> offers) {
         return handler(fixture, transport,
-                new MediaChannelNegotiator(mode, udpEnabled, offers::add, clock));
+                new MediaChannelNegotiator(mode, udpEnabled, offers::add, clock, endpoint()));
     }
 
     private static StreamCallHandler handler(Fixture fixture,
@@ -202,7 +215,7 @@ public class StreamCallHandlerMediaChannelTest {
                                              MediaChannelNegotiator negotiator) {
         return new StreamCallHandler(fixture.hub, fixture.runtime, transport,
                 StreamCallListener.NO_OP, null, PongTarget.NO_OP, null, null, null, null, null,
-                negotiator);
+                negotiator, fixture.registry);
     }
 
     private static Fixture fixture() {
@@ -246,7 +259,7 @@ public class StreamCallHandlerMediaChannelTest {
     }
 
     /**
-     * Hub under test with the codec that feeds it.
+     * Hub under test with the codec that feeds it and the offer registry of the call.
      */
     private static final class Fixture {
 
@@ -255,6 +268,8 @@ public class StreamCallHandlerMediaChannelTest {
         private final StreamRuntime runtime;
 
         private final StreamHub hub;
+
+        private final MediaChannelRegistry registry = new MediaChannelRegistry();
 
         private Fixture(FakeCodec codec, StreamRuntime runtime, StreamHub hub) {
             this.codec = codec;

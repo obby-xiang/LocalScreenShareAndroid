@@ -8,6 +8,7 @@ import com.obby.android.localscreenshare.core.model.EncodedAccessUnit;
 import com.obby.android.localscreenshare.core.model.StreamDescriptor;
 import com.obby.android.localscreenshare.core.metrics.MetricsSnapshot;
 import com.obby.android.localscreenshare.core.metrics.PipelineMetrics;
+import com.obby.android.localscreenshare.core.net.MediaChannelAware;
 import com.obby.android.localscreenshare.core.net.MediaTransportKind;
 import com.obby.android.localscreenshare.core.util.TimeSource;
 
@@ -580,9 +581,9 @@ public final class ClientSendSession {
      * <p>Used when another channel takes over the media path: the current descriptor is queued
      * again so the new channel never has to synthesize one, the queue of the old channel is
      * dropped, and the session waits for a validated join point, exactly like the recovery path of
-     * {@link #drainOne()}. The channel label is kept; use
-     * {@link #swapTransport(MediaTransport, MediaTransportKind)} when the replacement belongs to a
-     * different socket family.</p>
+     * {@link #drainOne()}. The channel label follows the transport when it declares one through
+     * {@link MediaChannelAware} and is kept otherwise, so a fallback back to the control-plane
+     * carrier reports {@code grpc} again without the caller having to say so.</p>
      *
      * <p>The returned transport is not closed here: the caller decides, because a swap back to the
      * control-plane carrier must leave that stream open. A detached session ignores the swap and
@@ -594,7 +595,7 @@ public final class ClientSendSession {
      */
     public MediaTransport swapTransport(MediaTransport next) {
         synchronized (stateLock) {
-            return swapTransportLocked(next, null);
+            return swapTransportLocked(next, kindOf(next));
         }
     }
 
@@ -689,7 +690,7 @@ public final class ClientSendSession {
         synchronized (stateLock) {
             installed = !detached && transport == failed;
             if (installed) {
-                swapTransportLocked(replacement, null);
+                swapTransportLocked(replacement, kindOf(replacement));
             }
         }
         if (!installed) {
@@ -698,6 +699,17 @@ public final class ClientSendSession {
         }
         failed.close();
         return true;
+    }
+
+    /**
+     * Returns the channel a transport declares, or null when it does not declare one.
+     *
+     * <p>A transport that knows its channel carries the label itself, which is what makes a swap
+     * driven by the recovery path report the channel it actually fell back to.</p>
+     */
+    private static MediaTransportKind kindOf(MediaTransport transport) {
+        return transport instanceof MediaChannelAware
+                ? ((MediaChannelAware) transport).getMediaTransportKind() : null;
     }
 
     /**

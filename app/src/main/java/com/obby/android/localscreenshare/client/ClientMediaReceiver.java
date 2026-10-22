@@ -308,6 +308,13 @@ public final class ClientMediaReceiver {
     }
 
     /**
+     * Returns the stream identity this receiver rebuilds descriptors and access units for.
+     */
+    public StreamKey getStreamKey() {
+        return streamKey;
+    }
+
+    /**
      * Returns the session driven by this receiver.
      */
     public ClientMediaSession getSession() {

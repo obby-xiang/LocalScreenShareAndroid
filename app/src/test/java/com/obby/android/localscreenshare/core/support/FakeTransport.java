@@ -2,6 +2,8 @@ package com.obby.android.localscreenshare.core.support;
 
 import com.obby.android.localscreenshare.core.model.EncodedAccessUnit;
 import com.obby.android.localscreenshare.core.model.StreamDescriptor;
+import com.obby.android.localscreenshare.core.net.MediaChannelAware;
+import com.obby.android.localscreenshare.core.net.MediaTransportKind;
 import com.obby.android.localscreenshare.core.stream.MediaTransport;
 
 import java.io.IOException;
@@ -20,7 +22,7 @@ import java.util.List;
  * production transport, while {@code close()} after an abort changes nothing. The fake does not
  * enforce lifecycle, so a send after termination is still recorded.</p>
  */
-public class FakeTransport implements MediaTransport {
+public class FakeTransport implements MediaTransport, MediaChannelAware {
 
     public enum Kind {
         DESCRIPTOR,
@@ -103,6 +105,12 @@ public class FakeTransport implements MediaTransport {
         maybeFail();
         maybeFailUnchecked(false);
         events.add(Event.accessUnit(accessUnit));
+    }
+
+    @Override
+    public MediaTransportKind getMediaTransportKind() {
+        // The fake stands for the control-plane carrier everywhere it is used as a session transport.
+        return MediaTransportKind.GRPC;
     }
 
     @Override

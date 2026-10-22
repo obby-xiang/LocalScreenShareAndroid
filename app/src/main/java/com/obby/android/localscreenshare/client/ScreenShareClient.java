@@ -14,6 +14,10 @@ import com.obby.android.localscreenshare.core.metrics.PipelineMetrics;
 import com.obby.android.localscreenshare.core.metrics.RttEstimator;
 import com.obby.android.localscreenshare.core.model.ClientSessionKey;
 import com.obby.android.localscreenshare.core.model.ClientState;
+import com.obby.android.localscreenshare.core.model.EncodedAccessUnit;
+import com.obby.android.localscreenshare.core.model.StreamDescriptor;
+import com.obby.android.localscreenshare.core.net.MediaChannelListener;
+import com.obby.android.localscreenshare.core.net.MediaChannelOffer;
 import com.obby.android.localscreenshare.core.stream.ClientCapabilities;
 import com.obby.android.localscreenshare.grpc.screenstream.ClientMessage;
 import com.obby.android.localscreenshare.grpc.screenstream.Hello;
@@ -32,10 +36,13 @@ import com.obby.android.localscreenshare.support.ExecutorShutdown;
 import com.obby.android.localscreenshare.trust.PinningTrustManager;
 import com.obby.android.localscreenshare.trust.TlsPinStore;
 import com.obby.android.localscreenshare.transport.GrpcConstants;
+import com.obby.android.localscreenshare.transport.MediaTlsFactory;
 import com.obby.android.localscreenshare.transport.ScreenStreamProtoMapper;
+import com.obby.android.localscreenshare.transport.TcpMediaReceiver;
 
 import org.apache.commons.lang3.concurrent.BasicThreadFactory;
 
+import java.security.GeneralSecurityException;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.Objects;
@@ -49,6 +56,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+
+import javax.net.ssl.SSLContext;
 
 import io.grpc.CallOptions;
 import io.grpc.Channel;
@@ -116,6 +125,11 @@ public final class ScreenShareClient {
 
     private static final long GRPC_CLIENT_STOP_TIMEOUT_MS = 50L;
 
+    /**
+     * Grace period for the media channel thread on stop; it is blocked in a socket read.
+     */
+    private static final long MEDIA_STOP_TIMEOUT_MS = 100L;
+
     // Limits how often a decode-queue overflow asks for a key frame; requests are raised on the
     // transport thread that detected the overflow.
     @NonNull
@@ -178,9 +192,36 @@ public final class ScreenShareClient {
     @NonNull
     private final RttEstimator mRttEstimator;
 
-    // State machine of the media channel negotiation; answers every offer of this call.
+    // State machine of the media channel negotiation; created in start() because it needs the
+    // receiver that owns the decode thread, and null outside a call.
+    @Nullable
+    private MediaChannelCoordinator mMediaChannelCoordinator;
+
+    // Host the control channel was opened to; an offer without an endpoint means this address.
     @NonNull
-    private final MediaChannelCoordinator mMediaChannelCoordinator = new MediaChannelCoordinator();
+    private final String mHost;
+
+    // Device id selected in discovery, or null in tests; the media channel pins the same peer.
+    @Nullable
+    private final String mExpectedDeviceId;
+
+    // Runs one media channel connection; the receiver blocks this thread for the channel's life.
+    @NonNull
+    private final ExecutorService mMediaExecutor = new ThreadPoolExecutor(1, 1, 30L,
+        TimeUnit.SECONDS, new LinkedBlockingQueue<>(),
+        new BasicThreadFactory.Builder().namingPattern("lss-media-rx-%d")
+            .wrappedFactory(runnable -> new Thread(runnable) {
+                @Override
+                public void run() {
+                    Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND);
+                    super.run();
+                }
+            })
+            .build(), new ThreadPoolExecutor.AbortPolicy());
+
+    // TLS context of the media channel, built on first use; null until a secure channel is opened.
+    @Nullable
+    private volatile SSLContext mMediaTlsContext;
 
     // Sends one probe, sweeps the unanswered ones and reschedules itself; runs on the main thread.
     @NonNull
@@ -401,6 +442,8 @@ public final class ScreenShareClient {
         }
         mAdvertisedCapabilities = advertised;
         mMetrics = metrics;
+        mHost = host;
+        mExpectedDeviceId = expectedDeviceId;
         mRttEstimator = new RttEstimator(metrics, metrics.getClock());
         final boolean isPlaintext = Preferences.get().isTlsAllowPlaintext();
         // The server requires a client certificate; the identity key signs the handshake. The
@@ -478,18 +521,20 @@ public final class ScreenShareClient {
                         return;
                     }
                     if (value.getPayloadCase() == ServerMessage.PayloadCase.MEDIA_OFFER) {
-                        // Negotiation, not media: the answer leaves on the main thread because the
-                        // request observer is not thread safe, and the media stream is untouched.
-                        final MediaChannelEvent answer =
-                            mMediaChannelCoordinator.onOffer(value.getMediaOffer());
-                        if (answer != null) {
-                            mMainHandler.post(() -> sendMediaChannelEvent(answer));
+                        // Negotiation, not media: the coordinator opens the channel on its own
+                        // thread and answers once the outcome is known.
+                        final MediaChannelCoordinator coordinator = mMediaChannelCoordinator;
+                        if (coordinator != null) {
+                            coordinator.onOffer(value.getMediaOffer());
                         }
                         ensureConnected();
                         return;
                     }
                     if (value.getPayloadCase() == ServerMessage.PayloadCase.MEDIA_CLOSE) {
-                        mMediaChannelCoordinator.onMediaClose(value.getMediaClose());
+                        final MediaChannelCoordinator coordinator = mMediaChannelCoordinator;
+                        if (coordinator != null) {
+                            coordinator.onMediaClose(value.getMediaClose());
+                        }
                         return;
                     }
                     // One clock read marks the arrival; everything downstream measures from it.
@@ -576,7 +621,10 @@ public final class ScreenShareClient {
                 }
             });
 
-        mMediaChannelCoordinator.reset();
+        final MediaChannelListener mediaChannelListener = newMediaChannelListener(receiver);
+        mMediaChannelCoordinator = new MediaChannelCoordinator(this::postMediaChannelAnswer,
+            mMediaExecutor, (offer, status) ->
+                createMediaChannel(receiver, mediaChannelListener, offer, status));
         mClientId = "client-" + UUID.randomUUID();
         final ClientCapabilities advertised = mAdvertisedCapabilities != null
             ? mAdvertisedCapabilities : CodecCapabilityProbe.probeClientDecoders();
@@ -653,8 +701,9 @@ public final class ScreenShareClient {
      * Sends one answer to a media channel offer; runs on the main thread only.
      *
      * <p>The request observer is not thread safe, which is why the answer is marshalled here
-     * instead of being written by the gRPC callback that read the offer. A post that arrives after
-     * {@link #stop()} sends nothing, exactly like the key-frame request path.</p>
+     * instead of being written by the gRPC callback that read the offer or by the channel thread
+     * that opened it. A post that arrives after {@link #stop()} sends nothing, exactly like the
+     * key-frame request path.</p>
      */
     private void sendMediaChannelEvent(@NonNull final MediaChannelEvent event) {
         final StreamObserver<ClientMessage> observer = mRequestObserver;
@@ -668,6 +717,132 @@ public final class ScreenShareClient {
         } catch (RuntimeException ignored) {
             // The stream is already terminating; the offer then times out on the server.
         }
+    }
+
+    /**
+     * Posts one answer to the main thread, where the request observer is written.
+     */
+    private void postMediaChannelAnswer(@NonNull final MediaChannelEvent event) {
+        mMainHandler.post(() -> {
+            if (!mIsStopped) {
+                sendMediaChannelEvent(event);
+            }
+        });
+    }
+
+    /**
+     * Builds the channel of one offer, or returns null when this installation cannot open one.
+     *
+     * <p>The endpoint falls back to the control-plane host when the server advertised none, and the
+     * TLS context presents the very identity the control plane already proved, pinned to the
+     * device the viewer selected. A build without an identity cannot authenticate the channel, so
+     * it declines instead of opening a socket the peer would refuse.</p>
+     */
+    @Nullable
+    private MediaChannelLink createMediaChannel(@NonNull final ClientMediaReceiver receiver,
+                                                @NonNull final MediaChannelListener listener,
+                                                @NonNull final MediaChannelOffer offer,
+                                                @NonNull final TcpMediaReceiver.StatusListener status) {
+        final String host = offer.getHost().isEmpty() ? mHost : offer.getHost();
+        final SSLContext context;
+        if (offer.isSecure()) {
+            final TlsMaterial material = mTlsMaterial;
+            if (material == null) {
+                return null;
+            }
+            try {
+                context = mediaTlsContext(material);
+            } catch (GeneralSecurityException e) {
+                Log.w(mTag, "createMediaChannel: TLS context unavailable: " + e.getMessage());
+                return null;
+            }
+        } else {
+            context = null;
+        }
+        return new TcpMediaReceiver(receiver.getStreamKey(), host, offer, listener, status, context);
+    }
+
+    /**
+     * Returns the TLS context of the media channel, building it on first use.
+     */
+    @NonNull
+    private SSLContext mediaTlsContext(@NonNull final TlsMaterial material)
+            throws GeneralSecurityException {
+        SSLContext context = mMediaTlsContext;
+        if (context == null) {
+            synchronized (this) {
+                context = mMediaTlsContext;
+                if (context == null) {
+                    context = MediaTlsFactory.clientContext(material, mExpectedDeviceId,
+                        TlsPinStore.get());
+                    mMediaTlsContext = context;
+                }
+            }
+        }
+        return context;
+    }
+
+    /**
+     * Returns the listener that feeds a dedicated channel into the viewer's decode thread.
+     *
+     * <p>It mirrors the gRPC receive path: descriptors and access units are queued on the same
+     * single decode thread, through the same catch-up generation, so a channel swap cannot make two
+     * threads decode at once and a catch-up discards channel frames exactly like stream frames.</p>
+     */
+    @NonNull
+    private MediaChannelListener newMediaChannelListener(
+            @NonNull final ClientMediaReceiver receiver) {
+        return new MediaChannelListener() {
+            @Override
+            public void onDescriptor(@NonNull final StreamDescriptor descriptor,
+                                     final boolean secure) {
+                final int generation = mCatchUpGeneration.get();
+                try {
+                    mDecodeExecutor.execute(() -> {
+                        if (mIsStopped) {
+                            return;
+                        }
+                        if (CatchUpPolicy.isSuperseded(generation, mCatchUpGeneration.get(),
+                                true)) {
+                            return;
+                        }
+                        receiver.onDescriptor(descriptor, secure);
+                    });
+                } catch (RejectedExecutionException e) {
+                    Log.w(mTag, "media channel: decode queue full, dropping a descriptor");
+                }
+            }
+
+            @Override
+            public void onAccessUnit(@NonNull final EncodedAccessUnit accessUnit,
+                                     final long arrivalNs) {
+                final int generation = mCatchUpGeneration.get();
+                try {
+                    mDecodeExecutor.execute(() -> {
+                        if (mIsStopped) {
+                            return;
+                        }
+                        if (CatchUpPolicy.isSuperseded(generation, mCatchUpGeneration.get(),
+                                false)) {
+                            mMetrics.increment(PipelineMetrics.Counter.CATCH_UP_SHEDS);
+                            return;
+                        }
+                        mMetrics.record(PipelineMetrics.Window.QUEUE_WAIT,
+                            mMetrics.nowNs() - arrivalNs);
+                        receiver.onAccessUnit(accessUnit, arrivalNs);
+                    });
+                } catch (RejectedExecutionException e) {
+                    // The unit was dropped after it arrived, so the reference chain has a gap.
+                    mMetrics.increment(PipelineMetrics.Counter.ARRIVAL_SHEDS);
+                    requestKeyFrameThrottledFromMediaPath();
+                }
+            }
+
+            @Override
+            public void onChannelFailed(@NonNull final String reason) {
+                Log.w(mTag, "media channel: failed, reason = " + reason);
+            }
+        };
     }
 
     /**
@@ -836,8 +1011,14 @@ public final class ScreenShareClient {
         mClientProfile = null;
         mClientStats = null;
         mRequestObserver = null;
+        final MediaChannelCoordinator coordinator = mMediaChannelCoordinator;
+        mMediaChannelCoordinator = null;
+        if (coordinator != null) {
+            coordinator.reset();
+        }
         mMainHandler.removeCallbacksAndMessages(null);
         mGrpcChannel.shutdownNow();
+        ExecutorShutdown.shutdownAndAwait(mMediaExecutor, MEDIA_STOP_TIMEOUT_MS);
         ExecutorShutdown.shutdownAndAwait(mDecodeExecutor, DECODE_STOP_TIMEOUT_MS);
         ExecutorShutdown.shutdownAndAwait(mAudioExecutor, AUDIO_STOP_TIMEOUT_MS);
         ExecutorShutdown.shutdownAndAwait(mGrpcClientExecutor, GRPC_CLIENT_STOP_TIMEOUT_MS);

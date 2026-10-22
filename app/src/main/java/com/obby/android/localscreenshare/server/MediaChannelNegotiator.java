@@ -42,6 +42,8 @@ public final class MediaChannelNegotiator {
 
     private final TimeSource timeSource;
 
+    private final MediaChannelEndpoint endpoint;
+
     private MediaChannelTicket ticket;
 
     private MediaTransportKind offeredKind;
@@ -49,7 +51,7 @@ public final class MediaChannelNegotiator {
     private long offerDeadlineMs;
 
     /**
-     * Creates a negotiator for one call.
+     * Creates a negotiator for one call that cannot reach a channel endpoint.
      *
      * @param mode        deployment preference from the hidden setting; null resolves to
      *                    {@link MediaTransportPolicy.Mode#AUTO}
@@ -60,16 +62,37 @@ public final class MediaChannelNegotiator {
      */
     public MediaChannelNegotiator(MediaTransportPolicy.Mode mode, boolean udpEnabled,
                                   MediaOfferTarget offerTarget, TimeSource timeSource) {
+        this(mode, udpEnabled, offerTarget, timeSource, MediaChannelEndpoint.unavailable());
+    }
+
+    /**
+     * Creates a negotiator for one call.
+     *
+     * @param mode        deployment preference from the hidden setting; null resolves to
+     *                    {@link MediaTransportPolicy.Mode#AUTO}
+     * @param udpEnabled  whether the experimental datagram tier may be offered
+     * @param offerTarget output for the offer messages; required
+     * @param timeSource  clock used for the offer window and the ticket lifetime; required
+     * @param endpoint    where the channel of this session can be reached; required
+     * @throws IllegalArgumentException if a required argument is null
+     */
+    public MediaChannelNegotiator(MediaTransportPolicy.Mode mode, boolean udpEnabled,
+                                  MediaOfferTarget offerTarget, TimeSource timeSource,
+                                  MediaChannelEndpoint endpoint) {
         if (offerTarget == null) {
             throw new IllegalArgumentException("offerTarget must not be null");
         }
         if (timeSource == null) {
             throw new IllegalArgumentException("timeSource must not be null");
         }
+        if (endpoint == null) {
+            throw new IllegalArgumentException("endpoint must not be null");
+        }
         this.mode = mode == null ? MediaTransportPolicy.Mode.AUTO : mode;
         this.udpEnabled = udpEnabled;
         this.offerTarget = offerTarget;
         this.timeSource = timeSource;
+        this.endpoint = endpoint;
     }
 
     /**
@@ -117,13 +140,16 @@ public final class MediaChannelNegotiator {
      */
     public boolean offer(MediaTransportKind kind, String peerDeviceId) {
         revoke();
-        if (kind == null || kind == MediaTransportKind.GRPC) {
+        if (kind == null || kind == MediaTransportKind.GRPC || !endpoint.isAvailable()) {
             return false;
         }
         long nowMs = timeSource.nowMs();
         MediaChannelTicket issued = MediaChannelTicket.issue(kind, peerDeviceId, nowMs);
         MediaChannelOffer offer = MediaChannelOffer
                 .builder(issued.getChannelId(), kind)
+                .host(endpoint.getHost())
+                .port(endpoint.getPort())
+                .secure(endpoint.isSecure())
                 .token(issued.getToken())
                 .build();
         try {

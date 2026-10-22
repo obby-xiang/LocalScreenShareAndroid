@@ -31,6 +31,7 @@ import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Orchestrates one client's media session on the server side of a stream call.
@@ -180,6 +181,9 @@ public final class StreamCallHandler {
     // Negotiation of the dedicated media channel; null when this call cannot negotiate one.
     private final MediaChannelNegotiator mediaNegotiator;
 
+    // Outstanding offers of this call, or null when the call cannot reach a channel endpoint.
+    private final MediaChannelRegistry mediaRegistry;
+
     // Carrier fallback of the call: a failed media channel returns media to the gRPC transport.
     private final MediaTransportRecovery mediaRecovery;
 
@@ -197,6 +201,16 @@ public final class StreamCallHandler {
 
     // Why the last channel was dropped, or null when none was; informational for logs and tests.
     private String mediaFailureReason;
+
+    // Channel the client bound, written by the channel listener's thread and picked up by a drain
+    // pass; null while no socket has completed its greeting.
+    private final AtomicReference<MediaTransport> pendingMediaTransport = new AtomicReference<>();
+
+    // Whether the client reported the offered channel ready; the swap waits for both halves.
+    private boolean mediaChannelReady;
+
+    // Channel currently carrying media, or null while the call is on its carrier.
+    private MediaTransport activeMediaTransport;
 
     /**
      * Creates a handler for one client that reports no events to a listener.
@@ -368,6 +382,40 @@ public final class StreamCallHandler {
                              AudioHub audioHub, AudioTransport audioTransport,
                              AuthorizationGate authorizationGate, ApprovalTarget approvalTarget,
                              MediaChannelNegotiator mediaNegotiator) {
+        this(hub, runtime, transport, listener, remoteAddress, pongTarget, peerCertificate,
+                audioHub, audioTransport, authorizationGate, approvalTarget, mediaNegotiator, null);
+    }
+
+    /**
+     * Creates a handler that can also bind the channel it negotiates.
+     *
+     * <p>The registry is the table that turns a socket presenting the offer token into this call's
+     * transport. Without one - a test, or a server whose media listener did not bind - the
+     * negotiation still runs and the call stays on its carrier.</p>
+     *
+     * @param hub              stream hub the client joins; required
+     * @param runtime          active stream runtime; required
+     * @param transport        transport owned by this call; required
+     * @param listener         receiver of call events; required
+     * @param remoteAddress    address the call arrived on, or null when unknown
+     * @param pongTarget       echo target for round-trip probes; required
+     * @param peerCertificate  identity proven by the handshake, or null when unverified
+     * @param audioHub         audio fan-out of the session, or null when the call carries no audio
+     * @param audioTransport   audio transport of the call, or null when the call carries no audio
+     * @param authorizationGate approval gate, or null when this call is not gated
+     * @param approvalTarget   output for the waiting notice, or null when it cannot be sent
+     * @param mediaNegotiator  media channel negotiation of this call, or null when it stays on the
+     *                         control-plane carrier
+     * @param mediaRegistry    registry of outstanding offers, or null when no media listener runs
+     * @throws IllegalArgumentException if any required argument is null
+     */
+    public StreamCallHandler(StreamHub hub, StreamRuntime runtime, MediaTransport transport,
+                             StreamCallListener listener, InetSocketAddress remoteAddress,
+                             PongTarget pongTarget, TlsCertificate peerCertificate,
+                             AudioHub audioHub, AudioTransport audioTransport,
+                             AuthorizationGate authorizationGate, ApprovalTarget approvalTarget,
+                             MediaChannelNegotiator mediaNegotiator,
+                             MediaChannelRegistry mediaRegistry) {
         if (hub == null) {
             throw new IllegalArgumentException("hub must not be null");
         }
@@ -395,7 +443,9 @@ public final class StreamCallHandler {
         this.authorizationGate = authorizationGate;
         this.approvalTarget = approvalTarget;
         this.mediaNegotiator = mediaNegotiator;
-        this.mediaRecovery = new StreamMediaRecovery(transport, runtime::requestJoinPoint);
+        this.mediaRegistry = mediaRegistry;
+        this.mediaRecovery = new StreamMediaRecovery(transport, runtime::requestJoinPoint,
+                this::onMediaChannelFallback);
     }
 
     /**
@@ -491,6 +541,11 @@ public final class StreamCallHandler {
             }
             if (!attached) {
                 return false;
+            }
+            // A channel bound after the client's READY, or a READY that arrived after the socket,
+            // is picked up here: both halves are only ever joined on a pass of this loop.
+            if (mediaPhase == MediaChannelPhase.OFFERED) {
+                activateMediaChannelIfReady();
             }
             sessionKey = key;
             session = attachedSession;
@@ -653,9 +708,22 @@ public final class StreamCallHandler {
         attachedSession = null;
         if (mediaNegotiator != null) {
             // A leaked token stops being usable the moment the call it belongs to is gone.
+            if (mediaRegistry != null) {
+                mediaRegistry.revoke(mediaNegotiator.getChannelIdHex());
+            }
             mediaNegotiator.revoke();
         }
         mediaKind = null;
+        mediaChannelReady = false;
+        final MediaTransport pending = pendingMediaTransport.getAndSet(null);
+        if (pending != null) {
+            pending.close();
+        }
+        final MediaTransport active = activeMediaTransport;
+        activeMediaTransport = null;
+        if (active != null) {
+            active.close();
+        }
         transport.close();
     }
 
@@ -895,6 +963,90 @@ public final class StreamCallHandler {
         }
         mediaKind = kind;
         mediaPhase = MediaChannelPhase.OFFERED;
+        if (mediaRegistry != null) {
+            mediaRegistry.register(negotiator.getTicket(), this::onMediaChannelReady);
+        }
+    }
+
+    /**
+     * Picks up a channel the client bound, once the client has also reported it ready; called
+     * under the handler monitor.
+     *
+     * <p>The two halves arrive on different threads and in either order: the socket completes on
+     * the listener's thread, the {@code READY} event on the control stream. Nothing is swapped
+     * before both are present, so the session never sends a frame to a socket the client is not
+     * reading yet, and a {@code READY} whose socket never arrives simply expires with the offer.</p>
+     */
+    private void activateMediaChannelIfReady() {
+        if (mediaPhase != MediaChannelPhase.OFFERED || !mediaChannelReady) {
+            return;
+        }
+        final MediaTransport channel = pendingMediaTransport.getAndSet(null);
+        if (channel == null) {
+            return;
+        }
+        final ClientSessionKey sessionKey = key;
+        final ClientSendSession session = attachedSession;
+        if (sessionKey == null || session == null) {
+            channel.close();
+            return;
+        }
+        final MediaTransport previous = hub.swapTransportIfCurrent(sessionKey, session, channel,
+                MediaTransportKind.TCP);
+        if (previous == null) {
+            // The session is gone or was taken over; this channel has nobody to carry.
+            channel.close();
+            return;
+        }
+        activeMediaTransport = channel;
+        mediaPhase = MediaChannelPhase.ACTIVE;
+        mediaKind = MediaTransportKind.TCP;
+        if (previous != transport) {
+            previous.close();
+        }
+        runtime.requestJoinPoint();
+    }
+
+    /**
+     * Receives a channel from the media listener; called on the thread that bound the socket.
+     */
+    private void onMediaChannelReady(@NonNull final MediaTransport channel) {
+        pendingMediaTransport.set(channel);
+    }
+
+    /**
+     * Returns the call to its carrier after a media channel failed; called from the drain thread.
+     *
+     * <p>The session has already swapped back by the time this runs, so all that is left is to
+     * forget the channel and stop treating the negotiation as active.</p>
+     */
+    private void onMediaChannelFallback() {
+        synchronized (this) {
+            if (closed) {
+                return;
+            }
+            if (mediaPhase == MediaChannelPhase.ACTIVE || mediaPhase == MediaChannelPhase.OFFERED) {
+                mediaPhase = MediaChannelPhase.GRPC;
+                mediaKind = null;
+                mediaFailureReason = "transport_failed";
+            }
+            mediaChannelReady = false;
+            final MediaTransport channel = pendingMediaTransport.getAndSet(null);
+            if (channel != null) {
+                channel.close();
+            }
+            final MediaTransport active = activeMediaTransport;
+            activeMediaTransport = null;
+            if (active != null) {
+                active.close();
+            }
+            if (mediaRegistry != null && mediaNegotiator != null) {
+                mediaRegistry.revoke(mediaNegotiator.getChannelIdHex());
+            }
+            if (mediaNegotiator != null) {
+                mediaNegotiator.revoke();
+            }
+        }
     }
 
     /**
@@ -911,9 +1063,17 @@ public final class StreamCallHandler {
         final MediaTransportKind failed = mediaKind;
         mediaFailureReason = reason;
         mediaKind = null;
+        mediaChannelReady = false;
+        final MediaTransport pending = pendingMediaTransport.getAndSet(null);
+        if (pending != null) {
+            pending.close();
+        }
         if (negotiator == null || failed == null) {
             mediaPhase = MediaChannelPhase.GRPC;
             return;
+        }
+        if (mediaRegistry != null) {
+            mediaRegistry.revoke(negotiator.getChannelIdHex());
         }
         failedMediaTransports.add(failed);
         negotiator.revoke();
@@ -943,7 +1103,8 @@ public final class StreamCallHandler {
         }
         switch (event.getType()) {
             case READY:
-                failMediaChannel("channel_unsupported");
+                mediaChannelReady = true;
+                activateMediaChannelIfReady();
                 break;
             case FAILED:
                 failMediaChannel(reasonOf(event, "channel_failed"));
