@@ -24,8 +24,8 @@ import com.obby.android.localscreenshare.discovery.provider.DeviceObservation;
  * because that is the only place the client reads it: the probe that persisted the entry completed a
  * TLS handshake. That is the same evidence the live confirmation path writes, so a fingerprinted
  * entry seeds {@code secure = true} and keeps its row connectable across a restart. An entry without
- * a fingerprint (a document written before the field was the gate, or a plaintext-mode probe) proves
- * nothing about TLS: the seed then leaves {@code secure} <b>null</b>, the row keeps reporting an
+ * a fingerprint (only a probe that ran in plaintext mode can produce one) proves nothing about
+ * TLS: the seed then leaves {@code secure} <b>null</b>, the row keeps reporting an
  * unencrypted peer and the gate keeps refusing it. The rule never turns "unknown" into "secure" -
  * a later announcement or handshake is what promotes such a row.</p>
  *
