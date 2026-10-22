@@ -45,8 +45,8 @@ public final class MediaTransportPolicy {
     public enum Mode {
 
         /**
-         * Let the server choose; until the dedicated channel is enabled by default this resolves
-         * to the control-plane carrier, which is exactly the behaviour before the channel existed.
+         * Let the server choose the best channel the client supports, falling back to the control
+         * plane when nothing else works.
          */
         AUTO,
 
@@ -109,9 +109,9 @@ public final class MediaTransportPolicy {
                         EnumSet.of(MediaTransportKind.UDP, MediaTransportKind.GRPC));
             case AUTO:
             default:
-                // Default still resolves to the carrier; the dedicated channel is reachable only
-                // through the explicit setting until it is turned on for everyone.
-                return Collections.unmodifiableSet(EnumSet.of(MediaTransportKind.GRPC));
+                // Every channel the deployment can serve; the datagram tier stays gated by the
+                // explicit switch, so {@code auto} prefers the dedicated stream.
+                return Collections.unmodifiableSet(EnumSet.allOf(MediaTransportKind.class));
         }
     }
 

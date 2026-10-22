@@ -141,21 +141,24 @@ public class MediaChannelNegotiatorTest {
 
     @Test
     public void nextKind_skipsTheFailedChannel() {
-        MediaChannelNegotiator negotiator = negotiator(MediaTransportPolicy.Mode.UDP, true,
+        MediaChannelNegotiator negotiator = negotiator(MediaTransportPolicy.Mode.AUTO, true,
                 new MutableClock());
         Set<String> declared = offered("tcp", "udp");
 
         assertEquals(MediaTransportKind.UDP, negotiator.firstKind(declared));
-        assertEquals(MediaTransportKind.GRPC, negotiator.nextKind(declared,
+        assertEquals(MediaTransportKind.TCP, negotiator.nextKind(declared,
                 EnumSet.of(MediaTransportKind.UDP)));
+        assertEquals(MediaTransportKind.GRPC, negotiator.nextKind(declared,
+                EnumSet.of(MediaTransportKind.UDP, MediaTransportKind.TCP)));
     }
 
     @Test
-    public void autoMode_staysOnTheCarrierInThisBuild() {
-        MediaChannelNegotiator negotiator = negotiator(MediaTransportPolicy.Mode.AUTO, true,
+    public void autoMode_prefersTheDedicatedStreamOverTheCarrier() {
+        MediaChannelNegotiator negotiator = negotiator(MediaTransportPolicy.Mode.AUTO, false,
                 new MutableClock());
 
-        assertEquals(MediaTransportKind.GRPC, negotiator.firstKind(offered("tcp", "udp")));
+        assertEquals(MediaTransportKind.TCP, negotiator.firstKind(offered("tcp", "udp")));
+        assertEquals(MediaTransportKind.GRPC, negotiator.firstKind(offered("udp")));
     }
 
     private static MediaChannelNegotiator negotiator(MediaTransportPolicy.Mode mode,
