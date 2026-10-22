@@ -21,6 +21,7 @@
 
 ## 🎯 当前焦点
 
+- 2026-10-22 **TB-DISC-011 落地（手动添加条目跨重启持久化）**：诊断确认「手动」身份有两份内存状态——`ManualAddressProvider.mManualTargets`（周期重探集合）与 `DeviceStore` 的 `pinned` 标记——都没有落盘，`FavoriteStore.sync()` 又只更新已存在的收藏，所以重启后手动条目既不在列表也不会被任何通道带回。按裁决「手动添加默认保留」，新增与 `favorite` 同构的落盘层：`discovery/manual/ManualDevice`（值对象）+ `ManualDeviceStorage`/`SharedPreferencesManualDeviceStorage`（独立文件 `lss-manual`）+ `ManualDeviceStore`（Gson 反射 DTO、构造期加载、损坏文档按空处理、写失败保留内存、`synchronized`），并在 `app/proguard-rules.pro` 加 `ManualDeviceStore$ManualRecord` 的 keep 规则、在 `BuildEngineeringContractTest` 补断言（R8 教训）。接线：`onConfirmed(MANUAL, …)` 成功即 upsert（内容不变不重写，避免每 15 s 重探落盘）；`startDiscoveryProviders()` 在 `seedFavorites()` 之后 `seedManualDevices()` 以**握手返回的设备 id** 播种 `DeviceStore`（id 是 store 的去重键，故重启后同设备被组播/NSD 发现只落一行、地址合并）并恢复 `ManualAddressProvider` 的周期重探；同地址换身份时新记录顶替旧记录并清掉旧行。移除路径：`DeviceStore.remove(id)` + `ManualAddressProvider.forgetManualTarget()` + `DiscoveryManager.removeManualDevice(id)`，`DeviceInfo` 新增 `manual` 标记（由 `pinned` 投影，含 Parcel），发现页长按菜单改为动作列表（收藏切换 / 移除手动添加 / 清除信任）；手动条目若同时是收藏，只去掉手动标记、保留收藏行。新增 `ManualDeviceStoreTest` 13 例与 4 个既有测试类共 8 条用例，全量 **1482 tests / 147 classes / 0 failures**（基线 1461/146，`test_baseline.json` 同批更新）；`build :app:assembleDebugAndroidTest`、lint 双变体 0 errors（新增 1 条仅版本目录联网检查）、三项 checks（177 键双语一致）通过。本批 `a2e3f94`；[TB-DISC-011](#tb-disc-011) 转已完成，设备点位（重启后仍在、与网络发现合并、移除后不复现、离线重启、R8 包）归 [TB-ENG-013](#tb-eng-013) 第 12 项。
 - 2026-10-22 **TB-CLIENT-006 落地（小窗 HUD 折行与字号自适应，Q-3）**：诊断确认 HUD 一直是**一个** `TextView` 装四行（`"\n"` 拼接）、`11sp` 定值、`WRAP_CONTENT`，与窗口尺寸无关；60% 窗口（630×1364，density 2.75）可用宽度约 229dp，而最宽行约 254sp，于是 `TextView` 在 `AT_MOST` 下软换行、三行变五行。改为 `ViewerPanelView` 的 `hudView` 为纵向 `LinearLayout`（背景与 12/8 内边距移到容器），每行一个 `singleLine` + `ellipsize(END)` 的 `TextView`，四行共用一个字号；字号由新增纯 JVM `render/ViewerHudTextPolicy` 按可用宽度在 **11sp–9sp** 间确定性缩小（线性缩放、向下取整像素、宽度未知保持最大），在 `setHudLines`/`onSizeChanged`/`onConfigurationChanged` 三处重算，缩到 9sp 仍超出则行尾 `…` 截断、**永不折行**（60% 小窗下最宽行按 440dpi/0.6em 推算需 ≈7.8sp，故该档会以 `…` 结尾；判据是「不折行、不重叠」）。大窗与全屏上限即原 `11sp`，字号/行数/内容不变。与 K3 裁决的一处出入：autosize 依赖与属性均可用（appcompat 1.7.0），但 uniform autosize 是每 `TextView` 独立字号、多行 autosize 靠折行收敛，无法满足「四行同一字号 + 单行截断」，故用最小自研策略（可 JVM 测试）。新增 `ViewerHudTextPolicyTest` 12 例，全量 **1461 tests / 146 classes / 0 failures**（基线 1449/145，`test_baseline.json` 同批更新）；`build :app:assembleDebugAndroidTest`、lint 双变体 0 errors、三项 checks 通过。本批 `9e6fe3a`（代码）、`db06d5f`（看板），Build run [39716615668](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39716615668) 与 Checks run [39716615660](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39716615660) 双绿；[TB-CLIENT-006](#tb-client-006) 转已完成，设备外观点位（60% 小窗、最小窗口、拖大/全屏、横竖屏、手势穿透、关闭态）归 [TB-ENG-013](#tb-eng-013) 第 11 项。
 - 2026-10-22 **TB-ENG-001 / TB-ENG-002 收官（B4 签名分离与发布加固）**：release 签名改为条件化——读取顺序为 `signing.properties` → `-Psigning.*` → 无材料则不签名（产物 `app-release-unsigned.apk`，缺任一值只 warn 且不打印值），新增 `-PrequireSigning=true` 在无材料时配置期末尾抛错；`gradle.properties` 删除示例签名四行、`.gitignore` 覆盖 `*.jks`/`*.keystore`/`signing/`、`signing/example.jks` 移出仓库。`build.yml` 的 keystore 改落 `$RUNNER_TEMP` 并在 `always()` 删除、非 PR 带 `-PrequireSigning=true`、PR 补回 `:app:assembleRelease`（unsigned，R8 在 PR 也覆盖）；`release.yml` 断言只存在签名版 `app-release.apk`、拒绝 `*-unsigned.apk`、tag 校验 `vX.Y.Z`、`--target "$GITHUB_SHA"`。`startup-checklist.md` §C 重写（三档矩阵、密钥生成/离线双备份/不轮换、键名清单、覆盖安装预期、agent 不读密钥不发布）。新增 3 条契约测试，全量 **1449 tests / 145 classes / 0 failures**（基线 1446/145）；有材料 / 无材料 / `-PrequireSigning` 三条签名路径本地实测，`build :app:assembleDebugAndroidTest`、lint 双变体 0 errors、三项 checks 通过。本批 `d517fcb`、`0b7a089`、`7675f73`、`d64dbdb`；[TB-ENG-001](#tb-eng-001) 与 [TB-ENG-002](#tb-eng-002) 转已完成，R8 冒烟、androidTest 执行与覆盖安装实测归 [TB-ENG-013](#tb-eng-013)。
 - 2026-10-22 **TB-ENG-001 B3 落地（仪器测试工程链路）**：只补文档与 Javadoc，不动测试逻辑与 CI。`startup-checklist.md` 新增「D. 仪器测试（androidTest）」——编译/运行命令、`H264MediaCodecSmokeTest` 的「失败不等于缺陷」边界、报告与 logcat 位置；该类 Javadoc 改为「CI 只编译，受权设备手动运行不构成完成证据」。`:app:assembleDebugAndroidTest`、`:app:lintDebug`（0 errors / 146 warnings）与三项 checks 通过，基线 1446/145 持平。本批 `836c809`；B4 待做，设备执行归 [TB-ENG-013](#tb-eng-013) 第 10 项。
@@ -91,7 +92,6 @@
 | TB-POWER-001 | 🔶 部分完成 | 🟠 P1 | 无观看者懒停与热降档（代码完成，设备验证待棒） | 2026-10-21 | — | [决策 DB-POWER-001](decision-board.md#db-power-001) |
 | TB-ENG-013 | 📋 待办 | 🟡 P2 | 统一回归：稳定性/长时测试清单（功能全部完成后执行） | 2026-10-21 | — | [TB-WIN-001](#tb-win-001) |
 | TB-DISC-012 | 🔶 部分完成 | 🟡 P2 | 双真机联机验证（首测组播互见 + 1080×2340 出画通过；跨机 NSD、分级扫描/收藏/身份跨机、多轮稳定性与 TLS 剩余项待补） | 2026-10-20 | — | [发现调研](discovery-research.md) |
-| TB-DISC-011 | 📋 待办 | 🟡 P3 | 手动添加条目跨重启持久化 | 2026-10-20 | — | [发现调研](discovery-research.md) |
 | TB-MEDIA-004 | 📋 待办 | 🟡 P3 | 首帧绿色花屏自愈 | 2026-10-20 | — | [媒体架构](media-architecture.md) |
 | TB-MEDIA-005 | 📋 待办 | 🟢 P3 | 停止共享时编码器输入面 abandoned 噪声（良性） | 2026-10-20 | — | [媒体架构](media-architecture.md) |
 | TB-CORE-001 | ✅ 已完成 | 🔴 P0 | 正确性与资源清理（B1–B6 全落地；设备点位归 TB-ENG-013） | 2026-10-17 | 2026-10-22 | [实施计划](superpowers/plans/2026-10-22-core-correctness-cleanup.md) |
@@ -118,6 +118,7 @@
 | TB-ENG-001 | ✅ 已完成 | 🟡 P2 | 测试与发布工程（B1 CI 独立测试 job、B2 R8/keep、B3 仪器测试链路、B4 签名分离全落地；设备点位归 TB-ENG-013） | 2026-10-17 | 2026-10-22 | [实施计划](superpowers/plans/2026-10-22-release-engineering.md) |
 | TB-ENG-002 | ✅ 已完成 | 🟡 P2 | 发布签名加固（签名材料条件化、示例材料移出仓库、发布流程断言；覆盖安装实测归 TB-ENG-013） | 2026-10-17 | 2026-10-22 | [启动与签名清单](startup-checklist.md) |
 | TB-ENG-006 | ✅ 已完成 | 🟡 P2 | JPEG 降级客户端查看器接回与死代码清理（B1–B4 全落地；设备点位归 TB-ENG-013） | 2026-10-19 | 2026-10-22 | [实施计划](superpowers/plans/2026-10-22-jpeg-viewer-reconnect.md) |
+| TB-DISC-011 | ✅ 已完成 | 🟡 P3 | 手动添加条目跨重启持久化（`ManualDeviceStore` 落盘 + 启动播种 + 长按移除；设备点位归 TB-ENG-013） | 2026-10-20 | 2026-10-22 | [发现调研](discovery-research.md) |
 | TB-DISC-010 | ✅ 已完成 | 🟠 P1 | 自签 TLS 与 TOFU 身份 pinning | 2026-10-20 | 2026-10-21 | [实施计划](superpowers/plans/2026-10-21-tls-tofu.md) |
 | TB-CLIENT-003 | ✅ 已完成 | 🟠 P1 | 查看器宽高比与缩放质量 | 2026-10-20 | 2026-10-20 | [实施计划](superpowers/plans/2026-10-21-viewer-quality-and-settings.md) |
 | TB-OBS-002 | ✅ 已完成 | 🟠 P1 | RTT 探针（Ping/Pong）与估计器 | 2026-10-21 | 2026-10-21 | [本计划](superpowers/plans/2026-10-21-transport-observability.md) |
@@ -236,16 +237,6 @@
 - **修法**（提交 `27f991a`）：公告的 `secure` / `auth` 恒表示传输能力（TLS 上线后恒 `true`，只有隐藏的 `tls_allow_plaintext` 才 `false`），与私密开关彻底解耦；私密开关只影响 `Descriptor.secure` / FLAG_SECURE 路径；连接拒绝逻辑仍然只认传输安全字段（`DeviceInfo.secure`，语义现在正确）。文案：`tls_device_not_encrypted` 改为行内短标签「未加密传输」，新增 `tls_device_not_encrypted_message` 说明真实原因（该设备只提供未加密连接，由隐藏的明文调试开关启用），「画面私密」开关下新增 `projection_secure_setting_note`（只保护显示、连接本身始终加密）；`Announcement.secure` 的 Javadoc 写明该字段只描述传输。中英双语同步。
 - **设备判据（待验证棒）**：① 两台全新设备都保持默认（画面私密关）→ 点行不再被拒，首连确认后可出画；② 打开被看方「画面私密」→ 观看端窗口仍是 `FLAG_SECURE`（`adb exec-out screencap` 为空即证），且不影响连接；③ 组播报文里 `sec` 恒为 `true`（明文调试开关关闭时），与私密开关无关；④ 打开隐藏的明文调试开关后，`sec=false` 且对端按 `tls_device_not_encrypted_message` 文案拒绝。
 - **关联文档**：[决策 DB-SEC-002](decision-board.md#db-sec-002)、[TB-SEC-001](#tb-sec-001)、[TB-DISC-010](#tb-disc-010)
-
-</details>
-
-<a id="tb-disc-011"></a>
-<details><summary>TB-DISC-011 手动添加条目跨重启持久化（📋 待办）</summary>
-
-- **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟡 P3 / 2026-10-20 / —
-- **任务**：手动添加（pinned）条目目前只存于内存 `DeviceStore`，进程重启后清空，需重新手动添加。若产品期望跨进程保留，需把 pinned 条目持久化（类似 `FavoriteStore` 的路径）；否则保持现状并记录该限制。
-- **交付物 / 验证证据**：交付：手动条目持久化与恢复、相关单测。验证：重启后手动条目仍在列表；当前未实施，仅登记设计观察。
-- **关联文档**：[发现调研](discovery-research.md)、[TB-DISC-008](#tb-disc-008)
 
 </details>
 
@@ -584,8 +575,9 @@
   9. **R8 release 冒烟 11 点位**（来源 [TB-ENG-001](#tb-eng-001) B2 与[实施计划 §5/§9](superpowers/plans/2026-10-22-release-engineering.md)）：安装 `assembleRelease` 产物（R8 已开启、`shrinkResources` 关闭）后覆盖——① 冷启动进主界面 ② 设备发现（NSD + 组播 + 分级扫描任一可见） ③ TLS 首连与信任 pin ④ 信任库持久化（重启后 pin 仍在） ⑤ 授权持久化（「总是允许」后重启免批） ⑥ 收藏与上次成功地址持久化 ⑦ 共享→观看一轮出画 ⑧ 音频一轮（有声、无周期性咔声） ⑨ 通知按钮与审批弹窗可用 ⑩ 覆盖安装（同签名可覆盖、异签名明确失败） ⑪ 本地 `mapping.txt` 随包留存。**阻塞：无**（代码与 JVM 契约已落地）；B4 签名分离落地后须改用正式签名包复跑 ⑤⑩⑪，并把 ④⑤⑥ 的「重启后仍在」作为 R8 是否静默清数据的判定点。
   10. **androidTest 手动执行（TB-ENG-001 B3）**（来源[启动与签名检查清单 D 节](startup-checklist.md#d-仪器测试androidtest)）：在 API 25+ 设备与一台模拟器上分别执行 `./gradlew :app:connectedDebugAndroidTest`，记录 `ExampleInstrumentedTest`、`H264MediaCodecSmokeTest` 的通过与失败原因；`H264MediaCodecSmokeTest` 的失败须按设备归类（`null` CSD 被拒 / 软解 / 硬解），不得记成实现缺陷。**阻塞：无**；判据为原始结果与报告路径可用、结论按设备区分。
   11. **HUD 字号自适应外观点位（TB-CLIENT-006）**（来源[TB-CLIENT-006](#tb-client-006)）：开 HUD 后逐档截图对照——① 60% 小窗（约 630×1364）四行不折行、不互相遮挡；最宽行（`rowd …` 与音频行）在 9sp 下限下**可能**以 `…` 结尾，须记录被截断的是哪几行，判据是「不折行、不重叠」而不是「内容全显示」（440dpi 侧算：47 字符在 605px 内需 ≈7.8sp，低于 9sp 下限）② 拖到最小窗口（`screen_share_viewer_min_size` 起）字号停在 9sp、行尾 `…` 更长（不得换行）③ 拖大回 80%/100% 与展开全屏后字号回到 11sp、行数与内容与改动前一致 ④ 横竖屏各取一组（旋转后重算且与 `ViewerFitPolicy` 的窗口尺寸一致）⑤ HUD 不遮挡单击 / 双击 / 拖拽手势 ⑥ 关闭 HUD 后不再刷新（1 s 节奏停止）。**阻塞：无**；判据为截图 + 无 `FATAL`/`ANR`，且「行数 = 内容行数」在每一档都成立。
+  12. **手动条目重启后仍在（TB-DISC-011）**（来源[TB-DISC-011](#tb-disc-011)）：① 手动添加一台设备（`IP:port`）→ 杀进程重启 App → 该条目仍在列表且地址正确（播种后先 HEARD，15 s 无确认转 STALE、90 s 后 UNREACHABLE，重探成功回 CONFIRMED）② 重启后同一设备同时被组播/NSD 发现 → 列表只有一行，两个地址落在同一行 ③ 长按「移除手动添加」→ 行消失，再重启不再出现 ④ 设备离线时重启 → 显示为不可达、不自动消失 ⑤ 手动 + 收藏同设备时移除手动条目 → 行仍在（收藏标记保留），重启后以收藏恢复 ⑥ R8 release 包（`assembleRelease`）复跑 ①③，确认 `ManualDeviceStore$ManualRecord` 的 keep 规则生效（未混淆则重启后仍在）。**阻塞：无**；判据为截图 + `adb shell run-as` 下 `shared_prefs/lss-manual.xml` 内容，且重启前后列表行数与身份一致。
 - **执行口径**：一次统一棒只装一个已推送 HEAD、仓库零改动；每项记录取数窗口、宿主负载与 guest `top`；不得把“没测到”写成“没问题”；运行前后偏好/输入法/方向逐字节还原；不得放宽判据，判据不可达时须写明机制理由。
-- **完成判据**：以上 11 项均有可核对证据（截图/日志/读数）并按[维护方式](#-维护方式)写回各自条目；阻塞未解除的项保持 📋 待办并注明阻塞原因。
+- **完成判据**：以上 12 项均有可核对证据（截图/日志/读数）并按[维护方式](#-维护方式)写回各自条目；阻塞未解除的项保持 📋 待办并注明阻塞原因。
 - **关联文档**：[TB-WIN-001](#tb-win-001)、[TB-OBS-001](#tb-obs-001)、[TB-CLIENT-005](#tb-client-005)、[TB-DISC-010](#tb-disc-010)、[DV-001](decision-board.md)、[路线图](optimization-roadmap.md)
 
 </details>
@@ -611,6 +603,26 @@
 </details>
 
 ### ✅ 已完成条目
+
+<a id="tb-disc-011"></a>
+<details><summary>TB-DISC-011 手动添加条目跨重启持久化（✅ 2026-10-22）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：✅ 已完成 / 🟡 P3 / 2026-10-20 / 2026-10-22
+- **任务（原始登记）**：手动添加（pinned）条目只存于内存 `DeviceStore`，进程重启后清空，需重新手动添加。裁决（2026-10-22）：手动添加**默认保留**（用户手动输入本身就是意图表达），参照 `FavoriteStore` 的落盘路径持久化并在启动时恢复；收藏的「收藏/取消」语义不动。
+- **诊断（2026-10-22，按代码现状）**：完整生命周期是 `MainActivity.showManualAddressDialog()` → `DiscoveryManager.probeManualAddress()` → `ManualAddressProvider.probeManual()`；探测成功后 `mManualTargets`（`Map<host:port, ManualAddress>`，仅内存）记录重探目标，并经 `ConfirmationSink` 走到 `DiscoveryManager.onConfirmed(MANUAL, …)` → `DeviceStore.onObserved()` + `confirm()` + `setPinned(id, true)`。也就是说「手动」身份有两份内存状态：provider 的重探集合与 store 的 `pinned` 标记，**两者都没有落盘**；`FavoriteStore.sync()` 只更新已存在的收藏，不会把手动条目写成收藏。进程重启后两份状态一起清空，列表里也没有任何通道能重新带回该设备（组播/NSD 被过滤正是用户手动输入的原因）。`FavoriteStore` 的做法可作同构参照：独立 `SharedPreferences` 文件（`lss-favorites`）、Gson 反射 DTO（`FavoriteStore$FavoriteRecord`，已在 R8 keep 清单）、构造期 `load()`、每次变更 `commit()` 写回、解析失败按空文档处理、`synchronized` 方法。
+- **已落地（`a2e3f94`）**：
+  - 新增落盘层（与 `favorite` 同构，不新增依赖）：`discovery/manual/ManualDevice`（不可变值对象：设备 id、指纹、名称、host、port）、`ManualDeviceStorage`（原始读写接口）、`SharedPreferencesManualDeviceStorage`（独立文件 `lss-manual`、键 `manual_devices`、`commit()`）、`ManualDeviceStore`（Gson 文档 `ManualDeviceStore$ManualRecord`，构造期加载，写失败保留内存，损坏文档按空处理，全部方法 `synchronized`）。
+  - 持久化时机：`DiscoveryManager.onConfirmed(MANUAL, …)` 成功后 `rememberManualDevice()` 写入（内容不变则不重写文档，避免每 15 s 重探都落盘）；用户长按「移除手动添加」时从文档删除。
+  - 启动恢复：`DiscoveryManager.startDiscoveryProviders()` 在 `seedFavorites()` 之后 `seedManualDevices()`——把每条持久化记录以 `DiscoveryChannel.MANUAL` 观察播种进 `DeviceStore` 并 `setPinned(true)`，同时 `ManualAddressProvider.addManualTarget()` 恢复周期重探，探测成功后回到 `CONFIRMED`、失败则 `UNREACHABLE`。
+  - 合并语义：播种用的是握手返回的**设备 id**，而 `DeviceStore` 以 id 为去重键（`mEntries` keyed by id），因此重启后同一设备被组播/NSD/扫描发现时落进同一个条目、地址在同一行合并，不会出现第二行。同一地址换了身份（重装/换钥）时，新 id 的记录顶替旧记录，旧行 unpin 并从列表移除（`rememberManualDevice()`），避免一个地址两行。
+  - 移除路径：新增 `DeviceStore.remove(id)`、`ManualAddressProvider.forgetManualTarget(host, port)`、`ManualDeviceStore.remove(id)`、`DiscoveryManager.removeManualDevice(id)`；`DeviceInfo` 新增 `manual` 标记（由 `pinned` 投影，含 Parcel 字段与 equals/hashCode），发现页长按菜单改为动作列表（收藏切换 / 移除手动添加 / 清除信任），手动条目移除后重启不再恢复；若该设备同时是收藏，只去掉手动标记、保留收藏行。
+  - R8：新增 `-keep class com.obby.android.localscreenshare.discovery.manual.ManualDeviceStore$ManualRecord { <fields>; }`（带归属注释），并在 `BuildEngineeringContractTest.GSON_PERSISTED_DTO_RULES` 补断言，防止字段名被混淆导致重启后丢数据。
+- **验证**：`ManualDeviceStoreTest` 13 例（新增→落盘→重载恢复 / 恢复条目地址 / 同 id 覆盖 / 同地址换 id 顶替旧记录 / 内容不变不写盘 / 删除后不再恢复 / 未知 id 删除 / 按地址查找 / 最近添加在前 / 损坏文档按空处理 / 无 id 与越界端口记录被跳过 / 文档内重复 id 只加载一次 / 写失败保留内存并在下一次写回全量）；`DeviceStoreTest` +3（`remove` 发布快照、播种的手动条目与同 id 公告合并为一条、`manual` 标记随 pinned 变化）；`ManualAddressTest` +2（`create` 接受 IPv4/IPv6 字面量、拒绝空主机/非字面量/越界端口）；`ManualAddressProviderTest` +2（播种目标在 `start` 后重探并确认、`forgetManualTarget` 后不再重探）；`DeviceInfoTest` +1（`manual` 默认 false 且随 builder 传递）。全量 **1482 tests / 147 classes / 0 failures / 0 errors / 0 skipped**（基线 1461/146，`test_baseline.json` 同批更新为 1482/147）；`./gradlew build :app:assembleDebugAndroidTest` 成功；`:app:lintDebug` 0 errors / 145 warnings、`:app:lintRelease` 0 errors / 135 warnings（新增 1 条仅为 `GradleDependency` 的版本目录联网检查，代码文件零新增告警）；`check_strings`（177 键、双语一致）/`check_cjk`/`check_docs` 通过。
+- **完成判据核对（2026-10-22）**：① 手动条目落盘并在启动时恢复 → `ManualDeviceStore` + `seedManualDevices()`；② 与网络发现合并、不重复 → 以设备 id 为键播种，`DeviceStoreTest` 用例覆盖；③ 用户移除后不再恢复 → `removeManualDevice()` 三处清理（文档 / 重探 / 列表）；④ 损坏文档容错与收藏同口径 → 按空文档处理，用例覆盖。
+- **设备点位（归 [TB-ENG-013](#tb-eng-013)）**：① 手动添加一台设备 → 杀进程重启 App → 该条目仍在列表（播种后先按 HEARD，15 s 无确认转 STALE、90 s 后 UNREACHABLE，重探成功后回到 CONFIRMED，与收藏的播种行为一致）② 重启后同一设备同时被组播/NSD 发现 → 只有一行，地址合并 ③ 长按「移除手动添加」→ 行消失，再重启不再出现 ④ 设备离线时重启 → 仍显示为不可达、不自动消失 ⑤ 手动 + 收藏同设备时移除手动条目 → 行仍在（收藏标记保留），重启后以收藏恢复 ⑥ R8 release 包上复跑 ①③，验证 keep 规则生效。JVM 无法覆盖 `SharedPreferences` 实际落盘、`Intent`/Parcel 传递与长按菜单交互，均未实测。
+- **关联文档**：[发现调研](discovery-research.md)、[TB-DISC-008](#tb-disc-008)、[TB-OBS-001](#tb-obs-001)
+
+</details>
 
 <a id="tb-client-006"></a>
 <details><summary>TB-CLIENT-006 小窗 HUD 折行与字号自适应（✅ 2026-10-22）</summary>
