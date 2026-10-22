@@ -258,8 +258,17 @@ public class ScreenShareService extends Service {
     @NonNull
     private final ServerStartCoordinator mServerStartCoordinator = new ServerStartCoordinator();
 
-    // Serializes the server start and stop away from the main thread. A start that blocks in the
-    // keystore must not hold up the main thread, and a stop queued behind it must not race it.
+    /**
+     * Serializes the server start and stop away from the main thread.
+     *
+     * <p>A start that blocks in the AndroidKeyStore must not hold up the main thread, and a stop
+     * queued behind it must not race it. The executor is terminated with
+     * {@link ExecutorService#shutdown()} and deliberately <b>not awaited</b> in
+     * {@link #onDestroy()}: that callback runs on the main thread and the queued task can sit in
+     * the keystore for seconds, so waiting would reintroduce the ANR this thread exists to prevent.
+     * A start that is still queued finishes and stops its own server through
+     * {@link ServerStartCoordinator}; nothing else is submitted after the shutdown.</p>
+     */
     @NonNull
     private final ExecutorService mServerControlExecutor = Executors.newSingleThreadExecutor(
         new BasicThreadFactory.Builder().namingPattern("lss-server-control").build());
@@ -1016,7 +1025,9 @@ public class ScreenShareService extends Service {
         mPendingApproval = null;
         NotificationManagerCompat.from(this).cancel(NOTIFICATION_ID_APPROVAL);
         stopThermalMonitor();
-        // Queued work still runs; a start in flight finishes and stops its own server.
+        // Queued work still runs; a start in flight finishes and stops its own server. Not awaited
+        // on purpose (see the field): this is the main thread and the keystore can block for
+        // seconds. This is the only shutdown site; shutdown() itself is idempotent.
         mServerControlExecutor.shutdown();
     }
 

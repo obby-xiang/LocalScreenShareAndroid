@@ -909,11 +909,12 @@ public final class ScreenShareServer {
      *
      * <p>Called from the main thread during teardown, or from the control thread when a start that
      * was already abandoned returns. State is nulled first, so pending callbacks turn into
-     * no-ops; then pending main-thread callbacks are removed, the broadcast receiver, the network
-     * callback and both NSD registrations are unregistered, and finally the gRPC server is shut
-     * down, active client observers are released and the executor is terminated. Unregistering
-     * callbacks that Android already released is tolerated by the surrounding {@code try}
-     * blocks.</p>
+     * no-ops; active stream calls are then closed, which ends their drain threads without waiting
+     * for a transport close callback that a failed start may never deliver. Then pending main-thread
+     * callbacks are removed, the broadcast receiver, the network callback and both NSD registrations
+     * are unregistered, and finally the gRPC server is shut down, active client observers are
+     * released and the executor is terminated. Unregistering callbacks that Android already
+     * released is tolerated by the surrounding {@code try} blocks.</p>
      */
     public void stop() {
         mIsStopped = true;
@@ -922,6 +923,17 @@ public final class ScreenShareServer {
         mServerProfile = null;
         mServerStats = null;
         mRegisterHandler = null;
+        // Close every live call before dropping the list: a handler's close ends its drain loop and
+        // detaches its session, so the drain threads stop even when the gRPC shutdown below never
+        // reaches a transport callback. The list is a copy-on-write snapshot, so closing while
+        // iterating is safe; a close failure must not keep the remaining calls alive.
+        for (final StreamCallHandler handler : mStreamCallHandlers) {
+            try {
+                handler.close();
+            } catch (RuntimeException e) {
+                Log.w(mTag, "stop: closing a stream call failed", e);
+            }
+        }
         mStreamCallHandlers.clear();
         if (mReverseRegisterClient != null) {
             mReverseRegisterClient.cancelAll();

@@ -26,6 +26,7 @@ import com.obby.android.localscreenshare.identity.tls.TlsMaterialHolder;
 import com.obby.android.localscreenshare.identity.tls.TlsNames;
 import com.obby.android.localscreenshare.settings.Preferences;
 import com.obby.android.localscreenshare.support.Constants;
+import com.obby.android.localscreenshare.support.ExecutorShutdown;
 import com.obby.android.localscreenshare.trust.PinningTrustManager;
 import com.obby.android.localscreenshare.trust.TlsPinStore;
 import com.obby.android.localscreenshare.transport.GrpcConstants;
@@ -42,6 +43,7 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -102,6 +104,15 @@ public final class ScreenShareClient {
     // growing the queue without limit. Thirty-two frames are about 680 ms of media.
     private static final int AUDIO_QUEUE_CAPACITY = 32;
 
+    // Bounded teardown budgets of the three pools. A stop runs on the main thread and has to stay
+    // inside 250 ms in total: the decode and audio threads may be inside a frame or a write, so
+    // each gets 100 ms, and the gRPC callback pool only finishes posted callbacks with the rest.
+    private static final long DECODE_STOP_TIMEOUT_MS = 100L;
+
+    private static final long AUDIO_STOP_TIMEOUT_MS = 100L;
+
+    private static final long GRPC_CLIENT_STOP_TIMEOUT_MS = 50L;
+
     // Limits how often a decode-queue overflow asks for a key frame; requests are raised on the
     // transport thread that detected the overflow.
     @NonNull
@@ -127,6 +138,11 @@ public final class ScreenShareClient {
     // main thread and the transport then reports the cancellation on its own thread: without the
     // write being visible, that late error would be logged as a peer failure.
     private volatile boolean mIsStopped;
+
+    // One-shot guard of stop(): the viewer service can reach its stop path from a broadcast, a
+    // floating confirmation and a failed start, and the pools must not be awaited more than once.
+    @NonNull
+    private final AtomicBoolean mStopStarted = new AtomicBoolean();
 
     // Non-null only between start() and stop().
     @Nullable
@@ -724,10 +740,19 @@ public final class ScreenShareClient {
      * Stops the stream and releases every resource owned by this client.
      *
      * <p>Marks the client stopped first, then clears the stats profile, removes pending main-thread
-     * callbacks, shuts the gRPC channel and both executors down. Must be called on the main thread;
-     * the instance cannot be restarted afterwards.</p>
+     * callbacks, shuts the gRPC channel down and terminates the three pools with a bounded wait. The
+     * channel goes first so the transport stops enqueueing; the decode and audio threads then get
+     * {@value #DECODE_STOP_TIMEOUT_MS} ms each to leave their frame and the gRPC callback pool gets
+     * {@value #GRPC_CLIENT_STOP_TIMEOUT_MS} ms, which keeps the whole stop inside 250 ms of main
+     * thread time even when a task ignores the interrupt. Idempotent: only the first call releases
+     * anything, so a second stop path cannot wait twice.</p>
+     *
+     * <p>Must be called on the main thread; the instance cannot be restarted afterwards.</p>
      */
     public void stop() {
+        if (!mStopStarted.compareAndSet(false, true)) {
+            return;
+        }
         mIsStopped = true;
         mMainHandler.removeCallbacks(mPingRunnable);
         mClientProfile = null;
@@ -735,9 +760,9 @@ public final class ScreenShareClient {
         mRequestObserver = null;
         mMainHandler.removeCallbacksAndMessages(null);
         mGrpcChannel.shutdownNow();
-        mGrpcClientExecutor.shutdownNow();
-        mDecodeExecutor.shutdownNow();
-        mAudioExecutor.shutdownNow();
+        ExecutorShutdown.shutdownAndAwait(mDecodeExecutor, DECODE_STOP_TIMEOUT_MS);
+        ExecutorShutdown.shutdownAndAwait(mAudioExecutor, AUDIO_STOP_TIMEOUT_MS);
+        ExecutorShutdown.shutdownAndAwait(mGrpcClientExecutor, GRPC_CLIENT_STOP_TIMEOUT_MS);
     }
 
     /**
