@@ -47,8 +47,12 @@ import java.util.List;
  * newest output is presented and every older one is discarded, so the picture never lags behind by
  * more than one frame and no output buffer is leaked. The frame is presented at its stream timestamp
  * mapped onto the monotonic clock, or immediately when that timestamp has already passed;
- * {@link PresentationPacer} owns the decision, including the optional local display-rate cap. A
- * dropped or discarded frame is never an encoded-frame drop: the bitstream itself is intact.</p>
+ * {@link PresentationPacer} owns the decision, including the optional local display-rate cap. The
+ * first picture after {@link #configure(StreamDescriptor)} or {@link #flush()} is presented
+ * immediately when its mapped time would defer it beyond the pacer's first-frame bound: waiting
+ * would leave the surface on the content it held before, which is what the viewer perceives as a
+ * green first frame. A dropped or discarded frame is never an encoded-frame drop: the bitstream
+ * itself is intact.</p>
  *
  * <p><b>Threading.</b> Instances are driven by a single owner (a {@code ClientMediaSession}, which
  * synchronizes its own entry points); this decoder adds no internal locking and must not be shared
@@ -603,8 +607,11 @@ public final class H264Decoder implements Decoder {
      * chain. The decoder stays configured and started, but {@code firstFrameSeen} is cleared so a
      * reference frame that is not an IDR is dropped instead of decoded, and the timeline anchor is
      * cleared so the join point re-anchors the mapping between stream time and the monotonic
-     * clock. A bridge that cannot flush is treated like a bridge that cannot stop: the recovery
-     * still proceeds.</p>
+     * clock. The last presented time is cleared with it, because the next picture is the first
+     * picture of the new run: with nothing on record it is no longer held back by the abandoned
+     * run's cadence, so an artefact lead cannot leave the old picture on screen for its duration. A
+     * bridge that cannot flush is treated like a bridge that cannot stop: the recovery still
+     * proceeds.</p>
      */
     @Override
     public void flush() {
@@ -622,6 +629,10 @@ public final class H264Decoder implements Decoder {
         firstFrameSeen = false;
         ptsAnchorUs = PresentationPacer.UNSET;
         timeAnchorNs = PresentationPacer.UNSET;
+        // The next picture is the first one of the new decode run, so it must be shown immediately
+        // rather than deferred to a mapped timestamp: the surface still holds the picture of the
+        // run that was just given up.
+        lastPresentedNs = PresentationPacer.UNSET;
         // The shared session anchor is deliberately left alone: a video flush must not shift the
         // audio timeline, and an audio reconfiguration never reaches this class.
     }

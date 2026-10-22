@@ -27,6 +27,30 @@ public class PresentationPacerTest {
     }
 
     @Test
+    public void firstFrameWithFutureTarget_isPresentedImmediately() {
+        // A first target far ahead of the current time is an artefact of the shared audio/video
+        // anchor, not a pacing instruction: deferring the picture would leave the surface on the
+        // content it held before, which is what a viewer sees as a green first frame.
+        assertEquals(Decision.PRESENT_NOW,
+                pacer.decide(NOW, NOW + 5 * FRAME_NS, PresentationPacer.UNSET, 0L));
+        assertEquals(Decision.PRESENT_NOW,
+                pacer.decide(NOW, NOW + 5 * FRAME_NS, PresentationPacer.UNSET, FRAME_NS));
+    }
+
+    @Test
+    public void firstFrameWithinTheDeferralBoundKeepsItsSlot() {
+        long withinBound = PresentationPacer.MAX_FIRST_FRAME_DEFERRAL_NS;
+
+        // A lead inside the bound is ordinary audio/video alignment, so the first picture still
+        // waits for its slot and the two tracks stay together.
+        assertEquals(Decision.SCHEDULE_AT,
+                pacer.decide(NOW, NOW + withinBound, PresentationPacer.UNSET, 0L));
+        // One nanosecond past the bound is treated as a clock artefact.
+        assertEquals(Decision.PRESENT_NOW,
+                pacer.decide(NOW, NOW + withinBound + 1L, PresentationPacer.UNSET, 0L));
+    }
+
+    @Test
     public void lateFrame_isPresentedImmediately() {
         assertEquals(Decision.PRESENT_NOW,
                 pacer.decide(NOW, NOW - 3 * FRAME_NS, PresentationPacer.UNSET, 0L));

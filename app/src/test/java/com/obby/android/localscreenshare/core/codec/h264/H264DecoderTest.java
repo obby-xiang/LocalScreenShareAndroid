@@ -2,6 +2,7 @@ package com.obby.android.localscreenshare.core.codec.h264;
 
 import android.view.Surface;
 
+import com.obby.android.localscreenshare.core.audio.SessionClock;
 import com.obby.android.localscreenshare.core.codec.CodecIds;
 import com.obby.android.localscreenshare.core.codec.DecoderException;
 import com.obby.android.localscreenshare.core.codec.KeyFrameRequester;
@@ -62,6 +63,8 @@ public class H264DecoderTest {
     private static final int HEIGHT = 480;
 
     private static final long PTS_US = 33_333L;
+
+    private static final long NOW_NS = 1_000_000_000L;
 
     private FakeRenderTarget renderTarget;
 
@@ -415,6 +418,48 @@ public class H264DecoderTest {
     }
 
     @Test
+    public void firstFrame_isPresentedImmediatelyWhenTheSessionClockMapsItAhead() {
+        MutableNanoClock clock = new MutableNanoClock(NOW_NS);
+        SessionClock sessionClock = new SessionClock();
+        // The other track anchored the shared timeline one second ago on a much older stream
+        // timestamp, so this picture's mapped target lies ahead of the current time. That is a
+        // mapping artefact, and the first picture must not wait for it.
+        sessionClock.anchorIfUnset(PTS_US, NOW_NS - 1_000_000_000L);
+        H264Decoder shared = newSessionClockDecoder(clock, sessionClock);
+        shared.configure(descriptor(CONFIG_EPOCH, CodecIds.H264, validConfigParts()));
+
+        long aheadPtsUs = PTS_US + 1_200_000L;
+        bridge.enqueueOutput(new DecodedOutput(30, aheadPtsUs, false, false));
+        shared.decode(accessUnit(CONFIG_EPOCH, 0, aheadPtsUs, idrPayload()));
+
+        assertEquals(Collections.singletonList(NOW_NS), bridge.getPresentedTimestampsNs());
+    }
+
+    @Test
+    public void flush_makesTheNextPicturePresentImmediately() {
+        MutableNanoClock clock = new MutableNanoClock(NOW_NS);
+        SessionClock sessionClock = new SessionClock();
+        sessionClock.anchorIfUnset(PTS_US, NOW_NS - 1_000_000_000L);
+        H264Decoder shared = newSessionClockDecoder(clock, sessionClock);
+        shared.configure(descriptor(CONFIG_EPOCH, CodecIds.H264, validConfigParts()));
+
+        // The first picture is shown immediately and becomes the surface's content.
+        bridge.enqueueOutput(new DecodedOutput(31, PTS_US, false, false));
+        shared.decode(accessUnit(CONFIG_EPOCH, 0, PTS_US, idrPayload()));
+
+        shared.flush();
+
+        // After the skip the next picture is the first of a new decode run: it replaces the
+        // abandoned picture at once instead of waiting for a timestamp on the old mapping.
+        long aheadPtsUs = PTS_US + 1_200_000L;
+        bridge.enqueueOutput(new DecodedOutput(32, aheadPtsUs, false, false));
+        shared.decode(accessUnit(CONFIG_EPOCH, 1, aheadPtsUs, idrPayload()));
+
+        assertEquals(Arrays.asList(31, 32), bridge.getPresentedIndices());
+        assertEquals(Arrays.asList(NOW_NS, NOW_NS), bridge.getPresentedTimestampsNs());
+    }
+
+    @Test
     public void backwardPts_isDroppedAsStale() {
         decoder.configure(descriptor(CONFIG_EPOCH, CodecIds.H264, validConfigParts()));
         bridge.enqueueOutput(new DecodedOutput(20, 100_000L, false, false));
@@ -487,6 +532,12 @@ public class H264DecoderTest {
         return new H264Decoder(STREAM_KEY, descriptor(CONFIG_EPOCH, CodecIds.H264,
                 validConfigParts()), renderTarget, bridgeFactory, KeyFrameRequester.NONE, metrics,
                 clock);
+    }
+
+    private H264Decoder newSessionClockDecoder(NanoClock clock, SessionClock sessionClock) {
+        return new H264Decoder(STREAM_KEY, descriptor(CONFIG_EPOCH, CodecIds.H264,
+                validConfigParts()), renderTarget, bridgeFactory, KeyFrameRequester.NONE,
+                PipelineMetrics.NONE, clock, sessionClock);
     }
 
     private static EncodedAccessUnit accessUnit(int configEpoch, long sequence, long ptsUs,
