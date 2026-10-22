@@ -21,6 +21,7 @@
 
 ## 🎯 当前焦点
 
+- 2026-10-22 **TB-ENG-006 B1 落地（能力声明统一）**：观看端此前在两处独立决定能力——HELLO 只报 `MediaCodecList` 探测到的视频解码器（JPEG 不经 MediaCodec，`getVideoCapabilities()` 为 null 时被跳过，服务端因此从不认为本端能解 JPEG），而 `ClientMediaSession` 把会话能力硬编码成 H.264；两者一旦不一致，服务端选出的 JPEG 描述符只会被判 CLOSED（帧不进解码、指标不计、loading 不消失）。改为单一来源：新增纯 JVM `client/ClientCapabilitiesFactory`（复制探测结果、缺 JPEG 时补 `CodecCapability.any`，Javadoc 写明 JPEG 由 `BitmapFactory` 显示而不经 MediaCodec），`CodecCapabilityProbe.probeClientDecoders()` 只探测 H.264/AAC 后走工厂；`ScreenShareClient` 新增构造重载接收能力集，`start()` 用它构造 HELLO（旧构造保留并默认探测）；`ScreenViewerService.advertisedCapabilities()` 每个 Service 实例探测一次，同一实例同时交给会话与两处 `new ScreenShareClient(...)`（重试沿用）。全量 **1428 tests / 141 classes / 0 failures / 0 errors / 0 skipped**（基线 1424/140，只增不减），`./gradlew build :app:assembleDebugAndroidTest` 与 `:app:lintDebug`（0 errors / 146 warnings）通过，三项 checks 通过。计划 `5b8f752`、本批 `e8b3b8d`；B2–B4 待做，见 [TB-ENG-006](#tb-eng-006)。
 - 2026-10-21 **TB-SEC-001 设备阻断缺陷修复（审批不出现 / 挂起被误判为撤销）**：双真机报告 `device-test-2026-10-21-sec/report.md` 的 S‑1（P0）定位到两个叠加原因——①`ScreenShareService` 的闸门监听器把 `onApprovalRequested` 写成了**自递归**（`mMainHandler.post(() -> onApprovalRequested(...))` 在匿名监听器内解析到自己），主线程自投递死循环，审批通知与对话框从未出现；②`StreamCallHandler.settleApproval()` 的 `switch` **漏了 `PENDING` 分支**，等待中的状态落进 `default`（=允许）分支，清掉 `pendingApproval` 并置 `pendingJoin`，未授权对端因此仍会 `hub.join`，随后被 `isStillAllowed()` 复核否掉并以 `authorization_revoked` 秒级关单（既无审批也无正确原因）。修法：监听器显式限定 `ScreenShareService.this`；`settleApproval()` 补 `case PENDING: return state`；复核改三态 `AuthorizationGate.Review`（`ALLOW`/`WAITING`/`DENY`），`StreamCallHandler.reviewAuthorization()` 在 `hub.join` **之前**复核，`WAITING` 一律不踢不连、`DENY` 才以 `authorization_revoked` 结束，`ALLOW` 才进入会话。JVM 回归补 14 条（挂起多轮不变 / 批准放行 / 拒绝仍是 `authorization_denied` / 超时仍是 `authorization_timeout` / 未来 HELLO 不误踢 / 闸门三态与身份隔离）；全量 **1381 tests / 132 classes / 0 failures / 0 errors / 0 skipped**（基线 1367/132，只增不减），`assembleDebug`、`:app:lintDebug`（0 errors / 146 warnings）通过。**双真机四条核心路径复验全部通过**（①审批出现且不发帧 ②总是允许出画 + 重连免批 ③拒绝文案正确且不自动重连 ④撤销 ≤31 ms 断流），证据 `device-test-2026-10-21-sec/r2/`。
 - 2026-10-21 **配对/授权落地（[TB-SEC-001](#tb-sec-001)，代码与 JVM 验证完成，设备四条核心路径已复验）**：两层分离——TOFU 管「身份是不是真的它」（已有），授权管「准不准看」。**默认拒绝**：未授权身份的媒体流请求不直接拒绝，而是停在待批准（不进 `StreamHub`、不发一帧、音频不扇出），服务端弹审批（设备名 + id 短码 + 指纹短码，允许一次 / 总是允许 / 拒绝，60 s 无回答即 `authorization_timeout`），拒绝与超时都带明确原因。**持久授权**按 id **且** 指纹落盘到独立文件 `lss-authorization`（与 `lss-trust` 分开），只有「总是允许」写盘、「允许一次」仅当次。**撤销即时生效**：直播中的会话每次 drain 复核授权，撤销后 ≤31 ms 断流（原因 `authorization_revoked`）。**开关默认开**，关闭回到旧行为并在设置里明示风险；音频沿用 D11「能看就能听」，不单独设许可。协议只做纯增量（`Hello.device_name=6`、`ServerMessage.authorization=6`），旧端忽略。提交 `d690592`（计划）、`7416f9f`（存储/策略/闸门）、`8c3cf1d`（服务端审批流）、`3cc5ef8`（客户端文案）、`a7840d2`（设置与已授权设备）及本条目；全量 **1381 tests / 132 classes / 0 failures / 0 errors / 0 skipped**，`assembleDebug`、`:app:lintDebug`（0 errors / 146 warnings）与三项 checks 通过。点位见 [TB-SEC-001](#tb-sec-001)。
 - 2026-10-21 **音频水位与口径修复（R1–R3，[TB-AUDIO-003](#tb-audio-003) 的两个 ❌ 与重连瞬态）**（来源 handoff `device-test-2026-10-21-dual/audio-fix-verify/report.md` §1.4/§4 的 N1/N2/N4）：**R1 水位** `MAX_DEPTH_MS 250→400`、`RECOVER_DEPTH_MS 150→250` —— 稳态深度是轨道 128 ms + 预填 ~106 ms ≈ **234–248 ms**，与旧的 250 ms 只差几毫秒，任何视频突发都会顶破并按 150 ms 一次砍 6 帧（128 ms 音频，每 13–18 s 一次，`audio.dropped` 0.294 次/s）；同时把丢弃改成**渐进**（新增 `MAX_DROP_FRAMES_PER_PLAN=2`，单次 ≤43 ms；丢弃速率仍高于实时，积压照常排空）。**R2 口径** `AudioPlayhead.audiblePtsUs()` 增加 `pendingFrames` 入参，可闻位置同时扣掉「轨道内未播帧」与「等写线程的帧」，`ClientAudioSession` 用 `pendingSamplesLocked()` 供数 —— 过去深预填被算成"音频落后/超前"的固定偏置（实测 70–91 ms）。**R3 重连瞬态** 播放开始时重锚漂移基准（`referenceOffsetUs` + 检查时刻），新音频会话在已被视频锚定的时间线上重播时，预填期的测量不再被当作基准（上一轮 `drift guard dropped one frame, offset = -185 ms`）。提交 `0b0f8cb`；全量 **1322 tests / 128 classes / 0 failures / 0 errors / 0 skipped**（基线 1315/128，只增不减），`assembleDebug`、`:app:lintDebug`（0 errors / 146 warnings）与三项 checks 通过。**本棒不碰设备**，判据见 [TB-AUDIO-003](#tb-audio-003)。
@@ -39,7 +40,7 @@
 - 基线参考：`65a34dc`（TB-ENG-004 完成标记）。
 - 编码框架隔离核心批次（Task 1–9，代码范围 `9f650dc..2a95ab2`）见 [TB-DOC-008](#tb-doc-008) 与 [TB-FW-001](#tb-fw-001)；最近完成的条目见 [TB-ENG-004](#tb-eng-004) 与 [TB-ENG-003](#tb-eng-003)。
 - 媒体路径生产接线（批次 A–H）已完成代码层面：双向流协议、StreamRuntime/StreamHub 服务端接线、H.264 采集直通、客户端 ClientMediaSession/Surface 渲染、JPEG 回退、能力选档与切换编排均已落地；仅经 JVM/fake 与编译验证，详见 [TB-FW-003](#tb-fw-003)。
-- 问题 3 代码层面已收官（批次 A–H），边角项 [TB-ENG-005](#tb-eng-005) 已完成（视频设置界面），[TB-ENG-007](#tb-eng-007) 已随可观测性 O3 完成（2026-10-21），[TB-ENG-006](#tb-eng-006) 仍为遗留；下一步等用户准备好设备后进入设备实测（设备验证未解禁）；问题 3 仍未关闭。
+- 问题 3 代码层面已收官（批次 A–H），边角项 [TB-ENG-005](#tb-eng-005) 已完成（视频设置界面），[TB-ENG-007](#tb-eng-007) 已随可观测性 O3 完成（2026-10-21），[TB-ENG-006](#tb-eng-006) 已转部分完成（B1 能力声明统一落地，B2–B4 待做）；下一步等用户准备好设备后进入设备实测（设备验证未解禁）；问题 3 仍未关闭。
 - 未做设备/真机/模拟器验证：全程未运行 adb、`connectedAndroidTest`、安装或启动 App；编码切换、Surface 恢复与多客户端行为均无实测数据。
 - 编码框架隔离核心（契约、StreamHub、有界队列、六状态机、JPEG 参考适配）已完成并通过 JVM 验证，见 [TB-FW-001](#tb-fw-001)、[TB-FW-004](#tb-fw-004)、[TB-FW-005](#tb-fw-005)、[TB-FW-002](#tb-fw-002)。
 - 问题 3 尚未由用户明确关闭，不能标记完成；代码完成 ≠ 问题关闭，API 25 只是兼容下限，能力按运行时探测分档。
@@ -75,6 +76,7 @@
 
 | ID | 状态 | 优先级 | 标题 | 创建 | 完成 | 关联 |
 | --- | --- | --- | --- | --- | --- | --- |
+| TB-ENG-014 | 📋 待办 | ⚪ P3 | H.264 编码器失败自动回退 JPEG（接在 TB-ENG-006 B2–B4 之后） | 2026-10-22 | — | [TB-ENG-006](#tb-eng-006) |
 | TB-SEC-002 | 🔶 部分完成 | 🔴 P0 | 身份密钥瞬时故障静默删键与三份身份快照（N3；代码完成，设备复测待棒） | 2026-10-21 | — | [决策 DB-SEC-003](decision-board.md#db-sec-003) |
 | TB-DISC-013 | 🔶 部分完成 | 🟠 P1 | 发现行首连的证书指纹引导（N2；代码完成，设备复测待棒） | 2026-10-21 | — | [TB-DISC-012](#tb-disc-012) |
 | TB-SEC-003 | 🔶 部分完成 | 🟠 P1 | 公告传输安全字段与「画面私密」分离（N1；代码完成，设备复测待棒） | 2026-10-21 | — | [决策 DB-SEC-002](decision-board.md#db-sec-002) |
@@ -84,7 +86,7 @@
 | TB-DISC-011 | 📋 待办 | 🟡 P3 | 手动添加条目跨重启持久化 | 2026-10-20 | — | [发现调研](discovery-research.md) |
 | TB-MEDIA-004 | 📋 待办 | 🟡 P3 | 首帧绿色花屏自愈 | 2026-10-20 | — | [媒体架构](media-architecture.md) |
 | TB-MEDIA-005 | 📋 待办 | 🟢 P3 | 停止共享时编码器输入面 abandoned 噪声（良性） | 2026-10-20 | — | [媒体架构](media-architecture.md) |
-| TB-ENG-006 | 📋 待办 | 🟡 P2 | JPEG 降级客户端查看器接回 | 2026-10-19 | — | [问题3接线计划](superpowers/plans/2026-10-19-media-path-wiring.md) |
+| TB-ENG-006 | 🔶 部分完成 | 🟡 P2 | JPEG 降级查看器接回与死代码清理（B1 能力声明统一已落地，B2–B4 待做） | 2026-10-19 | — | [实施计划](superpowers/plans/2026-10-22-jpeg-viewer-reconnect.md) |
 | TB-CORE-001 | ✅ 已完成 | 🔴 P0 | 正确性与资源清理（B1–B6 全落地；设备点位归 TB-ENG-013） | 2026-10-17 | 2026-10-22 | [实施计划](superpowers/plans/2026-10-22-core-correctness-cleanup.md) |
 | TB-CORE-002 | 🔶 部分完成 | 🔴 P0 | 会话与渲染目标解耦（解耦已落地，关窗不停会话待 DV-008） | 2026-10-17 | — | [窗口与会话设计](windowing-session-design.md) |
 | TB-WIN-001 | 🔶 部分完成 | 🟠 P1 | 窗口切换（方案 B；功能冒烟通过，全项回归待统一棒） | 2026-10-17 | — | [窗口与会话设计](windowing-session-design.md) |
@@ -284,12 +286,27 @@
 </details>
 
 <a id="tb-eng-006"></a>
-<details><summary>TB-ENG-006 JPEG 降级客户端查看器接回（📋 待办）</summary>
+<details><summary>TB-ENG-006 JPEG 降级客户端查看器接回与死代码清理（🔶 部分完成 · B1 已落地）</summary>
 
-- **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟡 P2 / 2026-10-19 / —
-- **任务**：批次 C 后生产客户端只接 `SurfaceRenderTarget`（H.264 路径），`BitmapRenderTarget` 无生产引用；JPEG 降级模式下客户端无可显示查看器。需在 JPEG 模式接回 Bitmap 查看器（可参考批次 C 前的 `ScreenShareViewer` 实现）。
-- **交付物 / 验证证据**：交付：JPEG 模式查看器接线与降级路径单测。验证：JPEG 降级会话在客户端可见画面；当前未实施，设备验证未解禁。
-- **关联文档**：[问题3接线计划](superpowers/plans/2026-10-19-media-path-wiring.md)
+- **状态 / 优先级 / 创建 / 完成**：🔶 部分完成（B1 代码 + JVM 用例完成，B2–B4 待做）/ 🟡 P2 / 2026-10-19 / —
+- **任务**：批次 C 后生产客户端只接 `SurfaceRenderTarget`（H.264 路径），`BitmapRenderTarget` 无生产引用；JPEG 降级模式下客户端无可显示查看器。需在 JPEG 模式接回 Bitmap 查看器（可参考批次 C 前的 `ScreenShareViewer` 实现）。2026-10-22 代码核对后范围扩为四批（能力声明统一 → JPEG 渲染目标与双宿主接线 → 编码格式选择入口 → 死代码清理），并以「JPEG 帧根本走不通」为前置：来源不只是渲染目标缺失，还有会话能力硬编码 H.264 与 HELLO 的 JPEG 能力依赖 `MediaCodecList` 两个断点。
+- **计划**：`docs/superpowers/plans/2026-10-22-jpeg-viewer-reconnect.md`（`5b8f752`）；批次划分、三处断点核对、D1–D3 设计与四处裁决见该文档 §3–§8。
+- **B1 已落地（`e8b3b8d`，能力声明统一）**：新增纯 JVM `client/ClientCapabilitiesFactory`——复制探测结果，缺 JPEG 时补 `CodecCapability.any(CodecIds.JPEG)`（Javadoc 写明 JPEG 由 `BitmapFactory` 显示、不经 MediaCodec，null 入参按空处理、音频能力原样保留）；`CodecCapabilityProbe.probeClientDecoders()` 只探测 H.264/AAC 后走工厂，删去 JPEG 的 `MediaCodecList` 探测；`ScreenShareClient` 新增构造重载接收 `ClientCapabilities`，`start()` 用它构造 HELLO，旧构造保留并默认探测；`ScreenViewerService.advertisedCapabilities()` 每个 Service 实例探测一次，同一实例交给 `ClientMediaSession`（替换 `new ClientCapabilities(Collections.singleton(CodecIds.H264))`）与两处 `new ScreenShareClient(...)`，重试沿用；两处「resolves the H.264 decoder」过期注释改为「active codec」。服务端从此能收到 JPEG 能力，客户端会话也不再拒绝自己声明的 JPEG 描述符。
+- **B1 验证**：`ClientCapabilitiesFactoryTest` 4 例（只探测到 H.264 → 补 JPEG 且不改调用方 map；已含 JPEG → 保留原细节不重复；音频原样保留含空表；null 入参 → 只剩 JPEG）；全量 **1428 tests / 141 classes / 0 failures / 0 errors / 0 skipped**（基线 1424/140，只增不减）；`./gradlew build :app:assembleDebugAndroidTest` 成功；`:app:lintDebug` 0 errors / 146 warnings（与基线持平）；`check_strings`/`check_cjk`/`check_docs` 通过。**未做设备验证**（设备验证未解禁）：JPEG 降级会话在客户端可见画面、服务端选到 JPEG 的实际链路仍未实测。
+- **未完成部分**：B2（新增 `BitmapScalePolicy`、重写 `BitmapRenderTarget`、新增 `HostRenderTarget`、`ViewerPanelView` 加 `frameView`、双宿主接线）、B3（`MaterialButtonToggleGroup` 编码格式二选一、JPEG 模式隐藏码率/关键帧行、下次开始共享生效）、B4（删内嵌 `ScreenShareViewer`、`mScreenShareViewer`、`support/MutableReference`、失效 import 与两个资源，用例数持平）。H.264 编码器失败自动回退 JPEG 另立 [TB-ENG-014](#tb-eng-014)。
+- **关联文档**：[实施计划](superpowers/plans/2026-10-22-jpeg-viewer-reconnect.md)、[问题3接线计划](superpowers/plans/2026-10-19-media-path-wiring.md)、[窗口与会话设计](windowing-session-design.md)
+
+</details>
+
+<a id="tb-eng-014"></a>
+<details><summary>TB-ENG-014 H.264 编码器失败自动回退 JPEG（📋 待办）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：📋 待办 / ⚪ P3 / 2026-10-22 / —
+- **任务**：服务端只在开始共享时按偏好决定编码格式（`ScreenShareService` 的 `mIsH264`），运行时不做 H.264↔JPEG 切换。[TB-ENG-006](#tb-eng-006) B3 把设置项改成 h264/jpeg 二选一后，用户一旦选中 H.264 而本机硬编创建或配置失败，当前没有任何回退路径：`StreamRuntime.start()` 抛 `EncoderException`，`onStartCommand` 的 `catch (RuntimeException)` 只弹通用「启动失败」toast 并停服（`start_service_failed`），用户只能自己发现并改设置重开。本条目实现「开始共享时 H.264 失败 → 自动改走 JPEG 兼容模式」，并在通知/悬浮条标注当前为降级格式。
+- **边界**：只做启动失败回退，不做运行时切换（服务端采集路径不支持）；JPEG 是兼容模式，编码开销更高，回退必须对用户可见，不能静默降档；不改变 `StreamHub`、协议或客户端能力协商口径（[TB-ENG-006](#tb-eng-006) B1 已让客户端恒声明 JPEG）。自动回退是否记忆到偏好、重试次数与失败文案需在实施时按产品口径裁决。
+- **交付物 / 验证证据**：交付：启动失败回退编排与 JVM 用例（失败 → 以 JPEG 重建运行时、成功后通知标注降级、JPEG 也失败时如实报错）。验证：未实施；设备点位归 [TB-ENG-013](#tb-eng-013)。
+- **来源**：2026-10-22 [JPEG 接回计划](superpowers/plans/2026-10-22-jpeg-viewer-reconnect.md) §7 产品口径与 §8 裁决 4（自动回退另立条目）。
+- **关联文档**：[TB-ENG-006](#tb-eng-006)、[JPEG 接回计划](superpowers/plans/2026-10-22-jpeg-viewer-reconnect.md)
 
 </details>
 
