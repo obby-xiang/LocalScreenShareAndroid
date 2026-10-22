@@ -8,7 +8,7 @@
 
 - **当前环境可以编译打包**：Gradle Wrapper、JDK、Android SDK 解析和签名配置都能完成 `assembleDebug` 与 `assembleRelease`。
 - **Debug 启动不要求 release 证书**：Debug 使用 AGP 自动签名；缺的是可用的 Android 设备/模拟器和 adb 安装通道，以及设备上的运行时授权。
-- **正式发布不能使用仓库内示例签名**：示例签名只够技术打包，不具备正式分发所需的私密性与升级连续性。正式发布必须换成私有 keystore 或 CI secrets。
+- **正式发布只认私有签名**：仓库不含任何签名材料；无材料时 release 产出 `app-release-unsigned.apk`，不能安装也不能分发。正式发布必须使用仓库外的私有 keystore（本地 `signing.properties` 或 CI secrets），并由用户手动 dispatch 发布。
 - **单设备只能做启动与界面检查**：完整服务端/客户端流程至少需要两台设备、同一局域网和可用的 NSD/mDNS。
 - **仪器测试只编译不运行**：CI 覆盖 `:app:assembleDebugAndroidTest`，`connectedDebugAndroidTest` 从未执行；`H264MediaCodecSmokeTest` 的失败不等于实现缺陷（见 D 节）。
 
@@ -23,7 +23,7 @@
 | Android SDK | 已具备，未读取路径 | `local.properties` 存在（内容未读取）；`ANDROID_HOME`/`ANDROID_SDK_ROOT` 未设置。构建成功说明 SDK 解析、API 35 与所需构建工具可用 |
 | 编译/目标版本 | 已具备 | `compileSdk 35`、`targetSdk 35`、`minSdk 25` |
 | Debug 构建 | 通过 | `./gradlew :app:assembleDebug --offline` 成功；AGP 的 `validateSigningDebug` 通过 |
-| Release 构建 | 通过（仅技术验证） | `./gradlew :app:assembleRelease --offline` 成功；当前使用仓库内示例签名回退，不能用于正式分发 |
+| Release 构建 | 通过 | `./gradlew :app:assembleRelease` 成功（R8 已开启）；本机无签名材料时产物为 `app-release-unsigned.apk`，有材料时为本机私有签名 |
 | 此前全量构建与 CI | 成功 | 本机已有 debug/release APK 与测试/检查报告；最近一次远端 Build CI 成功（run `39036432781`） |
 | Android 设备 | **未知** | `adb` 不在 PATH，本次未检查设备数量与状态；没有执行安装 |
 | adb | 不在 PATH | 未确认 SDK 内 platform-tools 是否存在；不读取 `local.properties` 的内容 |
@@ -81,36 +81,67 @@ Android 14+ 对 `mediaProjection` 前台服务有额外限制：应在用户可�
 
 ### Debug / Release / 正式发布
 
-| 场景 | 签名来源 | 能否安装 | 能否正式分发 |
-| --- | --- | --- | --- |
-| Debug | AGP 自动生成的 debug 签名 | 能 | 不能 |
-| 本地 Release（当前回退） | 仓库内公开示例签名材料与示例属性 | 技术上能 | **不能** |
-| 正式 Release | 私有 keystore + `signing.properties`，或 CI secrets 注入 | 能 | 能，需自行保管与审计 |
+| 场景 | 签名来源 | 产物 | 能否安装 | 能否正式分发 |
+| --- | --- | --- | --- | --- |
+| Debug | AGP 自动生成的 debug 签名 | `app-debug.apk` | 能 | 不能 |
+| 本地 Release（无材料） | 不签名 | `app-release-unsigned.apk` | 不能（系统拒绝未签名包） | **不能** |
+| 本地 Release（有材料） | 根目录 `signing.properties` 指向的私有 keystore | `app-release.apk` | 能 | 能，需自行保管与审计 |
+| 正式 Release（CI） | 四个 secrets 注入的私有 keystore | `app-release.apk` | 能 | 能，发布只能由用户手动 dispatch |
 
-当前 `app/build.gradle` 的 release 配置会优先读取根目录的 `signing.properties`；该文件已被 `.gitignore` 忽略。文件不存在时，会回退到 `gradle.properties` 中的示例签名属性。因此：
+`app/build.gradle` 的读取顺序是：**根目录 `signing.properties` → 四个 `-Psigning.*` 属性 → 都没有则不签名**。四个值（store 文件、store 口令、key alias、key 口令）缺任意一个都按“无材料”处理，只打一条 `logger.warn`（不打印任何值），release 产物变成 `app-release-unsigned.apk`。
 
-- **技术上可以打包**：本次 `assembleRelease` 成功，已有 release APK 产物。
-- **不能用于正式分发**：示例材料是公开的，无法证明发布者身份，也不能作为长期升级与信任链的根；任何拿到仓库的人都能用它签出同包名 APK。
-- **示例签名只适合本地构建验证**：不能上传应用商店或对外发布。
+- 仓库不再携带任何签名材料：`gradle.properties` 没有示例签名属性，`signing/example.jks` 已移出仓库，`.gitignore` 覆盖 `*.jks`、`*.keystore`、`signing/` 与 `signing.properties`。
+- 无材料时的 unsigned 产物只适合本地检查 R8 与打包是否通过，**不能安装、不能分发**。
+- 需要“缺材料就让构建失败”的场景（CI 非 PR 构建与发布）用 `-PrequireSigning=true`：配置期直接抛 `GradleException`，错误文案是 `release signing material is required`，不会悄悄产出 unsigned 包。
 
-正式发布需要：
+### 私有 keystore 的生成与保管
 
-1. 在仓库外或受控位置保管私有 keystore，并做好离线备份。
-2. 本地使用被忽略的 `signing.properties`（包含 keystore 路径、store 口令、key alias、key 口令），或由 CI secrets 注入同等材料。
-3. 确保真实 keystore、口令和 `signing.properties` 不进入 Git 历史、日志或构建产物。
-4. 固定 `applicationId` 与签名身份；后续版本必须使用同一签名密钥。
-5. 在发布前验证：干净环境可构建、产物签名正确、升级安装路径可用。
+> 以下只描述流程，不包含任何口令、别名或路径取值；agent 不生成、不读取、不记录密钥材料。
 
-CI 的 Build workflow 已通过 secrets 注入签名材料并成功构建，说明当前仓库的 CI 签名通道可用；Release workflow 是手动触发的发布流程，本次未执行。文档不复述任何签名值、口令或密钥细节。
+1. 在仓库外（受控目录或离线介质）生成私有 keystore，例如 `keytool -genkeypair -v -keystore <仓库外路径>.jks -alias <别名> -keyalg RSA -keysize 4096 -validity 10000`；口令由用户自己设定并保管。
+2. **离线双备份**：keystore 文件与口令分开保存在两处以上离线介质；只要还有一份备份就能继续发布，全部丢失则无法再发布同包名更新。
+3. **不轮换原则**：`applicationId` 与签名密钥一经发布即固定；轮换等于换 App（已安装用户无法覆盖升级），只有确认放弃存量升级时才考虑。
+4. 不要把 keystore、口令或导出的 base64 写进仓库、Issue、聊天记录或日志。
 
-### 覆盖安装与签名冲突
+### 本地接线（`signing.properties`）
 
-如果设备上已经安装了同 `applicationId`、但由不同密钥签名的 App：
+在仓库根目录创建被 gitignore 的 `signing.properties`（键名固定，值由用户填写，不提交）：
 
-- `adb install -r` 或 `installDebug` 可能失败，典型结果是签名不一致导致的更新不兼容。
-- 不能通过“直接卸载”静默解决：卸载会清除应用数据。
-- 应优先让新包使用与已安装版本相同的签名；如果确实需要换签名，必须先告知用户会清数据，由用户决定是否卸载。
-- 本次没有检查任何已安装 App 的签名，也没有卸载或修改设备。
+| 键 | 含义 |
+| --- | --- |
+| `storeFile` | keystore 路径（相对仓库根或绝对路径） |
+| `storePassword` | keystore 口令 |
+| `keyAlias` | 密钥别名 |
+| `keyPassword` | 密钥口令 |
+
+### CI 接线（四个 secrets）
+
+Build workflow 的非 PR 构建（以及手动 dispatch 的 Release workflow）从以下 secrets 取材料，解码到 `$RUNNER_TEMP/keystore.jks`（不落工作区），构建后以 `if: always()` 删除：
+
+| Secret | 内容 |
+| --- | --- |
+| `SIGNING_STORE_BASE64` | keystore 文件的 base64 编码 |
+| `SIGNING_STORE_PASSWORD` | keystore 口令 |
+| `SIGNING_KEY_ALIAS` | 密钥别名 |
+| `SIGNING_KEY_PASSWORD` | 密钥口令 |
+
+非 PR 构建带 `-PrequireSigning=true`：secrets 缺失时 job 在配置期失败，不会产出 unsigned 包。PR 构建不读 secrets，`assembleRelease` 产出 unsigned APK，只用于验证 R8 与打包链路。
+
+### 发布流程（只能用户手动执行）
+
+- `release.yml` 只有 `workflow_dispatch`，输入 tag 必须是 `vX.Y.Z`。
+- 发布前断言：产物里必须存在且只存在签名版 `app-release.apk`，出现 `*-unsigned.apk` 直接失败；`gh release create` 的 `--target` 绑定当前 `GITHUB_SHA`。
+- **agent 不触发 `release.yml`、不读取密钥、不执行发布**；发布由用户在自己的会话里手动 dispatch。
+- 发布前建议本地对产物执行 `apksigner verify --verbose <apk>` 确认签名有效（不在仓库记录证书指纹值）。
+
+### 覆盖安装验证
+
+| 场景 | 步骤 | 预期 |
+| --- | --- | --- |
+| 同签名覆盖安装 | 先装旧版（同一签名），再 `adb install -r` 新版签名包 | 成功，应用数据保留；启动后信任 / 授权 / 收藏仍在 |
+| 异签名覆盖安装 | 安装与已装版本不同密钥签名、同 `applicationId` 的包 | 失败，`INSTALL_FAILED_UPDATE_INCOMPATIBLE`；不得用“直接卸载”静默处理（卸载会清数据），必须由用户决定 |
+
+这两条属于设备点位，登记在[任务看板](task-board.md) TB-ENG-013 的统一回归清单；本文只写步骤与预期，不代表已验证。
 
 ## D. 仪器测试（androidTest）
 
@@ -155,7 +186,7 @@ CI 的 Build workflow 已通过 secrets 注入签名材料并成功构建，说�
 - 可用的 JDK（当前为 JDK 21）与 Android SDK 解析。
 - API 35 编译/目标配置与 API 25 最低兼容配置。
 - Debug 自动签名与可用的 Debug APK 构建。
-- Release 技术打包能力（示例签名回退）。
+- Release 技术打包能力（有材料签名 / 无材料 unsigned 两条路径）。
 - 当前功能所需的 Manifest 权限。
 - 远端 Build CI 成功记录。
 
@@ -172,7 +203,7 @@ CI 的 Build workflow 已通过 secrets 注入签名材料并成功构建，说�
 - 本地 `signing.properties` 或 CI secrets 注入。
 - 与已安装版本一致的签名身份与升级验证。
 - 正式发布流程、版本号与商店/分发渠道检查。
-- 清除仓库中的示例签名回退对正式构建的影响，确保正式包只使用私有签名。
+- 同签名覆盖安装与异签名拒绝的实测（步骤见 C 节，设备执行归 TB-ENG-013）。
 
 ### 不需要
 
