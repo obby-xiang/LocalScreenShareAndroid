@@ -118,6 +118,7 @@ import org.apache.commons.lang3.mutable.MutableBoolean;
 
 import java.text.NumberFormat;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
@@ -133,9 +134,11 @@ import java.util.function.BooleanSupplier;
  * the service to the foreground with the remote-messaging type, resets any previous session,
  * creates an {@link ScreenShareClient} and shows the loading overlay before the client connects. A
  * repeated start for the same target leaves the running session alone; a start for a different
- * target replaces it. {@link #stopService()} tears down the client, the overlays and the
- * foreground notification and calls {@link #stopSelf()}; {@link #onDestroy()} only unregisters the
- * stop receiver.</p>
+ * target replaces it. {@link #stopService()} runs the one-shot {@link TeardownCoordinator} that
+ * releases the client, the overlays and the foreground notification and then calls
+ * {@link #stopSelf()}; {@link #onDestroy()} runs the same teardown as a fallback for a destruction
+ * without that path and only then drops the instance reference and unregisters the stop
+ * receiver.</p>
  *
  * <p><b>Connection state.</b> The surface viewer is mounted when the session starts so its texture
  * view acquires a surface and the decoder can be created; the loading overlay is shown on top until
@@ -197,6 +200,11 @@ public class ScreenViewerService extends Service {
     // Single-use client; replaced by a new instance on retry and nulled on stop.
     @Nullable
     private ScreenShareClient mClient;
+
+    // One-shot release of one session; rebuilt for every accepted start and run by stopService()
+    // and onDestroy().
+    @Nullable
+    private TeardownCoordinator mTeardown;
 
     // Last stats sample received on the main thread.
     @Nullable
@@ -541,6 +549,10 @@ public class ScreenViewerService extends Service {
         ContextCompat.registerReceiver(this, mBroadcastReceiver, intentFilter, ContextCompat.RECEIVER_NOT_EXPORTED);
 
         ensureMetrics();
+
+        // The order is fixed; onStartCommand replaces the coordinator for every accepted start, so
+        // each session owns exactly one teardown and the first stop path releases it.
+        mTeardown = createTeardownCoordinator();
     }
 
     /**
@@ -581,13 +593,18 @@ public class ScreenViewerService extends Service {
     }
 
     /**
-     * Unregisters the stop receiver; the session itself was already released by
-     * {@link #stopService()}.
+     * Finishes the teardown and releases what outlives a session.
+     *
+     * <p>{@link #stopService()} normally ran the teardown already; running it here as well covers a
+     * service destroyed without that path, and the coordinator turns the second call into a no-op.
+     * The instance reference and the expansion watchdogs belong to the service rather than to the
+     * session, so they are dropped here.</p>
      */
     @Override
     public void onDestroy() {
         super.onDestroy();
         Log.i(mTag, "onDestroy: service destroyed");
+        runTeardown();
         cancelActivityAttachWatchdogs();
         sInstance = null;
 
@@ -640,6 +657,11 @@ public class ScreenViewerService extends Service {
             Log.w(mTag, "onStartCommand: client already running");
             return START_NOT_STICKY;
         }
+
+        // A new start can arrive before the previous stop reached onDestroy, in which case the old
+        // coordinator is already spent; the new session needs its own one-shot teardown or its stop
+        // would release nothing.
+        mTeardown = createTeardownCoordinator();
 
         mServiceInfo = serviceInfo;
         mIsConnected = false;
@@ -753,18 +775,76 @@ public class ScreenViewerService extends Service {
     }
 
     /**
-     * Releases the client, the overlays and the foreground notification, then stops the service.
+     * Stops the viewing session by running the one-shot teardown, then stops the service.
      *
-     * <p>Every step null-checks its target so a partially started session can take this path as
-     * well. The client is stopped before it is dropped, and {@link #stopSelf()} delivers
-     * {@link #onDestroy()} afterwards.</p>
+     * <p>Runs on the main thread and is reachable from the notification action, the floating
+     * confirmations, a failed start and a lost intent. The release order lives in
+     * {@link #createTeardownCoordinator()} so {@link #onDestroy()} cannot release a different
+     * subset; a second call only asks the service to stop again.</p>
      */
     private void stopService() {
+        Log.i(mTag, "stopService: stop service");
+        if (mTeardown == null || mTeardown.isDone()) {
+            return;
+        }
+        runTeardown();
+        stopSelf();
+    }
+
+    /**
+     * Builds the ordered release of one viewing session.
+     *
+     * <p>The order is the one {@code stopService()} executed directly before this coordinator
+     * existed: state, scheduled main-thread work, dialogs and overlays, the expanded host, the media
+     * session, the floating viewer, the client and finally the foreground notification. The client
+     * is stopped before it is dropped, and the media session is closed before its render targets are
+     * released. Every step is idempotent on its own, so a partially started session can run the same
+     * list.</p>
+     *
+     * @return the coordinator; never null
+     */
+    @NonNull
+    private TeardownCoordinator createTeardownCoordinator() {
+        return new TeardownCoordinator(Arrays.asList(
+            TeardownCoordinator.Step.of("reset-session-state", this::resetSessionState),
+            TeardownCoordinator.Step.of("cancel-main-thread-work", this::cancelScheduledWork),
+            TeardownCoordinator.Step.of("dismiss-dialog", this::dismissConfirmation),
+            TeardownCoordinator.Step.of("dismiss-loading-overlay", this::dismissLoadingOverlay),
+            TeardownCoordinator.Step.of("release-activity-host", this::releaseActivityHost),
+            TeardownCoordinator.Step.of("teardown-media-session", this::teardownMediaSession),
+            TeardownCoordinator.Step.of("dismiss-viewer-overlay", this::dismissViewerOverlay),
+            TeardownCoordinator.Step.of("stop-client", this::stopClient),
+            TeardownCoordinator.Step.of("remove-notification", this::removeForegroundNotification)));
+    }
+
+    /**
+     * Runs the teardown and logs the steps that failed; never throws.
+     */
+    private void runTeardown() {
+        final TeardownCoordinator teardown = mTeardown;
+        if (teardown == null) {
+            return;
+        }
+        for (TeardownCoordinator.StepFailure failure : teardown.run()) {
+            Log.w(mTag, "teardown: step failed: " + failure.getStepName(), failure.getCause());
+        }
+    }
+
+    /**
+     * Clears the session state the notification and the activity read.
+     */
+    private void resetSessionState() {
         mServiceInfo = null;
         mIsConnected = false;
         mClientStats = null;
         mInboundDataRate = 0L;
+    }
 
+    /**
+     * Drops every main-thread task that would otherwise re-arm itself or report a stale expansion,
+     * then releases the metric scope.
+     */
+    private void cancelScheduledWork() {
         mMainHandler.removeCallbacks(mMetricsLogRunnable);
         mMainHandler.removeCallbacks(mHudRunnable);
         cancelActivityAttachWatchdogs();
@@ -773,39 +853,65 @@ public class ScreenViewerService extends Service {
         mLogRateSampler = null;
         mLoggedResyncReason = null;
         mMetricsLogCount = 0;
+    }
 
+    /**
+     * Dismisses the disconnect confirmation, if one is open.
+     */
+    private void dismissConfirmation() {
         if (mDialog != null) {
             mDialog.dismiss();
             mDialog = null;
         }
+    }
 
+    /**
+     * Dismisses the loading overlay.
+     */
+    private void dismissLoadingOverlay() {
         if (mScreenShareLoading != null) {
             mScreenShareLoading.dismiss();
             mScreenShareLoading = null;
         }
+    }
 
-        // The expanded host has no session to show any more; it leaves with it. The snapshot is
-        // dropped here because the host that would consume it is gone.
+    /**
+     * Tells the expanded host that the session ended; the snapshot is dropped with it because the
+     * host that would consume it is gone.
+     */
+    private void releaseActivityHost() {
         if (mActivityHost != null) {
             mActivityHost.onSessionEnded();
             mActivityHost = null;
         }
         mTransitionSnapshot = null;
+    }
 
-        teardownMediaSession();
-
+    /**
+     * Dismisses the floating viewer window.
+     */
+    private void dismissViewerOverlay() {
         if (mSurfaceShareViewer != null) {
             mSurfaceShareViewer.dismiss();
             mSurfaceShareViewer = null;
         }
+    }
 
+    /**
+     * Stops the single-use client before it is dropped.
+     */
+    private void stopClient() {
         if (mClient != null) {
             mClient.stop();
             mClient = null;
         }
+    }
 
+    /**
+     * Removes the foreground notification.
+     */
+    private void removeForegroundNotification() {
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE);
-        stopSelf();
     }
 
     // Stats are sampled every three seconds on the main thread; the rate is mirrored into the

@@ -142,6 +142,7 @@ import org.apache.commons.lang3.time.DurationFormatUtils;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import java.util.Random;
@@ -162,9 +163,10 @@ import java.util.concurrent.Executors;
  * virtual display and the floating chip on the main thread. A null intent, a second start while the
  * server is starting or running, or a failure to promote the service to the foreground, to build the
  * pipeline or to start the server is rejected with {@code START_NOT_STICKY}; a successful start
- * returns {@code START_STICKY}. {@link #stopService()} tears the pipeline down in reverse order and
- * calls {@link #stopSelf()}; {@link #onDestroy()} unregisters the receiver, the preference observer
- * and the control thread.</p>
+ * returns {@code START_STICKY}. {@link #stopService()} runs the one-shot
+ * {@link TeardownCoordinator} that releases the session and then calls {@link #stopSelf()};
+ * {@link #onDestroy()} runs the same teardown as a fallback for a destruction without that path and
+ * only then unregisters the receiver, the preference observer and the control thread.</p>
  *
  * <p><b>Capture pipeline.</b> The projection renders into a {@link VirtualDisplay} backed by an
  * {@link ImageReader} surface. The image-available listener runs on the dedicated
@@ -246,6 +248,11 @@ public class ScreenShareService extends Service {
     // Main-thread state; non-null only between a successful start and stopService().
     @Nullable
     private ScreenShareServer mServer;
+
+    // One-shot release of one session; rebuilt for every accepted start and run by stopService()
+    // and onDestroy().
+    @Nullable
+    private TeardownCoordinator mTeardown;
 
     // Decides who stops the server when a stop arrives while the start is still running.
     @NonNull
@@ -984,25 +991,31 @@ public class ScreenShareService extends Service {
         // The thermal tier has to be known before the stream pipeline is built, so the first
         // encoder configuration already carries the values the device allows.
         startThermalMonitor();
+
+        // The order is fixed; onStartCommand replaces the coordinator for every accepted start, so
+        // each session owns exactly one teardown and the first stop path releases it.
+        mTeardown = createTeardownCoordinator();
     }
 
     /**
-     * Unregisters the receiver and the preference observer; the capture pipeline was already
-     * released by {@link #stopService()}.
+     * Finishes the teardown and releases what outlives a session.
+     *
+     * <p>{@link #stopService()} normally ran the teardown already; running it here as well covers a
+     * service destroyed without that path, and the coordinator turns the second call into a no-op.
+     * Only state that belongs to the service instance rather than to a session is released here.</p>
      */
     @Override
     public void onDestroy() {
         super.onDestroy();
         Log.i(mTag, "onDestroy: service destroyed");
 
+        runTeardown();
         unregisterReceiver(mBroadcastReceiver);
         TlsMaterialHolder.get().removeIdentityChangeListener(mLocalIdentityListener);
         Preferences.get().removeObserver(mPreferencesObserver);
-        mMainHandler.removeCallbacks(mEncoderRebuildRunnable);
         mPendingApproval = null;
         NotificationManagerCompat.from(this).cancel(NOTIFICATION_ID_APPROVAL);
         stopThermalMonitor();
-        stopAnnouncements();
         // Queued work still runs; a start in flight finishes and stops its own server.
         mServerControlExecutor.shutdown();
     }
@@ -1053,6 +1066,11 @@ public class ScreenShareService extends Service {
             mServerStartCoordinator.beginStop();
             return START_NOT_STICKY;
         }
+
+        // A new start can arrive before the previous stop reached onDestroy, in which case the old
+        // coordinator is already spent; the new session needs its own one-shot teardown or its stop
+        // would release nothing.
+        mTeardown = createTeardownCoordinator();
 
         createNotificationChannel();
 
@@ -1228,45 +1246,123 @@ public class ScreenShareService extends Service {
     }
 
     /**
-     * Releases the capture pipeline, the server and the foreground notification, then stops the
-     * service.
+     * Stops the running session by running the one-shot teardown, then stops the service.
      *
      * <p>Runs on the main thread and is reachable from the stop broadcast, the chip and the system
-     * projection callback. The order matters: the overlay and the display stop first, then the
-     * image reader and its thread, then the projection, and the server last, so no frame is
-     * accepted while the server is going away.</p>
+     * projection callback. The release order lives in {@link #createTeardownCoordinator()} so
+     * {@link #onDestroy()} cannot release a different subset; a second call only asks the service to
+     * stop again and never notifies the clients or claims the server twice.</p>
      */
     private void stopService() {
         Log.i(mTag, "stopService: stop service");
+        if (mTeardown == null || mTeardown.isDone()) {
+            return;
+        }
+        runTeardown();
+        stopSelf();
+    }
 
+    /**
+     * Builds the ordered release of one capture session.
+     *
+     * <p>The order is the one {@code stopService()} executed directly before this coordinator
+     * existed: state, scheduled main-thread work, audio, video watch, chip, encoder and hub, capture
+     * display, image reader, reader handler and thread, projection, announcements, server, clients
+     * and finally the foreground notification. The overlay and the display stop before the encoder
+     * surface is released, and the reader closes before its thread quits, so no frame is produced
+     * while the pipeline is being torn down. Every step is idempotent on its own, which lets a
+     * partially started session run the same list.</p>
+     *
+     * @return the coordinator; never null
+     */
+    @NonNull
+    private TeardownCoordinator createTeardownCoordinator() {
+        return new TeardownCoordinator(Arrays.asList(
+            TeardownCoordinator.Step.of("reset-session-state", this::resetSessionState),
+            TeardownCoordinator.Step.of("cancel-main-thread-work", this::cancelScheduledWork),
+            TeardownCoordinator.Step.of("stop-audio", this::stopAudioCapture),
+            TeardownCoordinator.Step.of("stop-video-watch", this::stopVideoWatch),
+            TeardownCoordinator.Step.of("dismiss-chip", this::dismissScreenShareChip),
+            TeardownCoordinator.Step.of("close-stream-pipeline", this::closeStreamPipeline),
+            TeardownCoordinator.Step.of("release-capture-display", this::releaseCaptureDisplay),
+            TeardownCoordinator.Step.of("close-image-reader", this::closeImageReader),
+            TeardownCoordinator.Step.of("release-reader-handler", this::releaseImageReaderHandler),
+            TeardownCoordinator.Step.of("quit-reader-thread", this::quitImageReaderThread),
+            TeardownCoordinator.Step.of("stop-media-projection", this::stopMediaProjection),
+            TeardownCoordinator.Step.of("stop-announcements", this::stopAnnouncements),
+            TeardownCoordinator.Step.of("stop-server", this::stopServer),
+            TeardownCoordinator.Step.of("notify-clients-stopped", this::notifyClientsStopped),
+            TeardownCoordinator.Step.of("remove-notification", this::removeForegroundNotification)));
+    }
+
+    /**
+     * Runs the teardown and logs the steps that failed; never throws.
+     */
+    private void runTeardown() {
+        final TeardownCoordinator teardown = mTeardown;
+        if (teardown == null) {
+            return;
+        }
+        for (TeardownCoordinator.StepFailure failure : teardown.run()) {
+            Log.w(mTag, "teardown: step failed: " + failure.getStepName(), failure.getCause());
+        }
+    }
+
+    /**
+     * Clears the session state the notification and the bound activities read.
+     */
+    private void resetSessionState() {
         mServerInfo = null;
         mProjectionSize = null;
         mServerStats = null;
         mConnectionCount = 0;
         mOutboundDataRate = 0L;
+    }
 
+    /**
+     * Drops every main-thread task that would otherwise re-arm itself or rebuild the encoder after
+     * the session ended, then releases the metric scope.
+     */
+    private void cancelScheduledWork() {
         mMainHandler.removeCallbacks(mMetricsLogRunnable);
+        mMainHandler.removeCallbacks(mEncoderRebuildRunnable);
         mMetrics = null;
         mRateSampler = null;
         mMetricsLogCount = 0;
+    }
 
-        // Audio stops before the projection it borrows is released.
+    /**
+     * Stops audio capture and its viewer watch before the projection it borrows is released.
+     */
+    private void stopAudioCapture() {
         stopAudioViewerWatch();
         stopAudioPipeline();
         mAudioAvailability = AudioAvailability.AVAILABLE;
+    }
 
-        // The watch is stopped before the display it drives is released.
+    /**
+     * Stops the video viewer watch before the display it drives is released.
+     */
+    private void stopVideoWatch() {
         stopVideoViewerWatch();
         mIsCapturePaused = false;
+    }
 
-        // Stop producing UI first so the chip never outlives the running session.
+    /**
+     * Removes the floating chip first, so no control outlives the running session.
+     */
+    private void dismissScreenShareChip() {
         if (mScreenShareChip != null) {
             mScreenShareChip.dismiss();
             mScreenShareChip = null;
         }
+    }
 
-        // Stop the encoder before releasing the capture surface, so no frame is produced while the
-        // display is being torn down. Detaching the hub's sessions closes their transports.
+    /**
+     * Closes the encoder before the capture surface is released, so no frame is produced while the
+     * display is being torn down; detaching the hub's sessions closes their transports.
+     */
+    private void closeStreamPipeline() {
         if (mStreamRuntime != null) {
             mStreamRuntime.close();
             mStreamRuntime = null;
@@ -1278,15 +1374,24 @@ public class ScreenShareService extends Service {
         mAudioHub = null;
         mStreamKey = null;
         mCodecRegistry = null;
+    }
 
+    /**
+     * Releases the virtual display that composes the captured screen.
+     */
+    private void releaseCaptureDisplay() {
         if (mVirtualDisplay != null) {
             mVirtualDisplay.release();
             mVirtualDisplay = null;
         }
+    }
 
-        // Closing the reader under the lock waits for an in-flight capture and rejects later ones.
-        // The generation is invalidated first so a frame that already left the lock is dropped
-        // instead of reaching the runtime of the next session.
+    /**
+     * Closes the image reader under its lock, which waits for an in-flight capture and rejects
+     * later ones. The generation is invalidated first so a frame that already left the lock is
+     * dropped instead of reaching the runtime of the next session.
+     */
+    private void closeImageReader() {
         synchronized (mImageReaderLock) {
             mProjectionGeneration.invalidate();
             mFrameTimestamp = -1L;
@@ -1296,46 +1401,73 @@ public class ScreenShareService extends Service {
                 mImageReader = null;
             }
         }
+    }
 
+    /**
+     * Drops the queued callbacks of the capture thread's handler.
+     */
+    private void releaseImageReaderHandler() {
         if (mImageReaderHandler != null) {
             mImageReaderHandler.removeCallbacksAndMessages(null);
             mImageReaderHandler = null;
         }
+    }
 
+    /**
+     * Stops the dedicated capture thread after its reader is closed.
+     */
+    private void quitImageReaderThread() {
         if (mImageReaderHandlerThread != null) {
             mImageReaderHandlerThread.quit();
             mImageReaderHandlerThread = null;
         }
+    }
 
-        // Unregister first so the stop callback does not re-enter this method.
+    /**
+     * Stops the projection; the callback is unregistered first so the stop does not re-enter the
+     * teardown.
+     */
+    private void stopMediaProjection() {
         if (mMediaProjection != null) {
             mMediaProjection.unregisterCallback(mMediaProjectionCallback);
             mMediaProjection.stop();
             mMediaProjection = null;
         }
+    }
 
-        // The goodbye burst goes out before the server stops, so it still carries the announced
-        // port; the announcer closes its sockets after the last goodbye.
-        stopAnnouncements();
-
+    /**
+     * Stops the server or hands the stop to the start task that is still in flight.
+     *
+     * <p>The goodbye burst has already gone out, so the announcer still carried the announced port.
+     * A start that is still running stops its own server as soon as {@code start()} returns, which
+     * keeps the port bound only for the rest of that call.</p>
+     */
+    private void stopServer() {
         if (mServer != null) {
             final ScreenShareServer server = mServer;
             mServer = null;
             if (mServerStartCoordinator.beginStop()) {
                 server.stop();
             } else {
-                // The start is still running on the control thread; it stops the server as soon as
-                // start() returns, which keeps the port bound only for the rest of that call.
-                Log.i(mTag, "stopService: server start is in flight, it stops the server itself");
+                Log.i(mTag, "stopServer: server start is in flight, it stops the server itself");
             }
         } else {
             mServerStartCoordinator.beginStop();
         }
+    }
 
+    /**
+     * Tells the bound activities that the session ended.
+     */
+    private void notifyClientsStopped() {
         mClientMessengers.forEach(this::notifyServerStopped);
+    }
 
+    /**
+     * Removes the foreground notification.
+     */
+    private void removeForegroundNotification() {
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE);
-        stopSelf();
     }
 
     /**
