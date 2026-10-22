@@ -142,10 +142,8 @@ import org.apache.commons.lang3.time.DurationFormatUtils;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.Random;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
@@ -170,11 +168,12 @@ import java.util.concurrent.Executors;
  *
  * <p><b>Capture pipeline.</b> The projection renders into a {@link VirtualDisplay} backed by an
  * {@link ImageReader} surface. The image-available listener runs on the dedicated
- * {@code lss-service-image-reader} thread, keeps only the newest image, throttles frames to the
- * configured frame rate using the image timestamp, copies the RGBA plane into a reusable
- * {@link Bitmap}, compresses it to JPEG with the configured quality and hands the
- * {@link ScreenFrame} to {@link ScreenShareServer#postScreenFrame}. The security flag travels with each
- * frame.</p>
+ * {@code lss-service-image-reader} thread, keeps only the newest image and throttles frames to the
+ * configured rate from the image timestamp. The reader lock covers only what the {@link Image}
+ * lifetime requires: the identity check, the throttle decision, acquisition and the RGBA copy into
+ * a buffer private to the capture thread. JPEG compression and the frame submission run outside the
+ * lock, so a resize or a teardown never waits for an encode, and a generation token checked before
+ * submission drops frames that outlived the reader which produced them.</p>
  *
  * <p><b>Viewer-driven capture.</b> A running encoder and display would otherwise keep composing and
  * encoding for an empty audience, so capture follows the viewer count: a one-second watch detaches
@@ -185,12 +184,12 @@ import java.util.concurrent.Executors;
  *
  * <p><b>Threading.</b> Service callbacks, server listeners, preference changes and all state
  * except the capture state run on the main thread. The capture listener runs on the image reader
- * thread; {@code mImageReaderLock} serializes image acquisition, reader replacement and teardown
- * so no frame is posted once the reader has been closed. The server start runs on the
- * {@code lss-server-control} thread, because binding the port and preparing TLS material reach the
- * AndroidKeyStore and blocked the main thread for seconds when the identity key was unusable
- * (N-t6-2); everything after the start returns to the main thread. Apart from that task and the
- * capture thread's {@code postScreenFrame} call, {@code mServer} is accessed only on the main
+ * thread; {@code mImageReaderLock} serializes image acquisition, reader replacement and teardown,
+ * so an encode never holds up a resize and no frame is acquired from a closed reader. The server
+ * start runs on the {@code lss-server-control} thread, because binding the port and preparing TLS
+ * material reach the AndroidKeyStore and blocked the main thread for seconds when the identity key
+ * was unusable (N-t6-2); everything after the start returns to the main thread. Apart from that task
+ * and the capture thread's frame submission, {@code mServer} is accessed only on the main
  * thread.</p>
  *
  * <p><b>Clients.</b> Activities bind to the service with {@code BIND_AUTO_CREATE} and register a
@@ -359,8 +358,11 @@ public class ScreenShareService extends Service {
     @Nullable
     private CodecRegistry mCodecRegistry;
 
+    // Volatile because the capture thread snapshots it under the reader lock before encoding, and
+    // teardown clears it on the main thread without that lock. The snapshot is dereferenced only
+    // after the generation check, so a frame from a retired session cannot reach a new runtime.
     @Nullable
-    private StreamRuntime mStreamRuntime;
+    private volatile StreamRuntime mStreamRuntime;
 
     @Nullable
     private StreamHub mStreamHub;
@@ -418,6 +420,15 @@ public class ScreenShareService extends Service {
     // throttling; guarded by mImageReaderLock.
     private volatile long mFrameTimestamp;
 
+    // Generation of the reader currently feeding the capture thread; guarded by mImageReaderLock so
+    // it always matches mImageReader. A frame keeps its snapshot after leaving the lock and is
+    // dropped if the generation moved on while it was being encoded.
+    private long mProjectionToken;
+
+    // Invalidates in-flight frames when the reader is replaced or the capture path is torn down.
+    @NonNull
+    private final ProjectionGeneration mProjectionGeneration = new ProjectionGeneration();
+
     // Main-thread state; resized on configuration changes.
     @Nullable
     private VirtualDisplay mVirtualDisplay;
@@ -431,10 +442,6 @@ public class ScreenShareService extends Service {
     // Floating duration chip; added on start and removed on teardown.
     @Nullable
     private ScreenShareChip mScreenShareChip;
-
-    // Reused ARGB_8888 buffer for the current capture size; guarded by mImageReaderLock.
-    @Nullable
-    private Bitmap mScreenFrameBitmap;
 
     // Last values received from the server on the main thread; replayed to newly registered
     // clients.
@@ -488,23 +495,28 @@ public class ScreenShareService extends Service {
 
     private long mOutboundDataRate;
 
-    // Projection settings, written on the main thread by the preference observer. The capture
-    // thread reads the quality, security and frame-rate values while encoding each frame.
+    // Effective projection values, written on the main thread by the preference observer and the
+    // thermal tier. The capture thread applies the JPEG quality and frame rate from the published
+    // snapshot instead of reading these fields.
     private boolean mIsProjectionSecure;
 
     private int mProjectionScale;
 
-    private int mProjectionQuality;
-
     private int mProjectionFrameRate;
+
+    // Snapshot the capture thread applies per frame. Published on the main thread from
+    // buildProjectionSettings(), so the JPEG path no longer reads the mutable preference fields
+    // directly and one frame cannot mix a new quality with an old frame rate.
+    @Nullable
+    private volatile ProjectionSettings mCaptureSettings;
 
     // True for the H.264 surface path, false for the JPEG fallback path; read at start.
     private boolean mIsH264;
 
     private final String mTag = "ScreenShareService@" + hashCode();
 
-    // Serializes image acquisition with reader replacement and teardown. It also guards
-    // mScreenFrameBitmap and mFrameTimestamp.
+    // Serializes image acquisition with reader replacement and teardown. It also guards the frame
+    // timestamp and the generation token.
     @NonNull
     private final Object mImageReaderLock = new Object();
 
@@ -598,12 +610,18 @@ public class ScreenShareService extends Service {
         }
     };
 
-    // Runs on the image reader thread. The identity check is repeated under the lock so a callback
-    // for a reader that has already been replaced becomes a no-op.
+    // Runs on the image reader thread. The reader lock covers only what the Image lifetime
+    // requires: identity check, throttle decision, acquisition and the pixel copy. The JPEG encode
+    // and the submission run outside it, validated against the generation that was current under
+    // the lock, so a resize or a teardown never waits for an encode.
     @NonNull
     private final ImageReader.OnImageAvailableListener mOnImageAvailableListener =
         new ImageReader.OnImageAvailableListener() {
-            private final long mNanosPerSecond = Duration.ofSeconds(1L).toNanos();
+            // Capture-thread private pixel buffer, reused across frames and readers of this
+            // session. Teardown does not touch it: the capture thread owns it and the collector
+            // reclaims it together with the listener.
+            @Nullable
+            private Bitmap mCaptureBitmap;
 
             @SuppressLint("RestrictedApi")
             @Override
@@ -612,57 +630,73 @@ public class ScreenShareService extends Service {
                     return;
                 }
 
+                final ProjectionSettings settings = mCaptureSettings;
+                if (settings == null) {
+                    return;
+                }
+
+                final long generation;
+                final StreamRuntime runtime;
+                final long timestampNs;
+                final Bitmap bitmap;
+
                 synchronized (mImageReaderLock) {
                     if (mImageReader != reader) {
                         return;
                     }
+                    generation = mProjectionToken;
+                    runtime = mStreamRuntime;
 
                     try (final Image image = reader.acquireLatestImage()) {
                         if (image == null) {
                             return;
                         }
 
-                        // Frame-rate throttle: drop images that arrive before the configured
-                        // interval since the last accepted frame. Timestamps are nanoseconds. The
-                        // rate is the effective one, so a thermal cap applies without a rebuild of
-                        // the JPEG path.
-                        if (mFrameTimestamp >= 0L
-                            && image.getTimestamp() - mFrameTimestamp < mNanosPerSecond / effectiveProjectionFrameRate()) {
+                        // Frame-rate throttle from the published snapshot, so a thermal cap
+                        // reaches the JPEG path without rebuilding the reader.
+                        if (!CaptureThrottlePolicy.shouldAccept(image.getTimestamp(),
+                            mFrameTimestamp, settings.getFrameRate())) {
                             return;
                         }
-
                         mFrameTimestamp = image.getTimestamp();
+                        timestampNs = image.getTimestamp();
 
                         // Reuse the buffer; only a size change allocates a new bitmap.
-                        if (mScreenFrameBitmap == null || mScreenFrameBitmap.getWidth() != image.getWidth()
-                            || mScreenFrameBitmap.getHeight() != image.getHeight()) {
-                            Optional.ofNullable(mScreenFrameBitmap).ifPresent(Bitmap::recycle);
-                            mScreenFrameBitmap =
-                                Bitmap.createBitmap(image.getWidth(), image.getHeight(), Bitmap.Config.ARGB_8888);
+                        if (mCaptureBitmap == null
+                            || mCaptureBitmap.getWidth() != image.getWidth()
+                            || mCaptureBitmap.getHeight() != image.getHeight()) {
+                            if (mCaptureBitmap != null) {
+                                mCaptureBitmap.recycle();
+                            }
+                            mCaptureBitmap = Bitmap.createBitmap(image.getWidth(), image.getHeight(),
+                                Bitmap.Config.ARGB_8888);
                         }
 
                         // Plane 0 holds the packed RGBA data; the row stride can be wider than the
-                        // image width.
+                        // image width. The copy stays under the lock because the image is closed
+                        // when this block exits.
                         final Image.Plane plane = image.getPlanes()[0];
                         plane.getBuffer().rewind();
-                        ImageProcessingUtil.copyByteBufferToBitmap(mScreenFrameBitmap, plane.getBuffer(),
+                        ImageProcessingUtil.copyByteBufferToBitmap(mCaptureBitmap, plane.getBuffer(),
                             plane.getRowStride());
-
-                        // JPEG frames are submitted through the frame-input encoder; the quality
-                        // comes from the current preference snapshot.
-                        final byte[] data;
-                        try (final ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
-                            mScreenFrameBitmap.compress(Bitmap.CompressFormat.JPEG, mProjectionQuality, outputStream);
-                            data = outputStream.toByteArray();
-                        } catch (IOException e) {
-                            return;
-                        }
-
-                        // Holding mImageReaderLock keeps this call ahead of teardown, which closes
-                        // the reader under the same lock. The runtime accepts calls from any thread.
-                        mStreamRuntime.submitFrame(mFrameTimestamp / 1000L, data);
+                        bitmap = mCaptureBitmap;
                     }
                 }
+
+                final byte[] data;
+                try (final ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
+                    bitmap.compress(Bitmap.CompressFormat.JPEG, settings.getJpegQuality(), outputStream);
+                    data = outputStream.toByteArray();
+                } catch (IOException e) {
+                    return;
+                }
+
+                // A frame that outlived its reader is dropped; a runtime of the next session never
+                // sees the previous session's pixels.
+                if (runtime == null || !mProjectionGeneration.isCurrent(generation)) {
+                    return;
+                }
+                runtime.submitFrame(timestampNs / 1000L, data);
             }
         };
 
@@ -709,14 +743,15 @@ public class ScreenShareService extends Service {
     // value and the capture size; a single key updates only what it affects. Quality and security
     // are read by the next encoded frame, the scale resizes the display, the bitrate is hot-applied
     // and the frame rate and key-frame interval rebuild the encoder because the encoder only reads
-    // them when it is created.
+    // them when it is created. Every capture-relevant change republishes the snapshot the capture
+    // thread reads.
     @NonNull
     private final Preferences.Observer mPreferencesObserver = key -> {
         if (key == null) {
             mIsProjectionSecure = Preferences.get().isProjectionSecure();
             mProjectionScale = Preferences.get().getProjectionScale();
-            mProjectionQuality = Preferences.get().getProjectionQuality();
             mProjectionFrameRate = Preferences.get().getProjectionFrameRate();
+            buildProjectionSettings();
             updateProjectionSize();
             scheduleEncoderRebuild();
             return;
@@ -731,10 +766,15 @@ public class ScreenShareService extends Service {
                 updateProjectionSize();
                 break;
             case Preferences.KEY_PROJECTION_QUALITY:
-                mProjectionQuality = Preferences.get().getProjectionQuality();
+                // Republish: the capture thread applies the JPEG quality from the snapshot, and
+                // the JPEG path has no encoder rebuild that would rebuild it.
+                buildProjectionSettings();
                 break;
             case Preferences.KEY_PROJECTION_FRAME_RATE:
+                // Republish as well: the JPEG throttle reads the snapshot, while the H.264 path
+                // picks the rate up in the rebuild below.
                 mProjectionFrameRate = Preferences.get().getProjectionFrameRate();
+                buildProjectionSettings();
                 scheduleEncoderRebuild();
                 break;
             case Preferences.KEY_PROJECTION_IDR_INTERVAL:
@@ -934,7 +974,6 @@ public class ScreenShareService extends Service {
 
         mIsProjectionSecure = Preferences.get().isProjectionSecure();
         mProjectionScale = Preferences.get().getProjectionScale();
-        mProjectionQuality = Preferences.get().getProjectionQuality();
         mProjectionFrameRate = Preferences.get().getProjectionFrameRate();
         mProjectionSizeAlignment = EncoderAlignmentProbe.probe(H264Codec.MIME);
         Log.i(mTag, "onCreate: encoder size alignment "
@@ -1155,6 +1194,7 @@ public class ScreenShareService extends Service {
             mImageReader = ImageReader.newInstance(mProjectionSize.getWidth(), mProjectionSize.getHeight(),
                 PixelFormat.RGBA_8888, IMAGE_READER_MAX_IMAGES);
             mFrameTimestamp = -1L;
+            mProjectionToken = mProjectionGeneration.begin();
             mImageReader.setOnImageAvailableListener(mOnImageAvailableListener, mImageReaderHandler);
             displaySurface = mImageReader.getSurface();
         }
@@ -1245,13 +1285,11 @@ public class ScreenShareService extends Service {
         }
 
         // Closing the reader under the lock waits for an in-flight capture and rejects later ones.
+        // The generation is invalidated first so a frame that already left the lock is dropped
+        // instead of reaching the runtime of the next session.
         synchronized (mImageReaderLock) {
+            mProjectionGeneration.invalidate();
             mFrameTimestamp = -1L;
-
-            if (mScreenFrameBitmap != null) {
-                mScreenFrameBitmap.recycle();
-                mScreenFrameBitmap = null;
-            }
 
             if (mImageReader != null) {
                 mImageReader.close();
@@ -1583,10 +1621,12 @@ public class ScreenShareService extends Service {
 
             // Recreate the reader at the new size, then hand the display the new surface. A paused
             // capture keeps the display detached; the resume path binds the new reader surface.
+            // The new generation drops a frame that was still being encoded for the old reader.
             mImageReader.close();
             mImageReader = ImageReader.newInstance(mProjectionSize.getWidth(), mProjectionSize.getHeight(),
                 PixelFormat.RGBA_8888, IMAGE_READER_MAX_IMAGES);
             mFrameTimestamp = -1L;
+            mProjectionToken = mProjectionGeneration.begin();
             mImageReader.setOnImageAvailableListener(mOnImageAvailableListener, mImageReaderHandler);
             if (!mIsCapturePaused) {
                 mVirtualDisplay.setSurface(mImageReader.getSurface());
@@ -2273,6 +2313,10 @@ public class ScreenShareService extends Service {
         Log.i(mTag, "thermal: event=" + event + " status=" + mThermalStatus + " tier=" + tier
             + " frameRate=" + effectiveProjectionFrameRate() + "/" + mProjectionFrameRate
             + " scale=" + effectiveProjectionScale() + "/" + mProjectionScale);
+
+        // Republish before the rebuild decision: the JPEG throttle reads the forced frame rate from
+        // the snapshot and has no encoder rebuild that would refresh it.
+        buildProjectionSettings();
         if (mServer != null) {
             updateNotification();
         }
@@ -2309,13 +2353,20 @@ public class ScreenShareService extends Service {
      * <p>The frame rate and the capture percentage are the effective values: the user's stored
      * choice lowered by the thermal tier, so the encoder is configured with what the device allows
      * right now without the stored preference ever changing.</p>
+     *
+     * <p>Building also publishes the snapshot for the capture thread, which applies the JPEG
+     * quality and the frame rate from it. Every path that changes one of those values calls this
+     * method, so the capture thread never has to read the mutable preference fields.</p>
      */
     @NonNull
     private ProjectionSettings buildProjectionSettings() {
-        return ProjectionSettings.of(Preferences.get().getProjectionBitrate(),
+        final ProjectionSettings settings = ProjectionSettings.of(
+            Preferences.get().getProjectionBitrate(),
             effectiveProjectionFrameRate(), Preferences.get().getProjectionIdrIntervalMs(),
             effectiveProjectionScale(), Preferences.get().getProjectionQuality(),
             Preferences.get().getProjectionCodec());
+        mCaptureSettings = settings;
+        return settings;
     }
 
     /**
