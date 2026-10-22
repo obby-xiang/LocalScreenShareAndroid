@@ -25,6 +25,7 @@ import com.obby.android.localscreenshare.core.audio.AudioHub;
 import com.obby.android.localscreenshare.core.codec.CodecRegistry;
 import com.obby.android.localscreenshare.core.metrics.PipelineMetrics;
 import com.obby.android.localscreenshare.core.model.ClientSessionKey;
+import com.obby.android.localscreenshare.core.net.MediaChannelLog;
 import com.obby.android.localscreenshare.core.net.MediaTransportPolicy;
 import com.obby.android.localscreenshare.core.stream.SessionSnapshot;
 import com.obby.android.localscreenshare.core.stream.StreamHub;
@@ -275,6 +276,20 @@ public final class ScreenShareServer {
     private volatile boolean mIsStopped;
 
     private final String mTag = "ScreenShareServer@" + hashCode();
+
+    // Media channel negotiation lines of every call of this session, tagged like the rest of the
+    // server log so a capture can be filtered by one tag.
+    private final MediaChannelLog mMediaChannelLog = new MediaChannelLog() {
+        @Override
+        public void info(final String message) {
+            Log.i(mTag, "mediaChannel: " + message);
+        }
+
+        @Override
+        public void warn(final String message) {
+            Log.w(mTag, "mediaChannel: " + message);
+        }
+    };
 
     @NonNull
     private final Context mContext;
@@ -1365,7 +1380,8 @@ public final class ScreenShareServer {
             final MediaChannelNegotiator mediaNegotiator = new MediaChannelNegotiator(mediaMode,
                     MediaTransportPolicy.allowsUdp(mediaMode,
                             Preferences.get().isMediaUdpEnabled()),
-                    transport::sendMediaOffer, TimeSource.MONOTONIC, mediaChannelEndpoint());
+                    transport::sendMediaOffer, TimeSource.MONOTONIC, mediaChannelEndpoint(),
+                    mMediaChannelLog);
             final StreamCallHandler handler = new StreamCallHandler(mStreamHub, mStreamRuntime,
                     transport, mStreamCallListener, remoteAddress, transport::sendPong, peer,
                     mAudioHub, transport, mAuthorizationGate, transport::sendApprovalPending,

@@ -1,5 +1,6 @@
 package com.obby.android.localscreenshare.client;
 
+import com.obby.android.localscreenshare.core.net.MediaChannelLog;
 import com.obby.android.localscreenshare.core.net.MediaChannelOffer;
 import com.obby.android.localscreenshare.core.net.MediaChannelStatusListener;
 import com.obby.android.localscreenshare.core.net.MediaTransportKind;
@@ -91,6 +92,26 @@ public class MediaChannelCoordinatorTest {
         assertEquals(1, sink.events.size());
         assertEquals(MediaChannelEventType.FAILED, sink.events.get(0).getType());
         assertEquals(MediaChannelCoordinator.REASON_UNSUPPORTED, sink.events.get(0).getReason());
+    }
+
+    @Test
+    public void offerWithoutAHost_isOpenedOnTheControlPlaneAddress() throws Exception {
+        RecordingSink sink = new RecordingSink();
+        FakeLink link = new FakeLink(true, null);
+        MediaChannelCoordinator coordinator = coordinator(sink, link);
+
+        // An empty host is the server saying "the address you already reached me on"; the port is
+        // the only thing that decides whether a channel can be opened at all.
+        coordinator.onOffer(MediaOffer.newBuilder()
+                .setChannelId(com.google.protobuf.ByteString.copyFrom(CHANNEL_ID))
+                .setTransport("tcp")
+                .setPort(9100)
+                .build());
+
+        assertTrue(link.awaitStarted());
+        assertEquals(1, sink.events.size());
+        assertEquals(MediaChannelEventType.READY, sink.events.get(0).getType());
+        assertNull(coordinator.getLastFailureReason());
     }
 
     @Test
@@ -196,6 +217,31 @@ public class MediaChannelCoordinatorTest {
         } finally {
             executor.shutdownNow();
         }
+    }
+
+    @Test
+    public void refusedOffer_reportsItsReasonToTheLog() {
+        RecordingSink sink = new RecordingSink();
+        List<String> warnings = new ArrayList<>();
+        MediaChannelLog log = new MediaChannelLog() {
+            @Override
+            public void info(String message) {
+            }
+
+            @Override
+            public void warn(String message) {
+                warnings.add(message);
+            }
+        };
+        MediaChannelCoordinator coordinator = new MediaChannelCoordinator(sink, Runnable::run,
+                (offer, status) -> new FakeLink(true, null), log);
+
+        coordinator.onOffer(MediaOffer.getDefaultInstance());
+        coordinator.onOffer(offer(CHANNEL_ID, "quic"));
+
+        assertEquals(1, warnings.size());
+        assertTrue(warnings.get(0).contains("FAILED"));
+        assertTrue(warnings.get(0).contains(MediaChannelCoordinator.REASON_UNSUPPORTED));
     }
 
     @Test

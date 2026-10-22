@@ -145,10 +145,15 @@ public final class MediaChannelOffer {
     }
 
     /**
-     * Returns whether the offer names an endpoint a client could actually reach.
+     * Returns whether the offer names a port a client could actually reach.
+     *
+     * <p>The port is the whole test: the host may legitimately be empty, which is the server saying
+     * "use the address you already reached me on" - the control-plane address - exactly as
+     * {@code MediaChannelEndpoint} documents and the client resolves. Requiring a host here used to
+     * reject every such offer before a socket was even opened.</p>
      */
     public boolean isEndpointPresent() {
-        return host != null && !host.isEmpty() && port > 0;
+        return port > 0;
     }
 
     @Override

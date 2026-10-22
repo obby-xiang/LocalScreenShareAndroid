@@ -17,6 +17,7 @@ import com.obby.android.localscreenshare.core.model.ClientState;
 import com.obby.android.localscreenshare.core.model.EncodedAccessUnit;
 import com.obby.android.localscreenshare.core.model.StreamDescriptor;
 import com.obby.android.localscreenshare.core.net.MediaChannelListener;
+import com.obby.android.localscreenshare.core.net.MediaChannelLog;
 import com.obby.android.localscreenshare.core.net.MediaChannelOffer;
 import com.obby.android.localscreenshare.core.net.MediaChannelStatusListener;
 import com.obby.android.localscreenshare.core.net.MediaTransportKind;
@@ -627,7 +628,18 @@ public final class ScreenShareClient {
         final MediaChannelListener mediaChannelListener = newMediaChannelListener(receiver);
         mMediaChannelCoordinator = new MediaChannelCoordinator(this::postMediaChannelAnswer,
             mMediaExecutor, (offer, status) ->
-                createMediaChannel(receiver, mediaChannelListener, offer, status));
+                createMediaChannel(receiver, mediaChannelListener, offer, status),
+            new MediaChannelLog() {
+                @Override
+                public void info(final String message) {
+                    Log.i(mTag, "mediaChannel: " + message);
+                }
+
+                @Override
+                public void warn(final String message) {
+                    Log.w(mTag, "mediaChannel: " + message);
+                }
+            });
         mClientId = "client-" + UUID.randomUUID();
         final ClientCapabilities advertised = mAdvertisedCapabilities != null
             ? mAdvertisedCapabilities : CodecCapabilityProbe.probeClientDecoders();

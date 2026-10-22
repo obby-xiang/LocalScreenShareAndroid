@@ -1,5 +1,6 @@
 package com.obby.android.localscreenshare.server;
 
+import com.obby.android.localscreenshare.client.MediaChannelCoordinator;
 import com.obby.android.localscreenshare.core.codec.CodecRegistry;
 import com.obby.android.localscreenshare.core.model.BitstreamFormat;
 import com.obby.android.localscreenshare.core.model.ClientSessionKey;
@@ -43,6 +44,8 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -183,6 +186,62 @@ public class MediaChannelNegotiationEndToEndTest {
     }
 
     @Test
+    public void offerWithoutAHost_isOpenedOnTheControlPlaneAddress() throws Exception {
+        // The server advertises no host on purpose: the client must fall back to the address it
+        // already reached the control plane on, which is the case the device report hit.
+        Fixture fixture = fixture(MediaTransportPolicy.Mode.TCP, "");
+        fixture.handler.onClientMessage(hello("tcp"));
+        assertEquals(1, fixture.offers.size());
+        assertEquals("", fixture.offers.get(0).getHost());
+        assertTrue(fixture.offers.get(0).getPort() > 0);
+
+        List<EncodedAccessUnit> units = Collections.synchronizedList(new ArrayList<>());
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            MediaChannelCoordinator coordinator = new MediaChannelCoordinator(
+                    event -> fixture.handler.onClientMessage(ClientMessage.newBuilder()
+                            .setMediaChannelEvent(event).build()),
+                    executor,
+                    (offer, status) -> new TcpMediaReceiver(STREAM_KEY, "127.0.0.1", offer,
+                            new MediaChannelListener() {
+                                @Override
+                                public void onDescriptor(StreamDescriptor descriptor,
+                                                         boolean secure) {
+                                    // The stream channel carries the descriptor; nothing to do.
+                                }
+
+                                @Override
+                                public void onAccessUnit(EncodedAccessUnit accessUnit,
+                                                         long arrivalNs) {
+                                    units.add(accessUnit);
+                                }
+
+                                @Override
+                                public void onChannelFailed(String reason) {
+                                    // Recorded through the coordinator answer.
+                                }
+                            }, status, fixture.clientContext));
+            coordinator.onOffer(com.obby.android.localscreenshare.transport
+                    .MediaChannelOfferMapper.toProtoOffer(fixture.offers.get(0)));
+
+            assertTrue("session did not move onto the offered channel",
+                    awaitChannelKind(fixture, MediaTransportKind.TCP));
+            assertEquals("tcp", fixture.hub.getSession(CLIENT).snapshot().getChannel());
+
+            fixture.codec.emitJoin(new byte[]{0x7a});
+            long deadline = System.currentTimeMillis() + TIMEOUT_MS;
+            while (System.currentTimeMillis() < deadline && units.isEmpty()) {
+                fixture.handler.drainOnce();
+                Thread.sleep(5L);
+            }
+            assertTrue("no unit arrived on the channel", !units.isEmpty());
+            coordinator.reset();
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
     public void datagramTierOffKeepsTheDatagramChannelOutOfTheCandidates() throws Exception {
         Fixture fixture = fixture(MediaTransportPolicy.Mode.TCP);
         fixture.handler.onClientMessage(hello("tcp", "udp"));
@@ -258,7 +317,11 @@ public class MediaChannelNegotiationEndToEndTest {
     }
 
     private Fixture fixture(MediaTransportPolicy.Mode mode) throws Exception {
-        Fixture fixture = new Fixture(mode);
+        return fixture(mode, "127.0.0.1");
+    }
+
+    private Fixture fixture(MediaTransportPolicy.Mode mode, String endpointHost) throws Exception {
+        Fixture fixture = new Fixture(mode, endpointHost);
         mServer = fixture.mediaServer;
         return fixture;
     }
@@ -309,7 +372,7 @@ public class MediaChannelNegotiationEndToEndTest {
 
         private final StreamCallHandler handler;
 
-        private Fixture(MediaTransportPolicy.Mode mode) throws Exception {
+        private Fixture(MediaTransportPolicy.Mode mode, String endpointHost) throws Exception {
             codec = new FakeCodec(FakeCodec.DEFAULT_CODEC_ID, 0, false, false);
             codec.setAutoEmitJoinOnRequest(false);
             CodecRegistry codecs = new CodecRegistry();
@@ -338,7 +401,7 @@ public class MediaChannelNegotiationEndToEndTest {
 
             MediaChannelNegotiator negotiator = new MediaChannelNegotiator(mode,
                     MediaTransportPolicy.allowsUdp(mode, true), offers::add, TimeSource.MONOTONIC,
-                    new MediaChannelEndpoint("127.0.0.1", port, mediaServer.getUdpPort(), true));
+                    new MediaChannelEndpoint(endpointHost, port, mediaServer.getUdpPort(), true));
             handler = new StreamCallHandler(hub, runtime, transport, StreamCallListener.NO_OP,
                     null, PongTarget.NO_OP, null, null, null, null, null, negotiator, registry);
         }

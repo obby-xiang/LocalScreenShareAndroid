@@ -9,6 +9,7 @@ import com.obby.android.localscreenshare.core.audio.AudioSendSession;
 import com.obby.android.localscreenshare.core.audio.AudioTransport;
 import com.obby.android.localscreenshare.core.audio.AudioCodecIds;
 import com.obby.android.localscreenshare.core.model.ClientSessionKey;
+import com.obby.android.localscreenshare.core.net.MediaChannelLog;
 import com.obby.android.localscreenshare.core.net.MediaTransportKind;
 import com.obby.android.localscreenshare.core.stream.ClientCapabilities;
 import com.obby.android.localscreenshare.core.stream.ClientSendSession;
@@ -193,6 +194,9 @@ public final class StreamCallHandler {
     // Channels that already failed in this call; the policy never offers one twice.
     private final Set<MediaTransportKind> failedMediaTransports =
             EnumSet.noneOf(MediaTransportKind.class);
+
+    // Diagnostic sink of this call's negotiation; NONE when the caller does not install one.
+    private final MediaChannelLog log;
 
     private MediaChannelPhase mediaPhase = MediaChannelPhase.NONE;
 
@@ -444,6 +448,7 @@ public final class StreamCallHandler {
         this.approvalTarget = approvalTarget;
         this.mediaNegotiator = mediaNegotiator;
         this.mediaRegistry = mediaRegistry;
+        this.log = mediaNegotiator == null ? MediaChannelLog.NONE : mediaNegotiator.getLog();
         this.mediaRecovery = new StreamMediaRecovery(transport, runtime::requestJoinPoint,
                 this::onMediaChannelFallback);
     }
@@ -1106,13 +1111,21 @@ public final class StreamCallHandler {
         }
         switch (event.getType()) {
             case READY:
+                log.info("answer: READY, channel = "
+                        + (mediaKind == null ? "unknown" : mediaKind.getLabel()));
                 mediaChannelReady = true;
                 activateMediaChannelIfReady();
                 break;
             case FAILED:
+                log.warn("answer: FAILED, channel = "
+                        + (mediaKind == null ? "unknown" : mediaKind.getLabel()) + ", reason = "
+                        + reasonOf(event, "channel_failed"));
                 failMediaChannel(reasonOf(event, "channel_failed"));
                 break;
             case CLOSED:
+                log.warn("answer: CLOSED, channel = "
+                        + (mediaKind == null ? "unknown" : mediaKind.getLabel()) + ", reason = "
+                        + reasonOf(event, "channel_closed"));
                 failMediaChannel(reasonOf(event, "channel_closed"));
                 break;
             case UNKNOWN_EVENT:

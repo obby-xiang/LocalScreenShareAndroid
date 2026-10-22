@@ -2,6 +2,7 @@ package com.obby.android.localscreenshare.server;
 
 import com.obby.android.localscreenshare.core.net.AccessUnitReassembler;
 import com.obby.android.localscreenshare.core.net.DatagramKeys;
+import com.obby.android.localscreenshare.core.net.MediaChannelLog;
 import com.obby.android.localscreenshare.core.net.MediaChannelOffer;
 import com.obby.android.localscreenshare.core.net.MediaChannelTicket;
 import com.obby.android.localscreenshare.core.net.MediaTransportKind;
@@ -48,6 +49,9 @@ public final class MediaChannelNegotiator {
 
     private final MediaChannelEndpoint endpoint;
 
+    // Diagnostic sink of this call; NONE when the caller does not install one.
+    private final MediaChannelLog log;
+
     private MediaChannelTicket ticket;
 
     private MediaTransportKind offeredKind;
@@ -73,7 +77,7 @@ public final class MediaChannelNegotiator {
     }
 
     /**
-     * Creates a negotiator for one call.
+     * Creates a negotiator that reports its offers through {@code log}.
      *
      * @param mode        deployment preference from the hidden setting; null resolves to
      *                    {@link MediaTransportPolicy.Mode#AUTO}
@@ -81,11 +85,15 @@ public final class MediaChannelNegotiator {
      * @param offerTarget output for the offer messages; required
      * @param timeSource  clock used for the offer window and the ticket lifetime; required
      * @param endpoint    where the channel of this session can be reached; required
+     * @param log         diagnostic sink; required, may be {@link MediaChannelLog#NONE}
      * @throws IllegalArgumentException if a required argument is null
      */
     public MediaChannelNegotiator(MediaTransportPolicy.Mode mode, boolean udpEnabled,
                                   MediaOfferTarget offerTarget, TimeSource timeSource,
-                                  MediaChannelEndpoint endpoint) {
+                                  MediaChannelEndpoint endpoint, MediaChannelLog log) {
+        if (log == null) {
+            throw new IllegalArgumentException("log must not be null");
+        }
         if (offerTarget == null) {
             throw new IllegalArgumentException("offerTarget must not be null");
         }
@@ -100,6 +108,34 @@ public final class MediaChannelNegotiator {
         this.offerTarget = offerTarget;
         this.timeSource = timeSource;
         this.endpoint = endpoint;
+        this.log = log;
+    }
+
+    /**
+     * Creates a negotiator for one call.
+     *
+     * @param mode        deployment preference from the hidden setting; null resolves to
+     *                    {@link MediaTransportPolicy.Mode#AUTO}
+     * @param udpEnabled  whether the experimental datagram tier may be offered
+     * @param offerTarget output for the offer messages; required
+     * @param timeSource  clock used for the offer window and the ticket lifetime; required
+     * @param endpoint    where the channel of this session can be reached; required
+     * @throws IllegalArgumentException if a required argument is null
+     */
+    public MediaChannelNegotiator(MediaTransportPolicy.Mode mode, boolean udpEnabled,
+                                  MediaOfferTarget offerTarget, TimeSource timeSource,
+                                  MediaChannelEndpoint endpoint) {
+        this(mode, udpEnabled, offerTarget, timeSource, endpoint, MediaChannelLog.NONE);
+    }
+
+    /**
+     * Returns the diagnostic sink this negotiator writes to.
+     *
+     * <p>The call handler of the same negotiation reuses it, so one call has one sink and the
+     * server does not have to thread a second parameter through the handler constructors.</p>
+     */
+    public MediaChannelLog getLog() {
+        return log;
     }
 
     /**
@@ -176,6 +212,9 @@ public final class MediaChannelNegotiator {
         offeredKind = kind;
         offeredKeys = keys;
         offerDeadlineMs = nowMs + offerTimeoutMs(kind);
+        log.info("offer: sent, transport = " + kind.getLabel() + ", port = "
+                + endpoint.getPort(kind) + ", host = "
+                + (endpoint.getHost().isEmpty() ? "<control plane>" : endpoint.getHost()));
         return true;
     }
 

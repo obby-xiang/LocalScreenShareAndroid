@@ -1,5 +1,6 @@
 package com.obby.android.localscreenshare.client;
 
+import com.obby.android.localscreenshare.core.net.MediaChannelLog;
 import com.obby.android.localscreenshare.core.net.MediaChannelOffer;
 import com.obby.android.localscreenshare.core.net.MediaTransportKind;
 import com.obby.android.localscreenshare.grpc.screenstream.MediaChannelEvent;
@@ -84,6 +85,9 @@ public final class MediaChannelCoordinator {
 
     private final ChannelFactory channelFactory;
 
+    // Diagnostic sink of this negotiation; NONE when the caller does not install one.
+    private final MediaChannelLog log;
+
     private final Map<String, MediaChannelLink> links = new HashMap<>();
 
     private final Set<String> closed = new HashSet<>();
@@ -108,6 +112,20 @@ public final class MediaChannelCoordinator {
      */
     public MediaChannelCoordinator(AnswerSink answerSink, Executor executor,
                                    ChannelFactory channelFactory) {
+        this(answerSink, executor, channelFactory, MediaChannelLog.NONE);
+    }
+
+    /**
+     * Creates a coordinator that reports its answers through {@code log}.
+     *
+     * @param answerSink     output for the answers; required
+     * @param executor       executor that runs each channel until it ends; required
+     * @param channelFactory builder of the channels; required
+     * @param log            diagnostic sink; required, may be {@link MediaChannelLog#NONE}
+     * @throws IllegalArgumentException if an argument is null
+     */
+    public MediaChannelCoordinator(AnswerSink answerSink, Executor executor,
+                                   ChannelFactory channelFactory, MediaChannelLog log) {
         if (answerSink == null) {
             throw new IllegalArgumentException("answerSink must not be null");
         }
@@ -117,9 +135,13 @@ public final class MediaChannelCoordinator {
         if (channelFactory == null) {
             throw new IllegalArgumentException("channelFactory must not be null");
         }
+        if (log == null) {
+            throw new IllegalArgumentException("log must not be null");
+        }
         this.answerSink = answerSink;
         this.executor = executor;
         this.channelFactory = channelFactory;
+        this.log = log;
     }
 
     /**
@@ -290,6 +312,9 @@ public final class MediaChannelCoordinator {
             }
             readySent = true;
         }
+        // One line per channel answer: the device report could not tell why a negotiation ended
+        // because neither end logged its reason.
+        log.info("answer: READY, channel = " + channelIdHex);
         answerSink.send(MediaChannelOfferMapper.toProtoEvent(
                 MediaChannelOfferMapper.toOfferChannelId(channelIdHex),
                 MediaChannelEventType.READY, ""));
@@ -309,6 +334,8 @@ public final class MediaChannelCoordinator {
                 failedSent = true;
             }
         }
+        log.warn("answer: " + (wasReady ? "CLOSED" : "FAILED") + ", channel = " + channelIdHex
+                + ", reason = " + reason);
         answerSink.send(MediaChannelOfferMapper.toProtoEvent(
                 MediaChannelOfferMapper.toOfferChannelId(channelIdHex),
                 wasReady ? MediaChannelEventType.CLOSED : MediaChannelEventType.FAILED,
@@ -323,6 +350,7 @@ public final class MediaChannelCoordinator {
             failedSent = true;
             lastFailureReason = reason;
         }
+        log.warn("answer: FAILED, channel = " + channelIdHex + ", reason = " + reason);
         answerSink.send(MediaChannelOfferMapper.toProtoEvent(
                 MediaChannelOfferMapper.toOfferChannelId(channelIdHex),
                 MediaChannelEventType.FAILED, reason));
