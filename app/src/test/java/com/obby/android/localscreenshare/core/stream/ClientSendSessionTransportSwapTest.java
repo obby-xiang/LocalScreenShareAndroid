@@ -79,6 +79,19 @@ public class ClientSendSessionTransportSwapTest {
     }
 
     @Test
+    public void swap_countsOneChannelSwitch() throws Exception {
+        FakeTransport first = new FakeTransport();
+        ClientSendSession session = measuredSession(first, null);
+        assertTrue(session.onDescriptor(descriptor(1)));
+
+        session.swapTransport(new FakeTransport());
+        session.swapTransport(new FakeTransport(), MediaTransportKind.UDP);
+
+        assertEquals(2L, session.snapshotMetrics(1000L)
+                .getCounter(PipelineMetrics.Counter.MEDIA_CHANNEL_SWITCHES));
+    }
+
+    @Test
     public void swapWithAChannel_recordsTheNewChannel() throws Exception {
         ClientSendSession session = session(new FakeTransport());
         assertTrue(session.onDescriptor(descriptor(1)));

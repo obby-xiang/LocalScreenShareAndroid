@@ -126,6 +126,36 @@ public class MetricsFormatterTest {
     }
 
     @Test
+    public void sessionLine_printsTheDatagramChannel() {
+        PipelineMetrics session = PipelineMetrics.create(new MutableNanoClock(), 16);
+
+        String line = MetricsFormatter.toSessionLogLine(session.snapshot(5000L), "1a2b3c4d",
+                MediaTransportKind.UDP);
+
+        assertTrue(line.contains(" chan=udp"));
+    }
+
+    @Test
+    public void sessionLine_printsTheChannelSwitchCount() {
+        PipelineMetrics session = PipelineMetrics.create(new MutableNanoClock(), 16);
+        session.add(PipelineMetrics.Counter.MEDIA_CHANNEL_SWITCHES, 2L);
+
+        String line = MetricsFormatter.toSessionLogLine(session.snapshot(5000L), "1a2b3c4d");
+
+        assertTrue(line.contains(" tx.chanSwitch=2"));
+    }
+
+    @Test
+    public void serverLine_printsTheFragmentCount() {
+        PipelineMetrics metrics = PipelineMetrics.create(new MutableNanoClock(), 16);
+        metrics.add(PipelineMetrics.Counter.FRAGMENTS_SENT, 5L);
+
+        String line = MetricsFormatter.toLogLine(Role.SERVER, metrics.snapshot(5000L));
+
+        assertTrue(line.contains(" tx.frag=5"));
+    }
+
+    @Test
     public void sessionLine_keepsOnlyTheFramingFieldsWhenNothingWasRecorded() {
         assertEquals("lss.metrics role=server period=5000 chan=grpc",
                 MetricsFormatter.toSessionLogLine(PipelineMetrics.NONE.snapshot(5000L), null));
@@ -153,6 +183,48 @@ public class MetricsFormatterTest {
         assertTrue(line.contains(" rx.arr.p50=33.0"));
         assertTrue(line.contains(" rx.stall=1"));
         assertFalse(line.contains("rx.seqGap"));
+    }
+
+    @Test
+    public void clientLine_printsTheDatagramCountersOfTheWeakNetworkTier() {
+        PipelineMetrics metrics = PipelineMetrics.create(new MutableNanoClock(), 16);
+        metrics.add(PipelineMetrics.Counter.DATAGRAMS_RECEIVED, 240L);
+        metrics.add(PipelineMetrics.Counter.DATAGRAMS_LOST, 6L);
+        metrics.add(PipelineMetrics.Counter.DATAGRAMS_DUPLICATE, 2L);
+        metrics.add(PipelineMetrics.Counter.DATAGRAMS_REORDERED, 3L);
+        metrics.add(PipelineMetrics.Counter.ACCESS_UNITS_INCOMPLETE, 4L);
+        metrics.add(PipelineMetrics.Counter.MEDIA_AUTH_FAILURES, 1L);
+
+        String line = MetricsFormatter.toLogLine(Role.CLIENT, metrics.snapshot(5000L));
+
+        assertTrue(line.contains(" udp.recv=240"));
+        assertTrue(line.contains(" udp.lost=6"));
+        assertTrue(line.contains(" udp.dup=2"));
+        assertTrue(line.contains(" udp.reorder=3"));
+        assertTrue(line.contains(" udp.auIncomplete=4"));
+        assertTrue(line.contains(" udp.authFail=1"));
+    }
+
+    @Test
+    public void clientLine_omitsTheDatagramBlockWhenNothingArrived() {
+        PipelineMetrics metrics = PipelineMetrics.create(new MutableNanoClock(), 16);
+        metrics.add(PipelineMetrics.Counter.ACCESS_UNITS, 10L);
+
+        String line = MetricsFormatter.toLogLine(Role.CLIENT, metrics.snapshot(5000L));
+
+        assertFalse(line.contains("udp."));
+    }
+
+    @Test
+    public void clientLine_omitsADatagramCounterThatStayedZero() {
+        PipelineMetrics metrics = PipelineMetrics.create(new MutableNanoClock(), 16);
+        metrics.add(PipelineMetrics.Counter.DATAGRAMS_RECEIVED, 3L);
+
+        String line = MetricsFormatter.toLogLine(Role.CLIENT, metrics.snapshot(5000L));
+
+        assertTrue(line.contains(" udp.recv=3"));
+        assertFalse(line.contains("udp.lost"));
+        assertFalse(line.contains("udp.authFail"));
     }
 
     @Test

@@ -295,6 +295,8 @@ public final class MetricsFormatter {
                 PipelineMetrics.Counter.DROPPED_UNITS, null);
         appendCounters(out, snapshot, ServerMetricNames.TX_RESYNC,
                 PipelineMetrics.Counter.RESYNCS, null);
+        appendCounters(out, snapshot, MediaMetricNames.TX_CHANNEL_SWITCH,
+                PipelineMetrics.Counter.MEDIA_CHANNEL_SWITCHES, null);
         return out.toString();
     }
 
@@ -488,6 +490,8 @@ public final class MetricsFormatter {
                 PipelineMetrics.Counter.JOIN_REQUESTS, null);
         appendCounters(out, snapshot, ServerMetricNames.KF_JOINS,
                 PipelineMetrics.Counter.JOIN_POINTS, null);
+        appendCounters(out, snapshot, MediaMetricNames.TX_FRAGMENT,
+                PipelineMetrics.Counter.FRAGMENTS_SENT, null);
     }
 
     /**
@@ -529,6 +533,34 @@ public final class MetricsFormatter {
         appendCatchUpReason(out, snapshot);
         appendRttFields(out, snapshot);
         appendAudioFields(out, snapshot);
+        appendMediaChannelFields(out, snapshot);
+    }
+
+    /**
+     * Appends the datagram counters of the same receive session.
+     *
+     * <p>The block is printed only once a datagram arrived: a viewer on the control-plane carrier
+     * has no datagram tier, and printing zeros would make its line look like a datagram channel
+     * that lost nothing - the two are not comparable, which is exactly what the omission avoids.
+     * The loss numbers are the ones the plan asks the weak-network tier to be judged by, so they
+     * stay on the same line as the arrival and decode health they explain.</p>
+     */
+    private static void appendMediaChannelFields(StringBuilder out, MetricsSnapshot snapshot) {
+        final long received = snapshot.getCounter(PipelineMetrics.Counter.DATAGRAMS_RECEIVED);
+        if (received == 0L) {
+            return;
+        }
+        out.append(' ').append(MediaMetricNames.UDP_RECEIVED).append('=').append(received);
+        appendCounters(out, snapshot, MediaMetricNames.UDP_LOST,
+                PipelineMetrics.Counter.DATAGRAMS_LOST, null);
+        appendCounters(out, snapshot, MediaMetricNames.UDP_DUPLICATE,
+                PipelineMetrics.Counter.DATAGRAMS_DUPLICATE, null);
+        appendCounters(out, snapshot, MediaMetricNames.UDP_REORDERED,
+                PipelineMetrics.Counter.DATAGRAMS_REORDERED, null);
+        appendCounters(out, snapshot, MediaMetricNames.UDP_AU_INCOMPLETE,
+                PipelineMetrics.Counter.ACCESS_UNITS_INCOMPLETE, null);
+        appendCounters(out, snapshot, MediaMetricNames.UDP_AUTH_FAILURE,
+                PipelineMetrics.Counter.MEDIA_AUTH_FAILURES, null);
     }
 
     /**

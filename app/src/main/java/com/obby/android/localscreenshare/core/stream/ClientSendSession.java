@@ -636,6 +636,7 @@ public final class ClientSendSession {
         }
         MediaTransport previous = transport;
         transport = next;
+        metrics.increment(PipelineMetrics.Counter.MEDIA_CHANNEL_SWITCHES);
         if (kind != null) {
             transportKind = kind;
         }
