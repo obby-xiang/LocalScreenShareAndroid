@@ -16,4 +16,7 @@ local.properties
 
 /.idea/
 signing.properties
+*.jks
+*.keystore
+signing/
 .worktrees/

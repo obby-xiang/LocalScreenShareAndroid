@@ -3,15 +3,31 @@ plugins {
     alias(libs.plugins.protobuf)
 }
 
-def signingProperties = new Properties()
-def signingPropertiesFile = rootProject.file("signing.properties")
+// Release signing material is optional and never lives in this repository. The lookup
+// order is: the ignored root signing.properties, then four -Psigning.* properties, then
+// nothing, which leaves the release APK unsigned. No value is ever logged.
+def signingMaterialKeys = ['storeFile', 'storePassword', 'keyAlias', 'keyPassword']
+def signingMaterial = [:]
+def signingPropertiesFile = rootProject.file('signing.properties')
 if (signingPropertiesFile.exists()) {
-    signingProperties.load(new FileInputStream(signingPropertiesFile))
+    def loaded = new Properties()
+    signingPropertiesFile.withInputStream { loaded.load(it) }
+    signingMaterialKeys.each { signingMaterial[it] = loaded.getProperty(it) }
 } else {
-    signingProperties['storeFile'] = property('signing.storeFile')
-    signingProperties['storePassword'] = property('signing.storePassword')
-    signingProperties['keyAlias'] = property('signing.keyAlias')
-    signingProperties['keyPassword'] = property('signing.keyPassword')
+    signingMaterialKeys.each { signingMaterial[it] = findProperty("signing.${it}") }
+}
+def isMissing = { value -> value == null || value.toString().trim().isEmpty() }
+def hasSigningMaterial = signingMaterialKeys.every { !isMissing(signingMaterial[it]) }
+def requireSigningMaterial = findProperty('requireSigning') == 'true'
+if (!hasSigningMaterial) {
+    if (signingMaterialKeys.every { isMissing(signingMaterial[it]) }) {
+        logger.warn('Release signing is disabled: no signing material configured, '
+            + 'so the release APK stays unsigned and must not be distributed.')
+    } else {
+        logger.warn('Release signing is disabled: the signing material is incomplete '
+            + '(store file, store password, key alias and key password are all required; '
+            + 'values are not logged).')
+    }
 }
 
 android {
@@ -29,17 +45,21 @@ android {
     }
 
     signingConfigs {
-        release {
-            storeFile rootProject.file(signingProperties['storeFile'])
-            storePassword signingProperties['storePassword']
-            keyAlias signingProperties['keyAlias']
-            keyPassword signingProperties['keyPassword']
+        if (hasSigningMaterial) {
+            release {
+                storeFile rootProject.file(signingMaterial['storeFile'])
+                storePassword signingMaterial['storePassword']
+                keyAlias signingMaterial['keyAlias']
+                keyPassword signingMaterial['keyPassword']
+            }
         }
     }
 
     buildTypes {
         release {
-            signingConfig signingConfigs.release
+            if (hasSigningMaterial) {
+                signingConfig signingConfigs.release
+            }
             minifyEnabled true
             shrinkResources false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
@@ -95,4 +115,9 @@ dependencies {
     implementation libs.guava
     implementation libs.camera.core
     implementation libs.splashscreen
+}
+
+// Reported at the end of configuration so the missing material is the only failure a user sees.
+if (requireSigningMaterial && !hasSigningMaterial) {
+    throw new GradleException('release signing material is required (-PrequireSigning=true)')
 }
