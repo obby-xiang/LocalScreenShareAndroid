@@ -34,6 +34,37 @@ public final class ManualAddress {
     }
 
     /**
+     * Creates an address from a literal host and a port, bypassing the typed-input grammar.
+     *
+     * <p>Used for addresses that are already stored: the host is a bare literal, so the IPv6 shape
+     * is detected here instead of being parsed out of a bracketed form.</p>
+     *
+     * @param host address literal; IPv6 literals are stored bare and lowercased
+     * @param port port to store; must be in {@code 1..65535}
+     * @return the address
+     * @throws IllegalArgumentException if the host is blank or not a literal, or the port is out of
+     *                                  range
+     */
+    @NonNull
+    public static ManualAddress create(@NonNull final String host, final int port) {
+        Objects.requireNonNull(host, "host");
+        final String value = host.trim();
+        if (value.isEmpty()) {
+            throw new IllegalArgumentException("empty host");
+        }
+        if (!isValidPort(port)) {
+            throw new IllegalArgumentException("port out of range: " + port);
+        }
+        if (looksLikeIpv6(value)) {
+            return new ManualAddress(value.toLowerCase(Locale.ROOT), port, true);
+        }
+        if (!looksLikeIpv4(value)) {
+            throw new IllegalArgumentException("not an IP literal: " + value);
+        }
+        return new ManualAddress(value, port, false);
+    }
+
+    /**
      * Parses one user entry.
      *
      * @param input text as typed

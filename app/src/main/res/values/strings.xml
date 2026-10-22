@@ -54,6 +54,8 @@
     <string name="discovery_empty_manual_hint">"No devices found. Tap to add an address."</string>
     <string name="discovery_add_favorite">"Add to favorites"</string>
     <string name="discovery_remove_favorite">"Remove from favorites"</string>
+    <string name="discovery_remove_manual">"Remove manual entry"</string>
+    <string name="discovery_manual_removed">"Removed the manual entry."</string>
     <string name="discovery_favorite_badge">"Favorite"</string>
     <string name="discovery_identity_changed_badge">"Identity changed"</string>
     <string name="discovery_identity_changed_connect">"This device's identity changed since it was saved. Connect anyway? The favorite will be updated to the new identity."</string>

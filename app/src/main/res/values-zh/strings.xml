@@ -54,6 +54,8 @@
     <string name="discovery_empty_manual_hint">"未发现设备，点此手动添加地址。"</string>
     <string name="discovery_add_favorite">"收藏"</string>
     <string name="discovery_remove_favorite">"取消收藏"</string>
+    <string name="discovery_remove_manual">"移除手动添加"</string>
+    <string name="discovery_manual_removed">"已移除手动添加的设备。"</string>
     <string name="discovery_favorite_badge">"已收藏"</string>
     <string name="discovery_identity_changed_badge">"身份已变更"</string>
     <string name="discovery_identity_changed_connect">"该设备的身份与收藏时不一致。仍要连接吗？连接后收藏会更新为新身份。"</string>

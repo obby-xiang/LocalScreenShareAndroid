@@ -29,6 +29,11 @@ import lombok.ToString;
  * <p>The display name is optional because the device name is not broadcast by default. Callers
  * render {@link #displayName()}, which falls back to {@code LSS-<id first 8>}, rather than
  * {@link #getName()}.</p>
+ *
+ * <p><b>Flags.</b> {@code favorite} marks a device the user saved, {@code identityChanged} warns that
+ * the fingerprint no longer matches the stored one, and {@code manual} marks a device the user added
+ * by typing its address: such an entry is pinned against expiry and persisted, so it survives a
+ * restart.</p>
  */
 @Getter
 @ToString
@@ -108,6 +113,8 @@ public final class DeviceInfo implements Parcelable {
 
     private final boolean identityChanged;
 
+    private final boolean manual;
+
     /**
      * Creates a device description. Null enum values fall back to their {@code UNKNOWN} constant,
      * a null protocol version falls back to {@link #DEFAULT_PROTOCOL_VERSION}, and the address list
@@ -121,7 +128,7 @@ public final class DeviceInfo implements Parcelable {
         final boolean secure, final AuthMode auth, final String protocolVersion,
         final int metadataVersion, final int capabilities, final List<DeviceAddress> addresses,
         final DevicePresence presence, final long lastSeenMs, final long lastConfirmedMs,
-        final boolean favorite, final boolean identityChanged) {
+        final boolean favorite, final boolean identityChanged, final boolean manual) {
         if (id == null || id.trim().isEmpty()) {
             throw new IllegalArgumentException("id must not be blank");
         }
@@ -147,6 +154,7 @@ public final class DeviceInfo implements Parcelable {
         this.lastConfirmedMs = lastConfirmedMs;
         this.favorite = favorite;
         this.identityChanged = identityChanged;
+        this.manual = manual;
     }
 
     /**
@@ -158,7 +166,7 @@ public final class DeviceInfo implements Parcelable {
             JoinPolicy.valueOf(in.readString()), in.readInt() != 0, AuthMode.valueOf(in.readString()),
             in.readString(), in.readInt(), in.readInt(),
             in.createTypedArrayList(DeviceAddress.CREATOR), DevicePresence.valueOf(in.readString()),
-            in.readLong(), in.readLong(), in.readInt() != 0, in.readInt() != 0);
+            in.readLong(), in.readLong(), in.readInt() != 0, in.readInt() != 0, in.readInt() != 0);
     }
 
     @Override
@@ -185,6 +193,7 @@ public final class DeviceInfo implements Parcelable {
         dest.writeLong(lastConfirmedMs);
         dest.writeInt(favorite ? 1 : 0);
         dest.writeInt(identityChanged ? 1 : 0);
+        dest.writeInt(manual ? 1 : 0);
     }
 
     /**
@@ -231,7 +240,8 @@ public final class DeviceInfo implements Parcelable {
         return secure == that.secure && metadataVersion == that.metadataVersion
             && capabilities == that.capabilities && lastSeenMs == that.lastSeenMs
             && lastConfirmedMs == that.lastConfirmedMs && favorite == that.favorite
-            && identityChanged == that.identityChanged && id.equals(that.id)
+            && identityChanged == that.identityChanged && manual == that.manual
+            && id.equals(that.id)
             && Objects.equals(fingerprint, that.fingerprint) && Objects.equals(name, that.name)
             && role == that.role && state == that.state && join == that.join && auth == that.auth
             && protocolVersion.equals(that.protocolVersion) && addresses.equals(that.addresses)
@@ -242,6 +252,6 @@ public final class DeviceInfo implements Parcelable {
     public int hashCode() {
         return Objects.hash(id, fingerprint, name, role, state, join, secure, auth, protocolVersion,
             metadataVersion, capabilities, addresses, presence, lastSeenMs, lastConfirmedMs, favorite,
-            identityChanged);
+            identityChanged, manual);
     }
 }

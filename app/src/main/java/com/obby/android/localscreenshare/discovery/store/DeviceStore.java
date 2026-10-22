@@ -317,6 +317,23 @@ public final class DeviceStore {
     }
 
     /**
+     * Drops one device from the table.
+     *
+     * <p>Used when the user removes a manually added entry: the row disappears instead of degrading
+     * to unreachable, and a device that is still announced reappears with its next observation, this
+     * time without the manual marker.</p>
+     *
+     * @return false when the store does not know the device
+     */
+    public boolean remove(@NonNull final String id) {
+        if (mEntries.remove(id) == null) {
+            return false;
+        }
+        refresh(mTimeSource.nowMs());
+        return true;
+    }
+
+    /**
      * Returns the current immutable snapshot, ordered by presence, favorite, confirmation and name.
      */
     @NonNull
@@ -414,6 +431,7 @@ public final class DeviceStore {
                 .lastConfirmedMs(entry.lastConfirmedMs)
                 .favorite(entry.favorite)
                 .identityChanged(entry.identityChanged)
+                .manual(entry.pinned)
                 .build());
         }
         Collections.sort(devices, SNAPSHOT_COMPARATOR);

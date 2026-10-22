@@ -32,8 +32,19 @@ public class DeviceInfoTest {
         assertFalse(device.isSecure());
         assertFalse(device.isFavorite());
         assertFalse(device.isIdentityChanged());
+        assertFalse(device.isManual());
         assertNull(device.getName());
         assertNull(device.primaryAddress());
+    }
+
+    @Test
+    public void theManualFlagIsCarriedByTheBuilder() {
+        final DeviceInfo manual = DeviceInfo.builder().id(DEVICE_ID).manual(true).build();
+        final DeviceInfo heard = DeviceInfo.builder().id(DEVICE_ID).build();
+
+        assertTrue(manual.isManual());
+        assertFalse(heard.isManual());
+        assertNotEquals(manual, heard);
     }
 
     @Test

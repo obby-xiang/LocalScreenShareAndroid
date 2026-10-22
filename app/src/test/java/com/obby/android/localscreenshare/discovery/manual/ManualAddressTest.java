@@ -93,6 +93,38 @@ public class ManualAddressTest {
         }
     }
 
+    @Test
+    public void createAcceptsStoredLiteralsWithoutTheTypedGrammar() {
+        final ManualAddress ipv4 = ManualAddress.create("10.0.0.5", 8080);
+        final ManualAddress ipv6 = ManualAddress.create("FE80::1", 9090);
+
+        assertEquals("10.0.0.5", ipv4.getHost());
+        assertEquals(8080, ipv4.getPort());
+        assertFalse(ipv4.isIpv6());
+        assertEquals("fe80::1", ipv6.getHost());
+        assertEquals(9090, ipv6.getPort());
+        assertTrue(ipv6.isIpv6());
+        assertEquals("[fe80::1]:9090", ipv6.toString());
+    }
+
+    @Test
+    public void createRejectsBlankHostsNonLiteralsAndBadPorts() {
+        assertCreateRejected("", 8080);
+        assertCreateRejected("   ", 8080);
+        assertCreateRejected("example.local", 8080);
+        assertCreateRejected("10.0.0.5", 0);
+        assertCreateRejected("10.0.0.5", 70000);
+    }
+
+    private static void assertCreateRejected(final String host, final int port) {
+        try {
+            ManualAddress.create(host, port);
+            fail("expected IllegalArgumentException for " + host + ":" + port);
+        } catch (IllegalArgumentException expected) {
+            // Expected: a stored address must still be a literal with a usable port.
+        }
+    }
+
     private static void assertInvalid(final String input) {
         try {
             ManualAddress.parse(input, DEFAULT_PORT);

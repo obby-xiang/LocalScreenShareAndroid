@@ -323,6 +323,58 @@ public class DeviceStoreTest {
         assertTrue(calls.get(1).isEmpty());
     }
 
+    @Test
+    public void removeDropsOneEntryAndPublishes() {
+        List<List<DeviceInfo>> calls = new ArrayList<>();
+        mStore.addListener(calls::add);
+        mStore.onObserved(heard(DEVICE_ID, "10.0.0.5", 8080, mClock.nowMs()));
+        mStore.onObserved(heard("other-device", "10.0.0.6", 8080, mClock.nowMs()));
+
+        assertTrue(mStore.remove(DEVICE_ID));
+
+        assertFalse(mStore.remove(DEVICE_ID));
+        assertEquals(1, mStore.size());
+        assertNull(mStore.device(DEVICE_ID));
+        assertNotNull(mStore.device("other-device"));
+        assertEquals(3, calls.size());
+        assertEquals(1, calls.get(2).size());
+    }
+
+    @Test
+    public void aRestoredManualEntryAndTheAnnouncedDeviceStayInOneEntry() {
+        // The seed a restart performs: the id and address a manual probe confirmed.
+        mStore.onObserved(DeviceObservation.builder()
+            .source(DiscoveryChannel.MANUAL)
+            .id(DEVICE_ID)
+            .fingerprint("fingerprint-one")
+            .host("10.0.0.5")
+            .port(8080)
+            .lastSeenMs(mClock.nowMs())
+            .build());
+        mStore.setPinned(DEVICE_ID, true);
+
+        // The same device is then announced on another interface; the store keys by device id.
+        mStore.onObserved(heard(DEVICE_ID, "192.168.1.9", 9090, mClock.nowMs()));
+
+        assertEquals(1, mStore.size());
+        final DeviceInfo device = mStore.device(DEVICE_ID);
+        assertTrue(device.isManual());
+        assertEquals(2, device.getAddresses().size());
+        assertEquals("fingerprint-one", device.getFingerprint());
+    }
+
+    @Test
+    public void theManualFlagFollowsThePinnedState() {
+        mStore.onObserved(heard(DEVICE_ID, "10.0.0.5", 8080, mClock.nowMs()));
+        assertFalse(mStore.device(DEVICE_ID).isManual());
+
+        mStore.setPinned(DEVICE_ID, true);
+        assertTrue(mStore.device(DEVICE_ID).isManual());
+
+        mStore.setPinned(DEVICE_ID, false);
+        assertFalse(mStore.device(DEVICE_ID).isManual());
+    }
+
     private static DeviceObservation heard(String id, String host, int port, long nowMs) {
         return DeviceObservation.builder()
             .source(DiscoveryChannel.NSD)

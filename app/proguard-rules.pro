@@ -17,15 +17,17 @@
 -keepattributes Signature
 
 # Gson persisted schemas: the field names are the JSON keys.
-# AuthorizationStore, TlsPinStore and FavoriteStore serialise these DTOs with Gson and
-# treat every parse failure as "empty store". Obfuscating a field name would therefore
-# silently discard persisted trust pins, authorization grants and favorites after an
-# upgrade, so both the class names and the field names must survive unchanged.
+# AuthorizationStore, TlsPinStore, FavoriteStore and ManualDeviceStore serialise these DTOs with
+# Gson and treat every parse failure as "empty store". Obfuscating a field name would therefore
+# silently discard persisted trust pins, authorization grants, favorites and the addresses the user
+# typed by hand after an upgrade, so both the class names and the field names must survive
+# unchanged.
 -keep class com.obby.android.localscreenshare.authorization.store.AuthorizationStore$Document { <fields>; }
 -keep class com.obby.android.localscreenshare.authorization.store.AuthorizationStore$EntryRecord { <fields>; }
 -keep class com.obby.android.localscreenshare.trust.TlsPinStore$Document { <fields>; }
 -keep class com.obby.android.localscreenshare.trust.TlsPinStore$PinRecord { <fields>; }
 -keep class com.obby.android.localscreenshare.discovery.favorite.FavoriteStore$FavoriteRecord { <fields>; }
+-keep class com.obby.android.localscreenshare.discovery.manual.ManualDeviceStore$ManualRecord { <fields>; }
 
 # protobuf-javalite: generated messages extend GeneratedMessageLite, and the lite
 # runtime resolves their fields by reflection for parsing and repeated-field views.

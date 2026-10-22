@@ -16,7 +16,10 @@ import com.obby.android.localscreenshare.discovery.favorite.FavoriteDevice;
 import com.obby.android.localscreenshare.discovery.favorite.FavoriteStore;
 import com.obby.android.localscreenshare.discovery.legacy.LegacyServiceDiscoveryListener;
 import com.obby.android.localscreenshare.discovery.legacy.LegacyServiceInfo;
+import com.obby.android.localscreenshare.discovery.manual.ManualAddress;
 import com.obby.android.localscreenshare.discovery.manual.ManualAddressProvider;
+import com.obby.android.localscreenshare.discovery.manual.ManualDevice;
+import com.obby.android.localscreenshare.discovery.manual.ManualDeviceStore;
 import com.obby.android.localscreenshare.discovery.model.DeviceAddress;
 import com.obby.android.localscreenshare.discovery.model.DeviceRole;
 import com.obby.android.localscreenshare.discovery.model.DiscoveryChannel;
@@ -88,7 +91,9 @@ import lombok.NoArgsConstructor;
  * <p><b>Fallbacks.</b> {@link ScanCoordinator} waits one grace window for announcements and
  * favorite probes; only a window that ends with no confirmed device escalates to an interface
  * scan. Favorites are persisted in {@link FavoriteStore}, seeded into the store at start so an
- * unreachable favorite keeps its alias and marker, and probed before anything else. The scan never
+ * unreachable favorite keeps its alias and marker, and probed before anything else. Addresses the
+ * user typed by hand are persisted in {@link ManualDeviceStore} and seeded the same way, so a manual
+ * entry survives a restart and keeps being re-probed until the user removes it. The scan never
  * confirms a device by itself: its hits go through the same confirm path as a handshake.</p>
  *
  * <p><b>Threading.</b> All manager state is confined to the main thread: NSD and multicast
@@ -158,6 +163,11 @@ public final class DiscoveryManager {
 
     @NonNull
     private final FavoriteStore mFavoriteStore = FavoriteStore.get();
+
+    // Durable entries the user added by address; seeded into the store at start so a typed address
+    // survives a restart instead of asking for the same work again.
+    @NonNull
+    private final ManualDeviceStore mManualDeviceStore = ManualDeviceStore.get();
 
     // Scans and manual probes are single-shot: they bypass the retrying RegisterClient, because a
     // scan must not multiply the traffic of a full subnet.
@@ -567,6 +577,7 @@ public final class DiscoveryManager {
         final DiscoverySettings settings = Preferences.get().getDiscoverySettings();
         migrateFavorites();
         seedFavorites();
+        seedManualDevices();
         mDeviceStore.addListener(mDeviceStoreListener);
         mRegisterClient.setTimeoutMs(settings.getRefreshTier().getRegisterTimeoutMs());
         Preferences.get().addObserver(mPreferencesObserver);
@@ -740,6 +751,7 @@ public final class DiscoveryManager {
             // A manually added address must not silently disappear once its one-shot probe's TTL
             // elapses; pin it so it degrades to unreachable and is re-probed instead of removed.
             mDeviceStore.setPinned(id, true);
+            rememberManualDevice(id, peer, host, port);
         }
         mFavoriteStore.sync(id, emptyToNull(peer.getFingerprint()),
             emptyToNull(peer.getName()), host, port);
@@ -835,6 +847,91 @@ public final class DiscoveryManager {
             mDeviceStore.setFavorite(favorite.getId(), true);
             mDeviceStore.setIdentityChanged(favorite.getId(), favorite.isIdentityChanged());
         }
+    }
+
+    /**
+     * Seeds the persisted manual entries into the store and resumes their re-probes.
+     *
+     * <p>A manually added device has no channel to report it after a restart: announcements may be
+     * filtered, which is why the address was typed in the first place. Without seeding, the row would
+     * vanish until the user typed the address again. Seeded entries are pinned, so the store keeps
+     * them as unreachable instead of expiring them, and their address is registered with the manual
+     * provider so the periodic re-probe promotes them back to confirmed when the device answers.</p>
+     *
+     * <p>The seed carries the device id the confirming handshake returned, which is the key
+     * {@link DeviceStore} merges by. A device that is also announced later therefore lands in the
+     * same entry instead of showing up twice.</p>
+     */
+    private void seedManualDevices() {
+        for (final ManualDevice device : mManualDeviceStore.devices()) {
+            mDeviceStore.onObserved(DeviceObservation.builder()
+                .source(DiscoveryChannel.MANUAL)
+                .id(device.getId())
+                .fingerprint(device.getFingerprint())
+                .name(device.getName())
+                .host(device.getHost())
+                .port(device.getPort())
+                .build());
+            mDeviceStore.setPinned(device.getId(), true);
+            try {
+                mManualAddressProvider.addManualTarget(
+                    ManualAddress.create(device.getHost(), device.getPort()));
+            } catch (IllegalArgumentException e) {
+                // A stored address that no longer parses cannot be probed; the entry stays in the
+                // list as unreachable until the user removes it.
+                Log.w(TAG, String.format("seedManualDevices: unprobeable address %s:%d",
+                    device.getHost(), device.getPort()));
+            }
+        }
+    }
+
+    /**
+     * Persists one manually added device and drops a stale record that owned the same address.
+     *
+     * <p>A device that was re-keyed answers at the address the user typed under another identity. The
+     * new identity becomes the manual entry of that address, and the previous row must not stay pinned
+     * next to it, or one address would show up twice.</p>
+     */
+    private void rememberManualDevice(@NonNull final String id, @NonNull final DeviceSummary peer,
+        @NonNull final String host, final int port) {
+        final ManualDevice previous = mManualDeviceStore.findByAddress(host, port);
+        mManualDeviceStore.add(ManualDevice.create(id, emptyToNull(peer.getFingerprint()),
+            emptyToNull(peer.getName()), host, port));
+        if (previous != null && !previous.getId().equals(id)) {
+            mDeviceStore.setPinned(previous.getId(), false);
+            if (!mFavoriteStore.isFavorite(previous.getId())) {
+                mDeviceStore.remove(previous.getId());
+            }
+        }
+    }
+
+    /**
+     * Removes a manually added device from the list and from storage.
+     *
+     * <p>The user added the entry by hand, so removing it is the only way back: the stored record, the
+     * periodic re-probe and the row all go away. A favorite of the same device keeps its row, because
+     * the favorite is a separate decision; only the manual marker is dropped in that case.</p>
+     *
+     * <p>Must be called on the main thread.</p>
+     *
+     * @param id device id of the manual entry
+     * @return false when the device is not a manually added entry
+     */
+    public boolean removeManualDevice(@NonNull final String id) {
+        final ManualDevice device = mManualDeviceStore.find(id);
+        if (device == null) {
+            return false;
+        }
+        mManualDeviceStore.remove(id);
+        mManualAddressProvider.forgetManualTarget(device.getHost(), device.getPort());
+        if (mFavoriteStore.isFavorite(id)) {
+            mDeviceStore.setPinned(id, false);
+        } else {
+            mDeviceStore.remove(id);
+        }
+        Log.i(TAG, String.format("removeManualDevice: removed id = %s at %s:%d", id,
+            device.getHost(), device.getPort()));
+        return true;
     }
 
     /**

@@ -36,6 +36,8 @@ public class BuildEngineeringContractTest {
             + "TlsPinStore$PinRecord { <fields>; }",
         "-keep class com.obby.android.localscreenshare.discovery.favorite."
             + "FavoriteStore$FavoriteRecord { <fields>; }",
+        "-keep class com.obby.android.localscreenshare.discovery.manual."
+            + "ManualDeviceStore$ManualRecord { <fields>; }",
     };
 
     // Providers registered through META-INF/services and looked up by ServiceLoader.

@@ -30,6 +30,12 @@ import java.util.concurrent.atomic.AtomicInteger;
  * confirmed and offered for saving as a favorite. Neither path trusts the address: only an
  * accepted Register with a usable identity reaches the sink.</p>
  *
+ * <p>A confirmed manual address is re-probed every
+ * {@code DiscoveryManager.MANUAL_REPROBE_INTERVAL_MS} so it stays confirmed while reachable and
+ * degrades to unreachable instead of expiring out of the list. The set of those addresses can also be
+ * seeded from the durable manual entries, which is what makes an address the user typed in an
+ * earlier process come back after a restart.</p>
+ *
  * <p>The provider is a {@link DiscoveryProvider} so its favorite probes start and stop with
  * discovery. Manual probes are allowed while it is stopped, because the user can add an address
  * even when automatic discovery found nothing; the sink writes into the same store either way.
@@ -312,6 +318,33 @@ public final class ManualAddressProvider implements DiscoveryProvider {
      */
     public int manualTargetCount() {
         return mManualTargets.size();
+    }
+
+    /**
+     * Registers an address to re-probe periodically.
+     *
+     * <p>Used at discovery start to resume the manual entries stored by an earlier process; the
+     * one-shot probe path registers its own targets when a probe is accepted. Must be called on the
+     * main thread.</p>
+     *
+     * @param address address to keep re-probing
+     */
+    public void addManualTarget(@NonNull final ManualAddress address) {
+        mManualTargets.put(addressKey(address.getHost(), address.getPort()), address);
+    }
+
+    /**
+     * Drops one address from the periodic re-probe set.
+     *
+     * <p>Called when the user removes a manual entry, so a forgotten address is not confirmed again
+     * and cannot come back through this path.</p>
+     *
+     * @param host address to forget
+     * @param port port to forget
+     * @return whether the address was being re-probed
+     */
+    public boolean forgetManualTarget(@NonNull final String host, final int port) {
+        return mManualTargets.remove(addressKey(host, port)) != null;
     }
 
     /**

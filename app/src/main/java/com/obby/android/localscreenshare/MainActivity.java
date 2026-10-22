@@ -112,6 +112,7 @@ import com.obby.android.localscreenshare.trust.TofuPolicy;
 
 import java.text.DateFormat;
 import java.text.NumberFormat;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
 import java.util.Collections;
@@ -809,25 +810,47 @@ public class MainActivity extends AppCompatActivity {
     }
 
     /**
-     * Offers the favorite action of one discovered device.
+     * Offers the actions of one discovered device.
      *
-     * <p>A long press opens this menu; the action label reflects the current state. The favorite
-     * flag is already part of {@link DeviceInfo}, so the store snapshot refresh after the change
+     * <p>A long press opens this menu; every row states the action it performs, so the manual entry
+     * removal and the trust reset stay reachable next to the favorite toggle. The flags the actions
+     * depend on are already part of {@link DeviceInfo}, so the store snapshot refresh after a change
      * updates the badge without a manual rebind.</p>
      */
     private void showDiscoveryItemMenu(@NonNull final DeviceInfo item) {
         final boolean isFavorite = DiscoveryManager.get().isFavorite(item.getId());
-        final MaterialAlertDialogBuilder builder = new MaterialAlertDialogBuilder(this)
-            .setTitle(item.displayName())
-            .setPositiveButton(isFavorite
-                    ? R.string.discovery_remove_favorite : R.string.discovery_add_favorite,
-                (dialog, which) -> toggleFavorite(item))
-            .setNegativeButton(android.R.string.cancel, null);
-        if (TlsPinStore.get().find(item.getId()) != null) {
-            builder.setNeutralButton(R.string.tls_forget_trust,
-                (dialog, which) -> forgetTrust(item));
+        final List<Integer> labels = new ArrayList<>();
+        final List<Runnable> actions = new ArrayList<>();
+        labels.add(isFavorite
+            ? R.string.discovery_remove_favorite : R.string.discovery_add_favorite);
+        actions.add(() -> toggleFavorite(item));
+        if (item.isManual()) {
+            labels.add(R.string.discovery_remove_manual);
+            actions.add(() -> removeManualDevice(item));
         }
-        builder.show();
+        if (TlsPinStore.get().find(item.getId()) != null) {
+            labels.add(R.string.tls_forget_trust);
+            actions.add(() -> forgetTrust(item));
+        }
+
+        final CharSequence[] items = new CharSequence[labels.size()];
+        for (int i = 0; i < labels.size(); i++) {
+            items[i] = getString(labels.get(i));
+        }
+        new MaterialAlertDialogBuilder(this)
+            .setTitle(item.displayName())
+            .setItems(items, (dialog, which) -> actions.get(which).run())
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
+    }
+
+    /**
+     * Removes a manual entry; the next discovery start no longer restores it.
+     */
+    private void removeManualDevice(@NonNull final DeviceInfo item) {
+        if (DiscoveryManager.get().removeManualDevice(item.getId())) {
+            Toast.makeText(this, R.string.discovery_manual_removed, Toast.LENGTH_SHORT).show();
+        }
     }
 
     /**

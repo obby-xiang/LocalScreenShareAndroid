@@ -185,6 +185,38 @@ public class ManualAddressProviderTest {
     }
 
     @Test
+    public void aSeededTargetIsReprobedOnStart() throws InterruptedException {
+        // What a restart does with the durable manual entries: the target is registered before the
+        // periodic re-probe runs, so the stored address is confirmed again without the user typing.
+        mProvider.addManualTarget(ManualAddress.create("192.168.1.9", 9000));
+        assertEquals(1, mProvider.manualTargetCount());
+
+        mProvider.start(noopListener());
+        mProvider.probeManualTargets();
+
+        waitFor(() -> mSink.confirmations.size() == 1);
+        assertEquals(DiscoveryChannel.MANUAL, mSink.confirmations.get(0).channel);
+        assertEquals("192.168.1.9", mSink.confirmations.get(0).host);
+        assertEquals(9000, mSink.confirmations.get(0).port);
+    }
+
+    @Test
+    public void aForgottenTargetIsNoLongerReprobed() throws InterruptedException {
+        mProvider.addManualTarget(ManualAddress.create("192.168.1.9", 9000));
+
+        assertTrue(mProvider.forgetManualTarget("192.168.1.9", 9000));
+        assertFalse(mProvider.forgetManualTarget("192.168.1.9", 9000));
+        assertEquals(0, mProvider.manualTargetCount());
+
+        mProvider.start(noopListener());
+        mProvider.probeManualTargets();
+        Thread.sleep(100L);
+
+        assertEquals(0, mProbe.callCount());
+        assertTrue(mSink.confirmations.isEmpty());
+    }
+
+    @Test
     public void failedReprobe_reportsToTheUnreachableSink() throws InterruptedException {
         final int[] calls = new int[]{0};
         FakeProbe probe = new FakeProbe((host, port) -> {
