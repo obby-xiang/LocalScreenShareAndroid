@@ -21,6 +21,7 @@
 
 ## 🎯 当前焦点
 
+- 2026-10-22 **三条待决策收口（DV-003 / DV-009 / DV-012）**：用户授权主 K3 最佳裁决——**不引入 HEVC**（[DB-CODEC-015](decision-board.md#db-codec-015)）、**接受「仅可信局域网」现状边界**（[DB-SEC-005](decision-board.md#db-sec-005)）、**不做多档流、保持单流**（[DB-MULTI-006](decision-board.md#db-multi-006)）；DV-014 / DV-015 前提不成立，随 DV-012 关闭。任务板联动：[TB-CLIENT-001](#tb-client-001)、[TB-CLIENT-002](#tb-client-002)、[TB-FW-007](#tb-fw-007) 转 ⏸️ 暂缓（[TB-CODEC-001](#tb-codec-001) 同源一并暂缓），[TB-CORE-001](#tb-core-001) 概览行与详情块移入已完成，[TB-SEC-001](#tb-sec-001) 记为「PIN/扫码与会话令牌不做」，已完成节说明改写为当前事实；决策板同步把 DB-MULTI-003 / DB-MULTI-004 的多档部分标 ❌ 已否决、DB-SEC-001 状态对齐为「部分实施」、DB-CODEC-007 的 HEVC 部分收口，并在「裁决演进」补三条。本批纯文档，三项 checks 通过。
 - 2026-10-22 **TB-MEDIA-004 部分落地（首帧呈现门控）**：按"三候选机制逐条对照代码"排查——"解码器拿到 SPS/PPS 前被喂非 IDR"（会话层 `H264CodecPolicy.isJoinPoint` 复验 IDR/首个 VCL/`first_mb_in_slice`，解码层 `firstFrameSeen` 再兜一层）、"join point 放行不带 config 的帧"（`joinInfo` 必填 + epoch/哈希校验 + 描述符先于同 epoch 首 AU）、"surface 未就绪就渲染"（`MISSING_SURFACE` 时不建解码器）**三条均不成立**；唯一能自证的首帧缺陷是**首帧被无上限地推迟呈现**：解码器把 PTS 经共享 `SessionClock` 映射，音频先锚定时（`ClientAudioSession.java:415`）首帧的映射时间可能落在当前时刻之后，`PresentationPacer` 返回 `SCHEDULE_AT`，`AndroidMediaCodecDecoderBridge.present` 以未来时间戳 `releaseOutputBuffer`，surface 在锁存第一帧前一直显示未初始化内容（绿色花屏），直到该时间戳达到才"自愈"；该推迟量没有上界，也不区分"对齐用的小超前"与"时钟基准造成的荒谬超前"。修复：`PresentationPacer.decide` 对"configure/flush 之后的首个画面且映射目标超前超过 `MAX_FIRST_FRAME_DEFERRAL_NS`（100 ms）"一律 `PRESENT_NOW`——该量级的超前只可能来自时钟基准/他轨锚点，不是节拍；100 ms 以内仍按原规则 `SCHEDULE_AT`，因此 A5 的「早到首帧按槽位呈现」判据（`AudioVideoSyncTest.videoPresentedEarlyIsScheduledForItsSlot`）不变。`H264Decoder.flush()` 同步清 `lastPresentedNs`，使追赶/换宿主后的首个画面同样不再受被放弃那一轮节拍约束；其余节拍/迟帧/丢帧规则未变。新增 4 例（pacer 2：超前 165 ms 立即呈现、恰好 100 ms 仍按槽位；decoder 2：音频先锚定→首帧映射超前 200 ms 立即呈现、flush 后首帧立即呈现），修复前 3 例红（`39 tests completed, 3 failed`，第 4 例为新旧行为一致的边界用例）、修复后全绿；全量 **1499 tests / 148 classes / 0 failures**（基线 1495/148，`test_baseline.json` 同批更新）；`build :app:assembleDebugAndroidTest`、lint 双变体 0 errors（debug 145 / release 135 warnings，与上批持平）、三项 checks 通过。本批 `11cac0e`（代码+测试），Build run [39721709412](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39721709412) 与 Checks run [39721709427](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39721709427) 双绿。**未定位部分**：观测到的 3 s→10 s 时长与编码端首个 IDR 内容是否退化依赖真实 `MediaCodec`/`VirtualDisplay`，解码器视角下不可区分，故不在解码侧做内容判定；设备点位（首连录屏、开/关音频对照、换帧尺寸后的首帧、重连对照）归 [TB-ENG-013](#tb-eng-013) 第 14 项，[TB-MEDIA-004](#tb-media-004) 转 🔶。
 - 2026-10-22 **TB-ENG-014 落地（H.264 编码器启动失败自动回退 JPEG）**：诊断确认失败发生在任何采集面创建之前——`startStreamPipeline()` 建 registry/runtime/hub 并 `runtime.start()`，失败出口（B1 的 `failAttempt`）抛 `EncoderException`（工厂/实例/Surface/`start` 统一包装）或 `CodecNotFoundException`，runtime 进 `FAILED` 且未发布 descriptor，而 `onStartCommand` 只弹通用「启动失败」并停服；采集面要到 `onServerStarted()` 才按 `mIsH264` 选，因此回退只需在 `startStreamPipeline()` 里改 `mIsH264` 的下游分支与重建 runtime/hub。新增纯 JVM `service/ProjectionCodecStartupCoordinator`：首次按偏好启动，**仅** `CodecNotFoundException` / `EncoderException` 触发、**只回退一次**、其余异常原样上抛；`startStreamPipeline()` 拆成「指标 scope + 协调器」与「单次尝试 `startStreamPipelineFor(h264)`」，重试前用既有 `closeStreamPipeline()` 释放失败尝试的 runtime/hub 注册/stream key。可见性：`Log.w`（带原因）+ 新增双语 toast `projection_codec_fallback_toast` + 通知副标题常驻 `service_notification_jpeg_fallback`（「JPEG 兼容模式」，`resetSessionState()` 清除）。**不记忆偏好**：协调器无 `Preferences` 依赖、启动路径不调用 `setProjectionCodec(...)`，由源码契约用例守住；下次共享仍先试 H.264。新增 `ProjectionCodecStartupCoordinatorTest` 12 例（含回退触发集、单次回退、JPEG 再失败原样上抛、偏好不被写入的源码断言），全量 **1495 tests / 148 classes / 0 failures**（基线 1483/147，`test_baseline.json` 同批更新）；`build :app:assembleDebugAndroidTest`、lint 双变体 0 errors（新文件零告警）、三项 checks 通过。本批 `fe8ebe4`（代码）、`fee0cfe`（看板），Build run [39719557076](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39719557076) 与 Checks run [39719556909](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39719556909) 双绿；[TB-ENG-014](#tb-eng-014) 转已完成，设备点位（失败注入、回退出画、提示可见、偏好未改写、JPEG 再失败、恢复回 H.264）归 [TB-ENG-013](#tb-eng-013) 第 13 项。
 - 2026-10-22 **TB-DISC-011 落地（手动添加条目跨重启持久化）**：诊断确认「手动」身份有两份内存状态——`ManualAddressProvider.mManualTargets`（周期重探集合）与 `DeviceStore` 的 `pinned` 标记——都没有落盘，`FavoriteStore.sync()` 又只更新已存在的收藏，所以重启后手动条目既不在列表也不会被任何通道带回。按裁决「手动添加默认保留」，新增与 `favorite` 同构的落盘层：`discovery/manual/ManualDevice`（值对象）+ `ManualDeviceStorage`/`SharedPreferencesManualDeviceStorage`（独立文件 `lss-manual`）+ `ManualDeviceStore`（Gson 反射 DTO、构造期加载、损坏文档按空处理、写失败保留内存、`synchronized`），并在 `app/proguard-rules.pro` 加 `ManualDeviceStore$ManualRecord` 的 keep 规则、在 `BuildEngineeringContractTest` 补断言（R8 教训）。接线：`onConfirmed(MANUAL, …)` 成功即 upsert（内容不变不重写，避免每 15 s 重探落盘）；`startDiscoveryProviders()` 在 `seedFavorites()` 之后 `seedManualDevices()` 以**握手返回的设备 id** 播种 `DeviceStore`（id 是 store 的去重键，故重启后同设备被组播/NSD 发现只落一行、地址合并）并恢复 `ManualAddressProvider` 的周期重探；同地址换身份时新记录顶替旧记录并清掉旧行。移除路径：`DeviceStore.remove(id)` + `ManualAddressProvider.forgetManualTarget()` + `DiscoveryManager.removeManualDevice(id)`，`DeviceInfo` 新增 `manual` 标记（由 `pinned` 投影，含 Parcel），发现页长按菜单改为动作列表（收藏切换 / 移除手动添加 / 清除信任）；手动条目若同时是收藏，只去掉手动标记、保留收藏行。新增 `ManualDeviceStoreTest` 13 例与 4 个既有测试类共 9 条用例，全量 **1483 tests / 147 classes / 0 failures**（基线 1461/146，`test_baseline.json` 同批更新）；`build :app:assembleDebugAndroidTest`、lint 双变体 0 errors（新增 1 条仅版本目录联网检查）、三项 checks（177 键双语一致）通过。本批 `a2e3f94`（落盘与恢复）、`55ba35c`（移除竞态修复），`a2e3f94` 的 Build run [39718136280](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39718136280) 与 Checks run [39718136354](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39718136354) 双绿；[TB-DISC-011](#tb-disc-011) 转已完成，设备点位（重启后仍在、与网络发现合并、移除后不复现、离线重启、R8 包）归 [TB-ENG-013](#tb-eng-013) 第 12 项。
@@ -95,7 +96,6 @@
 | TB-DISC-012 | 🔶 部分完成 | 🟡 P2 | 双真机联机验证（首测组播互见 + 1080×2340 出画通过；跨机 NSD、分级扫描/收藏/身份跨机、多轮稳定性与 TLS 剩余项待补） | 2026-10-20 | — | [发现调研](discovery-research.md) |
 | TB-MEDIA-004 | 🔶 部分完成 | 🟡 P3 | 首帧绿色花屏（客户端首帧呈现门控已修复；编码端/设备侧时长与首帧内容待棒） | 2026-10-20 | — | [媒体架构](media-architecture.md) |
 | TB-MEDIA-005 | 📋 待办 | 🟢 P3 | 停止共享时编码器输入面 abandoned 噪声（良性） | 2026-10-20 | — | [媒体架构](media-architecture.md) |
-| TB-CORE-001 | ✅ 已完成 | 🔴 P0 | 正确性与资源清理（B1–B6 全落地；设备点位归 TB-ENG-013） | 2026-10-17 | 2026-10-22 | [实施计划](superpowers/plans/2026-10-22-core-correctness-cleanup.md) |
 | TB-CORE-002 | 🔶 部分完成 | 🔴 P0 | 会话与渲染目标解耦（解耦已落地，关窗不停会话待 DV-008） | 2026-10-17 | — | [窗口与会话设计](windowing-session-design.md) |
 | TB-WIN-001 | 🔶 部分完成 | 🟠 P1 | 窗口切换（方案 B；功能冒烟通过，全项回归待统一棒） | 2026-10-17 | — | [窗口与会话设计](windowing-session-design.md) |
 | TB-OBS-001 | 🔶 部分完成 | 🔴 P0 | 可观测性与基线（O1–O6 已落地，O7 待设备；N3/N4/S-2 口径遗留已登记） | 2026-10-17 | — | [本计划](superpowers/plans/2026-10-21-transport-observability.md) |
@@ -104,12 +104,9 @@
 | TB-AUDIO-001 | 🔶 部分完成 | 🟡 P2 | 音频链路（A1–A7 代码完成，设备验证待 TB-AUDIO-003） | 2026-10-17 | — | [音频计划](superpowers/plans/2026-10-21-audio.md) |
 | TB-AUDIO-002 | ⏸ 待裁决 | 🟡 P2 | 麦克风降级（D1=不做，未激活） | 2026-10-21 | — | [音频计划 6.9](superpowers/plans/2026-10-21-audio.md) |
 | TB-AUDIO-003 | ⏳ 等待设备验证 | 🟡 P2 | 音频设备验证清单（并入 TB-ENG-013 统一回归） | 2026-10-21 | — | [音频计划 6.10](superpowers/plans/2026-10-21-audio.md) |
-| TB-CLIENT-001 | 📋 待办 | 🟡 P2 | 客户端画质与多客户端 | 2026-10-17 | — | [媒体架构](media-architecture.md) |
-| TB-CLIENT-002 | 📋 待办 | 🟡 P2 | 单流与多档流策略 | 2026-10-17 | — | [媒体架构](media-architecture.md) |
-| TB-FW-007 | 📋 待办 | 🟡 P2 | HEVC 扩展验证 | 2026-10-17 | — | [编码框架设计](codec-framework.md) |
 | TB-FW-008 | 📋 待办 | 🟡 P2 | 框架测试与证据 | 2026-10-17 | — | [编码框架设计](codec-framework.md) |
 
-> 说明：`TB-FW-001` 至 `TB-FW-008` 是 `TB-MEDIA-001`、`TB-CLIENT-001` 与 `TB-CLIENT-002` 的框架分解，实施时合并跟踪，不重复计算完成率。`TB-FW-001`、`TB-FW-004`、`TB-FW-005` 已完成（隔离契约、Hub/队列与客户端状态机的 JVM 验证）；`TB-FW-002` 部分完成（JPEG 参考适配与 JVM E2E，批次 D 已接入生产降级路径）；`TB-FW-003`、`TB-FW-006`、`TB-MEDIA-001`、`TB-MEDIA-003` 已转「⏳ 等待验证」（批次 A–H 完成生产接线、切换编排、H.264 硬编硬解与能力选档，仅 JVM/fake 与编译验证）；`TB-FW-007`、`TB-FW-008` 仍未完成。代码完成不代表设备验证、RTP 或问题关闭已经存在。
+> 说明：`TB-FW-001` 至 `TB-FW-008` 是 `TB-MEDIA-001`、`TB-CLIENT-001` 与 `TB-CLIENT-002` 的框架分解，实施时合并跟踪，不重复计算完成率。`TB-FW-001`、`TB-FW-004`、`TB-FW-005` 已完成（隔离契约、Hub/队列与客户端状态机的 JVM 验证）；`TB-FW-002` 部分完成（JPEG 参考适配与 JVM E2E，批次 D 已接入生产降级路径）；`TB-FW-003`、`TB-FW-006`、`TB-MEDIA-001`、`TB-MEDIA-003` 已转「⏳ 等待验证」（批次 A–H 完成生产接线、切换编排、H.264 硬编硬解与能力选档，仅 JVM/fake 与编译验证）；`TB-FW-007` 已随 DV-003 裁决转「⏸️ 暂缓」（[DB-CODEC-015](decision-board.md#db-codec-015)），`TB-FW-008` 仍未完成。代码完成不代表设备验证、RTP 或问题关闭已经存在。
 
 ## ✅ 已完成
 
@@ -121,6 +118,7 @@
 | TB-ENG-006 | ✅ 已完成 | 🟡 P2 | JPEG 降级客户端查看器接回与死代码清理（B1–B4 全落地；设备点位归 TB-ENG-013） | 2026-10-19 | 2026-10-22 | [实施计划](superpowers/plans/2026-10-22-jpeg-viewer-reconnect.md) |
 | TB-DISC-011 | ✅ 已完成 | 🟡 P3 | 手动添加条目跨重启持久化（`ManualDeviceStore` 落盘 + 启动播种 + 长按移除；设备点位归 TB-ENG-013） | 2026-10-20 | 2026-10-22 | [发现调研](discovery-research.md) |
 | TB-ENG-014 | ✅ 已完成 | ⚪ P3 | H.264 编码器启动失败自动回退 JPEG 兼容模式（单次回退、Toast + 通知副标题可见、不记忆偏好；设备点位归 TB-ENG-013） | 2026-10-22 | 2026-10-22 | [TB-ENG-006](#tb-eng-006) |
+| TB-CORE-001 | ✅ 已完成 | 🔴 P0 | 正确性与资源清理（B1–B6 全落地；设备点位归 TB-ENG-013） | 2026-10-17 | 2026-10-22 | [实施计划](superpowers/plans/2026-10-22-core-correctness-cleanup.md) |
 | TB-DISC-010 | ✅ 已完成 | 🟠 P1 | 自签 TLS 与 TOFU 身份 pinning | 2026-10-20 | 2026-10-21 | [实施计划](superpowers/plans/2026-10-21-tls-tofu.md) |
 | TB-CLIENT-003 | ✅ 已完成 | 🟠 P1 | 查看器宽高比与缩放质量 | 2026-10-20 | 2026-10-20 | [实施计划](superpowers/plans/2026-10-21-viewer-quality-and-settings.md) |
 | TB-OBS-002 | ✅ 已完成 | 🟠 P1 | RTT 探针（Ping/Pong）与估计器 | 2026-10-21 | 2026-10-21 | [本计划](superpowers/plans/2026-10-21-transport-observability.md) |
@@ -154,7 +152,7 @@
 | TB-DOC-006 | ✅ 已完成 | — | 启动与签名清单 | 2026-10-17 | 2026-10-17 | [启动与签名清单](startup-checklist.md) |
 | TB-DOC-007 | ✅ 已完成 | — | 签名包与三设备安装 | 2026-10-17 | 2026-10-17 | [启动与签名清单](startup-checklist.md) |
 
-> 说明：编码框架的隔离核心契约、静态注册、单活动流 Runtime、StreamHub、每客户端有界队列、客户端六状态机与 JPEG 独立帧参考适配已完成并通过 JVM 验证（Task 1–9）；这些条目完成时尚未接入生产投屏，后续批次 A–H 已把框架接入 `LssService`/`LssServer`/`LssClient`（H.264 采集直通、客户端 Surface 渲染、JPEG 降级、能力选档与切换编排，仅经 JVM/fake 及编译验证），设备验证仍未执行；RTP/HEVC/AV1 未实现。其余代码优化任务（TB-CORE、TB-WIN、TB-CLIENT、TB-AUDIO、TB-CTRL 等）仍未开始。
+> 说明：编码框架的隔离核心契约、静态注册、单活动流 Runtime、StreamHub、每客户端有界队列、客户端六状态机与 JPEG 独立帧参考适配已完成并通过 JVM 验证（Task 1–9）；这些条目完成时尚未接入生产投屏，后续批次 A–H 已把框架接入 `ScreenShareService`/`ScreenShareServer`/`ScreenShareClient`（H.264 采集直通、客户端 Surface 渲染、JPEG 降级、能力选档与切换编排，仅经 JVM/fake 及编译验证），设备验证仍未执行。其余曾并列的代码优化任务现状（2026-10-22）：[TB-CORE-001](#tb-core-001) 已完成（B1–B6）、[TB-CORE-002](#tb-core-002) 部分完成（关窗语义待 DV-008）、[TB-WIN-001](#tb-win-001) 部分完成（功能冒烟通过，全项回归归 TB-ENG-013）、[TB-CLIENT-001](#tb-client-001) 与 [TB-CLIENT-002](#tb-client-002) 已暂缓（DV-012 裁决不做多档流）、[TB-AUDIO-001](#tb-audio-001) 部分完成（设备验证归 TB-AUDIO-003）、[TB-CTRL-001](#tb-ctrl-001) 暂缓（用户 2026-10-21 裁决）。RTP、AV1 未实现；HEVC 已由 DV-003 裁决不引入（[DB-CODEC-015](decision-board.md#db-codec-015)）。
 
 ## ⏳ 等待验证
 
@@ -164,7 +162,6 @@
 | TB-FW-006 | ⏳ 等待验证 | 🟠 P1 | 编码切换编排 | 2026-10-17 | — | [编码框架设计](codec-framework.md) |
 | TB-MEDIA-001 | ⏳ 等待验证 | 🟠 P1 | H.264 硬编硬解 | 2026-10-17 | — | [媒体架构](media-architecture.md) |
 | TB-MEDIA-003 | ⏳ 等待验证 | 🟠 P1 | 运行时能力探测 | 2026-10-17 | — | [媒体架构](media-architecture.md) |
-| TB-CODEC-001 | ⏳ 等待验证 | ⚪ P3 | HEVC 可选档位 | 2026-10-17 | — | [媒体架构](media-architecture.md) |
 | TB-NET-001 | ⏳ 等待验证 | ⚪ P3 | RTP/UDP 传输 | 2026-10-17 | — | [路线图阶段 5](optimization-roadmap.md) |
 | TB-NET-002 | ⏳ 等待验证 | ⚪ P3 | WebRTC 互操作 | 2026-10-17 | — | [路线图阶段 5](optimization-roadmap.md) |
 | TB-PROD-001 | ⏳ 等待验证 | ⚪ P3 | 场景边界 | 2026-10-17 | — | [产品语境](product-context.md) |
@@ -181,6 +178,10 @@
 | TB-MEDIA-002 | ⏸️ 暂缓 | ⚪ P3 | 每客户端转码 | 2026-10-17 | — | [媒体架构](media-architecture.md) |
 | TB-REWRITE-001 | ⏸️ 暂缓 | ⚪ P3 | Kotlin 重写 | 2026-10-17 | — | [路线图](optimization-roadmap.md) |
 | TB-ROOT-001 | ⏸️ 暂缓 | ⚪ P3 | root 输入注入 | 2026-10-17 | — | [媒体架构](media-architecture.md) |
+| TB-CLIENT-001 | ⏸️ 暂缓 | 🟡 P2 | 客户端画质与多客户端（扇出/有界队列/统计已落地，剩余档位协商随 DV-012 不做） | 2026-10-17 | — | [决策 DB-MULTI-006](decision-board.md#db-multi-006) |
+| TB-CLIENT-002 | ⏸️ 暂缓 | 🟡 P2 | 单流与多档流策略（DV-012 裁决不做多档流，保持单流） | 2026-10-17 | — | [决策 DB-MULTI-006](decision-board.md#db-multi-006) |
+| TB-FW-007 | ⏸️ 暂缓 | 🟡 P2 | HEVC 扩展验证（DV-003 裁决不引入 HEVC；扩展点保留） | 2026-10-17 | — | [决策 DB-CODEC-015](decision-board.md#db-codec-015) |
+| TB-CODEC-001 | ⏸️ 暂缓 | ⚪ P3 | HEVC 可选档位（随 DV-003 不引入 HEVC，无待验证内容） | 2026-10-17 | — | [决策 DB-CODEC-015](decision-board.md#db-codec-015) |
 
 ## 📎 条目详情
 
@@ -293,36 +294,9 @@
 
 </details>
 
-<a id="tb-eng-007"></a>
-<details><summary>TB-ENG-007 客户端发送统计并入服务端统计（已并入 TB-OBS-001 O3，见已完成条目）</summary>
+<details><summary>TB-ENG-007 客户端发送统计并入服务端统计（✅ 2026-10-21，已并入 TB-OBS-001 O3，详情见已完成条目）</summary>
 
 本条目已按 [本计划](superpowers/plans/2026-10-21-transport-observability.md) 8.4 并入 [TB-OBS-001](#tb-obs-001) 的 O3 并已完成；详情见「✅ 已完成条目」中的同名块。
-
-</details>
-
-<a id="tb-core-001"></a>
-<details><summary>TB-CORE-001 正确性与资源清理（✅ 已完成 · B1–B6 全落地 · 2026-10-22）</summary>
-
-- **状态 / 优先级 / 创建 / 完成**：✅ 已完成 / 🔴 P0 / 2026-10-17 / 2026-10-22（B1–B6 分六批落地）
-- **任务**：正确性与资源清理：幂等停止、单一生命周期所有者、线程池终止、缩短临界区、媒体路径移除 `CallerRunsPolicy`、resize 代次隔离、权限撤销降级、重连退避、IPv6 地址与 NSD 服务类型修正、服务名隐私。
-- **交付物 / 验证证据**：交付：代码改动与单元/仪器/压力测试。验证：阶段 1 的启动停止、旋转尺寸、网络、慢客户端、权限、回归各项通过；JVM 分批执行，设备项待棒。
-- **子项核对（2026-10-22，代码复核，计划见[实施计划](superpowers/plans/2026-10-22-core-correctness-cleanup.md)）**：
-  - ✅ ⑤ `CallerRunsPolicy`：全仓库已无该拒绝策略（B/C 批次移除）。
-  - ✅ ⑨ NSD 服务类型 / 服务名隐私 / IPv6 格式：`discovery/nsd/NsdConstants.NSD_SERVICE_TYPE = "_lss._tcp"`（legacy 类型过渡期双注册）；TXT 记录的 `n`（名称）仅在用户开启共享设备名时写入；`support/NetUtils` 对 IPv6 字面量加方括号。证据见 [TB-DISC-003](#tb-disc-003)（提交 `a90358a`、`99cbc03`）。
-  - ✅ 发现侧重连退避：`support/BackoffPolicy` 按服务类型各自持有，由 `NsdDiscoveryCoordinator` 使用（同上提交）。
-  - ✅ ①② 幂等停止与单一生命周期所有者：B3 把两个前台服务的清理收口为一次性 `TeardownCoordinator`，`stopService()` 与 `onDestroy()` 走同一份有序步骤（设备回归见 [TB-ENG-013](#tb-eng-013)）。
-  - ✅ ④⑥ 缩短临界区与 resize 代次隔离：B2 把 JPEG 压缩与投递移出 reader 锁，并给采集侧加代次令牌；编码侧的 attempt generation 与 `configEpoch` 此前已完成。
-  - ✅ ③ 线程池终止：服务端 gRPC 由 `GrpcServerShutdown` 有序收尾（B4 起先关闭活跃会话再清表）；客户端 decode/audio/gRPC 三池在 `stop()` 里按 250 ms 总预算有界等待。
-  - ✅ ⑦ 权限撤销降级：投影被系统停止时 Toast 提示并走 teardown；录音 `SecurityException` 归类 `PERMISSION_DENIED`；两个服务的全部浮窗与浮窗对话框经 `support/OverlayWindow`，失败只记一条 `Log.w`、会话继续（B5，设备点位归 [TB-ENG-013](#tb-eng-013)）。
-  - ✅ ⑧ 重连退避与上限：观看端 `client/ReconnectPolicy` 按 0/1/2/4/8 s 退避、最多 5 次，重试按钮延迟发起、用尽后只剩「停止观看」（B6）。
-- **B1 完成（2026-10-22，提交 `6ee4790`）**：`StreamRuntime.start()` 在分配 attempt 后的所有步骤（关旧编码器、`registry.require`、工厂创建、surface 校验、`start`）收敛到 `failAttempt` 失败出口——状态置 `FAILED`、清 `publishedDescriptor` 与 `deferred`、清 `activeEncoder`、锁外关闭编码器、监听器只通知一次；`CodecNotFoundException` 保持原类型，其余包成 `EncoderException`，`FAILED && 未发布` 因此可重试，不再只能 `close()`。旧编码器 `close()` 失败也按失败处理，并把该编码器移入 retired 列表由后续 `close()` 重试释放。`switchDescriptor()` 的 `registry.require` 移出状态锁，未注册 codec 包成 `CodecSwitchException`，旧编码器/descriptor/epoch 不变、同一 epoch 可重试。`updateParameters()` 不再在状态锁内调用编码器（锁内取 encoder+generation → 锁外调用 → 锁内按代次提交缓存），代次已变时对新编码器重试一次；编码器抛异常仍保持缓存不变并上抛。JVM 证据：新增 `StreamRuntimeStartFailureTest` 8 条（未注册 codec 的 `FAILED` 与可重试、注册后重试成功、旧编码器关闭失败仍可重试、`READY` 再启动被拒、switch 到未注册 codec 保状态并同 epoch 重试、`updateParameters` 不持状态锁、编码器更新失败保缓存、并发 switch 后重放到新编码器）；全量 **1389 tests / 133 classes / 0 failures / 0 errors / 0 skipped**（基线 1381/132，+8 条 / +1 类）。`./gradlew :app:assembleDebug` 通过；`:app:lintDebug` **0 errors / 146 warnings**（与基线同数）。
-- **B2 完成（2026-10-22，提交 `1c4789d`）**：采集线程改为「锁内只碰 `Image` 生命周期、锁外压缩与投递」。新增纯 JVM `service/ProjectionGeneration`（`AtomicLong`；`begin()`/`isCurrent()`/`invalidate()`）与 `service/CaptureThrottlePolicy`（纯节流决策，帧率 ≤0 按 1、首帧接受、时间戳回落接受）；`ScreenShareService` 的 `onImageAvailable` 在 `mImageReaderLock` 内只做 reader 身份检查、节流判断、`acquireLatestImage`、ARGB 像素拷贝进**采集线程私有** Bitmap、`image.close()` 与 `(runtime, generation)` 快照，JPEG 压缩与 `submitFrame` 移到锁外并在投递前用 `isCurrent` 校验代次；共享字段 `mScreenFrameBitmap` 删除（teardown 不再 recycle）；`mStreamRuntime` 改 `volatile`；reader 创建（`onServerStarted`）与替换（`updateProjectionSize`）处 `begin()`，`stopService()` 关 reader 前 `invalidate()`；新增 `volatile ProjectionSettings mCaptureSettings`，由 `buildProjectionSettings()` 在主线程发布，采集线程只读该快照（替代直接读 `mProjectionQuality`/`mProjectionFrameRate`），偏好变更（质量、帧率、全量刷新）与热档变化处补发布。JVM 证据：新增 `ProjectionGenerationTest` 5 条（新 token 有效、`begin()` 淘汰旧 token、`invalidate()` 全失效、并发 `begin()` 唯一递增、`isCurrent` 无副作用）与 `CaptureThrottlePolicyTest` 6 条（首帧、间隔不足、间隔足够、帧率 0/负值、时间戳回落、同时间戳只过一次）；全量 **1400 tests / 135 classes / 0 failures / 0 errors / 0 skipped**（B1 后基线 1389/133，+11 条 / +2 类）。`./gradlew :app:assembleDebug` 通过；`:app:lintDebug` **0 errors / 146 warnings**（与基线同数）。JPEG 帧率/质量/尺寸口径未变（节流仍按有效帧率、质量仍取偏好快照、reader 尺寸仍由 `mProjectionSize` 决定）；H.264 路径未触及。
-- **B3 完成（2026-10-22，提交 `8166a75`）**：两个前台服务的清理收口到纯 JVM `service/TeardownCoordinator`（有序 `Step` 列表 + `AtomicBoolean` 一次性执行；单步 `RuntimeException` 记入 `StepFailure` 并继续执行后续步骤，不向外抛；`isDone()`）。`ScreenShareService` 的 15 步顺序与改前 `stopService()` 逐行 1:1：`reset-session-state` → `cancel-main-thread-work`（含新增的 `mEncoderRebuildRunnable` 取消）→ `stop-audio` → `stop-video-watch` → `dismiss-chip` → `close-stream-pipeline`（runtime.close → hub.unregister → 清空）→ `release-capture-display` → `close-image-reader`（锁内 `invalidate()` → close）→ `release-reader-handler` → `quit-reader-thread` → `stop-media-projection` → `stop-announcements` → `stop-server` → `notify-clients-stopped` → `remove-notification`；`ScreenViewerService` 的 9 步：`reset-session-state` → `cancel-main-thread-work`（metrics/HUD/watchdog + 指标复位）→ `dismiss-dialog` → `dismiss-loading-overlay` → `release-activity-host` → `teardown-media-session` → `dismiss-viewer-overlay` → `stop-client` → `remove-notification`。`stopService()` = `run()` + `stopSelf()`，二次进入直接返回（不再二次 `notifyServerStopped` 或 `beginStop`）；`onDestroy()` 也跑同一份 teardown 作为任何销毁路径的兜底，之后只做服务级清理（共享端：注销 receiver/身份监听/偏好观察者、清审批通知与待批状态、`stopThermalMonitor`、`mServerControlExecutor.shutdown`；查看端：`sInstance=null`、watchdog、注销 receiver）。每会话在 `onStartCommand` 接受新会话时重建协调器，覆盖「停止后、销毁前又收到新 start」的路径，否则新会话的停止会变成空操作。JVM 证据：新增 `TeardownCoordinatorTest` 6 条（顺序、二次调用不执行、失败记录且后续继续、失败不外抛、`isDone`、空列表）；全量 **1406 tests / 136 classes / 0 failures / 0 errors / 0 skipped**（B2 后基线 1400/135，+6 条 / +1 类）。`./gradlew :app:assembleDebug` 通过；`:app:lintDebug` **0 errors / 146 warnings**（与基线同数）。`ComponentConstructionTest`、`ServerStartCoordinatorTest`、`LazyContextValueTest` 全绿，字段初始化器未新增 Context 访问。JVM 覆盖不到的点（真实 Service 的 stop→start→destroy 循环、系统回收顺序、悬浮条与通知在停止时的消失时序）登记 [TB-ENG-013](#tb-eng-013) 设备回归。
-- **B4 完成（2026-10-22，提交 `284fdb3`）**：新增纯 JVM `support/ExecutorShutdown.shutdownAndAwait(executor, timeoutMs)`（`shutdownNow()` → 有界 `awaitTermination`；`InterruptedException` 恢复中断标志并返回 `false`；`null` 或已终止返回 `true`；幂等，重复调用不抛）。`ScreenShareClient.stop()` 加 `AtomicBoolean` once 守卫（二次进入直接返回），顺序保持 `mGrpcChannel.shutdownNow()` → decode 池 100 ms → audio 池 100 ms → gRPC client 池 50 ms，主线程最坏阻塞 **≤250 ms**（设计口径，待设备棒核对「停止观看」的实测卡顿）。`ScreenShareServer.stop()` 在清空前逐个 `StreamCallHandler.close()`（单个失败只记 `Log.w`，不阻断其余调用），drain 线程因此不再依赖 gRPC 关闭回调退出。`ScreenShareService` 的 `mServerControlExecutor` 维持 `shutdown()` **不等待**，契约写进字段 Javadoc 与 `onDestroy()` 调用点（主线程不能等 keystore；排队中的 start 由 `ServerStartCoordinator` 自停，shutdown 只此一处且本身幂等）。JVM 证据：新增 `ExecutorShutdownTest` 5 条（协作任务预算内退出、忽略中断的任务预算后返回 false 且二次调用可成功、调用线程中断标志保留、null/已终止返回 true、零预算与重复调用不抛）；全量 **1411 tests / 137 classes / 0 failures / 0 errors / 0 skipped**（B3 后基线 1406/136，+5 条 / +1 类），debug 与 release 变体同数。`./gradlew build :app:assembleDebugAndroidTest`（与 CI push 同款命令，含 `testReleaseUnitTest`）通过；`:app:lintDebug` **0 errors / 146 warnings**（与基线同数）。`GrpcServerShutdownTest`、`AudioPipelineTest`、`ClientAudioSessionTest` 全绿。CI 首跑（`610fd06`）暴露一处与本批无关的测试替身契约缺陷：`AudioPipelineTest.stopIsIdempotentAndStartAfterStopWorks` 失败，根因是 `FakeAudioEncoderBridge.configure()` 未复位 `closed`（真实 `AndroidAudioEncoderBridge.configure()` 会新建编码器并复位），第二会话首帧 `queueInput` 抛 `bridge is closed` 使 `running` 变 false；由 `699d452` 修正替身并通过确定性复现验证，随后 Build run `39706030089` 绿。
-- **B5 完成（2026-10-22，提交 `56199bf`）**：新增 `support/OverlayWindow`（`attach`/`detach`/`update` 处理视图，`show`/`dismiss` 处理对话框；吞 `RuntimeException`（含 `BadTokenException`、`SecurityException`、`IllegalArgumentException`）、失败只记一条 `Log.w` 并返回布尔值；`detach`/`update` 先查 `getParent()`，重复调用幂等）。两个服务的浮窗调用点全部改走它：共享端 `ScreenShareChip` 的 add/remove/update 与停止确认框；查看端 `ScreenShareLoading`、`SurfaceShareViewer`（含显示模式菜单与断开确认框）、`ScreenShareViewer`（含设置/断开确认框）三个窗口的 add/remove/update 与全部浮窗 `AlertDialog`。悬浮条 attach 失败时不再启动 ticker 与偏好观察者，会话继续以通知为入口（符合媒体架构的「停止悬浮窗，保留通知/Activity 入口」）。`PlaybackCaptureSource.read()` 改捕 `RuntimeException` 并用 `AudioCaptureException.classify` 归类（`SecurityException`→`PERMISSION_DENIED`、`IllegalStateException`→`DEVICE_BUSY`、`UnsupportedOperationException`/`IllegalArgumentException`→`UNSUPPORTED`、其余→`INTERNAL`，null→`INTERNAL`）。`MediaProjection.Callback.onStop` 在 teardown 前弹 `screen_share_capture_stopped`（`values`「Screen capture was stopped, sharing has ended.」/ `values-zh`「屏幕录制已被停止，共享已结束。」）。JVM 证据：新增 `AudioCaptureExceptionTest` 5 条与 `OverlayWindowContractTest` 2 条（源码扫描两个 Service 不得出现 `mWindowManager.addView(` 或 `mWindowManager.removeViewImmediate(`，并确认扫描覆盖两个服务）；全量 **1418 tests / 139 classes / 0 failures / 0 errors / 0 skipped**（B4 后基线 1411/137，+7 条 / +2 类），debug 与 release 变体同数。`./gradlew build :app:assembleDebugAndroidTest` 通过；`:app:lintDebug` **0 errors / 146 warnings**（与基线同数）；`check_strings`（175 键双一致）、`check_cjk`、`check_docs` 通过。JVM 覆盖不到的真实权限撤销点位（系统设置撤销「显示在其他应用的上层」、撤销录音权限、投影被系统停止）登记 [TB-ENG-013](#tb-eng-013)。
-- **B6 完成（2026-10-22，提交 `39951f0`）**：新增纯 JVM `client/ReconnectPolicy`（延迟 `{0,1000,2000,4000,8000}` ms、`MAX_ATTEMPTS = 5`；`nextDelayMs()` 每次消费一次并封顶 8 s，`canRetry()`、`getAttempts()`、`reset()`，方法 `synchronized`）。`ScreenViewerService.onConnected()` 与接受新会话的 `onStartCommand` 处 `reset()`；`onDisconnected()` 三个分支的最终行为：①安全拒绝（身份/授权）保持原样，只给「确定」并结束观看，不重试也不消耗次数；②可重试时确认框的确定按钮改为 `mMainHandler.postDelayed(...)` 按退避延迟发起重连，点击后按钮立即禁用并由 1 s 周期 Handler 刷新「将在 %d 秒后重试」，到期自动建新 client 并重新显示 loading，取消按钮会取消待执行重试并结束观看；③用尽 5 次后文案改为「多次重试仍未连接成功…」，只有一个「停止观看」按钮。待执行的重试与倒计时挂进 teardown 的 `cancel-main-thread-work` 步骤，并在新会话启动时取消，停止或切换会话后不会再有隐式重连。新增字符串 `screen_share_retry_countdown`（`values`「Reconnecting in %1$d s」/ `values-zh`「将在 %1$d 秒后重试」）与 `screen_share_retry_exhausted_message`（`values`「Unable to connect after several retries. Check that the device is online, then start viewing again from the device list.」/ `values-zh`「多次重试仍未连接成功。请确认对方设备在线后，从设备列表重新发起观看。」）。JVM 证据：新增 `ReconnectPolicyTest` 6 条（首次 0 ms、序列 0/1/2/4/8 s 且封顶、第 6 次 `canRetry()` 为 false、`reset()` 回到首次、`reset()` 不改变已取出的延迟、并发调用不越界）；全量 **1424 tests / 140 classes / 0 failures / 0 errors / 0 skipped**（B5 后基线 1418/139，+6 条 / +1 类），debug 与 release 变体同数。`./gradlew build :app:assembleDebugAndroidTest` 通过；`:app:lintDebug` **0 errors / 146 warnings**（与基线同数）；`check_strings`（177 键双一致）、`check_cjk`、`check_docs` 通过。
-- **完成判据核对（2026-10-22）**：① 幂等停止、② 单一生命周期所有者（B3）、③ 线程池终止（B4）、④ 缩短临界区、⑥ resize 代次隔离（B2）、⑤ `CallerRunsPolicy` 移除（B/C 批次）、⑦ 权限撤销降级（B5）、⑧ 重连退避与上限（B6）、⑨ IPv6/NSD 类型/服务名隐私（TB-DISC-003）九项全部落地且在 JVM 侧有回归。JVM 不能覆盖的设备点位——启动/停止循环与系统回收顺序、旋转与慢客户端、悬浮窗/录音/投影权限撤销、网络断开恢复与重连退避的实际计时、停止观看的主线程卡顿（B4 预算 ≤250 ms）——归 [TB-ENG-013](#tb-eng-013) 设备回归。全量 **1424 tests / 140 classes / 0 failures / 0 errors / 0 skipped**；六批均通过 `./gradlew build :app:assembleDebugAndroidTest` 与 `:app:lintDebug` 0 errors。
-- **关联文档**：[实施计划](superpowers/plans/2026-10-22-core-correctness-cleanup.md)、[路线图阶段 1](optimization-roadmap.md)、[项目现状风险清单](project-assessment.md)
 
 </details>
 
@@ -426,7 +400,7 @@
 - **构建证据**：`./gradlew :app:assembleDebug --offline` 通过；`:app:lintDebug` **0 errors / 146 warnings**（与基线同数；新增计数文案的 `PluralsCandidate` 已按 lint 口径改写）；`check_strings.py`（174 键双一致）、`check_cjk.py`、`check_docs.py` 通过。
 - **设备判据（待验证棒）**：① 未授权设备请求观看 → 服务端 ≤1 s 出现审批通知（名称 + id 短码 + 指纹短码），客户端显示「等待对方批准」，`ServerStats` 会话数与 `lss.metrics` 的 `enc.*` 不因等待而变化；②「允许一次」→ 出画，断开重连再次审批；③「总是允许」→ 出画，重连不再审批，`shared_prefs/lss-authorization.xml` 出现该 id；④「拒绝」→ 客户端弹出「对方拒绝了这次观看请求」并结束会话（无重试入口）；⑤ 60 s 不操作 → 客户端弹出超时文案，服务端通知消失；⑥ 设置 →「已授权设备」撤销正在观看的设备 → 客户端 ≤1 s 内断流并显示「对方已撤销观看授权」（`logcat` 有 `reason = authorization_revoked`）；⑦ 关闭开关 → 新设备直接出画（旧行为），设置里出现风险说明，重新打开后既有授权仍生效；⑧ 客户端未开启「共享设备名」→ 审批显示「未知设备」+ id 短码。
 - **设备四路径复验（r2，2026-10-21 23:03–23:06，双真机 A 服务端（API 29）/ B 观看端（API 31））**：①✅ 审批通知（`lss-authorization` 通道 id=2，三键）与主界面「观看请求」对话框在同一秒出现（A `onApprovalRequested` 23:03:04.740，B `onApprovalPending` .763），等待期间 `enc.auRate=0.0`、`kf.joins` 不增、0 位观看者；②✅「总是允许」→ A `1 个连接 | 30.75 KB/s`、B `ClientStats(mInboundDataRate≈31.9 KB/s)`，`lss-authorization.xml` 写入 B 的 id；重连后审批请求 0 次、无等待提示、直接出画；③✅「拒绝」→ A `reason = authorization_denied`、B「对方拒绝了这次观看请求。」，其后 20 s 内 B 无 `onStartCommand` / 客户端启动，A 无新审批请求；④✅ 撤销 → A 拒绝 23:04:30.709、B `onError` .740（**31 ms**），B 显示「对方已撤销观看授权，连接已断开。」，已授权列表清零。证据目录 `device-test-2026-10-21-sec/r2/`（`logs/`、`shots/`）。
-- **已知取舍 / 遗留**：① **PIN/扫码配对与会话令牌未实施**（DV-022 仍维持人工比对口径，DV-026 登记审批体验参数）；② 反控（[TB-CTRL-001](#tb-ctrl-001)，用户 2026-10-21 裁决暂缓）未实施，因此「观看/音频/反控分级授权」只剩观看一项落地，**音频按 D11 不单设许可**，不得写成「分级授权已完成」；③ 待批准期间占用一条 gRPC 流与一个 5 ms 轮询的 drain 线程（不占编码器与会话），最多 60 s；④ 会话进行中把开关从关改为开，未授权的当前观看者会按 `authorization_revoked` 断开并需重新批准（刻意保守，未单独设「即时生效」提示）；⑤ 明文调试开关下的无身份对端每次都只能「允许一次」（无可持久化的身份）；⑥ 「已授权设备」计数只在设置 sheet 显示时与撤销后刷新，不订阅存储变更。
+- **已知取舍 / 遗留**：① **PIN/扫码配对与会话令牌不做**——2026-10-22 DV-009 裁决接受「仅可信局域网」现状边界（[DB-SEC-005](decision-board.md#db-sec-005)），本条因此只剩设备点位 ⑤–⑧；DV-022 的人工比对口径与 DV-026 的审批体验参数不变；② 反控（[TB-CTRL-001](#tb-ctrl-001)，用户 2026-10-21 裁决暂缓）未实施，因此「观看/音频/反控分级授权」只剩观看一项落地，**音频按 D11 不单设许可**，不得写成「分级授权已完成」；③ 待批准期间占用一条 gRPC 流与一个 5 ms 轮询的 drain 线程（不占编码器与会话），最多 60 s；④ 会话进行中把开关从关改为开，未授权的当前观看者会按 `authorization_revoked` 断开并需重新批准（刻意保守，未单独设「即时生效」提示）；⑤ 明文调试开关下的无身份对端每次都只能「允许一次」（无可持久化的身份）；⑥ 「已授权设备」计数只在设置 sheet 显示时与撤销后刷新，不订阅存储变更。
 - **关联文档**：[实施计划](superpowers/plans/2026-10-21-sec-pairing.md)、[决策 DB-SEC-001](decision-board.md#db-sec-001)、[DB-SEC-004](decision-board.md#db-sec-004)、[DV-026](decision-board.md)、[媒体架构安全模型](media-architecture.md)、[TB-DISC-010 实施计划](superpowers/plans/2026-10-21-tls-tofu.md)、[音频计划第 8 章](superpowers/plans/2026-10-21-audio.md)、[项目现状安全边界](project-assessment.md)
 
 </details>
@@ -498,27 +472,6 @@
 
 </details>
 
-<a id="tb-client-001"></a>
-<details><summary>TB-CLIENT-001 客户端画质与多客户端（📋 待办）</summary>
-
-- **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟡 P2 / 2026-10-17 / —
-- **任务**：客户端画质与多客户端：分辨率、帧率、码率档位；`configEpoch` 与 IDR 刷新；一次编码按客户端扇出；每客户端有界队列与统计；慢客户端隔离。
-- **交付物 / 验证证据**：交付：档位协商、扇出队列、客户端统计。验证：阶段 3 的画质、多客户端、慢客户端项通过；当前未执行。
-- **关联文档**：[路线图阶段 3](optimization-roadmap.md)、[媒体架构多客户端](media-architecture.md)
-
-</details>
-
-<a id="tb-client-002"></a>
-<details><summary>TB-CLIENT-002 单流与多档流策略（📋 待办）</summary>
-
-- **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟡 P2 / 2026-10-17 / —
-- **任务**：兼容单流与多档流策略：默认共同能力交集；多档流让高能力客户端用高规格、其他客户端保留 H.264 档；受编码器实例、功耗与热限制；新客户端不得迫使已有客户端无提示降级；小窗/全屏可选不同档位。
-- **交付物 / 验证证据**：交付：选流策略、档位切换与可见回退、多客户端影响评估。验证：多客户端组合下无静默降级；档位切换 configEpoch/IDR 正确；编码器实例与功耗在预算内；无实测收益时保持单流；当前未执行。
-- **关联文档**：[媒体架构兼容单流与多档编码](media-architecture.md)、[决策 DB-MULTI-004](decision-board.md)、[路线图阶段 3](optimization-roadmap.md)
-
-</details>
-
-<a id="tb-client-005"></a>
 <details><summary>TB-CLIENT-005 观看端解码队列背压与追赶（✅ 2026-10-21，详情见已完成条目）</summary>
 
 本条目已实现解码追赶（catch-up）并完成 JVM 验证；交付物、指标与设备点位见「✅ 已完成条目」中的同名块。设备实测不在本棒。
@@ -581,22 +534,12 @@
 
 </details>
 
-<a id="tb-fw-007"></a>
-<details><summary>TB-FW-007 HEVC 扩展验证（📋 待办）</summary>
-
-- **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟡 P2 / 2026-10-17 / —
-- **任务**：HEVC 扩展验证：复用 `MediaCodec` 骨架，只接受明确安全 IDR；CRA/BLA/RASL/RADL 不作为可加入点。
-- **交付物 / 验证证据**：交付：HEVC 描述符、工厂、策略与验证记录。验证：新增 HEVC 不改公共层；CRA/RASL 不被接受；当前未实施。
-- **关联文档**：[编码框架设计](codec-framework.md)、[DB-CODEC-013](decision-board.md)、[DB-CODEC-009](decision-board.md)
-
-</details>
-
 <a id="tb-fw-008"></a>
 <details><summary>TB-FW-008 框架测试与证据（📋 待办）</summary>
 
 - **状态 / 优先级 / 创建 / 完成**：📋 待办 / 🟡 P2 / 2026-10-17 / —
 - **任务**：编码框架测试与证据：契约测试、可加入点、epoch 语义、队列溢出、切换、传输适配与回退；补充设备与网络验证记录。
-- **交付物 / 验证证据**：已具备 JVM 证据：`StreamFrameworkEndToEndTest`、`StreamHubTest`、`StreamRuntimeTest`、`ClientSendSessionTest`、`ClientMediaSessionTest`、`JpegCodecTest` 等 13 类 155 tests / 0 failures；H.264 最终集中修复（`9cb8af9`）后全量 364 tests / 0 failures，覆盖 H.264 JVM E2E，`:app:assembleDebug` 与 `:app:assembleDebugAndroidTest` 成功（androidTest 未运行），Build CI 通过；批次 A–H 后全量 **396 tests / 0 failures**（新增 32），覆盖协议映射、服务端接线、客户端接收、能力选档与 deferred 切换，各批 Build CI success；设备与网络验证记录仍未执行，因此本任务仍未完成。
+- **交付物 / 验证证据**：已具备 JVM 证据：`StreamFrameworkEndToEndTest`、`StreamHubTest`、`StreamRuntimeTest`、`ClientSendSessionTest`、`ClientMediaSessionTest`、`JpegCodecTest` 等 13 类 155 tests / 0 failures；H.264 最终集中修复（`9cb8af9`）后全量 364 tests / 0 failures，覆盖 H.264 JVM E2E，`:app:assembleDebug` 与 `:app:assembleDebugAndroidTest` 成功（androidTest 未运行），Build CI 通过；批次 A–H 后全量 **396 tests / 0 failures**（新增 32），覆盖协议映射、服务端接线、客户端接收、能力选档与 deferred 切换，各批 Build CI success；设备与网络验证记录仍未执行，因此本任务仍未完成。**现状（2026-10-22）**：全量基线为 1499 tests / 148 classes，0 failures / 0 errors / 0 skipped（上文 396 tests / 364 tests 为各自时点证据，不改写）。
 - **关联文档**：[编码框架设计](codec-framework.md)、[路线图阶段 2](optimization-roadmap.md)、[路线图阶段 4](optimization-roadmap.md)
 
 </details>
@@ -620,6 +563,32 @@
 - **与裁决口径的出入**：裁决允许「Toast 或状态文案」，本批两者都做（toast + 通知副标题），因为 toast 会消失而降级持续整个会话；不记忆偏好与「只启动时回退」按裁决执行。原条目的「在通知/悬浮条标注」按通知副标题落实，悬浮条（chip）未改文案。
 - **来源**：2026-10-22 [JPEG 接回计划](superpowers/plans/2026-10-22-jpeg-viewer-reconnect.md) §7 产品口径与 §8 裁决 4（自动回退另立条目）。
 - **关联文档**：[TB-ENG-006](#tb-eng-006)、[JPEG 接回计划](superpowers/plans/2026-10-22-jpeg-viewer-reconnect.md)、[媒体架构 §12 失败模式](media-architecture.md)
+
+</details>
+
+<a id="tb-core-001"></a>
+<details><summary>TB-CORE-001 正确性与资源清理（✅ 已完成 · B1–B6 全落地 · 2026-10-22）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：✅ 已完成 / 🔴 P0 / 2026-10-17 / 2026-10-22（B1–B6 分六批落地）
+- **任务**：正确性与资源清理：幂等停止、单一生命周期所有者、线程池终止、缩短临界区、媒体路径移除 `CallerRunsPolicy`、resize 代次隔离、权限撤销降级、重连退避、IPv6 地址与 NSD 服务类型修正、服务名隐私。
+- **交付物 / 验证证据**：交付：代码改动与单元/仪器/压力测试。验证：阶段 1 的启动停止、旋转尺寸、网络、慢客户端、权限、回归各项通过；JVM 分批执行，设备项待棒。
+- **子项核对（2026-10-22，代码复核，计划见[实施计划](superpowers/plans/2026-10-22-core-correctness-cleanup.md)）**：
+  - ✅ ⑤ `CallerRunsPolicy`：全仓库已无该拒绝策略（B/C 批次移除）。
+  - ✅ ⑨ NSD 服务类型 / 服务名隐私 / IPv6 格式：`discovery/nsd/NsdConstants.NSD_SERVICE_TYPE = "_lss._tcp"`（legacy 类型过渡期双注册）；TXT 记录的 `n`（名称）仅在用户开启共享设备名时写入；`support/NetUtils` 对 IPv6 字面量加方括号。证据见 [TB-DISC-003](#tb-disc-003)（提交 `a90358a`、`99cbc03`）。
+  - ✅ 发现侧重连退避：`support/BackoffPolicy` 按服务类型各自持有，由 `NsdDiscoveryCoordinator` 使用（同上提交）。
+  - ✅ ①② 幂等停止与单一生命周期所有者：B3 把两个前台服务的清理收口为一次性 `TeardownCoordinator`，`stopService()` 与 `onDestroy()` 走同一份有序步骤（设备回归见 [TB-ENG-013](#tb-eng-013)）。
+  - ✅ ④⑥ 缩短临界区与 resize 代次隔离：B2 把 JPEG 压缩与投递移出 reader 锁，并给采集侧加代次令牌；编码侧的 attempt generation 与 `configEpoch` 此前已完成。
+  - ✅ ③ 线程池终止：服务端 gRPC 由 `GrpcServerShutdown` 有序收尾（B4 起先关闭活跃会话再清表）；客户端 decode/audio/gRPC 三池在 `stop()` 里按 250 ms 总预算有界等待。
+  - ✅ ⑦ 权限撤销降级：投影被系统停止时 Toast 提示并走 teardown；录音 `SecurityException` 归类 `PERMISSION_DENIED`；两个服务的全部浮窗与浮窗对话框经 `support/OverlayWindow`，失败只记一条 `Log.w`、会话继续（B5，设备点位归 [TB-ENG-013](#tb-eng-013)）。
+  - ✅ ⑧ 重连退避与上限：观看端 `client/ReconnectPolicy` 按 0/1/2/4/8 s 退避、最多 5 次，重试按钮延迟发起、用尽后只剩「停止观看」（B6）。
+- **B1 完成（2026-10-22，提交 `6ee4790`）**：`StreamRuntime.start()` 在分配 attempt 后的所有步骤（关旧编码器、`registry.require`、工厂创建、surface 校验、`start`）收敛到 `failAttempt` 失败出口——状态置 `FAILED`、清 `publishedDescriptor` 与 `deferred`、清 `activeEncoder`、锁外关闭编码器、监听器只通知一次；`CodecNotFoundException` 保持原类型，其余包成 `EncoderException`，`FAILED && 未发布` 因此可重试，不再只能 `close()`。旧编码器 `close()` 失败也按失败处理，并把该编码器移入 retired 列表由后续 `close()` 重试释放。`switchDescriptor()` 的 `registry.require` 移出状态锁，未注册 codec 包成 `CodecSwitchException`，旧编码器/descriptor/epoch 不变、同一 epoch 可重试。`updateParameters()` 不再在状态锁内调用编码器（锁内取 encoder+generation → 锁外调用 → 锁内按代次提交缓存），代次已变时对新编码器重试一次；编码器抛异常仍保持缓存不变并上抛。JVM 证据：新增 `StreamRuntimeStartFailureTest` 8 条（未注册 codec 的 `FAILED` 与可重试、注册后重试成功、旧编码器关闭失败仍可重试、`READY` 再启动被拒、switch 到未注册 codec 保状态并同 epoch 重试、`updateParameters` 不持状态锁、编码器更新失败保缓存、并发 switch 后重放到新编码器）；全量 **1389 tests / 133 classes / 0 failures / 0 errors / 0 skipped**（基线 1381/132，+8 条 / +1 类）。`./gradlew :app:assembleDebug` 通过；`:app:lintDebug` **0 errors / 146 warnings**（与基线同数）。
+- **B2 完成（2026-10-22，提交 `1c4789d`）**：采集线程改为「锁内只碰 `Image` 生命周期、锁外压缩与投递」。新增纯 JVM `service/ProjectionGeneration`（`AtomicLong`；`begin()`/`isCurrent()`/`invalidate()`）与 `service/CaptureThrottlePolicy`（纯节流决策，帧率 ≤0 按 1、首帧接受、时间戳回落接受）；`ScreenShareService` 的 `onImageAvailable` 在 `mImageReaderLock` 内只做 reader 身份检查、节流判断、`acquireLatestImage`、ARGB 像素拷贝进**采集线程私有** Bitmap、`image.close()` 与 `(runtime, generation)` 快照，JPEG 压缩与 `submitFrame` 移到锁外并在投递前用 `isCurrent` 校验代次；共享字段 `mScreenFrameBitmap` 删除（teardown 不再 recycle）；`mStreamRuntime` 改 `volatile`；reader 创建（`onServerStarted`）与替换（`updateProjectionSize`）处 `begin()`，`stopService()` 关 reader 前 `invalidate()`；新增 `volatile ProjectionSettings mCaptureSettings`，由 `buildProjectionSettings()` 在主线程发布，采集线程只读该快照（替代直接读 `mProjectionQuality`/`mProjectionFrameRate`），偏好变更（质量、帧率、全量刷新）与热档变化处补发布。JVM 证据：新增 `ProjectionGenerationTest` 5 条（新 token 有效、`begin()` 淘汰旧 token、`invalidate()` 全失效、并发 `begin()` 唯一递增、`isCurrent` 无副作用）与 `CaptureThrottlePolicyTest` 6 条（首帧、间隔不足、间隔足够、帧率 0/负值、时间戳回落、同时间戳只过一次）；全量 **1400 tests / 135 classes / 0 failures / 0 errors / 0 skipped**（B1 后基线 1389/133，+11 条 / +2 类）。`./gradlew :app:assembleDebug` 通过；`:app:lintDebug` **0 errors / 146 warnings**（与基线同数）。JPEG 帧率/质量/尺寸口径未变（节流仍按有效帧率、质量仍取偏好快照、reader 尺寸仍由 `mProjectionSize` 决定）；H.264 路径未触及。
+- **B3 完成（2026-10-22，提交 `8166a75`）**：两个前台服务的清理收口到纯 JVM `service/TeardownCoordinator`（有序 `Step` 列表 + `AtomicBoolean` 一次性执行；单步 `RuntimeException` 记入 `StepFailure` 并继续执行后续步骤，不向外抛；`isDone()`）。`ScreenShareService` 的 15 步顺序与改前 `stopService()` 逐行 1:1：`reset-session-state` → `cancel-main-thread-work`（含新增的 `mEncoderRebuildRunnable` 取消）→ `stop-audio` → `stop-video-watch` → `dismiss-chip` → `close-stream-pipeline`（runtime.close → hub.unregister → 清空）→ `release-capture-display` → `close-image-reader`（锁内 `invalidate()` → close）→ `release-reader-handler` → `quit-reader-thread` → `stop-media-projection` → `stop-announcements` → `stop-server` → `notify-clients-stopped` → `remove-notification`；`ScreenViewerService` 的 9 步：`reset-session-state` → `cancel-main-thread-work`（metrics/HUD/watchdog + 指标复位）→ `dismiss-dialog` → `dismiss-loading-overlay` → `release-activity-host` → `teardown-media-session` → `dismiss-viewer-overlay` → `stop-client` → `remove-notification`。`stopService()` = `run()` + `stopSelf()`，二次进入直接返回（不再二次 `notifyServerStopped` 或 `beginStop`）；`onDestroy()` 也跑同一份 teardown 作为任何销毁路径的兜底，之后只做服务级清理（共享端：注销 receiver/身份监听/偏好观察者、清审批通知与待批状态、`stopThermalMonitor`、`mServerControlExecutor.shutdown`；查看端：`sInstance=null`、watchdog、注销 receiver）。每会话在 `onStartCommand` 接受新会话时重建协调器，覆盖「停止后、销毁前又收到新 start」的路径，否则新会话的停止会变成空操作。JVM 证据：新增 `TeardownCoordinatorTest` 6 条（顺序、二次调用不执行、失败记录且后续继续、失败不外抛、`isDone`、空列表）；全量 **1406 tests / 136 classes / 0 failures / 0 errors / 0 skipped**（B2 后基线 1400/135，+6 条 / +1 类）。`./gradlew :app:assembleDebug` 通过；`:app:lintDebug` **0 errors / 146 warnings**（与基线同数）。`ComponentConstructionTest`、`ServerStartCoordinatorTest`、`LazyContextValueTest` 全绿，字段初始化器未新增 Context 访问。JVM 覆盖不到的点（真实 Service 的 stop→start→destroy 循环、系统回收顺序、悬浮条与通知在停止时的消失时序）登记 [TB-ENG-013](#tb-eng-013) 设备回归。
+- **B4 完成（2026-10-22，提交 `284fdb3`）**：新增纯 JVM `support/ExecutorShutdown.shutdownAndAwait(executor, timeoutMs)`（`shutdownNow()` → 有界 `awaitTermination`；`InterruptedException` 恢复中断标志并返回 `false`；`null` 或已终止返回 `true`；幂等，重复调用不抛）。`ScreenShareClient.stop()` 加 `AtomicBoolean` once 守卫（二次进入直接返回），顺序保持 `mGrpcChannel.shutdownNow()` → decode 池 100 ms → audio 池 100 ms → gRPC client 池 50 ms，主线程最坏阻塞 **≤250 ms**（设计口径，待设备棒核对「停止观看」的实测卡顿）。`ScreenShareServer.stop()` 在清空前逐个 `StreamCallHandler.close()`（单个失败只记 `Log.w`，不阻断其余调用），drain 线程因此不再依赖 gRPC 关闭回调退出。`ScreenShareService` 的 `mServerControlExecutor` 维持 `shutdown()` **不等待**，契约写进字段 Javadoc 与 `onDestroy()` 调用点（主线程不能等 keystore；排队中的 start 由 `ServerStartCoordinator` 自停，shutdown 只此一处且本身幂等）。JVM 证据：新增 `ExecutorShutdownTest` 5 条（协作任务预算内退出、忽略中断的任务预算后返回 false 且二次调用可成功、调用线程中断标志保留、null/已终止返回 true、零预算与重复调用不抛）；全量 **1411 tests / 137 classes / 0 failures / 0 errors / 0 skipped**（B3 后基线 1406/136，+5 条 / +1 类），debug 与 release 变体同数。`./gradlew build :app:assembleDebugAndroidTest`（与 CI push 同款命令，含 `testReleaseUnitTest`）通过；`:app:lintDebug` **0 errors / 146 warnings**（与基线同数）。`GrpcServerShutdownTest`、`AudioPipelineTest`、`ClientAudioSessionTest` 全绿。CI 首跑（`610fd06`）暴露一处与本批无关的测试替身契约缺陷：`AudioPipelineTest.stopIsIdempotentAndStartAfterStopWorks` 失败，根因是 `FakeAudioEncoderBridge.configure()` 未复位 `closed`（真实 `AndroidAudioEncoderBridge.configure()` 会新建编码器并复位），第二会话首帧 `queueInput` 抛 `bridge is closed` 使 `running` 变 false；由 `699d452` 修正替身并通过确定性复现验证，随后 Build run `39706030089` 绿。
+- **B5 完成（2026-10-22，提交 `56199bf`）**：新增 `support/OverlayWindow`（`attach`/`detach`/`update` 处理视图，`show`/`dismiss` 处理对话框；吞 `RuntimeException`（含 `BadTokenException`、`SecurityException`、`IllegalArgumentException`）、失败只记一条 `Log.w` 并返回布尔值；`detach`/`update` 先查 `getParent()`，重复调用幂等）。两个服务的浮窗调用点全部改走它：共享端 `ScreenShareChip` 的 add/remove/update 与停止确认框；查看端 `ScreenShareLoading`、`SurfaceShareViewer`（含显示模式菜单与断开确认框）、`ScreenShareViewer`（含设置/断开确认框）三个窗口的 add/remove/update 与全部浮窗 `AlertDialog`。悬浮条 attach 失败时不再启动 ticker 与偏好观察者，会话继续以通知为入口（符合媒体架构的「停止悬浮窗，保留通知/Activity 入口」）。`PlaybackCaptureSource.read()` 改捕 `RuntimeException` 并用 `AudioCaptureException.classify` 归类（`SecurityException`→`PERMISSION_DENIED`、`IllegalStateException`→`DEVICE_BUSY`、`UnsupportedOperationException`/`IllegalArgumentException`→`UNSUPPORTED`、其余→`INTERNAL`，null→`INTERNAL`）。`MediaProjection.Callback.onStop` 在 teardown 前弹 `screen_share_capture_stopped`（`values`「Screen capture was stopped, sharing has ended.」/ `values-zh`「屏幕录制已被停止，共享已结束。」）。JVM 证据：新增 `AudioCaptureExceptionTest` 5 条与 `OverlayWindowContractTest` 2 条（源码扫描两个 Service 不得出现 `mWindowManager.addView(` 或 `mWindowManager.removeViewImmediate(`，并确认扫描覆盖两个服务）；全量 **1418 tests / 139 classes / 0 failures / 0 errors / 0 skipped**（B4 后基线 1411/137，+7 条 / +2 类），debug 与 release 变体同数。`./gradlew build :app:assembleDebugAndroidTest` 通过；`:app:lintDebug` **0 errors / 146 warnings**（与基线同数）；`check_strings`（175 键双一致）、`check_cjk`、`check_docs` 通过。JVM 覆盖不到的真实权限撤销点位（系统设置撤销「显示在其他应用的上层」、撤销录音权限、投影被系统停止）登记 [TB-ENG-013](#tb-eng-013)。
+- **B6 完成（2026-10-22，提交 `39951f0`）**：新增纯 JVM `client/ReconnectPolicy`（延迟 `{0,1000,2000,4000,8000}` ms、`MAX_ATTEMPTS = 5`；`nextDelayMs()` 每次消费一次并封顶 8 s，`canRetry()`、`getAttempts()`、`reset()`，方法 `synchronized`）。`ScreenViewerService.onConnected()` 与接受新会话的 `onStartCommand` 处 `reset()`；`onDisconnected()` 三个分支的最终行为：①安全拒绝（身份/授权）保持原样，只给「确定」并结束观看，不重试也不消耗次数；②可重试时确认框的确定按钮改为 `mMainHandler.postDelayed(...)` 按退避延迟发起重连，点击后按钮立即禁用并由 1 s 周期 Handler 刷新「将在 %d 秒后重试」，到期自动建新 client 并重新显示 loading，取消按钮会取消待执行重试并结束观看；③用尽 5 次后文案改为「多次重试仍未连接成功…」，只有一个「停止观看」按钮。待执行的重试与倒计时挂进 teardown 的 `cancel-main-thread-work` 步骤，并在新会话启动时取消，停止或切换会话后不会再有隐式重连。新增字符串 `screen_share_retry_countdown`（`values`「Reconnecting in %1$d s」/ `values-zh`「将在 %1$d 秒后重试」）与 `screen_share_retry_exhausted_message`（`values`「Unable to connect after several retries. Check that the device is online, then start viewing again from the device list.」/ `values-zh`「多次重试仍未连接成功。请确认对方设备在线后，从设备列表重新发起观看。」）。JVM 证据：新增 `ReconnectPolicyTest` 6 条（首次 0 ms、序列 0/1/2/4/8 s 且封顶、第 6 次 `canRetry()` 为 false、`reset()` 回到首次、`reset()` 不改变已取出的延迟、并发调用不越界）；全量 **1424 tests / 140 classes / 0 failures / 0 errors / 0 skipped**（B5 后基线 1418/139，+6 条 / +1 类），debug 与 release 变体同数。`./gradlew build :app:assembleDebugAndroidTest` 通过；`:app:lintDebug` **0 errors / 146 warnings**（与基线同数）；`check_strings`（177 键双一致）、`check_cjk`、`check_docs` 通过。
+- **完成判据核对（2026-10-22）**：① 幂等停止、② 单一生命周期所有者（B3）、③ 线程池终止（B4）、④ 缩短临界区、⑥ resize 代次隔离（B2）、⑤ `CallerRunsPolicy` 移除（B/C 批次）、⑦ 权限撤销降级（B5）、⑧ 重连退避与上限（B6）、⑨ IPv6/NSD 类型/服务名隐私（TB-DISC-003）九项全部落地且在 JVM 侧有回归。JVM 不能覆盖的设备点位——启动/停止循环与系统回收顺序、旋转与慢客户端、悬浮窗/录音/投影权限撤销、网络断开恢复与重连退避的实际计时、停止观看的主线程卡顿（B4 预算 ≤250 ms）——归 [TB-ENG-013](#tb-eng-013) 设备回归。全量 **1424 tests / 140 classes / 0 failures / 0 errors / 0 skipped**；六批均通过 `./gradlew build :app:assembleDebugAndroidTest` 与 `:app:lintDebug` 0 errors。
+- **关联文档**：[实施计划](superpowers/plans/2026-10-22-core-correctness-cleanup.md)、[路线图阶段 1](optimization-roadmap.md)、[项目现状风险清单](project-assessment.md)
 
 </details>
 
@@ -1114,16 +1083,6 @@
 
 </details>
 
-<a id="tb-codec-001"></a>
-<details><summary>TB-CODEC-001 HEVC 可选档位（⏳ 等待验证）</summary>
-
-- **状态 / 优先级 / 创建 / 完成**：⏳ 等待验证 / ⚪ P3 / 2026-10-17 / —
-- **事项**：HEVC 作为可选高档位启用。
-- **触发条件 / 所需证据**：服务端与客户端均探测支持，且同场景实测相比 H.264 有明确码率/画质收益；否则保持 H.264 兼容档、HEVC 仅作为可选项。当前未实测。
-- **关联文档**：[媒体架构编码格式](media-architecture.md)
-
-</details>
-
 <a id="tb-net-001"></a>
 <details><summary>TB-NET-001 RTP/UDP 传输（⏳ 等待验证）</summary>
 
@@ -1212,7 +1171,7 @@
 
 - **状态 / 优先级 / 创建 / 完成**：⏸️ 暂缓 / ⚪ P3 / 2026-10-17 / —
 - **事项**：每客户端独立转码或完整 simulcast 栈。
-- **暂缓理由 / 重新评估条件**：默认兼容单流 + 受限多档流（TB-CLIENT-002）已能覆盖高/低能力客户端并存；每客户端转码会放大编码器实例、功耗与实现复杂度，只有明确需求与实测收益才引入。
+- **暂缓理由 / 重新评估条件**：单流（DV-012 已裁决不做多档流，见 [DB-MULTI-006](decision-board.md#db-multi-006)）已能覆盖高/低能力客户端并存；每客户端转码会放大编码器实例、功耗与实现复杂度，只有明确需求与实测收益才引入。
 - **关联文档**：[媒体架构多客户端](media-architecture.md)
 
 </details>
@@ -1234,6 +1193,52 @@
 - **事项**：root/shell/系统签名输入注入。
 - **暂缓理由 / 重新评估条件**：普通 App 不可用，安全与合规风险高；反控基线使用无障碍能力。
 - **关联文档**：[媒体架构反控能力](media-architecture.md)
+
+</details>
+
+<a id="tb-client-001"></a>
+<details><summary>TB-CLIENT-001 客户端画质与多客户端（⏸️ 暂缓 · DV-012 裁决不做多档流）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：⏸️ 暂缓 / 🟡 P2 / 2026-10-17 / —
+- **事项（原始范围）**：客户端画质与多客户端：分辨率、帧率、码率档位；`configEpoch` 与 IDR 刷新；一次编码按客户端扇出；每客户端有界队列与统计；慢客户端隔离。
+- **已落地的部分（2026-10-22 拆分核对）**：
+  - 一次编码按客户端扇出 + 每客户端有界队列：批次 G 的 `StreamHub` / `ClientSendSession` / `BoundedAccessUnitQueue`，JVM 证据见 [TB-FW-004](#tb-fw-004)（`StreamHubTest`、`ClientSendSessionTest`），生产接线见 [TB-FW-003](#tb-fw-003)。
+  - 统计：服务端「观看者 · 队列 · 丢弃 · 重同步」摘要行由 [TB-OBS-001](#tb-obs-001) O3 落地（`StreamHub.snapshotSessionMetrics()` + `MetricsFormatter.toSessionLogLine()`）。
+  - 慢客户端隔离：`WAIT_IDR` 等待与断流在批次 G 落地；观看端的追赶与背压由 [TB-CLIENT-005](#tb-client-005) 落地（`rx.catchup*`、`cu`）。
+  - `configEpoch` 与 IDR 刷新：`StreamRuntime.switchDescriptor()` 推进 epoch 并请求关键帧（[TB-FW-006](#tb-fw-006)），观看端按 descriptor 重建解码器。
+- **暂缓理由 / 重新评估条件**：剩余范围只有「分辨率/帧率/码率档位协商（多档画质）」，而 DV-012 已裁决**不做多档流、保持单流**（2026-10-22 用户授权主 K3 最佳裁决，见 [DB-MULTI-006](decision-board.md#db-multi-006)）；没有第二档可协商，本条没有剩余交付。若 DV-012 重开（产品要求同一服务端同时提供两档画质，且目标机型有第二编码器实例与功耗预算），本条随之重启，按原验收口径执行档位协商、`configEpoch` 切换与多客户端影响评估。
+- **关联文档**：[媒体架构多客户端](media-architecture.md)、[决策 DB-MULTI-006](decision-board.md#db-multi-006)、[路线图阶段 3](optimization-roadmap.md)
+
+</details>
+
+<a id="tb-client-002"></a>
+<details><summary>TB-CLIENT-002 单流与多档流策略（⏸️ 暂缓 · DV-012 裁决不做多档流）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：⏸️ 暂缓 / 🟡 P2 / 2026-10-17 / —
+- **事项（原始范围）**：兼容单流与多档流策略：默认共同能力交集；多档流让高能力客户端用高规格、其他客户端保留 H.264 档；受编码器实例、功耗与热限制；新客户端不得迫使已有客户端无提示降级；小窗/全屏可选不同档位。
+- **已落地的部分（2026-10-22）**：**单流**是当前且唯一的策略——`StreamHub.join` 取共同兼容能力选 codec（批次 G，[TB-FW-004](#tb-fw-004)）；H.264 硬编在启动时失败会自动回退 JPEG 兼容模式（[TB-ENG-014](#tb-eng-014)）；客户端能力只决定「能否加入」与「慢客户端如何被隔离」，「新客户端不得迫使已有客户端降级」在单流下自然成立。
+- **暂缓理由 / 重新评估条件**：DV-012 已裁决**不做多档流**（2026-10-22 用户授权主 K3 最佳裁决，见 [DB-MULTI-006](decision-board.md#db-multi-006)）：单流 + 每客户端独立会话 + 有界队列已落地并验证，多档流需要多个硬件编码器实例（DV-015）而功耗与复杂度成本没有实测收益支撑；DV-014（自动选档阈值）与 DV-015（实例与功耗上限）随之关闭。**重开条件**：DV-012 重开；届时本条与 DV-014 / DV-015 一并重启。
+- **关联文档**：[媒体架构兼容单流与多档编码](media-architecture.md)、[决策 DB-MULTI-006](decision-board.md#db-multi-006)、[路线图阶段 3](optimization-roadmap.md)
+
+</details>
+
+<a id="tb-fw-007"></a>
+<details><summary>TB-FW-007 HEVC 扩展验证（⏸️ 暂缓 · DV-003 裁决不引入 HEVC）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：⏸️ 暂缓 / 🟡 P2 / 2026-10-17 / —
+- **事项（原始范围）**：HEVC 扩展验证：复用 `MediaCodec` 骨架，只接受明确安全 IDR；CRA/BLA/RASL/RADL 不作为可加入点。
+- **暂缓理由 / 重新评估条件**：DV-003 已裁决**不引入 HEVC**（2026-10-22 用户授权主 K3 最佳裁决，见 [DB-CODEC-015](decision-board.md#db-codec-015)）：H.264 保底（启动失败回退 JPEG，[TB-ENG-014](#tb-eng-014)）已覆盖全部目标场景，HEVC 的码率/画质收益在目标机型与网络上从未实测。编解码契约的多格式扩展点保留不动（`CodecRegistration`、`StreamDescriptor`、`EncoderFactory`），不因本条删除或改写。**重开条件**：出现 H.264 兼容性事故（目标机型硬编不可用且 JPEG 回退不可接受），或目标机型 HEVC 硬编/硬解覆盖充分且有同场景实测收益；届时本条与 DV-017（前导图像接入点）一并重启。
+- **关联文档**：[编码框架设计](codec-framework.md)、[决策 DB-CODEC-015](decision-board.md#db-codec-015)、[媒体架构编码格式](media-architecture.md)
+
+</details>
+
+<a id="tb-codec-001"></a>
+<details><summary>TB-CODEC-001 HEVC 可选档位（⏸️ 暂缓 · 随 DV-003 不引入 HEVC）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：⏸️ 暂缓 / ⚪ P3 / 2026-10-17 / —
+- **事项（原始范围）**：HEVC 作为可选高档位启用。
+- **暂缓理由 / 重新评估条件**：DV-003 已裁决**不引入 HEVC**（2026-10-22，见 [DB-CODEC-015](decision-board.md#db-codec-015)），因此没有「可选档位」需要验证；本条与 [TB-FW-007](#tb-fw-007) 同源，重开条件一致（H.264 兼容性事故，或明确的高端需求且有同场景实测收益）。原触发条件（双方探测支持且同场景实测有收益）保留为届时判据。
+- **关联文档**：[媒体架构编码格式](media-architecture.md)、[决策 DB-CODEC-015](decision-board.md#db-codec-015)
 
 </details>
 
