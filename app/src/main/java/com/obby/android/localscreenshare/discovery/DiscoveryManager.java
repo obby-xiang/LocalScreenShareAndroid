@@ -20,6 +20,7 @@ import com.obby.android.localscreenshare.discovery.manual.ManualAddress;
 import com.obby.android.localscreenshare.discovery.manual.ManualAddressProvider;
 import com.obby.android.localscreenshare.discovery.manual.ManualDevice;
 import com.obby.android.localscreenshare.discovery.manual.ManualDeviceStore;
+import com.obby.android.localscreenshare.discovery.manual.ManualObservationMapper;
 import com.obby.android.localscreenshare.discovery.model.DeviceAddress;
 import com.obby.android.localscreenshare.discovery.model.DeviceRole;
 import com.obby.android.localscreenshare.discovery.model.DiscoveryChannel;
@@ -841,6 +842,11 @@ public final class DiscoveryManager {
                 .id(favorite.getId())
                 .fingerprint(favorite.getFingerprint())
                 .name(favorite.getAlias())
+                // Same rule as the manual seed: a stored fingerprint came from the responder's
+                // certificate, i.e. from a completed TLS handshake, so the seeded row can keep
+                // claiming TLS transport instead of showing an unencrypted peer until a probe
+                // replaces it. Without a fingerprint nothing is claimed.
+                .secure(ManualObservationMapper.secureClaim(favorite.getFingerprint()))
                 .host(favorite.getHost())
                 .port(favorite.getPort())
                 .build());
@@ -860,18 +866,14 @@ public final class DiscoveryManager {
      *
      * <p>The seed carries the device id the confirming handshake returned, which is the key
      * {@link DeviceStore} merges by. A device that is also announced later therefore lands in the
-     * same entry instead of showing up twice.</p>
+     * same entry instead of showing up twice. It also restores the transport capability the stored
+     * fingerprint proves (see {@link ManualObservationMapper}), so a row the user added by hand is
+     * connectable right after a restart instead of being refused as an unencrypted peer until the
+     * next re-probe.</p>
      */
     private void seedManualDevices() {
         for (final ManualDevice device : mManualDeviceStore.devices()) {
-            mDeviceStore.onObserved(DeviceObservation.builder()
-                .source(DiscoveryChannel.MANUAL)
-                .id(device.getId())
-                .fingerprint(device.getFingerprint())
-                .name(device.getName())
-                .host(device.getHost())
-                .port(device.getPort())
-                .build());
+            mDeviceStore.onObserved(ManualObservationMapper.toSeedObservation(device));
             mDeviceStore.setPinned(device.getId(), true);
             try {
                 mManualAddressProvider.addManualTarget(
