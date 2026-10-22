@@ -21,6 +21,7 @@
 
 ## 🎯 当前焦点
 
+- 2026-10-22 **双媒体传输专项启动，B1 落地（[TB-NET-003](#tb-net-003)）**：主 K3 的六条裁决已定，[实施计划](superpowers/plans/2026-10-22-media-transports.md) 落盘（裸 TCP 16 字节帧头 + 复用 mTLS 与 per-RPC 凭证绑定、UDP AES-256-GCM 分片、FEC v1 不做、UDP→TCP→gRPC 回退链、六批约 +52 生产类），并完成 **B1 抽象层补齐与接收侧对称化**（行为零变化，仍只用 gRPC）：新增 `core/stream/MediaTransportRecovery`（drain 失败先问钩子，返回非 null 则不 detach——换 transport、重发 descriptor、清队列、等 join point；仅控制面载体自身失败才致命）、`ClientSendSession.swapTransport(...)`、`StreamHub.swapTransportIfCurrent(...)`（与 `detachIfCurrent` 同形防 takeover 竞态）、`core/net/MediaChannelListener` 与 `MediaTransportKind`；接收侧 `ClientMediaReceiver` 新增 raw `onDescriptor`/`onAccessUnit` 入口，proto 入口改为「proto → 模型 → raw 入口」，接收计数与 `ArrivalTracker` 仍只有一处；每会话指标行新增 `chan=` 字段位（当前恒 `grpc`）。**1506 tests / 149 classes → 1528 / 153**（+22/+4，基线同批更新），`./gradlew build :app:assembleDebugAndroidTest`、lint 双变体 0 errors（145/135 warnings，与上批持平）、三项 checks 通过。提交 `d79817f`（计划）、`906638f`（B1 代码与测试）；B2–B6 待做，决策板 DB-NET-001 改写与新增 DB-NET-003 属 B6。
 - 2026-10-22 **两份业界调研落盘（采集/格式/传输与性能优化）**：新增 [采集格式与传输方式业界调研](transport-research.md)（三层对照、13 个方案矩阵、三个问题的共识与分歧、对本项目三选的评估、来源清单）与 [性能优化业界调研](performance-research.md)（降功耗/提流畅/减卡顿的业界做法、差距分析、按收益与工程量排序的建议、触发条件）。同步更新 [文档索引](README.md) 的阅读顺序与索引表，并在 [决策看板](decision-board.md) DV-001 / DV-002 / DV-016 / DV-020 / DV-021 的复评条件处补指针。**纯文档，不改代码，也不改变既有裁决**；调研给出的候选做法（客户端解码器低延迟参数、收紧追赶阈值、背压回传、热余量预测等）**不在本棒立开发条目**，由用户裁决后再立。三项 checks 通过。
 - 2026-10-22 **TB-DISC-011 回归修复（手动条目冷启动丢失加密能力）**：功耗设备棒异常项 8 发现，观看端冷启动后手动条目显示「未加密传输」、点按被 `tls_device_not_encrypted_message` 拦下，直到一次周期探测读回 `secure=true`。根因是本批播种的 `DeviceObservation` 未带 `secure`（`DeviceEntry.merge()` 只在字段非 null 时写入），而 TLS 闸门读的正是这一位。语义判定：`secure` 是**对端传输能力**（DB-SEC-002），落盘的 `fp` 只能来自对端证书即落盘那次探测完成过 TLS 握手，故播种时按指纹恢复该标记——新增纯 JVM `ManualObservationMapper`：有指纹 → `secure=true`，无指纹 → 不声明；`seedFavorites()` 套用同一规则（该缺口早于本批，TLS 闸门 `a2f43b5` 晚于收藏播种）。**校验逻辑未改**，无指纹条目仍被拦下。新增 `ManualObservationMapperTest` 7 例（含经真实 `DeviceStore` 的 `isSecure()` 双向守卫），全量 **1506 tests / 149 classes / 0 failures**（基线 1499/148）；build、lint 双变体 0 errors、三项 checks 通过。设备复验（冷启动立即可连、无指纹仍拦截）归 [TB-ENG-013](#tb-eng-013) 第 15 项。
 - 2026-10-22 **三条待决策收口（DV-003 / DV-009 / DV-012）**：用户授权主 K3 最佳裁决——**不引入 HEVC**（[DB-CODEC-015](decision-board.md#db-codec-015)）、**接受「仅可信局域网」现状边界**（[DB-SEC-005](decision-board.md#db-sec-005)）、**不做多档流、保持单流**（[DB-MULTI-006](decision-board.md#db-multi-006)）；DV-014 / DV-015 前提不成立，随 DV-012 关闭。任务板联动：[TB-CLIENT-001](#tb-client-001)、[TB-CLIENT-002](#tb-client-002)、[TB-FW-007](#tb-fw-007) 转 ⏸️ 暂缓（[TB-CODEC-001](#tb-codec-001) 同源一并暂缓），[TB-CORE-001](#tb-core-001) 概览行与详情块移入已完成，[TB-SEC-001](#tb-sec-001) 记为「PIN/扫码与会话令牌不做」，已完成节说明改写为当前事实；决策板同步把 DB-MULTI-003 / DB-MULTI-004 的多档部分标 ❌ 已否决、DB-SEC-001 状态对齐为「部分实施」、DB-CODEC-007 的 HEVC 部分收口，并在「裁决演进」补三条。本批纯文档，三项 checks 通过。
@@ -91,6 +92,7 @@
 
 | ID | 状态 | 优先级 | 标题 | 创建 | 完成 | 关联 |
 | --- | --- | --- | --- | --- | --- | --- |
+| TB-NET-003 | 🔶 部分完成 | 🟠 P1 | 双媒体传输：裸 TCP 主力 + UDP 实验档（B1 抽象层与接收侧对称化已落地，B2–B6 待做） | 2026-10-22 | — | [实施计划](superpowers/plans/2026-10-22-media-transports.md) |
 | TB-SEC-002 | 🔶 部分完成 | 🔴 P0 | 身份密钥瞬时故障静默删键与三份身份快照（N3；代码完成，设备复测待棒） | 2026-10-21 | — | [决策 DB-SEC-003](decision-board.md#db-sec-003) |
 | TB-DISC-013 | 🔶 部分完成 | 🟠 P1 | 发现行首连的证书指纹引导（N2；代码完成，设备复测待棒） | 2026-10-21 | — | [TB-DISC-012](#tb-disc-012) |
 | TB-SEC-003 | 🔶 部分完成 | 🟠 P1 | 公告传输安全字段与「画面私密」分离（N1；代码完成，设备复测待棒） | 2026-10-21 | — | [决策 DB-SEC-002](decision-board.md#db-sec-002) |
@@ -197,6 +199,24 @@
 ### 📋 待办条目
 
 
+
+<a id="tb-net-003"></a>
+<details><summary>TB-NET-003 双媒体传输：裸 TCP 主力 + UDP 实验档（🔶 部分完成 · B1 已落地）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：🔶 部分完成（B1 代码与 JVM 用例落地，B2–B6 待做）/ 🟠 P1 / 2026-10-22 / —
+- **来源**：用户要求按[实施计划](superpowers/plans/2026-10-22-media-transports.md)分批实现双媒体传输；计划依据主 K3 的六条裁决与 [DB-NET-001](decision-board.md#db-net-001)/[DB-NET-002](decision-board.md#db-net-002)、[DB-OBS-001](decision-board.md#db-obs-001)/[DB-OBS-002](decision-board.md#db-obs-002)、[DB-SEC-005](decision-board.md#db-sec-005)。
+- **范围（六批）**：B1 抽象层补齐与接收侧对称化；B2 协商协议与选路策略（proto 纯增量 + `MediaTransportPolicy`）；B3 裸 TCP 媒体通道（16 字节帧头、复用 mTLS + 每 RPC 凭证绑定、写停滞看门狗）；B4 UDP 内核（AEAD 包格式、重排窗、重装、丢包统计）；B5 UDP 接线与回退链（丢包 → IDR/catch-up，实验档默认关）；B6 指标、日志与文档收口。FEC/RS、NACK、WebRTC/SRT/QUIC、拥塞控制明确不做（计划 §8）。
+- **B1 交付物**（提交 `906638f`，行为零变化，仍只用 gRPC）：
+  - 发送侧：`core/stream/MediaTransportRecovery.java:20` 恢复钩子；`ClientSendSession.java:433` 的 drain 失败分支先问钩子，返回非 null 即换 transport、重发当前 descriptor、清旧队列、按 codec 策略置 `WAIT_RANDOM_ACCESS` 并关闭失败 transport，不 detach（`:632`），只有 `IOException` 视为可恢复、未检查异常按 transport 违约走原 detach；`ClientSendSession.java:564` 的 `swapTransport` 返回旧 transport（调用方决定是否关闭，控制面载体永不关）；`StreamHub.java:370` 的 `swapTransportIfCurrent` 与 `detachIfCurrent` 同形，防 takeover 竞态。
+  - 接收侧：`core/net/MediaChannelListener.java:23` 三回调契约（描述符 / 访问单元 / 通道失败）；`ClientMediaReceiver.java:247` 与 `:277` 的 raw `onDescriptor`/`onAccessUnit`，proto 入口改为「proto → 模型 → raw 入口」，接收计数与 `ArrivalTracker` 仍只有一处，几何与安全位回调行为不变。
+  - 通道标识：`core/net/MediaTransportKind.java:14`（`grpc`/`tcp`/`udp` 常量标签）；每会话指标行新增 `chan=`（`MetricNames.java:51`、`MetricsFormatter.java:274`），`SessionSnapshot` 与 `SessionMetricsSnapshot` 携带通道并暴露 `getChannel()`，`ScreenShareService` 的会话行改为传通道。
+  - 包规范：`docs/naming-conventions.md` §1.1 增 `core/net`（网络分帧与重组等纯 JVM 传输机制，socket/TLS 留在顶层 `transport`）。
+- **JVM 证据**：新增 4 个测试类 22 例——`ClientSendSessionTransportSwapTest` 10 例（swap 重发 descriptor 且清掉旧队列、带通道换标签、detach 后 swap 返回 null、恢复成功不 detach 且失败通道关闭、钩子拒绝或抛异常才 detach、未检查异常不问钩子、钩子执行期间并发 detach 时不安装并关闭替代通道）、`StreamHubTransportSwapTest` 4 例（正常换通道、takeover 后旧会话不再被换、键不匹配不换、null 参数）、`ClientMediaReceiverRawEntryTest` 4 例（两条入口状态/安全位/几何/解码器一致、接收计数一致、关闭后忽略、null 忽略）、`MediaTransportKindTest` 3 例（标签契约、枚举完整、valueOf 往返）；并更新 `MetricsFormatterTest` 的会话行断言（新增 `chan=grpc` 与 `chan=tcp` 两例）。全量 **1528 tests / 153 classes / 0 failures / 0 errors / 0 skipped**（基线 1506/149，`test_baseline.json` 同批更新）。`./gradlew build :app:assembleDebugAndroidTest` 通过；`:app:lintDebug` 0 errors / 145 warnings、`:app:lintRelease` 0 errors / 135 warnings（与上批持平）；三项 checks 通过。
+- **与计划的两处出入**：① 计划 §2.2 的恢复钩子签名只收 `IOException`，故未检查异常仍走原 detach 路径（视为 transport 违约），其余语义一致；② `swapTransport` 增加带 `MediaTransportKind` 的重载，使会话行在新媒体通道接手后能报真实通道（计划只写单参数版本，单参数版保留并保持标签不变）。
+- **待办（B2–B6 的关键前提）**：B2 才把 HELLO 的 `media_transports`、offer/ready/close 与 `MediaTransportPolicy` 接上，届时 `StreamHub.join` 需要注入恢复钩子与通道种类（本批钩子只经 `ClientSendSession` 构造函数注入，生产路径尚未使用）；决策板 DB-NET-001 改写、新增 DB-NET-003 与 DB-OBS-002 补注属 B6，本批未动决策板。
+- **关联文档**：[实施计划](superpowers/plans/2026-10-22-media-transports.md)、[传输方式调研](transport-research.md)、[决策 DB-NET-001](decision-board.md#db-net-001)、[媒体架构](media-architecture.md)
+
+</details>
 
 <a id="tb-sec-002"></a>
 <details><summary>TB-SEC-002 身份密钥瞬时故障静默删键与三份身份快照（🔶 部分完成 · N3）</summary>
