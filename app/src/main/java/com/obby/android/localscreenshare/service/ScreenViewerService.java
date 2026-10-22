@@ -110,6 +110,7 @@ import com.obby.android.localscreenshare.render.ViewerZoomMenuModel;
 import com.obby.android.localscreenshare.render.ZoomMode;
 import com.obby.android.localscreenshare.settings.Preferences;
 import com.obby.android.localscreenshare.support.MutableReference;
+import com.obby.android.localscreenshare.support.OverlayWindow;
 import com.obby.android.localscreenshare.support.ResourceUtils;
 import com.obby.android.localscreenshare.support.ServiceProtocol;
 
@@ -408,7 +409,7 @@ public class ScreenViewerService extends Service {
             updateInboundDataRate(0L);
 
             if (mDialog != null) {
-                mDialog.dismiss();
+                OverlayWindow.dismiss(mDialog);
             }
 
             if (mScreenShareLoading != null) {
@@ -461,7 +462,7 @@ public class ScreenViewerService extends Service {
             }
             mDialog = builder.create();
             mDialog.getWindow().setType(ServiceProtocol.FLOATING_WINDOW_TYPE);
-            mDialog.show();
+            OverlayWindow.show(mDialog);
         }
 
         @Override
@@ -685,7 +686,7 @@ public class ScreenViewerService extends Service {
 
         // Replace the previous session only after the foreground notification succeeded.
         if (mDialog != null) {
-            mDialog.dismiss();
+            OverlayWindow.dismiss(mDialog);
             mDialog = null;
         }
 
@@ -860,7 +861,7 @@ public class ScreenViewerService extends Service {
      */
     private void dismissConfirmation() {
         if (mDialog != null) {
-            mDialog.dismiss();
+            OverlayWindow.dismiss(mDialog);
             mDialog = null;
         }
     }
@@ -1716,14 +1717,12 @@ public class ScreenViewerService extends Service {
                         .create();
                     mDialog.getWindow().setType(ServiceProtocol.FLOATING_WINDOW_TYPE);
                 }
-                mDialog.show();
+                OverlayWindow.show(mDialog);
             });
         }
 
         public void show() {
-            if (mLoadingView.getParent() == null) {
-                mWindowManager.addView(mLoadingView, mLayoutParams);
-            }
+            OverlayWindow.attach(mWindowManager, mLoadingView, mLayoutParams);
         }
 
         /**
@@ -1738,13 +1737,11 @@ public class ScreenViewerService extends Service {
 
         public void dismiss() {
             if (mDialog != null) {
-                mDialog.dismiss();
+                OverlayWindow.dismiss(mDialog);
                 mDialog = null;
             }
 
-            if (mLoadingView.getParent() != null) {
-                mWindowManager.removeViewImmediate(mLoadingView);
-            }
+            OverlayWindow.detach(mWindowManager, mLoadingView);
         }
     }
 
@@ -2020,7 +2017,7 @@ public class ScreenViewerService extends Service {
                 mPanelView.setRounded(Preferences.get().isViewerRounded());
                 mPanelView.setDisplaySize(0, 0);
                 mPanelView.setContentGeometry(mContentWidth, mContentHeight, mRotationDegrees);
-                mWindowManager.addView(mPanelView, mLayoutParams);
+                OverlayWindow.attach(mWindowManager, mPanelView, mLayoutParams);
                 updateHudVisibility();
             }
         }
@@ -2057,7 +2054,7 @@ public class ScreenViewerService extends Service {
             updateLayoutParams();
             mPanelView.setRounded(Preferences.get().isViewerRounded());
             mPanelView.setContentGeometry(mContentWidth, mContentHeight, mRotationDegrees);
-            mWindowManager.updateViewLayout(mPanelView, mLayoutParams);
+            OverlayWindow.update(mWindowManager, mPanelView, mLayoutParams);
             updateHudVisibility();
         }
 
@@ -2076,13 +2073,11 @@ public class ScreenViewerService extends Service {
         void dismiss() {
             mLayoutParams.flags &= ~WindowManager.LayoutParams.FLAG_SECURE;
             if (mDialog != null) {
-                mDialog.dismiss();
+                OverlayWindow.dismiss(mDialog);
                 mDialog = null;
             }
             mPanelView.hideSnapshot();
-            if (mPanelView.getParent() != null) {
-                mWindowManager.removeViewImmediate(mPanelView);
-            }
+            OverlayWindow.detach(mWindowManager, mPanelView);
         }
 
         @Override
@@ -2098,7 +2093,7 @@ public class ScreenViewerService extends Service {
                 mLayoutParams.flags &= ~WindowManager.LayoutParams.FLAG_SECURE;
             }
             if (mPanelView.getParent() != null) {
-                mWindowManager.updateViewLayout(mPanelView, mLayoutParams);
+                OverlayWindow.update(mWindowManager, mPanelView, mLayoutParams);
             }
         }
 
@@ -2179,7 +2174,7 @@ public class ScreenViewerService extends Service {
                     .create();
                 mDialog.getWindow().setType(ServiceProtocol.FLOATING_WINDOW_TYPE);
             }
-            mDialog.show();
+            OverlayWindow.show(mDialog);
         }
 
         /**
@@ -2230,11 +2225,11 @@ public class ScreenViewerService extends Service {
             final List<ViewerZoomMenuModel.Entry> entries = ViewerZoomMenuModel.build(
                 mContentWidth, mContentHeight, mRotationDegrees, mBounds.width(), mBounds.height(),
                 mScale, minSize, mZoomMode, Preferences.get().isViewerHudEnabled());
-            ViewerMenuFactory.createZoomDialog(mContext, entries, mScale,
+            OverlayWindow.show(ViewerMenuFactory.createZoomDialog(mContext, entries, mScale,
                 isAudioMuted.getAsBoolean()
                     ? R.string.viewer_audio_unmute_action
                     : R.string.viewer_audio_mute_action,
-                R.string.viewer_action_expand_full_screen, true, mMenuListener).show();
+                R.string.viewer_action_expand_full_screen, true, mMenuListener));
         }
 
         /**
@@ -2285,7 +2280,7 @@ public class ScreenViewerService extends Service {
             if (mLayoutParams.x != finalX || mLayoutParams.y != finalY) {
                 mLayoutParams.x = finalX;
                 mLayoutParams.y = finalY;
-                mWindowManager.updateViewLayout(mPanelView, mLayoutParams);
+                OverlayWindow.update(mWindowManager, mPanelView, mLayoutParams);
             }
         }
 
@@ -2424,7 +2419,7 @@ public class ScreenViewerService extends Service {
                             .create();
                         mDialog.getWindow().setType(ServiceProtocol.FLOATING_WINDOW_TYPE);
                     }
-                    mDialog.show();
+                    OverlayWindow.show(mDialog);
                     return true;
                 }
 
@@ -2433,7 +2428,7 @@ public class ScreenViewerService extends Service {
                     if (mSettingsDialog == null) {
                         mSettingsDialog = createSettingsDialog();
                     }
-                    mSettingsDialog.show();
+                    OverlayWindow.show(mSettingsDialog);
                     return true;
                 }
 
@@ -2495,7 +2490,7 @@ public class ScreenViewerService extends Service {
             }
 
             if (shouldUpdate.isTrue()) {
-                mWindowManager.updateViewLayout(mFrameView, mLayoutParams);
+                OverlayWindow.update(mWindowManager, mFrameView, mLayoutParams);
             }
 
             // Clearing the previous reference offers its bitmap back to the client's reuse pool,
@@ -2517,7 +2512,7 @@ public class ScreenViewerService extends Service {
                 updateLayoutParams();
                 updateMatrix();
                 updateShape();
-                mWindowManager.addView(mFrameView, mLayoutParams);
+                OverlayWindow.attach(mWindowManager, mFrameView, mLayoutParams);
             }
         }
 
@@ -2531,12 +2526,12 @@ public class ScreenViewerService extends Service {
             mFrameView.setImageBitmap(null);
 
             if (mSettingsDialog != null) {
-                mSettingsDialog.dismiss();
+                OverlayWindow.dismiss(mSettingsDialog);
                 mSettingsDialog = null;
             }
 
             if (mDialog != null) {
-                mDialog.dismiss();
+                OverlayWindow.dismiss(mDialog);
                 mDialog = null;
             }
 
@@ -2545,16 +2540,14 @@ public class ScreenViewerService extends Service {
                 mFrame = null;
             }
 
-            if (mFrameView.getParent() != null) {
-                mWindowManager.removeViewImmediate(mFrameView);
-            }
+            OverlayWindow.detach(mWindowManager, mFrameView);
         }
 
         private void updateView() {
             updateLayoutParams();
             updateMatrix();
             updateShape();
-            mWindowManager.updateViewLayout(mFrameView, mLayoutParams);
+            OverlayWindow.update(mWindowManager, mFrameView, mLayoutParams);
         }
 
         private void updateMatrix() {
@@ -2634,7 +2627,7 @@ public class ScreenViewerService extends Service {
             if (mLayoutParams.x != finalX || mLayoutParams.y != finalY) {
                 mLayoutParams.x = finalX;
                 mLayoutParams.y = finalY;
-                mWindowManager.updateViewLayout(mFrameView, mLayoutParams);
+                OverlayWindow.update(mWindowManager, mFrameView, mLayoutParams);
             }
         }
 
@@ -2680,7 +2673,7 @@ public class ScreenViewerService extends Service {
                 if (mOpacity != (int) value) {
                     mOpacity = (int) value;
                     updateLayoutParams();
-                    mWindowManager.updateViewLayout(mFrameView, mLayoutParams);
+                    OverlayWindow.update(mWindowManager, mFrameView, mLayoutParams);
                 }
             });
             opacitySettingView.addOnSliderTouchListener(new Slider.OnSliderTouchListener() {
@@ -2722,7 +2715,7 @@ public class ScreenViewerService extends Service {
                 if (Preferences.get().isViewerKeepScreenOn() != isChecked) {
                     Preferences.get().setViewerKeepScreenOn(isChecked);
                     updateLayoutParams();
-                    mWindowManager.updateViewLayout(mFrameView, mLayoutParams);
+                    OverlayWindow.update(mWindowManager, mFrameView, mLayoutParams);
                 }
             });
 

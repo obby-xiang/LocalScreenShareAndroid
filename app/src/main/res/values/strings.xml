@@ -11,6 +11,7 @@
     <string name="permission_request_post_notification">"Allow \"&lt;b&gt;<xliff:g id="name">%1$s</xliff:g>&lt;/b&gt;\" to send notifications."</string>
     <string name="permission_request_system_alert_window">"Allow \"&lt;b&gt;<xliff:g id="name">%1$s</xliff:g>&lt;/b&gt;\" to display over other apps."</string>
     <string name="screen_share_stop_confirm">"Stop sharing the screen?"</string>
+    <string name="screen_share_capture_stopped">"Screen capture was stopped, sharing has ended."</string>
     <string name="screen_share_connecting">"Connecting to the shared screen…"</string>
     <string name="screen_share_disconnect_confirm">"Disconnect from the shared screen \"&lt;b&gt;<xliff:g id="name">%1$s</xliff:g>&lt;/b&gt;\"?"</string>
     <string name="screen_share_retry_connect_confirm">"Unable to connect to the shared screen \"&lt;b&gt;<xliff:g id="name">%1$s</xliff:g>&lt;/b&gt;\". Retry?"</string>

@@ -136,9 +136,12 @@ public final class PlaybackCaptureSource implements AudioCaptureSource {
                         "capture read failed: " + read);
             }
             return read;
-        } catch (IllegalStateException e) {
-            throw new AudioCaptureException(AudioCaptureException.Reason.DEVICE_BUSY,
-                    "capture device became invalid", e);
+        } catch (RuntimeException e) {
+            // A revoked recording permission surfaces here as a SecurityException, which used to
+            // escape the capture thread and end the process; the shared mapping keeps the reason
+            // consistent with the encoder side.
+            throw new AudioCaptureException(AudioCaptureException.classify(e),
+                    "capture read failed", e);
         }
     }
 

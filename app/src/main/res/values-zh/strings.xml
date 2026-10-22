@@ -11,6 +11,7 @@
     <string name="permission_request_post_notification">"请允许应用“&lt;b&gt;<xliff:g id="name">%1$s</xliff:g>&lt;/b&gt;”发送通知。"</string>
     <string name="permission_request_system_alert_window">"请允许应用“&lt;b&gt;<xliff:g id="name">%1$s</xliff:g>&lt;/b&gt;”显示在其他应用的上层。"</string>
     <string name="screen_share_stop_confirm">"是否停止共享屏幕？"</string>
+    <string name="screen_share_capture_stopped">"屏幕录制已被停止，共享已结束。"</string>
     <string name="screen_share_connecting">"正在连接到共享屏幕…"</string>
     <string name="screen_share_disconnect_confirm">"是否断开与共享屏幕“&lt;b&gt;<xliff:g id="name">%1$s</xliff:g>&lt;/b&gt;”的连接？"</string>
     <string name="screen_share_retry_connect_confirm">"无法连接到共享屏幕“&lt;b&gt;<xliff:g id="name">%1$s</xliff:g>&lt;/b&gt;”，是否重试？"</string>

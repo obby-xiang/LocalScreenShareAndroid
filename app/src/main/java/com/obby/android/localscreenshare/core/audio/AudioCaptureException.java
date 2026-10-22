@@ -74,4 +74,31 @@ public final class AudioCaptureException extends Exception {
     public Reason getReason() {
         return reason;
     }
+
+    /**
+     * Classifies a platform failure into the reason reported to the user.
+     *
+     * <p>The mapping is deliberately small and ordered. A revoked recording permission surfaces as
+     * a {@link SecurityException} on some API levels, so the security check comes first. An
+     * {@link IllegalStateException} means the capture device became unusable while it was in use,
+     * which the user sees as a busy device. An unsupported device reports
+     * {@link UnsupportedOperationException} or rejects an argument. Everything else is an internal
+     * failure; the message of the original exception is kept as the cause by the caller.</p>
+     *
+     * @param failure failure to classify; {@code null} is classified as {@link Reason#INTERNAL}
+     * @return the reason to report; never null
+     */
+    public static Reason classify(final Throwable failure) {
+        if (failure instanceof SecurityException) {
+            return Reason.PERMISSION_DENIED;
+        }
+        if (failure instanceof IllegalStateException) {
+            return Reason.DEVICE_BUSY;
+        }
+        if (failure instanceof UnsupportedOperationException
+                || failure instanceof IllegalArgumentException) {
+            return Reason.UNSUPPORTED;
+        }
+        return Reason.INTERNAL;
+    }
 }

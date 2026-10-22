@@ -133,6 +133,7 @@ import com.obby.android.localscreenshare.settings.ProjectionSettings;
 import com.obby.android.localscreenshare.settings.VisibilityPolicy;
 import com.obby.android.localscreenshare.trust.FingerprintFormatter;
 import com.obby.android.localscreenshare.support.DelayedScheduler;
+import com.obby.android.localscreenshare.support.OverlayWindow;
 import com.obby.android.localscreenshare.support.ServiceProtocol;
 import com.obby.android.localscreenshare.support.WindowUtils;
 import com.obby.android.localscreenshare.transport.ScreenStreamProtoMapper;
@@ -610,6 +611,10 @@ public class ScreenShareService extends Service {
         @Override
         public void onStop() {
             Log.i(mTag, "mMediaProjectionCallback.onStop: media projection stopped");
+            // The system or the user ended the capture; the share cannot continue, and a silent
+            // stop reads as a crash. The toast is the only surface left because the overlay is gone.
+            Toast.makeText(ScreenShareService.this, R.string.screen_share_capture_stopped,
+                Toast.LENGTH_LONG).show();
             stopService();
         }
 
@@ -1233,8 +1238,12 @@ public class ScreenShareService extends Service {
             displaySurface, mVirtualDisplayCallback, new Handler(Looper.getMainLooper()));
 
         // The chip is only shown once the pipeline is complete.
-        mScreenShareChip = new ScreenShareChip(this);
-        mScreenShareChip.show();
+        final ScreenShareChip chip = new ScreenShareChip(this);
+        if (!chip.show()) {
+            Log.i(mTag, "onServerStarted: floating chip not shown, the share continues with the"
+                + " notification as its entry point");
+        }
+        mScreenShareChip = chip;
 
         // Video follows the same rule as audio: capture starts with the display, and the watch
         // pauses it as soon as the first published configuration exists and no viewer is attached.
@@ -2904,7 +2913,7 @@ public class ScreenShareService extends Service {
                 if (key == null || Preferences.KEY_PROJECTION_KEEP_SCREEN_ON.equals(key)) {
                     mIsKeepScreenOn = Preferences.get().isProjectionKeepScreenOn();
                     updateLayoutParams();
-                    mWindowManager.updateViewLayout(mChipView, mLayoutParams);
+                    OverlayWindow.update(mWindowManager, mChipView, mLayoutParams);
                 }
             }
         };
@@ -2931,7 +2940,7 @@ public class ScreenShareService extends Service {
                             .create();
                         mDialog.getWindow().setType(ServiceProtocol.FLOATING_WINDOW_TYPE);
                     }
-                    mDialog.show();
+                    OverlayWindow.show(mDialog);
                     return true;
                 }
 
@@ -2957,34 +2966,43 @@ public class ScreenShareService extends Service {
         }
 
         /**
-         * Adds the overlay window and starts the ticker. Must be called on the main thread after
-         * the overlay permission has been granted.
+         * Adds the overlay window and starts the ticker when the window is attached.
+         *
+         * <p>Must be called on the main thread. A revoked overlay permission makes the attach fail,
+         * in which case the ticker and the preference observer are not started and the service
+         * keeps running with the notification as its only entry point.</p>
+         *
+         * @return {@code true} when the chip is visible
          */
-        public void show() {
+        public boolean show() {
             mStartTimestamp = SystemClock.elapsedRealtime();
             mIsKeepScreenOn = Preferences.get().isProjectionKeepScreenOn();
             updateDuration();
 
             updateLayoutParams();
-            mWindowManager.addView(mChipView, mLayoutParams);
+            if (!OverlayWindow.attach(mWindowManager, mChipView, mLayoutParams)) {
+                return false;
+            }
 
             adjustLocation();
             mChipView.post(mTickRunnable);
 
             Preferences.get().addObserver(mPreferencesObserver);
+            return true;
         }
 
         /**
-         * Stops the ticker, removes the window and unsubscribes the preference observer.
+         * Stops the ticker, removes the window and unsubscribes the preference observer; safe when
+         * the window was never attached.
          */
         public void dismiss() {
             mChipView.removeCallbacks(mTickRunnable);
             mChipView.removeCallbacks(mAdjustLocationRunnable);
-            mWindowManager.removeViewImmediate(mChipView);
+            OverlayWindow.detach(mWindowManager, mChipView);
             Preferences.get().removeObserver(mPreferencesObserver);
 
             if (mDialog != null) {
-                mDialog.dismiss();
+                OverlayWindow.dismiss(mDialog);
                 mDialog = null;
             }
         }
@@ -3047,7 +3065,7 @@ public class ScreenShareService extends Service {
             if (mLayoutParams.x != finalX || mLayoutParams.y != finalY) {
                 mLayoutParams.x = finalX;
                 mLayoutParams.y = finalY;
-                mWindowManager.updateViewLayout(mChipView, mLayoutParams);
+                OverlayWindow.update(mWindowManager, mChipView, mLayoutParams);
             }
         }
 
