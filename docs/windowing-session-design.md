@@ -7,12 +7,14 @@
 
 ## 1. 问题
 
-当前客户端把网络、解码结果和悬浮窗 UI 都放在 `LssClientService` 里：
+改造前（2026-10-21 方案 B 落地之前，类名取当时的 `Lss*`）客户端把网络、解码结果和悬浮窗 UI 都放在 `LssClientService` 里：
 
 - `LssClientService` 持有 `LssClient`、加载框和 `ScreenShareViewer`（`.../service/LssClientService.java:84-94`、`:109-176`）。
 - 客户端侧的 `MainActivity` 只负责发现和启动 `LssClientService`，不承载视频画面（`.../MainActivity.java:469-474`）。
 - `ScreenShareViewer` 是一个 `WindowManager` 悬浮窗，内部是 `ShapeableImageView`，不是 Surface 渲染目标（`LssClientService.java:409-844`、`:794-843`）。
 - `dismiss()` 会清空帧、移除 View；`stopService()` 会停止 `LssClient` 并结束 Service（`LssClientService.java:583-606`、`:275-303`）。
+
+> 现状（2026-10-22）：本节描述的是改造前的实现，用于解释方案来源；其中提到的类名已改为 `ScreenViewerService` / `ScreenShareClient`。当前实现是双宿主（悬浮窗 `SurfaceShareViewer` / 全屏 `ViewerActivity`，共用 `ViewerPanelView`）+ 稳定 `SwitchableRenderTarget`，每个宿主的输出目标为 `HostRenderTarget`（surface 半 + JPEG bitmap 半）；旧的 `ScreenShareViewer`、`support/MutableReference` 与专用布局/资源已在 TB-ENG-006 B4 删除。
 
 因此，如果直接新增一个“全屏 Activity”并在 Activity 里重新创建 `LssClient`，窗口切换就会变成：
 
@@ -99,12 +101,14 @@ flowchart TB
 
 `ClientSession` 的内部锁只保护状态字段；不要在锁内调用解码器重建（`retryConfigure()`）、`addView`、`removeView`、`Surface.release` 或网络写。
 
-## 3. 当前实现为什么不能直接复用
+## 3. 改造前的实现为什么不能直接复用
 
-| 现状 | 影响 |
+> 本节是方案 B 落地前的评审依据，表中的类名与文件行号属于改造前快照；结论（把渲染目标与会话解耦）仍是当前设计的基础。
+
+| 改造前现状 | 影响 |
 | --- | --- |
-| `ScreenShareViewer` 是 `ShapeableImageView`，显示的是解码后的 Bitmap | 无法直接接收 MediaCodec 的 Surface 输出；需要改成 Surface/TextureView 显示目标 |
-| `LssClientService` 同时拥有 `LssClient` 和悬浮窗 | 窗口销毁与连接生命周期耦合；Activity 介入会重复创建连接 |
+| `ScreenShareViewer` 是 `ShapeableImageView`，显示的是解码后的 Bitmap（该类已删除） | 无法直接接收 MediaCodec 的 Surface 输出；需要改成 Surface/TextureView 显示目标 |
+| `LssClientService` 同时拥有 `LssClient` 和悬浮窗（现为 `ScreenViewerService` / `ScreenShareClient`） | 窗口销毁与连接生命周期耦合；Activity 介入会重复创建连接 |
 | `dismiss()` 清空帧并移除 View | 没有“保留最后一帧”的过渡语义 |
 | `stopService()` 停止 `LssClient` | 任何“关闭窗口”的误用都会导致断连 |
 | 悬浮窗 `FLAG_NOT_FOCUSABLE` | 无法直接处理返回键、输入法和焦点；全屏交互需要另一种显示目标 |
@@ -273,7 +277,7 @@ sequenceDiagram
 
 ### 5.6 Activity 设计
 
-- `ViewerActivity` 不持有 `LssClient`；只绑定 `ClientSession`（通过 Binder/Messenger/接口）。
+- `ViewerActivity` 不持有 `ScreenShareClient`（改造前写作 `LssClient`）；只绑定 `ClientSession`（通过 Binder/Messenger/接口）。
 - `exported=false`；`launchMode` 用 `singleTop` 或 `singleTask`，避免重复实例。
 - 透明/无标题主题；`WindowCompat.setDecorFitsSystemWindows(false)` + `WindowInsetsControllerCompat` 做沉浸式。
 - `SurfaceView` 优先用于稳定全屏；`TextureView` 用于需要透明度/圆角/复杂变换的场景。

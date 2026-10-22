@@ -9,13 +9,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ServiceInfo;
-import android.content.res.Configuration;
 import android.graphics.Bitmap;
-import android.graphics.Canvas;
-import android.graphics.DrawFilter;
-import android.graphics.Matrix;
-import android.graphics.Paint;
-import android.graphics.PaintFlagsDrawFilter;
 import android.graphics.PixelFormat;
 import android.graphics.PointF;
 import android.graphics.Rect;
@@ -28,7 +22,6 @@ import android.os.SystemClock;
 import android.text.format.Formatter;
 import android.util.DisplayMetrics;
 import android.util.Log;
-import android.util.Size;
 import android.view.GestureDetector;
 import android.view.Gravity;
 import android.view.LayoutInflater;
@@ -39,7 +32,6 @@ import android.view.ViewConfiguration;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.Button;
-import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -54,17 +46,7 @@ import androidx.core.app.ServiceCompat;
 import androidx.core.content.ContextCompat;
 import androidx.core.text.HtmlCompat;
 
-import com.google.android.material.bottomsheet.BottomSheetBehavior;
-import com.google.android.material.bottomsheet.BottomSheetDialog;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
-import com.google.android.material.imageview.ShapeableImageView;
-import com.google.android.material.materialswitch.MaterialSwitch;
-import com.google.android.material.shape.CornerFamily;
-import com.google.android.material.shape.MaterialShapeDrawable;
-import com.google.android.material.shape.MaterialShapeUtils;
-import com.google.android.material.shape.ShapeAppearanceModel;
-import com.google.android.material.slider.LabelFormatter;
-import com.google.android.material.slider.Slider;
 import com.obby.android.localscreenshare.MainActivity;
 import com.obby.android.localscreenshare.ViewerActivity;
 import com.obby.android.localscreenshare.R;
@@ -84,7 +66,6 @@ import com.obby.android.localscreenshare.client.ClientObserver;
 import com.obby.android.localscreenshare.client.ClientStats;
 import com.obby.android.localscreenshare.client.ClientStatsListener;
 import com.obby.android.localscreenshare.client.StreamFailure;
-import com.obby.android.localscreenshare.client.StreamGeometryListener;
 import com.obby.android.localscreenshare.core.client.ClientMediaSession;
 import com.obby.android.localscreenshare.core.client.ClientStateListener;
 import com.obby.android.localscreenshare.core.codec.CodecRegistry;
@@ -114,15 +95,9 @@ import com.obby.android.localscreenshare.render.ViewerPanelView;
 import com.obby.android.localscreenshare.render.ViewerZoomMenuModel;
 import com.obby.android.localscreenshare.render.ZoomMode;
 import com.obby.android.localscreenshare.settings.Preferences;
-import com.obby.android.localscreenshare.support.MutableReference;
 import com.obby.android.localscreenshare.support.OverlayWindow;
-import com.obby.android.localscreenshare.support.ResourceUtils;
 import com.obby.android.localscreenshare.support.ServiceProtocol;
 
-import org.apache.commons.lang3.math.NumberUtils;
-import org.apache.commons.lang3.mutable.MutableBoolean;
-
-import java.text.NumberFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -156,12 +131,15 @@ import java.util.function.BooleanSupplier;
  * instead of offering a retry that would fail the same check. Cancelling either confirmation
  * broadcasts {@link ServiceProtocol#ACTION_STOP_CLIENT_SERVICE}.</p>
  *
- * <p><b>Threading and ownership.</b> All service callbacks and {@link ClientObserver}
- * callbacks run on the main thread; {@link ScreenShareClient} decodes frames on its own executor and
- * delivers them on the main thread. A received frame arrives as a {@link MutableReference} owned by the
- * viewer, which clears the previous frame when it stores a new one. All overlay windows are added
- * and removed on the main thread and require the overlay permission checked by
- * {@link MainActivity}.</p>
+ * <p><b>Threading and ownership.</b> All service callbacks and {@link ClientObserver} callbacks run
+ * on the main thread; {@link ScreenShareClient} decodes frames on its own executor and delivers
+ * them on the main thread. The session keeps one stable {@link SwitchableRenderTarget} whose
+ * delegate is the {@link HostRenderTarget} of the display host that currently owns the output: the
+ * surface half receives H.264, the bitmap half decodes complete JPEG frames on the decode thread and
+ * posts them to the host on the main thread. Switching between the floating window and the activity
+ * re-points that delegate and rebuilds the decoder; the network session and its descriptor are
+ * untouched. All overlay windows are added and removed on the main thread and require the overlay
+ * permission checked by {@link MainActivity}.</p>
  */
 public class ScreenViewerService extends Service {
     private static final String NOTIFICATION_CHANNEL_ID = "lss-client-service";
@@ -219,10 +197,6 @@ public class ScreenViewerService extends Service {
     // Overlay shown while connecting; the same instance is reused across retries.
     @Nullable
     private ScreenShareLoading mScreenShareLoading;
-
-    // Overlay shown once frames arrive; created on the first connect.
-    @Nullable
-    private ScreenShareViewer mScreenShareViewer;
 
     // Media session wiring: the registry resolves the active codec's decoder, the session drives
     // it, and the receiver feeds it from the wire on the client's dedicated decode thread.
@@ -2515,505 +2489,6 @@ public class ScreenViewerService extends Service {
             }
             rect.offsetTo(0, 0);
             rect.offset(-rect.width() / 2, -rect.height() / 2);
-        }
-    }
-
-    /**
-     * Floating, draggable viewer for received frames.
-     *
-     * <p>Created and used on the main thread. The first {@link #show()} applies the stored
-     * opacity, scale and normalized location; later frames only replace the bitmap and, when the
-     * frame size or the secure flag changes, the window layout. A long press starts dragging, a
-     * single tap opens the disconnect confirmation and a double tap opens the settings sheet.
-     * Settings are applied live and persisted when a slider is released. The frame reference
-     * passed to {@link #setFrame} is owned by the viewer until the next frame or
-     * {@link #dismiss()} clears it.</p>
-     */
-    private static class ScreenShareViewer {
-        private static final float CORNER_SIZE_RATIO = 1 / 16f;
-
-        private static final int MIN_OPACITY = 50;
-
-        private static final int MAX_OPACITY = 100;
-
-        private static final int OPACITY_STEP = 1;
-
-        private static final int MIN_SCALE = 25;
-
-        private static final int MAX_SCALE = 100;
-
-        private static final int SCALE_STEP = 1;
-
-        // Live copies of the persisted viewer settings; the slider listeners update them.
-        private int mOpacity;
-
-        private int mScale;
-
-        // Current frame; owned by this viewer until it is replaced or cleared.
-        @Nullable
-        private MutableReference<Bitmap> mFrame;
-
-        // Pixel size of the current frame; null before the first frame and after dismiss().
-        @Nullable
-        private Size mFrameSize;
-
-        // Last matrix applied to the frame view; compared before touching the view.
-        @Nullable
-        private Matrix mMatrix;
-
-        // Disconnect confirmation, created on demand as a floating window.
-        @Nullable
-        private AlertDialog mDialog;
-
-        // Settings sheet, created on demand and dismissed with the viewer.
-        @Nullable
-        private BottomSheetDialog mSettingsDialog;
-
-        @NonNull
-        private final Context mContext;
-
-        @NonNull
-        private final DeviceInfo mServiceInfo;
-
-        @NonNull
-        private final WindowManager mWindowManager;
-
-        @NonNull
-        private final ShapeableImageView mFrameView;
-
-        @NonNull
-        private final WindowManager.LayoutParams mLayoutParams;
-
-        @NonNull
-        private final GestureDetector mGestureDetector;
-
-        // Normalized position within the allowed bounds, in the range [0, 1].
-        @NonNull
-        private final PointF mLocation = new PointF();
-
-        // Scratch rectangle reused by the bounds calculations.
-        @NonNull
-        private final Rect mBounds = new Rect();
-
-        // Difference between the window origin and the touch point while dragging.
-        @NonNull
-        private final PointF mDragOffset = new PointF();
-
-        @NonNull
-        private final LabelFormatter mPercentageLabelFormatter = new LabelFormatter() {
-            @NonNull
-            @Override
-            public String getFormattedValue(float value) {
-                return NumberFormat.getPercentInstance().format(value / 100f);
-            }
-        };
-
-        @SuppressWarnings("FieldCanBeLocal")
-        @NonNull
-        private final GestureDetector.OnGestureListener mOnGestureListener =
-            new GestureDetector.SimpleOnGestureListener() {
-                @Override
-                public boolean onDown(@NonNull MotionEvent e) {
-                    return true;
-                }
-
-                @SuppressWarnings("DataFlowIssue")
-                @Override
-                public boolean onSingleTapConfirmed(@NonNull MotionEvent e) {
-                    if (mDialog == null) {
-                        mDialog = new MaterialAlertDialogBuilder(mContext)
-                            .setMessage(HtmlCompat.fromHtml(mContext.getString(R.string.screen_share_disconnect_confirm,
-                                nameOf(mServiceInfo)), HtmlCompat.FROM_HTML_MODE_LEGACY))
-                            .setPositiveButton(android.R.string.ok, (dialog, which) -> mContext.sendBroadcast(
-                                new Intent(ServiceProtocol.ACTION_STOP_CLIENT_SERVICE).setPackage(mContext.getPackageName())))
-                            .setNegativeButton(android.R.string.cancel, null)
-                            .setCancelable(false)
-                            .create();
-                        mDialog.getWindow().setType(ServiceProtocol.FLOATING_WINDOW_TYPE);
-                    }
-                    OverlayWindow.show(mDialog);
-                    return true;
-                }
-
-                @Override
-                public boolean onDoubleTap(@NonNull MotionEvent e) {
-                    if (mSettingsDialog == null) {
-                        mSettingsDialog = createSettingsDialog();
-                    }
-                    OverlayWindow.show(mSettingsDialog);
-                    return true;
-                }
-
-                @Override
-                public void onLongPress(@NonNull MotionEvent e) {
-                    mFrameView.setActivated(true);
-                    mDragOffset.set(mLayoutParams.x - e.getRawX(), mLayoutParams.y - e.getRawY());
-                }
-            };
-
-        @SuppressLint("InflateParams")
-        private ScreenShareViewer(@NonNull final Context context, @NonNull final DeviceInfo serviceInfo) {
-            mContext = new ContextThemeWrapper(context, R.style.Theme_ScreenShare);
-            mServiceInfo = serviceInfo;
-            mWindowManager = mContext.getSystemService(WindowManager.class);
-            mFrameView = createFrameView();
-            mLayoutParams = new WindowManager.LayoutParams(0, 0, 0, 0, ServiceProtocol.FLOATING_WINDOW_TYPE,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
-                PixelFormat.TRANSLUCENT);
-            mLayoutParams.gravity = Gravity.CENTER;
-            mGestureDetector = new GestureDetector(mContext, mOnGestureListener);
-        }
-
-        /**
-         * Stores a new frame and updates the overlay only when its geometry or security changes.
-         *
-         * <p>Takes ownership of the reference and clears the previous frame. The bitmap is shown
-         * immediately; the window layout is touched only when the frame size or the secure flag
-         * differs from the previous frame.</p>
-         */
-        @SuppressWarnings("DataFlowIssue")
-        public void setFrame(@NonNull final MutableReference<Bitmap> frame, boolean isSecure) {
-            final MutableReference<Bitmap> oldFrame = mFrame;
-            mFrame = frame;
-
-            final Bitmap bitmap = mFrame.getValue();
-            mFrameView.setImageBitmap(bitmap);
-
-            final MutableBoolean shouldUpdate = new MutableBoolean();
-            // A size change invalidates the fit scale, the image matrix and the corner radius.
-            if (mFrameSize == null || mFrameSize.getWidth() != bitmap.getWidth()
-                || mFrameSize.getHeight() != bitmap.getHeight()) {
-                shouldUpdate.setTrue();
-                mFrameSize = new Size(bitmap.getWidth(), bitmap.getHeight());
-                updateLayoutParams();
-                updateMatrix();
-                updateShape();
-            }
-
-            // Mirrors the frame's secure flag onto the window; a secure window is excluded from
-            // screenshots and screen recordings.
-            if ((mLayoutParams.flags & WindowManager.LayoutParams.FLAG_SECURE) == 0 == isSecure) {
-                shouldUpdate.setTrue();
-                if (isSecure) {
-                    mLayoutParams.flags |= WindowManager.LayoutParams.FLAG_SECURE;
-                } else {
-                    mLayoutParams.flags &= ~WindowManager.LayoutParams.FLAG_SECURE;
-                }
-            }
-
-            if (shouldUpdate.isTrue()) {
-                OverlayWindow.update(mWindowManager, mFrameView, mLayoutParams);
-            }
-
-            // Clearing the previous reference offers its bitmap back to the client's reuse pool,
-            // or recycles it when the pool is full or the client is stopped.
-            if (oldFrame != null) {
-                oldFrame.clear();
-            }
-        }
-
-        /**
-         * Adds the overlay window the first time it is called and loads the persisted viewer
-         * settings at that moment. Later calls are no-ops while the view is attached.
-         */
-        public void show() {
-            if (mFrameView.getParent() == null) {
-                mOpacity = Preferences.get().getViewerOpacity();
-                mScale = Preferences.get().getViewerScale();
-                mLocation.set(Preferences.get().getViewerLocation());
-                updateLayoutParams();
-                updateMatrix();
-                updateShape();
-                OverlayWindow.attach(mWindowManager, mFrameView, mLayoutParams);
-            }
-        }
-
-        /**
-         * Removes the overlay, closes its dialogs and clears the current frame. Safe to call when
-         * the view is not attached.
-         */
-        public void dismiss() {
-            mFrameSize = null;
-            mLayoutParams.flags &= ~WindowManager.LayoutParams.FLAG_SECURE;
-            mFrameView.setImageBitmap(null);
-
-            if (mSettingsDialog != null) {
-                OverlayWindow.dismiss(mSettingsDialog);
-                mSettingsDialog = null;
-            }
-
-            if (mDialog != null) {
-                OverlayWindow.dismiss(mDialog);
-                mDialog = null;
-            }
-
-            if (mFrame != null) {
-                mFrame.clear();
-                mFrame = null;
-            }
-
-            OverlayWindow.detach(mWindowManager, mFrameView);
-        }
-
-        private void updateView() {
-            updateLayoutParams();
-            updateMatrix();
-            updateShape();
-            OverlayWindow.update(mWindowManager, mFrameView, mLayoutParams);
-        }
-
-        private void updateMatrix() {
-            final Matrix matrix = new Matrix();
-            if (mFrameSize != null && mFrameSize.getWidth() > 0 && mFrameSize.getHeight() > 0) {
-                matrix.setScale((float) mLayoutParams.width / mFrameSize.getWidth(),
-                    (float) mLayoutParams.height / mFrameSize.getHeight());
-            }
-
-            if (!Objects.equals(mMatrix, matrix)) {
-                mMatrix = matrix;
-                mFrameView.setImageMatrix(mMatrix);
-            }
-        }
-
-        private void updateShape() {
-            final float cornerSize;
-            if (Preferences.get().isViewerRounded()) {
-                final float maxCornerSize = mContext.getResources().getDimension(
-                    ResourceUtils.resolveAttribute(mContext, com.google.android.material.R.attr.shapeCornerSizeLarge));
-                cornerSize = Math.min(Math.min(mLayoutParams.width, mLayoutParams.height) * CORNER_SIZE_RATIO,
-                    maxCornerSize);
-            } else {
-                cornerSize = 0f;
-            }
-
-            final ShapeAppearanceModel shapeAppearanceModel = ShapeAppearanceModel.builder()
-                .setAllCorners(CornerFamily.ROUNDED, cornerSize)
-                .build();
-            mFrameView.setShapeAppearanceModel(shapeAppearanceModel);
-
-            final MaterialShapeDrawable foreground = new MaterialShapeDrawable(shapeAppearanceModel);
-            foreground.setFillColor(ContextCompat.getColorStateList(mContext, R.color.screen_share_viewer_foreground));
-            mFrameView.setForeground(foreground);
-        }
-
-        // Fits the frame into the visible display bounds at the user scale, never below the
-        // minimum viewer size, then maps the normalized location onto the allowed center range.
-        private void updateLayoutParams() {
-            mLayoutParams.alpha = mOpacity / 100f;
-
-            if (Preferences.get().isViewerKeepScreenOn()) {
-                mLayoutParams.flags |= WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON;
-            } else {
-                mLayoutParams.flags &= ~WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON;
-            }
-
-            getMaxLayoutBounds(mBounds);
-
-            if (mFrameSize == null || mFrameSize.getWidth() <= 0 || mFrameSize.getHeight() <= 0) {
-                mLayoutParams.width = 0;
-                mLayoutParams.height = 0;
-            } else {
-                final int minSize = mContext.getResources().getDimensionPixelSize(R.dimen.screen_share_viewer_min_size);
-                final float scale = Math.min(mBounds.width() * mScale / 100f / mFrameSize.getWidth(),
-                    mBounds.height() * mScale / 100f / mFrameSize.getHeight());
-                final float finalScale = NumberUtils.max((float) minSize / mFrameSize.getWidth(),
-                    (float) minSize / mFrameSize.getHeight(), scale);
-                mLayoutParams.width = (int) (mFrameSize.getWidth() * finalScale);
-                mLayoutParams.height = (int) (mFrameSize.getHeight() * finalScale);
-            }
-
-            getLocationBounds(mBounds);
-            mLayoutParams.x = (int) (mBounds.left + mBounds.width() * mLocation.x);
-            mLayoutParams.y = (int) (mBounds.top + mBounds.height() * mLocation.y);
-        }
-
-        // Clamps the window position to the allowed center range and stores it normalized.
-        private void updateLocation(final int x, final int y) {
-            getLocationBounds(mBounds);
-
-            final int finalX = Math.max(mBounds.left, Math.min(x, mBounds.right));
-            final int finalY = Math.max(mBounds.top, Math.min(y, mBounds.bottom));
-            mLocation.set(mBounds.width() <= 0 ? 0f : (float) (finalX - mBounds.left) / mBounds.width(),
-                mBounds.height() <= 0 ? 0f : (float) (finalY - mBounds.top) / mBounds.height());
-
-            if (mLayoutParams.x != finalX || mLayoutParams.y != finalY) {
-                mLayoutParams.x = finalX;
-                mLayoutParams.y = finalY;
-                OverlayWindow.update(mWindowManager, mFrameView, mLayoutParams);
-            }
-        }
-
-        // The rectangle describes allowed window centers, so it is inset by half the window size.
-        private void getLocationBounds(@NonNull final Rect rect) {
-            getMaxLayoutBounds(rect);
-            rect.left += mLayoutParams.width / 2;
-            rect.top += mLayoutParams.height / 2;
-            rect.right -= mLayoutParams.width / 2;
-            rect.bottom -= mLayoutParams.height / 2;
-        }
-
-        // Visible display frame with the origin moved to its center.
-        private void getMaxLayoutBounds(@NonNull final Rect rect) {
-            mFrameView.getWindowVisibleDisplayFrame(rect);
-            rect.offsetTo(0, 0);
-            rect.offset(-rect.width() / 2, -rect.height() / 2);
-        }
-
-        /**
-         * Builds the viewer settings sheet.
-         *
-         * <p>Opacity, scale and the switches apply immediately; slider values are persisted when
-         * the finger is released. The current values are loaded when the sheet is shown, because
-         * the same instance is reused.</p>
-         */
-        @SuppressWarnings("DataFlowIssue")
-        @NonNull
-        private BottomSheetDialog createSettingsDialog() {
-            final BottomSheetDialog settingsDialog = new BottomSheetDialog(mContext);
-            settingsDialog.setContentView(R.layout.widget_screen_share_viewer_settings);
-            settingsDialog.setDismissWithAnimation(true);
-            settingsDialog.getWindow().setType(ServiceProtocol.FLOATING_WINDOW_TYPE);
-            settingsDialog.getBehavior().setSkipCollapsed(true);
-
-            final Slider opacitySettingView = settingsDialog.findViewById(R.id.opacity_setting);
-            opacitySettingView.setValue(MIN_OPACITY);
-            opacitySettingView.setValueFrom(MIN_OPACITY);
-            opacitySettingView.setValueTo(MAX_OPACITY);
-            opacitySettingView.setStepSize(OPACITY_STEP);
-            opacitySettingView.setLabelFormatter(mPercentageLabelFormatter);
-            opacitySettingView.addOnChangeListener((slider, value, fromUser) -> {
-                if (mOpacity != (int) value) {
-                    mOpacity = (int) value;
-                    updateLayoutParams();
-                    OverlayWindow.update(mWindowManager, mFrameView, mLayoutParams);
-                }
-            });
-            opacitySettingView.addOnSliderTouchListener(new Slider.OnSliderTouchListener() {
-                @Override
-                public void onStartTrackingTouch(@NonNull Slider slider) {
-                }
-
-                @Override
-                public void onStopTrackingTouch(@NonNull Slider slider) {
-                    Preferences.get().setViewerOpacity(mOpacity);
-                }
-            });
-
-            final Slider scaleSettingView = settingsDialog.findViewById(R.id.scale_setting);
-            scaleSettingView.setValue(MIN_SCALE);
-            scaleSettingView.setValueFrom(MIN_SCALE);
-            scaleSettingView.setValueTo(MAX_SCALE);
-            scaleSettingView.setStepSize(SCALE_STEP);
-            scaleSettingView.setLabelFormatter(mPercentageLabelFormatter);
-            scaleSettingView.addOnChangeListener((slider, value, fromUser) -> {
-                if (mScale != (int) value) {
-                    mScale = (int) value;
-                    updateView();
-                }
-            });
-            scaleSettingView.addOnSliderTouchListener(new Slider.OnSliderTouchListener() {
-                @Override
-                public void onStartTrackingTouch(@NonNull Slider slider) {
-                }
-
-                @Override
-                public void onStopTrackingTouch(@NonNull Slider slider) {
-                    Preferences.get().setViewerScale(mScale);
-                }
-            });
-
-            final MaterialSwitch keepScreenOnSettingView = settingsDialog.findViewById(R.id.keep_screen_on_setting);
-            keepScreenOnSettingView.setOnCheckedChangeListener((buttonView, isChecked) -> {
-                if (Preferences.get().isViewerKeepScreenOn() != isChecked) {
-                    Preferences.get().setViewerKeepScreenOn(isChecked);
-                    updateLayoutParams();
-                    OverlayWindow.update(mWindowManager, mFrameView, mLayoutParams);
-                }
-            });
-
-            final MaterialSwitch roundedSettingView = settingsDialog.findViewById(R.id.rounded_setting);
-            roundedSettingView.setOnCheckedChangeListener((buttonView, isChecked) -> {
-                if (Preferences.get().isViewerRounded() != isChecked) {
-                    Preferences.get().setViewerRounded(isChecked);
-                    updateShape();
-                }
-            });
-
-            settingsDialog.setOnShowListener(dialog -> {
-                settingsDialog.getBehavior().setState(BottomSheetBehavior.STATE_EXPANDED);
-                opacitySettingView.setValue(mOpacity);
-                scaleSettingView.setValue(mScale);
-                keepScreenOnSettingView.setChecked(Preferences.get().isViewerKeepScreenOn());
-                keepScreenOnSettingView.jumpDrawablesToCurrentState();
-                roundedSettingView.setChecked(Preferences.get().isViewerRounded());
-                roundedSettingView.jumpDrawablesToCurrentState();
-            });
-
-            return settingsDialog;
-        }
-
-        /**
-         * Builds the frame view: bitmap filtering, re-layout on display configuration changes and
-         * the drag gesture on top of the tap gestures detected by the gesture detector.
-         *
-         * <p>Dragging is armed by a long press; releasing the finger persists the normalized
-         * position.</p>
-         */
-        @NonNull
-        private ShapeableImageView createFrameView() {
-            final ShapeableImageView frameView = new ShapeableImageView(mContext) {
-                // Smooths the bitmap when it is scaled to the window size.
-                @NonNull
-                private final DrawFilter mDrawFilter =
-                    new PaintFlagsDrawFilter(0, Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
-
-                @Override
-                protected void onDraw(Canvas canvas) {
-                    canvas.setDrawFilter(mDrawFilter);
-                    super.onDraw(canvas);
-                }
-
-                @Override
-                protected void onConfigurationChanged(Configuration newConfig) {
-                    super.onConfigurationChanged(newConfig);
-                    // Bounds change with rotation and multi-window; re-fit after the new
-                    // configuration has been applied.
-                    post(() -> updateView());
-                }
-
-                // Drag uses raw screen coordinates because the window itself moves under the
-                // finger.
-                @SuppressLint("ClickableViewAccessibility")
-                @Override
-                public boolean onTouchEvent(@NonNull MotionEvent event) {
-                    switch (event.getActionMasked()) {
-                        case MotionEvent.ACTION_MOVE:
-                            if (mFrameView.isActivated()) {
-                                updateLocation((int) (event.getRawX() + mDragOffset.x),
-                                    (int) (event.getRawY() + mDragOffset.y));
-                            }
-                            break;
-                        case MotionEvent.ACTION_UP:
-                        case MotionEvent.ACTION_CANCEL:
-                            if (mFrameView.isActivated()) {
-                                mFrameView.setActivated(false);
-                                Preferences.get().setViewerLocation(mLocation);
-                            }
-                            break;
-                        default:
-                            break;
-                    }
-
-                    return mGestureDetector.onTouchEvent(event) || super.onTouchEvent(event);
-                }
-            };
-
-            frameView.setAdjustViewBounds(true);
-            frameView.setScaleType(ImageView.ScaleType.FIT_XY);
-            frameView.setElevation(mContext.getResources().getDimension(R.dimen.screen_share_viewer_elevation));
-            MaterialShapeUtils.setParentAbsoluteElevation(frameView);
-
-            return frameView;
         }
     }
 }

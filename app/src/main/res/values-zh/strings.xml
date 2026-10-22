@@ -33,9 +33,7 @@
     <string name="viewer_action_stop_viewing">"停止观看"</string>
     <string name="viewer_expand_error">"无法打开全屏，已在悬浮窗中继续显示"</string>
     <string name="keep_screen_on_setting_label">"屏幕常亮"</string>
-    <string name="viewer_opacity_setting_label">"不透明度"</string>
     <string name="viewer_scale_setting_label">"显示大小"</string>
-    <string name="viewer_rounded_setting_label">"窗口圆角"</string>
     <string name="projection_toolbar_title">"我的共享屏幕"</string>
     <string name="service_online">"在线"</string>
     <string name="service_offline">"离线"</string>

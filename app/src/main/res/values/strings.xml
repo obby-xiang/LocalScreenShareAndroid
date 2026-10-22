@@ -33,9 +33,7 @@
     <string name="viewer_action_stop_viewing">"Stop viewing"</string>
     <string name="viewer_expand_error">"Full screen did not open, still showing in the small window"</string>
     <string name="keep_screen_on_setting_label">"Keep screen on"</string>
-    <string name="viewer_opacity_setting_label">"Opacity"</string>
     <string name="viewer_scale_setting_label">"Display size"</string>
-    <string name="viewer_rounded_setting_label">"Rounded corners"</string>
     <string name="projection_toolbar_title">"My Shared Screen"</string>
     <string name="service_online">"Online"</string>
     <string name="service_offline">"Offline"</string>

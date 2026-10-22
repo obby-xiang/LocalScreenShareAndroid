@@ -16,7 +16,8 @@
 - 协议无单独 JPEG 消息：`Descriptor` 带 `codec_id="jpeg"`、`bitstream_format="JPEG_FRAME"`、空 config；每帧都是 join point（保留最新帧策略）。
 - 当前 JPEG 帧走不通：HELLO 无 JPEG 能力时服务端按 `REQUIRES_EXPLICIT_FALLBACK` 关闭；HELLO 若含 JPEG，客户端会话能力硬编码 H.264 导致 CLOSED，帧不进解码也不计指标，loading 永不消失。
 - 服务端选格式只在开始时读偏好（`mIsH264`），运行时切换不支持（观察者只打日志"applies on the next start"）；设置界面编码格式为只读，`Preferences.setProjectionCodec` 无调用方。
-- 死代码（B4 删除，逐条 grep 取证）：内嵌类 `ScreenShareViewer`（约 497 行）、字段 `mScreenShareViewer`、`support/MutableReference`、仅死类使用的 import、`res/color/screen_share_viewer_foreground.xml`、`dimen screen_share_viewer_elevation`。保留 `screen_share_viewer_min_size` 与 viewer settings 布局（活代码在用）。`BitmapRenderTarget` 复用而非删除（B2 重写）。
+- 死代码（B4 删除，逐条 grep 取证）：内嵌类 `ScreenShareViewer`（约 497 行）、字段 `mScreenShareViewer`、`support/MutableReference`、仅死类使用的 import、`res/color/screen_share_viewer_foreground.xml`、`dimen screen_share_viewer_elevation`。保留 `screen_share_viewer_min_size`（活代码在用）。`BitmapRenderTarget` 复用而非删除（B2 重写）。
+- B4 实施时复核发现：`res/layout/widget_screen_share_viewer_settings.xml` 的唯一引用就是该死类，删除类后它会变成新的未使用资源（会让 lint 未使用资源告警 +1，违反「减少或持平」），因此连同只被该布局引用的 `viewer_opacity_setting_label`、`viewer_rounded_setting_label` 一并删除；计划原文「viewer settings 布局（活代码在用）」的判断有误。
 - 已有 JVM 覆盖：`JpegCodecTest`、`StreamFrameworkEndToEndTest.jpegEmptyConfig_worksEndToEnd`、`ClientMediaSessionTest.emptyConfigJpegDescriptor_isAccepted`、`ScreenStreamProtoMapperTest`、`SwitchableRenderTargetTest`。
 
 ## 3. 目标设计（三个共用决定）
@@ -50,7 +51,7 @@
 
 - **B2**：新增 `BitmapScalePolicy`（`sampleSize(frameW, frameH, boxW, boxH)`：任一 ≤0→1；宽高排序后取 min 比值，向下取 2 的幂，夹 [1,8]，旋转不变）；重写 `BitmapRenderTarget`（构造接 `ViewerHost` + 主线程 `Executor`；decode 线程解码 + 原子替换 pending + 调度主线程 deliver；`clear()` 清 pending）；新增 `HostRenderTarget`（`getSurface`/`setContentSize` → surface 半，`renderEncodedImage` → bitmap 半，`release` 释放两半）；`ViewerPanelView` 加 `frameView`（`ScaleType.MATRIX`、默认 GONE、不可点击，圆角/矩阵与 texture 同步，`captureSnapshot` 优先 frameView）；`ViewerHost` 加 `showEncodedFrame`/`clearEncodedFrame`/`getContentBox`；`ViewerActivity` 转发；`ScreenViewerService` 两个宿主的渲染目标换为 `HostRenderTarget`，teardown/dismiss 清 frame 层。不改 `SurfaceRenderTarget`/`SwitchableRenderTarget`/`ClientMediaSession`/`JpegDecoder`/协议/服务端。测试：`BitmapScalePolicyTest`（6）、`HostRenderTargetTest`（5）、`ClientMediaSessionJpegTargetTest`（2，JPEG 帧到 bitmap 半、H.264 风格帧不到 bitmap 半）。
 - **B3**：布局把只读 codec 文本换成 `MaterialButtonToggleGroup`（h264/jpeg 两项，复用现有文案键）；码率行与关键帧行包进带 id 的行容器；`MainActivity` 切换时写 `Preferences.setProjectionCodec`，`applyVideoSettingsControls()` 按 `isBitrateApplicable()`/`isIdrIntervalApplicable()` 显隐；`ProjectionControlValues` 新增这两个方法（都返回 `h264`）；说明文案改为"下次开始共享时生效"，删除旧的"固定 H.264"文案键并同步 `values-zh`。测试：`ProjectionControlValuesTest` +2。
-- **B4**：删除 §2 死代码清单全部对象与失效 import；修正 `ScreenViewerService` 类 Javadoc 与 `docs/windowing-session-design.md` 的过期描述；验证用例数与类数与 B3 后**持平**、`git grep` 零命中、`lintDebug` 资源告警减少或持平。
+- **B4**：删除 §2 死代码清单全部对象与失效 import（含 B4 复核补充的 `widget_screen_share_viewer_settings.xml` 与两个只被它使用的字符串）；修正 `ScreenViewerService` 类 Javadoc 与 `docs/windowing-session-design.md` 的过期描述；验证用例数与类数与 B3 后**持平**、`git grep` 零命中、`lintDebug` 资源告警减少或持平。
 
 ## 7. 编码格式切换的产品口径（已裁决）
 

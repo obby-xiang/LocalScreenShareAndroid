@@ -195,7 +195,7 @@ flowchart LR
 
 ### 6.3 客户端设置与重连
 
-- 客户端设置只有不透明度、显示大小、屏幕常亮、圆角（`widget_screen_share_viewer_settings.xml`、`LssClientService.java:707-791`），没有分辨率、帧率、码率、音频或控制选项。
+- 客户端设置当时只有不透明度、显示大小、屏幕常亮、圆角（`widget_screen_share_viewer_settings.xml`、`LssClientService.java:707-791`），没有分辨率、帧率、码率、音频或控制选项。这套弹窗随旧 JPEG 查看器在 TB-ENG-006 B4 删除；当前观看端设置走 `ViewerMenuFactory` 的菜单（缩放档位、显示大小、HUD、静音），投影参数在发送端的视频编码设置里。
 - 断线时弹出“重试/重新连接”对话框（`LssClientService.java:125-168`）；重连会新建 `LssClient`，没有指数退避、没有会话恢复、没有“保持最后一帧”策略。
 - 前台通知显示主机地址、端口和入站速率（`:328-346`）；地址来自 NSD 解析结果，日志和界面都会暴露局域网地址。
 - 客户端使用 `remoteMessaging` 前台服务类型（`AndroidManifest.xml:43-46`）。它是否能准确表达“长连接媒体查看”的语义，建议在目标版本和分发渠道政策下复核。
