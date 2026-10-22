@@ -60,6 +60,7 @@ import com.google.android.material.appbar.MaterialToolbar;
 import com.google.android.material.bottomsheet.BottomSheetBehavior;
 import com.google.android.material.bottomsheet.BottomSheetDialog;
 import com.google.android.material.button.MaterialButton;
+import com.google.android.material.button.MaterialButtonToggleGroup;
 import com.google.android.material.color.MaterialColors;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.divider.MaterialDividerItemDecoration;
@@ -71,6 +72,7 @@ import com.obby.android.localscreenshare.authorization.ApprovalOutcome;
 import com.obby.android.localscreenshare.authorization.store.AuthorizationEntry;
 import com.obby.android.localscreenshare.authorization.store.AuthorizationStore;
 import com.obby.android.localscreenshare.core.audio.AudioAvailability;
+import com.obby.android.localscreenshare.core.codec.CodecIds;
 import com.obby.android.localscreenshare.core.codec.h264.H264Codec;
 import com.obby.android.localscreenshare.core.codec.mediacodec.EncoderSizeLimitProbe;
 import com.obby.android.localscreenshare.discovery.DiscoveryManager;
@@ -242,10 +244,18 @@ public class MainActivity extends AppCompatActivity {
     private Slider mBitrateSettingView;
 
     @Nullable
+    private View mBitrateSettingRow;
+
+    @Nullable
     private Slider mIdrIntervalSettingView;
 
     @Nullable
-    private MaterialTextView mCodecSettingView;
+    private View mIdrIntervalSettingRow;
+
+    // Two mutually exclusive codec options; the preference observer refreshes it like every other
+    // control, so a change written elsewhere (a reset, another sheet) shows up here too.
+    @Nullable
+    private MaterialButtonToggleGroup mCodecToggleGroup;
 
     // Sliders the user currently has a finger on; a preference refresh never moves a slider while
     // it is being dragged.
@@ -1657,9 +1667,14 @@ public class MainActivity extends AppCompatActivity {
      * <p>The projection controls moved here from the service settings sheet, so there is exactly
      * one place that writes each preference. Values are persisted when a slider is released: a
      * drag would otherwise persist dozens of intermediate values, and the frame rate and key-frame
-     * interval each cost an encoder rebuild. The quality row is only shown when the JPEG capture
-     * path is selected; this build always shares H.264, where the value is unused. The codec row is
-     * read-only because the client viewer has no JPEG path yet.</p>
+     * interval each cost an encoder rebuild.</p>
+     *
+     * <p><b>Codec rows.</b> The codec is a two-option choice, and the controls that only one codec
+     * understands follow it: the JPEG quality row appears for JPEG, while the bitrate and key-frame
+     * interval rows are H.264 only, because the JPEG encoder ignores live parameters and every JPEG
+     * frame is independently decodable. A codec change takes effect the next time sharing starts;
+     * a running capture session keeps the encoder it was built for, which is what the note under
+     * the buttons says.</p>
      *
      * <p>The capture percentage slider starts at the minimum the current display and encoder can
      * use, so it never offers a percentage whose capture size the encoder refuses (see
@@ -1758,6 +1773,7 @@ public class MainActivity extends AppCompatActivity {
 
         final Slider bitrateSettingView = settingsDialog.findViewById(R.id.bitrate_setting);
         mBitrateSettingView = bitrateSettingView;
+        mBitrateSettingRow = settingsDialog.findViewById(R.id.bitrate_setting_row);
         bitrateSettingView.setValue(ProjectionControlValues.MIN_BITRATE_MBPS);
         bitrateSettingView.setValueFrom(ProjectionControlValues.MIN_BITRATE_MBPS);
         bitrateSettingView.setValueTo(ProjectionControlValues.MAX_BITRATE_MBPS);
@@ -1788,6 +1804,7 @@ public class MainActivity extends AppCompatActivity {
 
         final Slider idrIntervalSettingView = settingsDialog.findViewById(R.id.idr_interval_setting);
         mIdrIntervalSettingView = idrIntervalSettingView;
+        mIdrIntervalSettingRow = settingsDialog.findViewById(R.id.idr_interval_setting_row);
         idrIntervalSettingView.setValue(ProjectionSettings.MIN_IDR_INTERVAL_MS / 1000f);
         idrIntervalSettingView.setValueFrom(ProjectionSettings.MIN_IDR_INTERVAL_MS / 1000f);
         idrIntervalSettingView.setValueTo(ProjectionSettings.MAX_IDR_INTERVAL_MS / 1000f);
@@ -1815,7 +1832,21 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        mCodecSettingView = settingsDialog.findViewById(R.id.codec_setting);
+        mCodecToggleGroup = settingsDialog.findViewById(R.id.codec_toggle_group);
+        mCodecToggleGroup.addOnButtonCheckedListener((group, checkedId, isChecked) -> {
+            // Only the newly checked button writes, so the pair produces one preference write.
+            if (!isChecked) {
+                return;
+            }
+            final String codec = checkedId == R.id.codec_h264_option
+                ? CodecIds.H264
+                : CodecIds.JPEG;
+            if (!codec.equals(Preferences.get().getProjectionCodec())) {
+                // The mode is read when a capture session starts; a running session keeps encoding
+                // with the codec it was built for.
+                Preferences.get().setProjectionCodec(codec);
+            }
+        });
 
         // Thermal throttling is a temporary override of the two sliders above, never a stored
         // video value, so it lives at the bottom of the sheet with its own explanation.
@@ -1875,6 +1906,14 @@ public class MainActivity extends AppCompatActivity {
         if (mQualitySettingRow != null) {
             mQualitySettingRow.setVisibility(values.isH264() ? View.GONE : View.VISIBLE);
         }
+        if (mBitrateSettingRow != null) {
+            mBitrateSettingRow.setVisibility(
+                values.isBitrateApplicable() ? View.VISIBLE : View.GONE);
+        }
+        if (mIdrIntervalSettingRow != null) {
+            mIdrIntervalSettingRow.setVisibility(
+                values.isIdrIntervalApplicable() ? View.VISIBLE : View.GONE);
+        }
         if (mQualitySettingView != null && !mTrackingSliders.contains(mQualitySettingView)) {
             mQualitySettingView.setValue(values.getJpegQuality());
         }
@@ -1897,10 +1936,15 @@ public class MainActivity extends AppCompatActivity {
             && !mTrackingSliders.contains(mIdrIntervalSettingView)) {
             mIdrIntervalSettingView.setValue(values.getIdrIntervalSeconds());
         }
-        if (mCodecSettingView != null) {
-            mCodecSettingView.setText(values.isH264()
-                ? R.string.projection_codec_value_h264
-                : R.string.projection_codec_value_jpeg);
+        if (mCodecToggleGroup != null) {
+            final int checkedId = values.isH264()
+                ? R.id.codec_h264_option
+                : R.id.codec_jpeg_option;
+            // check() notifies the listener, which writes the preference back only when the value
+            // really differs, so a refresh loop cannot form.
+            if (mCodecToggleGroup.getCheckedButtonId() != checkedId) {
+                mCodecToggleGroup.check(checkedId);
+            }
         }
     }
 

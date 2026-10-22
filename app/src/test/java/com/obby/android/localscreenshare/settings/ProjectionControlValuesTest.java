@@ -118,6 +118,29 @@ public class ProjectionControlValuesTest {
         assertEquals(70, values.getJpegQuality());
     }
 
+    @Test
+    public void jpegCodec_hidesTheControlsItIgnores() {
+        ProjectionControlValues values = ProjectionControlValues.of(
+            ProjectionSettings.of(4_000_000, 60, 1_000, 100, 70, CodecIds.JPEG), 5);
+
+        assertFalse(values.isBitrateApplicable());
+        assertFalse(values.isIdrIntervalApplicable());
+        // The hidden controls keep their stored values, so switching back to H.264 shows them
+        // again instead of resetting them.
+        assertEquals(70, values.getJpegQuality());
+        assertEquals(4.0f, values.getBitrateMbps(), DELTA);
+        assertEquals(1.0f, values.getIdrIntervalSeconds(), DELTA);
+    }
+
+    @Test
+    public void h264Codec_appliesBitrateAndKeyFrameInterval() {
+        ProjectionControlValues values = ProjectionControlValues.of(
+            defaults(100, 4_000_000, 1_000, 85), 5);
+
+        assertTrue(values.isBitrateApplicable());
+        assertTrue(values.isIdrIntervalApplicable());
+    }
+
     private static ProjectionSettings defaults(int scalePercent, int bitrateBps, int idrIntervalMs,
                                                int quality) {
         return ProjectionSettings.of(bitrateBps, 60, idrIntervalMs, scalePercent, quality,

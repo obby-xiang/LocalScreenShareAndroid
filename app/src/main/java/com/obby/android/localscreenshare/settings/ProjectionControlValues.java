@@ -144,6 +144,27 @@ public final class ProjectionControlValues {
         return h264;
     }
 
+    /**
+     * Returns whether the bitrate control applies to the selected codec.
+     *
+     * <p>The JPEG path ignores encoder parameters: {@code JpegEncoder.updateParameters} is a no-op
+     * because the capture side already produced a complete image, so a bitrate has no effect there.
+     * The sheet hides the row instead of offering a control that does nothing.</p>
+     */
+    public boolean isBitrateApplicable() {
+        return h264;
+    }
+
+    /**
+     * Returns whether the key-frame interval control applies to the selected codec.
+     *
+     * <p>Every JPEG frame is independently decodable, so that path has no key-frame interval to
+     * request; the sheet hides the row for it.</p>
+     */
+    public boolean isIdrIntervalApplicable() {
+        return h264;
+    }
+
     private static int clamp(final int value, final int min, final int max) {
         return Math.max(min, Math.min(max, value));
     }

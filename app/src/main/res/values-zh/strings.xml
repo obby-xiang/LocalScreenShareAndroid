@@ -78,7 +78,7 @@
     <string name="video_settings_summary">"%1$s · %2$d fps · %3$s"</string>
     <string name="video_settings_rebuild_hint">"修改画面大小、帧率或关键帧间隔会重建编码器，画面可能短暂停顿并重新同步。"</string>
     <string name="video_settings_frame_rate_note">"高于 60 fps 需要本机编码器支持。"</string>
-    <string name="video_settings_codec_locked_note">"当前版本固定使用 H.264。"</string>
+    <string name="video_settings_codec_note">"下次开始共享时生效。JPEG 为兼容模式：任何设备都能显示，但编码开销与带宽占用高于 H.264。"</string>
     <string name="thermal_throttle_setting_label">"过热时自动降档"</string>
     <string name="thermal_throttle_setting_note">"设备热状态升到严重档时降低帧率，升到临界档时再把画面缩小一半；温度降下来后自动恢复你设定的画质参数。"</string>
     <string name="service_notification_thermal_reduced">"过热降档：<xliff:g id="fps">%1$d</xliff:g> fps"</string>
