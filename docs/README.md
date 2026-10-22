@@ -32,7 +32,7 @@
 | 5 | [渐进优化路线图](optimization-roadmap.md) | 先改什么、后改什么？每阶段如何验收？ | 计划，未执行 |
 | 6 | [可扩展编码框架设计](codec-framework.md) | 编码如何扩展？描述符、运行参数、可加入点与客户端状态如何定义？ | 已实施（代码接线，待设备验证） |
 | 7 | [局域网设备发现调研](discovery-research.md) | 局域网发现机制有哪些？LocalSend 怎么做？设备身份与字段如何分层？分几阶段落地？ | 已实施（TB-DISC-001..009，待设备验证） |
-| 8 | [采集格式与传输方式业界调研](transport-research.md) | 无 root 采集的最优路径是什么？H.264/HEVC/AV1 如何取舍？TCP、UDP、gRPC 各在什么阵营？ | 调研，未落地 |
+| 8 | [采集格式与传输方式业界调研](transport-research.md) | 无 root 采集的最优路径是什么？H.264/HEVC/AV1 如何取舍？TCP、UDP、gRPC 各在什么阵营？ | 调研；传输三档已由 [TB-NET-003](task-board.md#tb-net-003) 落地（见文末 §8 实施状态），采集与编码结论未落地 |
 | 9 | [性能优化业界调研](performance-research.md) | 业界如何降功耗、提流畅、减卡顿？我们差在哪、先做什么？ | 调研，未落地 |
 
 如果只想快速了解结论，先读本页的“结论速览”，再读第 1 篇和第 5 篇；如果只想了解进展，先读两个看板。第 7 篇是设备发现的专项调研，只在处理发现与设备身份时按需阅读。第 8–9 篇是业界调研：第 8 篇校准采集、编码与传输的技术选型，第 9 篇校准性能优化的投入顺序；两份都不改变既有裁决，只作为复评依据。编写或重构代码前，先读 [命名与包结构规范](naming-conventions.md)。
@@ -51,7 +51,7 @@
 | [optimization-roadmap.md](optimization-roadmap.md) | 可观测性、并发与资源清理、Session 解耦、H.264、窗口切换、客户端画质、音频、单客户端反控、传输决策的阶段与验收标准 |
 | [codec-framework.md](codec-framework.md) | 静态 Codec SPI、单活动流核心与 StreamHub、责任边界、描述符与运行参数分离、访问单元、可加入点与客户端状态、慢客户端、编码切换、传输映射、落地顺序、验收标准与非目标 |
 | [discovery-research.md](discovery-research.md) | 业界发现机制与平台矩阵、LocalSend 源码深挖、设备身份与字段的三层分配、可靠性参数、方案对比与分阶段落地建议；方案已实施（TB-DISC-001..009），待设备验证 |
-| [transport-research.md](transport-research.md) | 采集格式、传输格式、传输方式的三层对照：13 个代表性方案的矩阵、三个问题的共识与分歧、对本项目三选的评估与触发条件、不限 minSdk 的新 API、证据强度与反例、完整来源清单 |
+| [transport-research.md](transport-research.md) | 采集格式、传输格式、传输方式的三层对照：13 个代表性方案的矩阵、三个问题的共识与分歧、对本项目三选的评估与触发条件、不限 minSdk 的新 API、证据强度与反例、完整来源清单；文末 §8 记录 2026-10-22 的实施状态（[实施计划](superpowers/plans/2026-10-22-media-transports.md)、[DB-NET-003](decision-board.md#db-net-003)） |
 | [performance-research.md](performance-research.md) | 降功耗/提流畅/减卡顿的业界做法（编码侧、观看侧、系统侧）、jank 与恢复策略、与本项目的差距分析、按收益与工程量排序的 13 项建议、不推荐做法、可引入的 API 与 5 个触发条件 |
 | [naming-conventions.md](naming-conventions.md) | 包、类、方法/字段、资源与常量的命名规则，后缀语义表、包依赖方向、产品端点固定名、反例清单与例外；TB-ENG-011 的 R1–R4 批次依据 |
 

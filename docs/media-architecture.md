@@ -312,6 +312,22 @@ H.264 的 P 帧依赖前面的参考帧。丢弃一个中间 P 帧后，后续 P
 
 ## 6. 传输
 
+### 6.0 当前实现：三通道架构（2026-10-22，[DB-NET-003](decision-board.md#db-net-003)）
+
+> 本节记录**已落地**的形态；下面 6.1–6.4 是历史裁决与触发条件，按「控制面保留 gRPC」部分仍然有效、媒体部分按 6.0 理解。
+
+媒体面不再只有一条通道，而是一个可协商的三档结构，发送侧统一收敛在 `core/stream/MediaTransport` 一个接口上：
+
+| 档位 | 实现 | 传输与加密 | 何时使用 |
+| --- | --- | --- | --- |
+| gRPC 双向流 | `transport/GrpcMediaTransport` | 复用控制面 mTLS 与连接 | 载体与回退终点；老客户端、未协商或全部失败时继续用它，媒体不断流 |
+| 裸 TCP 媒体通道 | `transport/TcpMediaTransport` | 同一套 mTLS 材料与 pin 校验，外加每 RPC 一次性 32 B token 绑定 socket | 协商成功即用（`auto` 档默认）；16 字节帧头（pts + flags/size + epoch + type/version），DESCRIPTOR 载荷为 proto 描述符、AU 载荷原样 |
+| UDP 实验档 | `transport/UdpMediaTransport` | AES-256-GCM 逐数据报（nonce = salt‖wireSeq、AAD 绑序号），密钥控制面下发 | 默认关闭，服务端视频设置里开启；弱网优先尝试，失败自动回落 |
+
+协商时序（v1）：客户端 `HELLO` 声明 `media_transports` → 服务端按选路策略（`core/net/MediaTransportPolicy`）在 `ServerMessage.media_offer` 里给出一档（带 channel id、token、端口；UDP 另带 keys/盐/mtu/hold）→ 客户端建通道（TCP：TLS + 56 B hello；UDP：bind 包）→ 通道建立后客户端回 `READY` → 服务端在 join point 原子换 transport、重发 descriptor、请求关键帧 → 失败/超时/看门狗则退化下一档，UDP → TCP → gRPC。控制面与 RPC 全程不断，切换点在 join point，不会重复出帧。
+
+**v1 明确不做**：FEC/RS（只保留 PARITY 位与保留字段）、NACK 与任何客户端→服务端 UDP 反馈、拥塞控制/码率自适应、DTLS、音频随新媒体面（音频仍走 gRPC）、`MediaTransport` 接口改造。取舍与重开条件见 [DB-NET-003](decision-board.md#db-net-003)，实现证据与设备点位见 [TB-NET-003](task-board.md#tb-net-003)。
+
 ### 6.1 控制面：保留 gRPC/TCP
 
 控制面继续使用 gRPC/TCP，负责：

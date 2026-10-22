@@ -252,3 +252,19 @@ flowchart LR
 - [T32] Pixel 8 AV1 硬编实测: https://takusan.negitoro.dev/posts/android_video_av1_pixel_8_hardware_encoder/
 
 > 二手来源仅用于补充厂商未公开的实现细节；凡与官方文档冲突之处，以一手来源为准。
+
+## 8. 实施状态（2026-10-22 补，不改变正文结论）
+
+本节只记录调研结论落地到了哪一步，不改写第 1–7 节的判断与来源。
+
+调研在本项目三选上给出的建议是：**媒体面先用裸 TCP（帧头极简、不套 protobuf），UDP/RTP 作为弱网可选档**，并把「丢包/重排/拥塞」的工具箱（NACK、FEC、jitter buffer、拥塞控制）留给真正需要的一档。落地对应关系（[TB-NET-003](task-board.md#tb-net-003) B1–B6，计划见 [双媒体传输实施计划](superpowers/plans/2026-10-22-media-transports.md)）：
+
+| 调研建议 | 落地形态 | 证据 |
+| --- | --- | --- |
+| 第①档：控制面与媒体面分工（§2.3、§3.3） | 控制面仍 gRPC；媒体面抽象为 `MediaTransport` 三档，失败逐档回退 | [DB-NET-003](decision-board.md#db-net-003)、`MediaChannelNegotiationEndToEndTest` |
+| 第②档：裸 TCP 承载 H.264、帧头不套 protobuf（§2.3 的 scrcpy 一列） | 16 字节帧头 + DESCRIPTOR/AU 帧型；mTLS 复用 + per-RPC token | `MediaFrameCodec`、`MediaTlsFactory`、`TcpMediaLoopbackTest` |
+| 第③档：UDP/RTP 风格分包（§3.3 的分片与重排做法） | AES-256-GCM 分片、重排窗、按 AU 重组、丢片整 AU 丢弃 | `UdpMediaPacketCodec`、`DatagramReorderWindow`、`AccessUnitReassembler`、`UdpMediaReceiverLoopbackTest` |
+| 工具箱中**未做**的部分 | FEC/RS、NACK、拥塞控制/码率自适应（只保留头部标志位与重开条件） | [DB-NET-003](decision-board.md#db-net-003) 的「明确不做」与重开条件 |
+| 需要实测才能定的部分（§4.5、§6） | 三档的设备侧行为、弱网读数与回退时延 | [TB-ENG-013](task-board.md#tb-eng-013) 第 16 项 |
+
+**边界**：以上落地只有 JVM 与回环 socket 证据，没有任何真机、真实弱网或跨 AP 的读数；调研里「TCP 队头阻塞在干净 LAN 下是否可测」的问题仍未回答，`udp.*` 与 `rx.rowd/rx.stall` 的可比性也要等设备基线。
