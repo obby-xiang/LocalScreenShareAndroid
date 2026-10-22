@@ -374,6 +374,21 @@ public class ViewerActivity extends AppCompatActivity implements ViewerHost {
     }
 
     @Override
+    public void showEncodedFrame(@NonNull final Bitmap frame) {
+        mPanelView.showFrame(frame);
+    }
+
+    @Override
+    public void clearEncodedFrame() {
+        mPanelView.clearFrame();
+    }
+
+    @Override
+    public void getContentBox(@NonNull final Rect out) {
+        mPanelView.getContentBox(out);
+    }
+
+    @Override
     public void onSessionEnded() {
         Log.i(mTag, "onSessionEnded: the session ended while expanded");
         mIsSessionEnded = true;

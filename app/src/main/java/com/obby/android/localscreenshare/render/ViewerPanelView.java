@@ -7,7 +7,9 @@ import android.graphics.Color;
 import android.graphics.Matrix;
 import android.graphics.Outline;
 import android.graphics.Typeface;
+import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.ColorDrawable;
+import android.graphics.drawable.Drawable;
 import android.text.TextUtils;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -19,28 +21,42 @@ import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.TextView;
 
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+
 import java.util.List;
 
 /**
- * Video surface, last-frame snapshot and debug overlay shared by both display hosts.
+ * Video surface, encoded-frame layer, last-frame snapshot and debug overlay shared by both display
+ * hosts.
  *
  * <p>The floating window and the full-screen activity must show exactly the same picture and offer
  * the same debug overlay, so the rendering part lives here once: a {@link TextureView} the decoder
- * renders into directly, an {@link ImageView} that holds one captured frame during a host switch and
- * a monospaced text overlay. The owner only decides where the content box goes - the window sizes
- * itself to the content, the activity fills the display and letterboxes it - and supplies the
- * stream geometry.</p>
+ * renders into directly, an {@link ImageView} that shows decoded JPEG frames, an {@link ImageView}
+ * that holds one captured frame during a host switch and a monospaced text overlay. The owner only
+ * decides where the content box goes - the window sizes itself to the content, the activity fills
+ * the display and letterboxes it - and supplies the stream geometry.</p>
+ *
+ * <p><b>Two picture paths.</b> H.264 arrives through the texture and never touches the frame layer.
+ * JPEG arrives as one complete image per frame, which the bitmap render target decodes and hands to
+ * {@link #showFrame(Bitmap)}; the frame layer is hidden until the first frame and is cleared when a
+ * JPEG session ends, so the H.264 path looks exactly as it did before the layer existed. The layer
+ * sits above the texture and below the snapshot, is never clickable or focusable, and therefore
+ * never consumes a touch meant for the texture.</p>
  *
  * <p><b>Content geometry.</b> {@link #setContentGeometry(int, int, int)} stores the visible size and
  * rotation reported by the stream descriptor; {@link #setDisplaySize(int, int)} sets the box the
  * rotated picture should fill, centered in the view. A zero display size means "the whole view",
  * which is the window case. {@link ViewerContentTransform} turns both into the texture transform, so
- * a quarter-turn stream is rotated and a letterboxed picture keeps its aspect ratio.</p>
+ * a quarter-turn stream is rotated and a letterboxed picture keeps its aspect ratio. The frame layer
+ * and the snapshot share that transform, which is what makes a decoded JPEG frame land in exactly
+ * the same box as a texture frame.</p>
  *
- * <p><b>Snapshot.</b> {@link #captureSnapshot()} reads one frame from the texture; the caller hands
- * it to the incoming host, which shows it through {@link #showSnapshot(Bitmap)} until its first
- * decoded frame arrives and then drops it with {@link #fadeOutSnapshot(long)}. The snapshot layer is
- * UI only: it is not a second decoder output, and it never starts or stops decoding.</p>
+ * <p><b>Snapshot.</b> {@link #captureSnapshot()} returns the JPEG frame while the frame layer is
+ * showing one, and otherwise reads one frame from the texture; the caller hands it to the incoming
+ * host, which shows it through {@link #showSnapshot(Bitmap)} until its first decoded frame arrives
+ * and then drops it with {@link #fadeOutSnapshot(long)}. The snapshot layer is UI only: it is not a
+ * second decoder output, and it never starts or stops decoding.</p>
  *
  * <p><b>Threading.</b> Every method is called on the main thread; the decoder writes into the
  * texture on its own thread and never touches this view.</p>
@@ -51,6 +67,8 @@ public final class ViewerPanelView extends FrameLayout {
     private static final float CORNER_SIZE_RATIO = 1 / 16f;
 
     private final TextureView textureView;
+
+    private final ImageView frameView;
 
     private final ImageView snapshotView;
 
@@ -119,6 +137,22 @@ public final class ViewerPanelView extends FrameLayout {
             }
         });
 
+        frameView = new ImageView(context);
+        // A decoded JPEG frame is drawn with the same explicit matrix as the snapshot, so both land
+        // in exactly the box the live picture uses, letterboxing and rotation included.
+        frameView.setScaleType(ImageView.ScaleType.MATRIX);
+        // The layer must never take a touch or the focus away from the texture view: the window
+        // drag, the tap menu and the double-tap menu all listen on the texture view underneath.
+        frameView.setClickable(false);
+        frameView.setFocusable(false);
+        frameView.setVisibility(View.GONE);
+        frameView.setOutlineProvider(new ViewOutlineProvider() {
+            @Override
+            public void getOutline(View view, Outline outline) {
+                outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), cornerSize);
+            }
+        });
+
         snapshotView = new ImageView(context);
         // The still frame is drawn with an explicit matrix so it lands in exactly the box the live
         // picture uses, letterboxing included.
@@ -139,6 +173,10 @@ public final class ViewerPanelView extends FrameLayout {
         hudView.setVisibility(View.GONE);
 
         addView(textureView, new LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        // Above the texture, below the snapshot: a decoded JPEG frame covers the (empty) texture,
+        // while the switch snapshot still covers both during a host change.
+        addView(frameView, new LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         addView(snapshotView, new LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
@@ -243,17 +281,26 @@ public final class ViewerPanelView extends FrameLayout {
     private void applyCornerSize() {
         if (!rounded || getWidth() <= 0 || getHeight() <= 0) {
             cornerSize = 0f;
-            textureView.setClipToOutline(false);
-            textureView.invalidateOutline();
-            return;
+        } else {
+            final float maxCornerSize = getResources().getDimension(
+                com.obby.android.localscreenshare.support.ResourceUtils.resolveAttribute(getContext(),
+                    com.google.android.material.R.attr.shapeCornerSizeLarge));
+            cornerSize = Math.min(
+                Math.min(getWidth(), getHeight()) * CORNER_SIZE_RATIO, maxCornerSize);
         }
-        final float maxCornerSize = getResources().getDimension(
-            com.obby.android.localscreenshare.support.ResourceUtils.resolveAttribute(getContext(),
-                com.google.android.material.R.attr.shapeCornerSizeLarge));
-        cornerSize = Math.min(
-            Math.min(getWidth(), getHeight()) * CORNER_SIZE_RATIO, maxCornerSize);
-        textureView.setClipToOutline(cornerSize > 0f);
-        textureView.invalidateOutline();
+        applyCornerClip(textureView);
+        applyCornerClip(frameView);
+    }
+
+    /**
+     * Applies the current radius to {@code view}, so every picture layer is cut to the same shape.
+     *
+     * <p>The frame layer draws over the texture, so it needs the same clip; otherwise a rounded
+     * window would show square corners as soon as a JPEG frame arrives.</p>
+     */
+    private void applyCornerClip(View view) {
+        view.setClipToOutline(cornerSize > 0f);
+        view.invalidateOutline();
     }
 
     @Override
@@ -301,13 +348,20 @@ public final class ViewerPanelView extends FrameLayout {
     }
 
     /**
-     * Captures the currently displayed frame, or returns null when the texture cannot be read.
+     * Captures the currently displayed frame, or returns null when nothing can be read.
      *
      * <p>Used once per host switch: the frame covers the incoming host until its first decoded
-     * frame, so the picture never drops to black. The bitmap is a full copy and belongs to the
-     * caller.</p>
+     * frame, so the picture never drops to black. A JPEG session has no texture content, so the
+     * frame layer is the picture and its bitmap is returned; the caller must not recycle it, because
+     * the layer keeps showing it. An H.264 session has an empty frame layer and gets a full copy
+     * read from the texture instead.</p>
      */
+    @Nullable
     public Bitmap captureSnapshot() {
+        final Bitmap frame = currentFrame();
+        if (frame != null) {
+            return frame;
+        }
         if (!textureView.isAvailable()) {
             return null;
         }
@@ -318,6 +372,52 @@ public final class ViewerPanelView extends FrameLayout {
             // still frame to show and the incoming host waits for its first decoded frame.
             return null;
         }
+    }
+
+    /**
+     * Shows {@code frame} in the content box, in place of the (empty) texture.
+     *
+     * <p>Called on the main thread by the bitmap half of the host's render target once per decoded
+     * JPEG frame. The layer is created hidden and stays hidden for an H.264 session, so this is the
+     * only path that makes it visible.</p>
+     *
+     * @param frame decoded frame to show; null clears the layer
+     */
+    public void showFrame(@Nullable Bitmap frame) {
+        if (frame == null) {
+            clearFrame();
+            return;
+        }
+        frameView.setImageBitmap(frame);
+        frameView.setVisibility(View.VISIBLE);
+        applyDrawableMatrix(frameView, contentMatrix());
+    }
+
+    /**
+     * Hides the frame layer and drops its reference to the bitmap.
+     *
+     * <p>The bitmap is not recycled: it may be the still frame another host is showing, and the
+     * garbage collector reclaims it once neither view references it.</p>
+     */
+    public void clearFrame() {
+        frameView.setVisibility(View.GONE);
+        frameView.setImageBitmap(null);
+    }
+
+    /**
+     * Returns the bitmap the frame layer is showing, or null when it is hidden or empty.
+     */
+    @Nullable
+    private Bitmap currentFrame() {
+        if (frameView.getVisibility() != View.VISIBLE) {
+            return null;
+        }
+        final Drawable drawable = frameView.getDrawable();
+        if (!(drawable instanceof BitmapDrawable)) {
+            return null;
+        }
+        final Bitmap bitmap = ((BitmapDrawable) drawable).getBitmap();
+        return bitmap == null || bitmap.isRecycled() ? null : bitmap;
     }
 
     /**
@@ -405,14 +505,26 @@ public final class ViewerPanelView extends FrameLayout {
     }
 
     /**
-     * Applies the content transform to the texture and to the still frame.
+     * Applies the content transform to the texture, the frame layer and the still frame.
      *
      * <p>A {@code TextureView} stretches its texture to the view bounds before the transform is
      * applied, while an {@code ImageView} with an explicit matrix draws its drawable at its intrinsic
-     * size. The still frame therefore gets the same transform composed after a drawable-to-view
-     * scale, which is what makes it land in exactly the same box as the live picture.</p>
+     * size. Both image layers therefore get the same transform composed after a drawable-to-view
+     * scale, which is what makes a decoded JPEG frame and a switch snapshot land in exactly the same
+     * box as the live picture.</p>
      */
     private void updateContentTransform() {
+        final Matrix matrix = contentMatrix();
+        textureView.setTransform(matrix);
+        applyDrawableMatrix(frameView, matrix);
+        applyDrawableMatrix(snapshotView, matrix);
+    }
+
+    /**
+     * Returns the transform the texture applies, which every other picture layer reuses.
+     */
+    @NonNull
+    private Matrix contentMatrix() {
         final ViewerContentTransform transform = ViewerContentTransform.compute(
             getWidth(), getHeight(), displayWidth, displayHeight, rotationDegrees);
         final Matrix matrix = new Matrix();
@@ -422,9 +534,15 @@ public final class ViewerPanelView extends FrameLayout {
             matrix.postRotate(transform.getRotationDegrees(),
                 transform.getCenterX(), transform.getCenterY());
         }
-        textureView.setTransform(matrix);
+        return matrix;
+    }
 
-        final android.graphics.drawable.Drawable drawable = snapshotView.getDrawable();
+    /**
+     * Places {@code view}'s drawable in the content box by composing the drawable-to-view scale with
+     * {@code contentTransform}; a view without a drawable or before the first layout is left alone.
+     */
+    private void applyDrawableMatrix(@NonNull ImageView view, @NonNull Matrix contentTransform) {
+        final Drawable drawable = view.getDrawable();
         if (drawable == null) {
             return;
         }
@@ -433,10 +551,10 @@ public final class ViewerPanelView extends FrameLayout {
         if (drawableWidth <= 0 || drawableHeight <= 0 || getWidth() <= 0 || getHeight() <= 0) {
             return;
         }
-        final Matrix snapshotMatrix = new Matrix();
-        snapshotMatrix.setScale(getWidth() / (float) drawableWidth,
+        final Matrix matrix = new Matrix();
+        matrix.setScale(getWidth() / (float) drawableWidth,
             getHeight() / (float) drawableHeight);
-        snapshotMatrix.postConcat(matrix);
-        snapshotView.setImageMatrix(snapshotMatrix);
+        matrix.postConcat(contentTransform);
+        view.setImageMatrix(matrix);
     }
 }

@@ -103,6 +103,8 @@ import com.obby.android.localscreenshare.core.util.TimeSource;
 import com.obby.android.localscreenshare.discovery.favorite.FavoriteStore;
 import com.obby.android.localscreenshare.discovery.model.DeviceAddress;
 import com.obby.android.localscreenshare.discovery.model.DeviceInfo;
+import com.obby.android.localscreenshare.render.BitmapRenderTarget;
+import com.obby.android.localscreenshare.render.HostRenderTarget;
 import com.obby.android.localscreenshare.render.SurfaceRenderTarget;
 import com.obby.android.localscreenshare.render.SwitchableRenderTarget;
 import com.obby.android.localscreenshare.render.ViewerFitPolicy;
@@ -230,9 +232,10 @@ public class ScreenViewerService extends Service {
     @Nullable
     private StreamKey mStreamKey;
 
-    // Output target of the floating window; released when the session is torn down.
+    // Output target of the floating window: a surface half for H.264 and a bitmap half for JPEG;
+    // released when the session is torn down.
     @Nullable
-    private SurfaceRenderTarget mOverlayRenderTarget;
+    private HostRenderTarget mOverlayRenderTarget;
 
     // Stable target handed to the session. Its delegate is the display host that currently owns the
     // decoder output, which is what makes a window <-> activity switch a decoder rebuild instead of
@@ -283,7 +286,7 @@ public class ScreenViewerService extends Service {
     // Output target of the activity host; recreated for every attach because an activity instance
     // brings its own texture view.
     @Nullable
-    private SurfaceRenderTarget mActivityRenderTarget;
+    private HostRenderTarget mActivityRenderTarget;
 
     // Last frame captured for the incoming host; taken once by that host and then dropped.
     @Nullable
@@ -1127,11 +1130,18 @@ public class ScreenViewerService extends Service {
                 this::syncHudLoop, this::expandToActivity, this::toggleAudioMuted,
                 this::isAudioMuted);
         }
-        mOverlayRenderTarget = new SurfaceRenderTarget(mSurfaceShareViewer.getTextureView(),
-            () -> onHostSurfaceAvailable(mOverlayRenderTarget));
+        // Both halves exist from the start: which one the session uses is decided by the descriptor
+        // the server sends, which arrives after the target was handed over. The bitmap half delivers
+        // on the main thread through the service handler.
+        mOverlayRenderTarget = new HostRenderTarget(
+            new SurfaceRenderTarget(mSurfaceShareViewer.getTextureView(),
+                () -> onHostSurfaceAvailable(mOverlayRenderTarget)),
+            new BitmapRenderTarget(mSurfaceShareViewer, mMainHandler::post));
         mActivityRenderTarget = mActivityHost == null ? null
-            : new SurfaceRenderTarget(mActivityHost.getTextureView(),
-                () -> onHostSurfaceAvailable(mActivityRenderTarget));
+            : new HostRenderTarget(
+                new SurfaceRenderTarget(mActivityHost.getTextureView(),
+                    () -> onHostSurfaceAvailable(mActivityRenderTarget)),
+                new BitmapRenderTarget(mActivityHost, mMainHandler::post));
         mRenderTarget = new SwitchableRenderTarget(
             mActivityRenderTarget != null ? mActivityRenderTarget : mOverlayRenderTarget);
         final ClientMediaSession session = new ClientMediaSession(
@@ -1263,7 +1273,7 @@ public class ScreenViewerService extends Service {
      *
      * @param target the target that reported availability; may be null after a teardown
      */
-    private void onHostSurfaceAvailable(@Nullable final SurfaceRenderTarget target) {
+    private void onHostSurfaceAvailable(@Nullable final HostRenderTarget target) {
         final ClientMediaSession session = mClientMediaSession;
         final SwitchableRenderTarget router = mRenderTarget;
         if (session == null || router == null || target == null
@@ -1567,11 +1577,13 @@ public class ScreenViewerService extends Service {
         // The activity made it; neither watchdog has anything left to report.
         cancelActivityAttachWatchdogs();
 
-        final SurfaceRenderTarget previous = mActivityRenderTarget;
+        final HostRenderTarget previous = mActivityRenderTarget;
         mActivityHost = host;
         mIsActivityTransitionDone = false;
-        mActivityRenderTarget = new SurfaceRenderTarget(host.getTextureView(),
-            () -> onHostSurfaceAvailable(mActivityRenderTarget));
+        mActivityRenderTarget = new HostRenderTarget(
+            new SurfaceRenderTarget(host.getTextureView(),
+                () -> onHostSurfaceAvailable(mActivityRenderTarget)),
+            new BitmapRenderTarget(host, mMainHandler::post));
         router.setDelegate(mActivityRenderTarget);
 
         // Capture the outgoing host's last frame before the decoder stops writing into it; the
@@ -1658,7 +1670,7 @@ public class ScreenViewerService extends Service {
         mIsActivityTransitionDone = false;
 
         final ClientMediaSession session = mClientMediaSession;
-        final SurfaceRenderTarget previous = mActivityRenderTarget;
+        final HostRenderTarget previous = mActivityRenderTarget;
         mActivityRenderTarget = null;
 
         if (session != null) {
@@ -1804,6 +1816,15 @@ public class ScreenViewerService extends Service {
         if (mActivityRenderTarget != null) {
             mActivityRenderTarget.release();
             mActivityRenderTarget = null;
+        }
+        // Releasing the targets clears their own frame layers, but a host without a target (the
+        // activity between two attaches, or a retry that reuses the floating window) must not keep
+        // showing the last JPEG frame of the ended session.
+        if (mSurfaceShareViewer != null) {
+            mSurfaceShareViewer.clearEncodedFrame();
+        }
+        if (mActivityHost != null) {
+            mActivityHost.clearEncodedFrame();
         }
     }
 
@@ -2241,6 +2262,9 @@ public class ScreenViewerService extends Service {
                 mDialog = null;
             }
             mPanelView.hideSnapshot();
+            // The window object outlives a detach and is reused by the next session, so the JPEG
+            // frame layer must not carry the previous session's last frame into the new one.
+            mPanelView.clearFrame();
             OverlayWindow.detach(mWindowManager, mPanelView);
         }
 
@@ -2295,6 +2319,30 @@ public class ScreenViewerService extends Service {
         @Nullable
         public Bitmap captureSnapshot() {
             return mPanelView.captureSnapshot();
+        }
+
+        /**
+         * Shows one decoded JPEG frame in the window's content box.
+         */
+        @Override
+        public void showEncodedFrame(@NonNull final Bitmap frame) {
+            mPanelView.showFrame(frame);
+        }
+
+        /**
+         * Hides the JPEG frame layer, which is invisible for the whole H.264 path anyway.
+         */
+        @Override
+        public void clearEncodedFrame() {
+            mPanelView.clearFrame();
+        }
+
+        /**
+         * Returns the box the picture is drawn in, used by the bitmap half to pick a sample size.
+         */
+        @Override
+        public void getContentBox(@NonNull final Rect out) {
+            mPanelView.getContentBox(out);
         }
 
         /**

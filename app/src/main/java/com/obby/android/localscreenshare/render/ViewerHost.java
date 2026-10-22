@@ -1,6 +1,7 @@
 package com.obby.android.localscreenshare.render;
 
 import android.graphics.Bitmap;
+import android.graphics.Rect;
 import android.view.TextureView;
 
 import java.util.List;
@@ -15,9 +16,12 @@ import java.util.List;
  * active, so a host that becomes active late still receives the current values instead of waiting
  * for the next descriptor.</p>
  *
- * <p><b>Threading.</b> All methods are called on the main thread by the service. The texture view
- * the host returns is the decoder output surface; the service wraps it in its own
- * {@code SurfaceRenderTarget} and releases that target when the host is detached.</p>
+ * <p><b>Threading.</b> All methods except {@link #showEncodedFrame(Bitmap)} are called on the main
+ * thread by the service. The texture view the host returns is the decoder output surface, and the
+ * service wraps it together with the host's frame layer in its own {@code HostRenderTarget}, which
+ * it releases when the host is detached. {@link #showEncodedFrame(Bitmap)} also runs on the main
+ * thread, but it is posted by the bitmap half rather than called by the service, so a decoded JPEG
+ * frame never touches a view on the decode thread.</p>
  */
 public interface ViewerHost {
 
@@ -60,6 +64,37 @@ public interface ViewerHost {
      * Hides the captured frame; called when the live picture is available again.
      */
     void hideSnapshot();
+
+    /**
+     * Shows one decoded JPEG frame.
+     *
+     * <p>Called on the main thread by the bitmap half of the host's render target. The frame is
+     * drawn in the same content box as the live picture and stays until the next frame replaces it,
+     * the session ends, or the host detaches. The host owns the bitmap from now on and must not
+     * recycle it.</p>
+     *
+     * @param frame decoded frame; required
+     */
+    void showEncodedFrame(Bitmap frame);
+
+    /**
+     * Clears the JPEG frame layer, restoring the surface-only picture.
+     *
+     * <p>Called when a JPEG session ends or the host is torn down. An H.264 session never shows a
+     * frame here, so the layer stays hidden and does not affect that path.</p>
+     */
+    void clearEncodedFrame();
+
+    /**
+     * Reports the box the picture is drawn in, in view coordinates.
+     *
+     * <p>The bitmap target uses it to pick a decode sample size: without it a frame would always be
+     * decoded at the encoder's coded size, however small the window is. An empty rectangle means the
+     * box is not known yet, which decodes at full size.</p>
+     *
+     * @param out receives the box; required
+     */
+    void getContentBox(Rect out);
 
     /**
      * Captures the frame this host is currently showing.
