@@ -21,6 +21,7 @@
 
 ## 🎯 当前焦点
 
+- 2026-10-22 **TB-CLIENT-006 落地（小窗 HUD 折行与字号自适应，Q-3）**：诊断确认 HUD 一直是**一个** `TextView` 装四行（`"\n"` 拼接）、`11sp` 定值、`WRAP_CONTENT`，与窗口尺寸无关；60% 窗口（630×1364，density 2.75）可用宽度约 229dp，而最宽行约 254sp，于是 `TextView` 在 `AT_MOST` 下软换行、三行变五行。改为 `ViewerPanelView` 的 `hudView` 为纵向 `LinearLayout`（背景与 12/8 内边距移到容器），每行一个 `singleLine` + `ellipsize(END)` 的 `TextView`，四行共用一个字号；字号由新增纯 JVM `render/ViewerHudTextPolicy` 按可用宽度在 **11sp–9sp** 间确定性缩小（线性缩放、向下取整像素、宽度未知保持最大），在 `setHudLines`/`onSizeChanged`/`onConfigurationChanged` 三处重算，缩到 9sp 仍超出则行尾 `…` 截断、**永不折行**。大窗与全屏上限即原 `11sp`，字号/行数/内容不变。与 K3 裁决的一处出入：autosize 依赖与属性均可用（appcompat 1.7.0），但 uniform autosize 是每 `TextView` 独立字号、多行 autosize 靠折行收敛，无法满足「四行同一字号 + 单行截断」，故用最小自研策略（可 JVM 测试）。新增 `ViewerHudTextPolicyTest` 12 例，全量 **1461 tests / 146 classes / 0 failures**（基线 1449/145，`test_baseline.json` 同批更新）；`build :app:assembleDebugAndroidTest`、lint 双变体 0 errors、三项 checks 通过。本批 `9e6fe3a`；[TB-CLIENT-006](#tb-client-006) 转已完成，设备外观点位（60% 小窗、最小窗口、拖大/全屏、横竖屏、手势穿透、关闭态）归 [TB-ENG-013](#tb-eng-013) 第 11 项。
 - 2026-10-22 **TB-ENG-001 / TB-ENG-002 收官（B4 签名分离与发布加固）**：release 签名改为条件化——读取顺序为 `signing.properties` → `-Psigning.*` → 无材料则不签名（产物 `app-release-unsigned.apk`，缺任一值只 warn 且不打印值），新增 `-PrequireSigning=true` 在无材料时配置期末尾抛错；`gradle.properties` 删除示例签名四行、`.gitignore` 覆盖 `*.jks`/`*.keystore`/`signing/`、`signing/example.jks` 移出仓库。`build.yml` 的 keystore 改落 `$RUNNER_TEMP` 并在 `always()` 删除、非 PR 带 `-PrequireSigning=true`、PR 补回 `:app:assembleRelease`（unsigned，R8 在 PR 也覆盖）；`release.yml` 断言只存在签名版 `app-release.apk`、拒绝 `*-unsigned.apk`、tag 校验 `vX.Y.Z`、`--target "$GITHUB_SHA"`。`startup-checklist.md` §C 重写（三档矩阵、密钥生成/离线双备份/不轮换、键名清单、覆盖安装预期、agent 不读密钥不发布）。新增 3 条契约测试，全量 **1449 tests / 145 classes / 0 failures**（基线 1446/145）；有材料 / 无材料 / `-PrequireSigning` 三条签名路径本地实测，`build :app:assembleDebugAndroidTest`、lint 双变体 0 errors、三项 checks 通过。本批 `d517fcb`、`0b7a089`、`7675f73`、`d64dbdb`；[TB-ENG-001](#tb-eng-001) 与 [TB-ENG-002](#tb-eng-002) 转已完成，R8 冒烟、androidTest 执行与覆盖安装实测归 [TB-ENG-013](#tb-eng-013)。
 - 2026-10-22 **TB-ENG-001 B3 落地（仪器测试工程链路）**：只补文档与 Javadoc，不动测试逻辑与 CI。`startup-checklist.md` 新增「D. 仪器测试（androidTest）」——编译/运行命令、`H264MediaCodecSmokeTest` 的「失败不等于缺陷」边界、报告与 logcat 位置；该类 Javadoc 改为「CI 只编译，受权设备手动运行不构成完成证据」。`:app:assembleDebugAndroidTest`、`:app:lintDebug`（0 errors / 146 warnings）与三项 checks 通过，基线 1446/145 持平。本批 `836c809`；B4 待做，设备执行归 [TB-ENG-013](#tb-eng-013) 第 10 项。
 - 2026-10-22 **TB-ENG-001 B2 落地（启用 R8 与 keep 规则）**：release 打开 R8（`minifyEnabled true`、显式 `shrinkResources false`），`app/proguard-rules.pro` 写入 12 条带归属注释的规则（`SourceFile,LineNumberTable`、Gson 泛型 `Signature`、五个落盘 DTO、`GeneratedMessageLite`、四个 gRPC provider）；首轮 `assembleRelease` 的 R8 输出 0 条 `Missing class`，故未加任何 `-dontwarn`。`configuration.txt` 来源核对确认 DTO/gRPC/protobuf 规则只来自本文件，`mapping.txt`/`seeds.txt` 抽查显示五个 DTO 类名与全部字段保持原名、`usage.txt` 未删任何 DTO 字段。新增 `BuildEngineeringContractTest` 3 条；全量 **1446 tests / 145 classes / 0 failures / 0 errors / 0 skipped**（基线 1443/144，`test_baseline.json` 同批更新），`assembleRelease`、`./gradlew build :app:assembleDebugAndroidTest`、`:app:lintDebug`（0 errors / 146 warnings）、`:app:lintRelease`（0 errors / 136 warnings）与三项 checks 通过。本批 `27523e1`、计划证据 `e577dc2`；B3–B4 待做，R8 设备冒烟 11 点位归 [TB-ENG-013](#tb-eng-013) 第 9 项。
@@ -104,7 +105,6 @@
 | TB-AUDIO-003 | ⏳ 等待设备验证 | 🟡 P2 | 音频设备验证清单（并入 TB-ENG-013 统一回归） | 2026-10-21 | — | [音频计划 6.10](superpowers/plans/2026-10-21-audio.md) |
 | TB-CLIENT-001 | 📋 待办 | 🟡 P2 | 客户端画质与多客户端 | 2026-10-17 | — | [媒体架构](media-architecture.md) |
 | TB-CLIENT-002 | 📋 待办 | 🟡 P2 | 单流与多档流策略 | 2026-10-17 | — | [媒体架构](media-architecture.md) |
-| TB-CLIENT-006 | 📋 待办 | ⚪ P3 | 小窗 HUD 折行与字号自适应 | 2026-10-21 | — | [TB-OBS-001](#tb-obs-001) |
 | TB-FW-007 | 📋 待办 | 🟡 P2 | HEVC 扩展验证 | 2026-10-17 | — | [编码框架设计](codec-framework.md) |
 | TB-FW-008 | 📋 待办 | 🟡 P2 | 框架测试与证据 | 2026-10-17 | — | [编码框架设计](codec-framework.md) |
 
@@ -114,6 +114,7 @@
 
 | ID | 状态 | 优先级 | 标题 | 创建 | 完成 | 关联 |
 | --- | --- | --- | --- | --- | --- | --- |
+| TB-CLIENT-006 | ✅ 已完成 | ⚪ P3 | 小窗 HUD 折行与字号自适应（字号随窗口宽度在 11sp–9sp 间缩小、每行单行截断；纯 JVM 策略已测，设备点位归 TB-ENG-013） | 2026-10-21 | 2026-10-22 | [TB-OBS-001](#tb-obs-001) |
 | TB-ENG-001 | ✅ 已完成 | 🟡 P2 | 测试与发布工程（B1 CI 独立测试 job、B2 R8/keep、B3 仪器测试链路、B4 签名分离全落地；设备点位归 TB-ENG-013） | 2026-10-17 | 2026-10-22 | [实施计划](superpowers/plans/2026-10-22-release-engineering.md) |
 | TB-ENG-002 | ✅ 已完成 | 🟡 P2 | 发布签名加固（签名材料条件化、示例材料移出仓库、发布流程断言；覆盖安装实测归 TB-ENG-013） | 2026-10-17 | 2026-10-22 | [启动与签名清单](startup-checklist.md) |
 | TB-ENG-006 | ✅ 已完成 | 🟡 P2 | JPEG 降级客户端查看器接回与死代码清理（B1–B4 全落地；设备点位归 TB-ENG-013） | 2026-10-19 | 2026-10-22 | [实施计划](superpowers/plans/2026-10-22-jpeg-viewer-reconnect.md) |
@@ -536,19 +537,6 @@
 
 </details>
 
-<a id="tb-client-006"></a>
-<details><summary>TB-CLIENT-006 小窗 HUD 折行与字号自适应（📋 待办 · 设备验证 Q-3 登记）</summary>
-
-- **状态 / 优先级 / 创建 / 完成**：📋 待办 / ⚪ P3 / 2026-10-21 / —
-- **任务**：观看窗缩到 630×1364（显示大小 60%）时，`SurfaceShareViewer` 的 HUD（`11sp` 等宽字体、`WRAP_CONTENT`、内边距 12/8）第三行 `rowd +… | stall … | drop … | kf …` 超出窗口宽度，TextView 自行折行，三行变五行。做**字号按窗口宽度自适应**（或等价的换行策略），保证窗口 ≥60% 时仍是固定三行。
-- **交付物 / 验证证据**：交付：HUD 文本尺寸/布局随窗口宽度的确定性规则（例如可用宽度不足时在 8–11sp 之间降字号，仍不足再退化为允许折行），以及「行数 = 3」的判定方式。验证：在 1080p 与 60% 小窗两档下截图对照，三行完整可读、不遮挡单击/双击/拖拽手势，关闭态仍不刷新。
-- **已观察实例**：`device-test-2026-10-21-metrics-r2/report.md` §7（Q-3），证据 `shots/o6-hud-smallwindow-60.png`。
-- **2026-10-21 新增一行**：HUD 增加第 4 行音频指标（`av … ms (p95 …) | af … | ad … | au …`，见 [TB-AUDIO-001](#tb-audio-001)），60% 小窗下该行同样受本条目约束；`av.offset` 读数异常偏大时（见 [TB-AUDIO-003](#tb-audio-003) N6）这一行会先折行，修 N6 前不要用截图判定「行数」。
-- **边界**：纯呈现问题，不影响指标数值与媒体路径；因需要肉眼对照截图，应排在一次设备棒里做，不与媒体路径改动混批。
-- **关联文档**：[TB-OBS-001](#tb-obs-001)、[本计划](superpowers/plans/2026-10-21-transport-observability.md) 6.6
-
-</details>
-
 <a id="tb-eng-001"></a>
 <details><summary>TB-ENG-001 测试与发布工程（✅ 已完成 · B1 CI 独立测试 job、B2 R8/keep、B3 仪器测试链路、B4 签名分离全落地）</summary>
 
@@ -595,8 +583,9 @@
   8. **音频长时/压力项**（来源 [TB-AUDIO-003](#tb-audio-003) 与[音频计划 6.10](superpowers/plans/2026-10-21-audio.md) 的 A8-4/5/6/8）：10 分钟漂移量（`AV_OFFSET` P50/P95）、3 台观看端同时播放与慢客户端音频丢弃、同一 TCP 上音频被视频大帧阻塞的可感知度（`tx.send.p95` 与主观卡顿）、开关音频各 30 分钟的电池/温度/CPU 对比。**阻塞：音频功能设备冒烟通过后**；判据为 `|Δ|` 观感 ≤100 ms、无视频回归。
   9. **R8 release 冒烟 11 点位**（来源 [TB-ENG-001](#tb-eng-001) B2 与[实施计划 §5/§9](superpowers/plans/2026-10-22-release-engineering.md)）：安装 `assembleRelease` 产物（R8 已开启、`shrinkResources` 关闭）后覆盖——① 冷启动进主界面 ② 设备发现（NSD + 组播 + 分级扫描任一可见） ③ TLS 首连与信任 pin ④ 信任库持久化（重启后 pin 仍在） ⑤ 授权持久化（「总是允许」后重启免批） ⑥ 收藏与上次成功地址持久化 ⑦ 共享→观看一轮出画 ⑧ 音频一轮（有声、无周期性咔声） ⑨ 通知按钮与审批弹窗可用 ⑩ 覆盖安装（同签名可覆盖、异签名明确失败） ⑪ 本地 `mapping.txt` 随包留存。**阻塞：无**（代码与 JVM 契约已落地）；B4 签名分离落地后须改用正式签名包复跑 ⑤⑩⑪，并把 ④⑤⑥ 的「重启后仍在」作为 R8 是否静默清数据的判定点。
   10. **androidTest 手动执行（TB-ENG-001 B3）**（来源[启动与签名检查清单 D 节](startup-checklist.md#d-仪器测试androidtest)）：在 API 25+ 设备与一台模拟器上分别执行 `./gradlew :app:connectedDebugAndroidTest`，记录 `ExampleInstrumentedTest`、`H264MediaCodecSmokeTest` 的通过与失败原因；`H264MediaCodecSmokeTest` 的失败须按设备归类（`null` CSD 被拒 / 软解 / 硬解），不得记成实现缺陷。**阻塞：无**；判据为原始结果与报告路径可用、结论按设备区分。
+  11. **HUD 字号自适应外观点位（TB-CLIENT-006）**（来源[TB-CLIENT-006](#tb-client-006)）：开 HUD 后逐档截图对照——① 60% 小窗（约 630×1364）四行完整可读、不折行、不互相遮挡 ② 拖到最小窗口（`screen_share_viewer_min_size` 起）字号缩到 9sp、必要时行尾出现 `…`（不得换行）③ 拖大回 80%/100% 与展开全屏后字号回到 11sp、行数与内容与改动前一致 ④ 横竖屏各取一组（旋转后重算且与 `ViewerFitPolicy` 的窗口尺寸一致）⑤ HUD 不遮挡单击 / 双击 / 拖拽手势 ⑥ 关闭 HUD 后不再刷新（1 s 节奏停止）。**阻塞：无**；判据为截图 + 无 `FATAL`/`ANR`，且「行数 = 内容行数」在每一档都成立。
 - **执行口径**：一次统一棒只装一个已推送 HEAD、仓库零改动；每项记录取数窗口、宿主负载与 guest `top`；不得把“没测到”写成“没问题”；运行前后偏好/输入法/方向逐字节还原；不得放宽判据，判据不可达时须写明机制理由。
-- **完成判据**：以上 10 项均有可核对证据（截图/日志/读数）并按[维护方式](#-维护方式)写回各自条目；阻塞未解除的项保持 📋 待办并注明阻塞原因。
+- **完成判据**：以上 11 项均有可核对证据（截图/日志/读数）并按[维护方式](#-维护方式)写回各自条目；阻塞未解除的项保持 📋 待办并注明阻塞原因。
 - **关联文档**：[TB-WIN-001](#tb-win-001)、[TB-OBS-001](#tb-obs-001)、[TB-CLIENT-005](#tb-client-005)、[TB-DISC-010](#tb-disc-010)、[DV-001](decision-board.md)、[路线图](optimization-roadmap.md)
 
 </details>
@@ -622,6 +611,23 @@
 </details>
 
 ### ✅ 已完成条目
+
+<a id="tb-client-006"></a>
+<details><summary>TB-CLIENT-006 小窗 HUD 折行与字号自适应（✅ 2026-10-22）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：✅ 已完成 / ⚪ P3 / 2026-10-21 / 2026-10-22
+- **任务（原始登记）**：观看窗缩到 630×1364（显示大小 60%）时，`SurfaceShareViewer` 的 HUD（`11sp` 等宽字体、`WRAP_CONTENT`、内边距 12/8）第三行 `rowd +… | stall … | drop … | kf …` 超出窗口宽度，TextView 自行折行，三行变五行。要求**字号按窗口宽度自适应**（或等价的换行策略），并保证「不折行遮挡」。
+- **诊断（2026-10-22，按代码现状）**：HUD 始终是**一个** `TextView`（`render/ViewerPanelView` 的 `hudView`），四行（音频行加入后）用 `"\n"` 拼成一个字符串：`11sp` 等宽、`WRAP_CONTENT`、内边距 `12/8`（**像素**）、行距 1.1；`ScreenViewerService` 每 1 s 经 `applyHudLines()` → 宿主 `setHudLines()` 整体替换文本。字号与窗口尺寸**完全无关**：窗口由 `render/ViewerFitPolicy` 按显示比例缩小（60% ⇒ 630×1364），文本尺寸却是定值；最宽的第三行约 47 字符 × 0.6 em ≈ 254sp，而 440dpi（density 2.75）下 630px 窗口去掉内边距只剩约 229dp，`TextView` 在 `AT_MOST` 约束下软换行 → 三行变五行并互相遮挡。折行发生在**布局层**（`StaticLayout` 宽度不足时的软换行），不在数据层：指标内容、行数与 1 s 刷新节奏都正确。
+- **已落地（`9e6fe3a`）**：① 新增纯 JVM `render/ViewerHudTextPolicy`：`MAX_TEXT_SIZE_SP = 11f`、`MIN_TEXT_SIZE_SP = 9f`，`fitTextSizePx(可用宽度, 最大 px, 最小 px, 最宽行 px)` 按最宽行线性缩放、向下取整到像素、夹在 `[min, max]`，宽度或文本未知时保持最大值。② `ViewerPanelView` 的 `hudView` 改为纵向 `LinearLayout`（背景与 12/8 内边距移到容器），每行一个 `TextView`：`setSingleLine(true)` + `ellipsize(END)`，所有行共用一个字号。③ 字号在 `setHudLines()`、`onSizeChanged()`、`onConfigurationChanged()` 三处重算——用等宽 `Paint` 在最宽行、最大字号下测量，再交给策略缩放；`Paint` 与布局同族字体，测量值即布局宽度。④ **「行数 = 内容行数」由结构保证**：每行恒为单行，缩到 9sp 仍超出时该行以 `…` 截断，永不折行。⑤ `MetricsFormatter.audioHudLine` 中「叠加层已折行」的旧描述同步改为「缩字号 + 截断」。
+- **大窗 / 全屏不变**：策略上限就是改动前的 `11sp`，窗口足够宽时返回最大值 → 字号、行数、内容与改动前一致；悬浮窗与全屏宿主共用同一 `ViewerPanelView`，两处行为一致。
+- **验证**：`ViewerHudTextPolicyTest` 12 例（放得下保持最大 / 恰好填满 / 等比缩小 / 向下取整 / 极窄夹到最小 / 缩放后不超可用宽度 / 越窄不会变大 / 宽度或文本未知保持最大 / min=max / 非法边界拒绝 / 常量关系）；全量 **1461 tests / 146 classes / 0 failures / 0 errors / 0 skipped**（基线 1449/145，`test_baseline.json` 同批更新为 1461/146）；`./gradlew build :app:assembleDebugAndroidTest`、`:app:lintDebug`、`:app:lintRelease`（0 errors）与三项 checks 通过。
+- **完成判据核对（2026-10-22）**：① 字号随可用宽度确定性缩小 → `ViewerHudTextPolicy` + 三处重算点；② 每行单行、超长截断、不折行 → 每行 `singleLine` + `ellipsize(END)`；③ 大窗 / 全屏外观不变 → 策略上限等于原 `11sp`；④ 关闭态仍不刷新 → `setHudLines(empty)` 立即清空并隐藏（原有路径未改）。
+- **与 K3 裁决方向的出入**：裁决优先「TextView autosize（`android:autoSizeTextType`/`app:autoSizeTextType` 体系）」。核对结果：appcompat 1.7.0 已在依赖内、autosize 可用；但 uniform autosize 的粒度是**每个 TextView 一个独立字号**——四行拆成四个 `TextView` 后各自动缩放会出现同一 HUD 内四行字号不一致；而单个多行 `TextView` 的 autosize 在缩到极限时会选择**折行**（正是要消除的现象），无法保证「每行单行截断」。故采用「一个共享字号的纯策略 + 每行 `singleLine`/`ellipsize`」的最小自研方案，决策逻辑可 JVM 测试。
+- **设备点位（归 [TB-ENG-013](#tb-eng-013)）**：60% 小窗（630×1364）四行完整可读且不遮挡；拖到最小窗口时字号缩到 9sp、必要时行尾出现 `…`；拖大回 100% 与全屏时字号回到 11sp、外观与改动前一致；横竖屏旋转后重算；HUD 不遮挡单击 / 双击 / 拖拽手势；关闭 HUD 后不再刷新。JVM 无法覆盖 `Paint.measureText` 与布局的实际取整、`LinearLayout` 的 `AT_MOST` 传递与 ellipsize 渲染。
+- **边界**：纯呈现问题，不影响指标数值与媒体路径。
+- **关联文档**：[TB-OBS-001](#tb-obs-001)、[本计划](superpowers/plans/2026-10-21-transport-observability.md) 6.6
+
+</details>
 
 <a id="tb-eng-006"></a>
 <details><summary>TB-ENG-006 JPEG 降级客户端查看器接回与死代码清理（✅ 2026-10-22）</summary>
