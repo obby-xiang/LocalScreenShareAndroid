@@ -118,6 +118,23 @@ public final class FakeCodec {
         requireEncoder().failNextStop();
     }
 
+    public void failNextClose() {
+        requireEncoder().failNextClose();
+    }
+
+    public void failNextUpdateParameters() {
+        requireEncoder().failNextUpdateParameters();
+    }
+
+    /**
+     * Runs {@code onUpdateParameters} from inside every {@code updateParameters()} of the current
+     * encoder, before the hints are recorded. A test uses this to observe the caller's lock state
+     * from inside the encoder lifecycle call itself.
+     */
+    public void setOnUpdateParameters(Runnable onUpdateParameters) {
+        requireEncoder().setOnUpdateParameters(onUpdateParameters);
+    }
+
     /**
      * Runs {@code onStop} once from inside the next {@code stop()} of the current encoder, before
      * the stop outcome is decided. A test uses this to observe the caller's lock state from inside
@@ -236,9 +253,15 @@ public final class FakeCodec {
 
         private boolean failNextRequestSyncPoint;
 
+        private boolean failOnClose;
+
+        private boolean failNextUpdateParameters;
+
         private Runnable beforeNextRequestSyncPointFailure;
 
         private Runnable onStop;
+
+        private Runnable onUpdateParameters;
 
         private boolean started;
 
@@ -295,6 +318,14 @@ public final class FakeCodec {
 
         @Override
         public void updateParameters(StreamParameters parameters) {
+            final Runnable probe = onUpdateParameters;
+            if (probe != null) {
+                probe.run();
+            }
+            if (failNextUpdateParameters) {
+                failNextUpdateParameters = false;
+                throw new IllegalStateException("injected updateParameters failure");
+            }
             lastParameters = parameters;
         }
 
@@ -317,6 +348,10 @@ public final class FakeCodec {
 
         @Override
         public void close() {
+            if (failOnClose) {
+                failOnClose = false;
+                throw new IllegalStateException("injected encoder close failure");
+            }
             closed = true;
         }
 
@@ -328,8 +363,20 @@ public final class FakeCodec {
             this.failOnStop = true;
         }
 
+        public void failNextClose() {
+            this.failOnClose = true;
+        }
+
+        public void failNextUpdateParameters() {
+            this.failNextUpdateParameters = true;
+        }
+
         public void setOnStop(Runnable onStop) {
             this.onStop = onStop;
+        }
+
+        public void setOnUpdateParameters(Runnable onUpdateParameters) {
+            this.onUpdateParameters = onUpdateParameters;
         }
 
         public void failNextRequestSyncPoint(Runnable beforeFailure) {

@@ -2,6 +2,7 @@ package com.obby.android.localscreenshare.core.stream;
 
 import android.view.Surface;
 
+import com.obby.android.localscreenshare.core.codec.CodecNotFoundException;
 import com.obby.android.localscreenshare.core.codec.CodecRegistration;
 import com.obby.android.localscreenshare.core.codec.CodecRegistry;
 import com.obby.android.localscreenshare.core.codec.CodecSwitchException;
@@ -51,13 +52,16 @@ import java.util.List;
  * {@code CONFIGURING} or {@code READY} back to {@code FAILED}, and any state to {@code CLOSED}.
  * A failed attempt can be retried with {@link #start()} only while nothing was ever published;
  * once a descriptor has been published, a failure is terminal for this runtime instance and the
- * owner has to close and rebuild it.</p>
+ * owner has to close and rebuild it. Every step between recording an attempt and a successful
+ * start - closing a previous failed encoder, resolving the codec, creating, validating and
+ * starting the encoder - funnels into that same {@code FAILED} transition, so a rejected attempt
+ * stays retryable instead of being stranded in {@code CONFIGURING}.</p>
  *
  * <p><b>Locking and callbacks.</b> Internal state is guarded by a private lock, and descriptor
  * switches are serialized by a second, dedicated switch lock. The lock order is always switch lock
- * before state lock, and no state lock is ever taken while an encoder is created, started, stopped
- * or closed, so an encoder drain thread that enters {@link #onAccessUnit} while its encoder is
- * being superseded can always finish instead of waiting for the caller that waits for it.
+ * before state lock, and no state lock is ever taken while an encoder is created, started, stopped,
+ * updated or closed, so an encoder drain thread that enters {@link #onAccessUnit} while its encoder
+ * is being superseded can always finish instead of waiting for the caller that waits for it.
  * Listener notifications are always delivered outside the state lock. Listener callbacks run on the
  * thread that produced the event - an encoder drain thread for access units, deferred
  * configuration and encoder failures, the caller's thread for a descriptor switch - so listeners
@@ -184,17 +188,20 @@ public final class StreamRuntime {
      * publishing, cannot be restarted and is rejected with {@link IllegalStateException}. The call
      * allocates a new attempt generation, marks the runtime {@code CONFIGURING} and clears the
      * published descriptor before the encoder factory is invoked, so observers never see the
-     * previous attempt's {@code READY} state while the new encoder is still being created. A
-     * previous failed encoder is closed outside the lock; an unregistered codec id propagates the
-     * registry's exception after the attempt was recorded.</p>
+     * previous attempt's {@code READY} state while the new encoder is still being created.</p>
      *
-     * <p>The factory is expected to finish codec configuration itself. This method only checks
-     * that a surface-input codec returned an input surface, based on
+     * <p>Every step after the attempt was recorded is contained by the same failure exit: closing
+     * a previous failed encoder, resolving the codec, creating it, checking the input surface and
+     * starting it. The factory is expected to finish codec configuration itself, so the only
+     * validation here is that a surface-input codec returned an input surface, based on
      * {@code CodecDescriptor.isSurfaceInputRequired()} alone and without a configuration-parts
-     * precondition, and then starts the encoder outside the lock. A synchronous factory, surface
-     * or start failure marks the attempt {@code FAILED}, notifies
-     * {@link StreamRuntimeListener#onEncoderFailed(StreamKey, EncoderException)} outside the lock,
-     * closes that encoder and throws {@link EncoderException}.</p>
+     * precondition. The first failure marks the attempt {@code FAILED}, clears the active encoder,
+     * notifies {@link StreamRuntimeListener#onEncoderFailed(StreamKey, EncoderException)} exactly
+     * once outside the lock and rethrows. Because nothing was published, the runtime stays
+     * retryable instead of being stranded in {@code CONFIGURING}. An unregistered codec id keeps
+     * propagating {@link CodecNotFoundException}; a failing close of the previous encoder is
+     * reported as {@link EncoderException} and that encoder is retired so a later close retries
+     * the release.</p>
      *
      * <p>Codecs without configuration parts publish the requested descriptor and become
      * {@link RuntimeState#READY} inside this call without a descriptor notification. Codecs with
@@ -202,8 +209,11 @@ public final class StreamRuntime {
      * through {@link EncoderOutput#onEncoderConfig(EncoderConfig)}; access units that arrive
      * before publication are dropped.</p>
      *
-     * @throws IllegalStateException if the runtime is closed or is not in a retryable state
-     * @throws EncoderException      if the encoder cannot be created, validated or started
+     * @throws IllegalStateException  if the runtime is closed or is not in a retryable state
+     * @throws CodecNotFoundException if the requested codec id is not registered; the attempt is
+     *                                marked {@code FAILED} before the exception propagates
+     * @throws EncoderException       if the previous encoder cannot be closed or the encoder
+     *                                cannot be created, validated or started
      */
     public void start() {
         final long attempt;
@@ -229,22 +239,34 @@ public final class StreamRuntime {
             startParameters = parameters;
         }
 
-        // Retry path: close the previous failed encoder outside the lock.
+        // Retry path: close the previous failed encoder outside the lock. A failing close fails the
+        // attempt instead of stranding the runtime in CONFIGURING; the encoder is retired so a
+        // later close can retry the release.
         if (oldFailed != null) {
-            oldFailed.close();
+            try {
+                oldFailed.close();
+            } catch (RuntimeException e) {
+                retireEncoder(oldFailed);
+                throw failAttempt(attempt, null,
+                        new EncoderException("failed to close the previous encoder", e));
+            }
         }
 
-        final CodecRegistration registration = registry.require(startDescriptor.getCodecId());
+        final CodecRegistration registration;
+        try {
+            registration = registry.require(startDescriptor.getCodecId());
+        } catch (RuntimeException e) {
+            throw failAttempt(attempt, null, e);
+        }
         final boolean deferredCodec = registration.getDescriptor().hasConfigParts();
+
         final Encoder encoder;
         try {
             encoder = registration.getEncoderFactory().create(streamKey, startDescriptor,
                     startParameters, outputForGeneration(attempt));
         } catch (RuntimeException e) {
-            EncoderException failure = new EncoderException(
-                    "encoder factory failed for codec " + startDescriptor.getCodecId(), e);
-            notifyEncoderFailed(markFailed(attempt), failure);
-            throw failure;
+            throw failAttempt(attempt, null, new EncoderException(
+                    "encoder factory failed for codec " + startDescriptor.getCodecId(), e));
         }
 
         // Record the active encoder and deferral under the lock, then validate the
@@ -260,17 +282,14 @@ public final class StreamRuntime {
             }
         }
         if (overtaken) {
-            encoder.close();
+            closeQuietly(encoder);
             throw new EncoderException("encoder attempt superseded before surface validation");
         }
 
         if (registration.getDescriptor().isSurfaceInputRequired()
                 && encoder.getInputSurface() == null) {
-            EncoderException failure = new EncoderException(
-                    "surface input required but encoder returned a null surface");
-            notifyEncoderFailed(markFailed(attempt), failure);
-            encoder.close();
-            throw failure;
+            throw failAttempt(attempt, encoder, new EncoderException(
+                    "surface input required but encoder returned a null surface"));
         }
 
         // Re-check that no asynchronous failure or close overtook the attempt before
@@ -281,17 +300,15 @@ public final class StreamRuntime {
                     || (state != RuntimeState.CONFIGURING && state != RuntimeState.READY);
         }
         if (startOvertaken) {
-            encoder.close();
+            closeQuietly(encoder);
             throw new EncoderException("encoder attempt superseded before start");
         }
 
         try {
             encoder.start();
         } catch (RuntimeException e) {
-            EncoderException failure = new EncoderException("encoder failed to start", e);
-            notifyEncoderFailed(markFailed(attempt), failure);
-            encoder.close();
-            throw failure;
+            throw failAttempt(attempt, encoder,
+                    new EncoderException("encoder failed to start", e));
         }
 
         // Publish for non-deferred codecs; deferred codecs stay CONFIGURING until the
@@ -426,29 +443,57 @@ public final class StreamRuntime {
     /**
      * Applies new rate and cadence hints to the active encoder.
      *
-     * <p>Allowed only while {@code CONFIGURING} or {@code READY}. The encoder is updated first,
-     * under the runtime lock, and the cached parameters are replaced only when that call returns,
-     * so an encoder failure leaves the previous value in place and propagates to the caller. The
-     * config epoch, descriptor and encoder instance are unchanged.</p>
+     * <p>Allowed only while {@code CONFIGURING} or {@code READY}. The encoder is updated outside
+     * the runtime lock, so a slow codec call cannot block state reads, descriptor switches or the
+     * capture side. The cached parameters are replaced only when that call returns for the encoder
+     * of the attempt that was current when the call started, so an encoder failure leaves the
+     * previous value in place and propagates to the caller. If a descriptor switch replaced the
+     * encoder meanwhile, the hints are applied once more to the new encoder instead of being
+     * silently dropped for the stream. The config epoch, descriptor and encoder instance are
+     * otherwise unchanged.</p>
      *
      * @throws IllegalStateException    if the runtime is closed or not running
      * @throws IllegalArgumentException if {@code newParameters} is null
      */
     public void updateParameters(StreamParameters newParameters) {
-        synchronized (lock) {
-            if (closed) {
-                throw new IllegalStateException("runtime is closed");
+        for (int tryIndex = 0; ; tryIndex++) {
+            final Encoder encoder;
+            final long encoderGeneration;
+            synchronized (lock) {
+                if (closed) {
+                    throw new IllegalStateException("runtime is closed");
+                }
+                if (state != RuntimeState.CONFIGURING && state != RuntimeState.READY) {
+                    throw new IllegalStateException("runtime is not running");
+                }
+                if (newParameters == null) {
+                    throw new IllegalArgumentException("parameters must not be null");
+                }
+                encoder = activeEncoder;
+                encoderGeneration = generation;
             }
-            if (state != RuntimeState.CONFIGURING && state != RuntimeState.READY) {
-                throw new IllegalStateException("runtime is not running");
+
+            // A failing encoder propagates before the cache is touched, which keeps the previous
+            // parameters in place for retries and for the next encoder instance.
+            if (encoder != null) {
+                encoder.updateParameters(newParameters);
             }
-            if (newParameters == null) {
-                throw new IllegalArgumentException("parameters must not be null");
+
+            synchronized (lock) {
+                if (generation == encoderGeneration) {
+                    if (!closed) {
+                        parameters = newParameters;
+                    }
+                    return;
+                }
             }
-            if (activeEncoder != null) {
-                activeEncoder.updateParameters(newParameters);
+
+            // The encoder was superseded while it was being updated. Retry once on the new
+            // encoder; a second switch in the same call means the hint belongs to no live encoder
+            // and the cached value stays as it was.
+            if (tryIndex > 0) {
+                return;
             }
-            parameters = newParameters;
         }
     }
 
@@ -553,10 +598,12 @@ public final class StreamRuntime {
      * of the new epoch has been forwarded, which is also the point by which the owner has
      * re-pointed the capture display at the new encoder's input surface.</p>
      *
-     * <p><b>Failure.</b> A failure while creating, validating or starting the new encoder closes it
-     * and keeps the old encoder, descriptor, epoch and state, wrapped in
+     * <p><b>Failure.</b> A failure while resolving, creating, validating or starting the new
+     * encoder closes it and keeps the old encoder, descriptor, epoch and state, wrapped in
      * {@link CodecSwitchException}; nothing is published and no listener is notified, so the owner
-     * can retry with the same epoch. A failure of {@code stop()} on the old encoder does not abort
+     * can retry with the same epoch. The codec registration is resolved outside the state lock, so
+     * an unknown codec id is a switch failure like any other instead of an exception escaping
+     * while the runtime is mid-switch. A failure of {@code stop()} on the old encoder does not abort
      * the switch: that encoder has already been told to stop and cannot produce another usable
      * frame, so keeping it active would bind the runtime - and the capture display that points at
      * its surface - to a dead encoder. The switch is committed instead and the encoder is retired
@@ -564,7 +611,8 @@ public final class StreamRuntime {
      *
      * @throws IllegalArgumentException if {@code next} is null or belongs to another stream
      * @throws ConfigEpochException     if the epoch is not exactly one greater than the current
-     * @throws CodecSwitchException     if the new encoder cannot be prewarmed
+     * @throws CodecSwitchException     if the codec is not registered or the new encoder cannot be
+     *                                  prewarmed
      * @throws IllegalStateException    if the runtime is closed, before or during the switch
      */
     public void switchDescriptor(StreamDescriptor next) {
@@ -589,11 +637,19 @@ public final class StreamRuntime {
                 if (next.getConfigEpoch() != expectedEpoch) {
                     throw new ConfigEpochException(expectedEpoch, next.getConfigEpoch());
                 }
-                nextRegistration = registry.require(next.getCodecId());
-                nextDeferred = nextRegistration.getDescriptor().hasConfigParts();
                 nextParameters = parameters;
                 attempt = ++nextAttemptGeneration;
             }
+
+            // Resolve the codec outside the state lock. A missing registration must leave the old
+            // encoder, descriptor and epoch untouched so the same epoch can be retried.
+            try {
+                nextRegistration = registry.require(next.getCodecId());
+            } catch (RuntimeException e) {
+                throw new CodecSwitchException(
+                        "failed to resolve codec for epoch " + next.getConfigEpoch(), e);
+            }
+            nextDeferred = nextRegistration.getDescriptor().hasConfigParts();
 
             // Phase one: prewarm the new encoder outside the lock. The old encoder keeps draining
             // meanwhile; its units still carry the current generation, so they are forwarded as
@@ -913,19 +969,63 @@ public final class StreamRuntime {
     /**
      * Marks the attempt failed if it is still current, and returns the listeners to notify.
      *
-     * <p>Used by the synchronous start paths, which must clear the published descriptor as well.
-     * Returns {@code null} when a concurrent failure or close already took over the attempt, so
-     * the caller silently skips the notification.</p>
+     * <p>Used by the synchronous start paths, which must clear the published descriptor and the
+     * deferral flag as well. Returns {@code null} when a concurrent failure or close already took
+     * over the attempt, so the caller silently skips the notification.</p>
      */
     private List<StreamRuntimeListener> markFailed(long attempt) {
         synchronized (lock) {
             if (generation == attempt && !closed) {
                 state = RuntimeState.FAILED;
                 publishedDescriptor = null;
+                deferred = false;
                 activeEncoder = null;
                 return new ArrayList<>(listeners);
             }
             return null;
+        }
+    }
+
+    /**
+     * Fails a start attempt, releases its encoder and returns the exception to throw.
+     *
+     * <p>Called outside the state lock. The runtime moves to {@code FAILED} with no published
+     * descriptor, which keeps it retryable. Listeners are notified at most once, and only when the
+     * attempt was still current; {@link CodecNotFoundException} is rethrown unchanged while any
+     * other failure is reported and thrown as {@link EncoderException}.</p>
+     */
+    private RuntimeException failAttempt(long attempt, Encoder encoder, RuntimeException cause) {
+        final List<StreamRuntimeListener> snapshot = markFailed(attempt);
+        if (cause instanceof CodecNotFoundException) {
+            notifyEncoderFailed(snapshot, new EncoderException(cause.getMessage(), cause));
+            closeQuietly(encoder);
+            return cause;
+        }
+        final EncoderException failure = cause instanceof EncoderException
+                ? (EncoderException) cause
+                : new EncoderException("encoder attempt failed", cause);
+        notifyEncoderFailed(snapshot, failure);
+        closeQuietly(encoder);
+        return failure;
+    }
+
+    /**
+     * Retires an encoder whose close failed, so a later close can retry the release.
+     *
+     * <p>Called outside the state lock. A closed runtime closes the encoder immediately; otherwise
+     * it joins the retired list, which is drained after the next join point or by
+     * {@link #close()}.</p>
+     */
+    private void retireEncoder(Encoder encoder) {
+        final boolean runtimeClosed;
+        synchronized (lock) {
+            runtimeClosed = closed;
+            if (!runtimeClosed) {
+                retiredEncoders.add(encoder);
+            }
+        }
+        if (runtimeClosed) {
+            closeQuietly(encoder);
         }
     }
 
