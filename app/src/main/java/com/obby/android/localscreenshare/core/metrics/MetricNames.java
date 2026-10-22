@@ -45,6 +45,12 @@ public final class MetricNames {
     public static final String KEY_SESSION_ID = "sid";
 
     /**
+     * Field carrying the media channel a send session uses, for example {@code grpc} or {@code
+     * tcp}.
+     */
+    public static final String KEY_CHANNEL = "chan";
+
+    /**
      * Estimated access units retained in the transport between both endpoints.
      */
     public static final String APPROX_BACKLOG = "approx.tx.backlog";

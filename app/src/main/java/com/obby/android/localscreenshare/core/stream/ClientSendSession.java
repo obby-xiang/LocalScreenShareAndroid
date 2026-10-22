@@ -8,6 +8,7 @@ import com.obby.android.localscreenshare.core.model.EncodedAccessUnit;
 import com.obby.android.localscreenshare.core.model.StreamDescriptor;
 import com.obby.android.localscreenshare.core.metrics.MetricsSnapshot;
 import com.obby.android.localscreenshare.core.metrics.PipelineMetrics;
+import com.obby.android.localscreenshare.core.net.MediaTransportKind;
 import com.obby.android.localscreenshare.core.util.TimeSource;
 
 import java.io.IOException;
@@ -35,12 +36,18 @@ import java.util.concurrent.locks.ReentrantLock;
  * the session was not detached meanwhile. A blocked transport therefore holds no lock that
  * {@code offer} needs.</p>
  *
- * <p><b>Failure.</b> Any transport failure detaches the session - clearing the queue, moving to
- * {@code CLOSED} and closing the transport exactly once - and is rethrown so the owning
- * {@link StreamHub} can drop the session. A detached session accepts no units and never drains
- * again. Detaching with a reason ({@link #detach(String)}) terminates the transport abnormally
- * instead of only closing it, which is what tells a peer whose session was replaced by a newer
- * connection that the stream is over.</p>
+ * <p><b>Failure.</b> A transport failure is first offered to the session's
+ * {@link MediaTransportRecovery} hook: when it returns a replacement, the failed transport is
+ * swapped out, the current descriptor is queued again, the queue is cleared and the session waits
+ * for a join point of the new channel, so one failed media channel no longer takes the control
+ * plane down with it. Without a hook, or when it declines, the session detaches - clearing the
+ * queue, moving to {@code CLOSED} and closing the transport exactly once - and the failure is
+ * rethrown so the owning {@link StreamHub} can drop the session. Only an {@link IOException} counts
+ * as a channel failure worth recovering; an unchecked exception means the transport broke its
+ * contract and detaches. A detached session accepts no units and never drains again. Detaching with
+ * a reason ({@link #detach(String)}) terminates the transport abnormally instead of only closing
+ * it, which is what tells a peer whose session was replaced by a newer connection that the stream
+ * is over.</p>
  */
 public final class ClientSendSession {
 
@@ -52,13 +59,15 @@ public final class ClientSendSession {
     private final ClientSessionKey key;
     private final CodecRegistry registry;
     private final StreamQueueLimits limits;
-    private final MediaTransport transport;
+    private final MediaTransportRecovery recovery;
     private final TimeSource timeSource;
     private final PipelineMetrics metrics;
 
     private final Object stateLock = new Object();
     private final ReentrantLock drainLock = new ReentrantLock();
 
+    private volatile MediaTransport transport;
+    private MediaTransportKind transportKind = MediaTransportKind.GRPC;
     private CodecPolicy policy;
     private StreamDescriptor currentDescriptor;
     private BoundedAccessUnitQueue queue;
@@ -85,7 +94,7 @@ public final class ClientSendSession {
     public ClientSendSession(ClientSessionKey key, CodecRegistry registry,
                              StreamQueueLimits limits, MediaTransport transport,
                              TimeSource timeSource) {
-        this(key, registry, limits, transport, timeSource, PipelineMetrics.NONE);
+        this(key, registry, limits, transport, timeSource, PipelineMetrics.NONE, null);
     }
 
     /**
@@ -109,6 +118,31 @@ public final class ClientSendSession {
     public ClientSendSession(ClientSessionKey key, CodecRegistry registry,
                              StreamQueueLimits limits, MediaTransport transport,
                              TimeSource timeSource, PipelineMetrics metrics) {
+        this(key, registry, limits, transport, timeSource, metrics, null);
+    }
+
+    /**
+     * Creates a session whose transport failures may be recovered instead of detaching it.
+     *
+     * <p>The hook is consulted on the draining thread before the session gives up, which is what
+     * lets the owner fall back from a dedicated media channel to the control-plane carrier without
+     * ending the call. It is fixed for the life of the session and may be null, in which case every
+     * transport failure detaches as before.</p>
+     *
+     * @param key         client and stream identity; required
+     * @param registry    codec registry used to resolve the per-codec policy; required
+     * @param limits      queue bounds applied to each epoch's queue; required
+     * @param transport   transport owned by this session; required
+     * @param timeSource  clock used for queue residency and drops; required
+     * @param metrics     metric scope of this session; required, may be
+     *                    {@link PipelineMetrics#NONE}
+     * @param recovery    hook consulted before a failed transport is treated as fatal; may be null
+     * @throws IllegalArgumentException if a required argument is null
+     */
+    public ClientSendSession(ClientSessionKey key, CodecRegistry registry,
+                             StreamQueueLimits limits, MediaTransport transport,
+                             TimeSource timeSource, PipelineMetrics metrics,
+                             MediaTransportRecovery recovery) {
         if (key == null) {
             throw new IllegalArgumentException("key must not be null");
         }
@@ -133,6 +167,7 @@ public final class ClientSendSession {
         this.transport = transport;
         this.timeSource = timeSource;
         this.metrics = metrics;
+        this.recovery = recovery;
     }
 
     /**
@@ -173,6 +208,18 @@ public final class ClientSendSession {
     public boolean isDetached() {
         synchronized (stateLock) {
             return detached;
+        }
+    }
+
+    /**
+     * Returns the media channel this session currently sends over.
+     *
+     * <p>It starts as {@link MediaTransportKind#GRPC} and follows a channel swap, so the session
+     * row reports the channel the frames actually left on rather than the configured one.</p>
+     */
+    public MediaTransportKind getTransportKind() {
+        synchronized (stateLock) {
+            return transportKind;
         }
     }
 
@@ -383,6 +430,9 @@ public final class ClientSendSession {
             }
             return true;
         } catch (IOException | RuntimeException e) {
+            if (recoverFromTransportFailure(e)) {
+                return false;
+            }
             boolean terminate;
             synchronized (stateLock) {
                 terminate = detachInternalLocked();
@@ -430,7 +480,7 @@ public final class ClientSendSession {
             ClientSendStats current = new ClientSendStats(queuedUnits, queuedBytes, dropped,
                     resyncCount, sentUnits, descriptorSends);
             return new SessionSnapshot(key, state, current,
-                    metrics.stats(PipelineMetrics.Window.SEND).getP95());
+                    metrics.stats(PipelineMetrics.Window.SEND).getP95(), transportKind);
         }
     }
 
@@ -491,6 +541,132 @@ public final class ClientSendSession {
                 transport.close();
             }
         }
+    }
+
+    /**
+     * Replaces the transport of this session and returns the previous one.
+     *
+     * <p>Used when another channel takes over the media path: the current descriptor is queued
+     * again so the new channel never has to synthesize one, the queue of the old channel is
+     * dropped, and the session waits for a validated join point, exactly like the recovery path of
+     * {@link #drainOne()}. The channel label is kept; use
+     * {@link #swapTransport(MediaTransport, MediaTransportKind)} when the replacement belongs to a
+     * different socket family.</p>
+     *
+     * <p>The returned transport is not closed here: the caller decides, because a swap back to the
+     * control-plane carrier must leave that stream open. A detached session ignores the swap and
+     * returns null; the caller then owns the replacement and has to close it.</p>
+     *
+     * @param next transport installed for subsequent sends; required
+     * @return the replaced transport, or null when the session was detached
+     * @throws IllegalArgumentException if {@code next} is null
+     */
+    public MediaTransport swapTransport(MediaTransport next) {
+        synchronized (stateLock) {
+            return swapTransportLocked(next, null);
+        }
+    }
+
+    /**
+     * Replaces the transport and records the channel the replacement belongs to.
+     *
+     * <p>Same guarantees as {@link #swapTransport(MediaTransport)}; the kind is what the session
+     * row reports as {@code chan} from then on.</p>
+     *
+     * @param next transport installed for subsequent sends; required
+     * @param kind channel {@code next} belongs to; required
+     * @return the replaced transport, or null when the session was detached
+     * @throws IllegalArgumentException if an argument is null
+     */
+    public MediaTransport swapTransport(MediaTransport next, MediaTransportKind kind) {
+        if (kind == null) {
+            throw new IllegalArgumentException("kind must not be null");
+        }
+        synchronized (stateLock) {
+            return swapTransportLocked(next, kind);
+        }
+    }
+
+    /**
+     * Installs {@code next}, re-queues the current descriptor and clears the old queue. The caller
+     * must hold the state lock.
+     *
+     * @param next transport installed for subsequent sends; required
+     * @param kind channel of {@code next}, or null to keep the current label
+     * @return the replaced transport, or null when the session was detached
+     */
+    private MediaTransport swapTransportLocked(MediaTransport next, MediaTransportKind kind) {
+        if (next == null) {
+            throw new IllegalArgumentException("next must not be null");
+        }
+        if (detached) {
+            return null;
+        }
+        MediaTransport previous = transport;
+        transport = next;
+        if (kind != null) {
+            transportKind = kind;
+        }
+        if (currentDescriptor != null) {
+            droppedUnits = Math.max(droppedUnits, queue.droppedUnits());
+            queue = new BoundedAccessUnitQueue(limits, policy.getOverflowAction());
+            pendingDescriptor = currentDescriptor;
+            state = ClientState.WAIT_RANDOM_ACCESS;
+            resyncEpisodeCounted = false;
+        }
+        return previous;
+    }
+
+    /**
+     * Offers a failed transport to the recovery hook and installs its replacement.
+     *
+     * <p>The hook runs outside the state lock, so it may ask the encoder for a join point. The
+     * replacement is installed and the failed transport is closed only when the session is still
+     * attached and still owns the failure, which keeps a concurrent detach or swap from being
+     * undone. An unchecked failure, a null hook, a hook that throws and a hook that declines all
+     * leave the session to detach as before.</p>
+     *
+     * @param failure the send failure, either checked or unchecked
+     * @return true when a replacement was installed and the session stays attached
+     */
+    private boolean recoverFromTransportFailure(Exception failure) {
+        if (!(failure instanceof IOException)) {
+            return false;
+        }
+        final MediaTransportRecovery hook;
+        final MediaTransport failed;
+        synchronized (stateLock) {
+            if (detached) {
+                return false;
+            }
+            hook = recovery;
+            failed = transport;
+        }
+        if (hook == null) {
+            return false;
+        }
+        MediaTransport replacement;
+        try {
+            replacement = hook.onTransportFailed(failed, (IOException) failure);
+        } catch (RuntimeException ignored) {
+            return false;
+        }
+        if (replacement == null) {
+            return false;
+        }
+        boolean installed;
+        synchronized (stateLock) {
+            installed = !detached && transport == failed;
+            if (installed) {
+                swapTransportLocked(replacement, null);
+            }
+        }
+        if (!installed) {
+            replacement.close();
+            return false;
+        }
+        failed.close();
+        return true;
     }
 
     /**

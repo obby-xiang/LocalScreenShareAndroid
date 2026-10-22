@@ -350,6 +350,37 @@ public final class StreamHub implements StreamRuntimeListener {
     }
 
     /**
+     * Replaces the transport of an attached session only while the key still maps to it.
+     *
+     * <p>This is the swap a call handler needs when another channel takes over the media path:
+     * after a takeover the key maps to a newer session, and an old handler must not give its own
+     * dead channel to the replacement. The session installs the new transport, re-queues its
+     * current descriptor and waits for a join point, so the peer sees no unit from the new channel
+     * before the descriptor it belongs to. A null key, a null session, a null transport or a key
+     * that maps to another session does nothing.</p>
+     *
+     * <p>The replaced transport is returned rather than closed, because the caller owns it: a
+     * failed media channel has to be released, while the gRPC carrier that also carries the control
+     * stream must stay open. The session closes the replacement itself if it detaches in the
+     * meantime.</p>
+     *
+     * @return the replaced transport, or null when nothing was swapped; the caller decides whether
+     *         to close it
+     */
+    public MediaTransport swapTransportIfCurrent(ClientSessionKey key, ClientSendSession session,
+                                                 MediaTransport next) {
+        if (key == null || session == null || next == null) {
+            return null;
+        }
+        synchronized (lock) {
+            if (sessions.get(key) != session) {
+                return null;
+            }
+        }
+        return session.swapTransport(next);
+    }
+
+    /**
      * Drains at most one descriptor or access unit to one client.
      *
      * <p>The lookup is lock-free for the common case; the actual send runs in the session without
@@ -443,7 +474,7 @@ public final class StreamHub implements StreamRuntimeListener {
         List<SessionMetricsSnapshot> snapshots = new ArrayList<>(current.size());
         for (ClientSendSession session : current) {
             snapshots.add(new SessionMetricsSnapshot(session.getKey(),
-                    session.snapshotMetrics(periodMs)));
+                    session.snapshotMetrics(periodMs), session.getTransportKind()));
         }
         snapshots.sort(Comparator.comparing(SessionMetricsSnapshot::getClientId)
                 .thenComparing(snapshot -> snapshot.getKey().getStreamKey().getValue()));

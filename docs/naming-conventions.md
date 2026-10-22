@@ -13,9 +13,10 @@
 
 - 包名全小写、单数、无下划线；不得出现 `core/Codec`、`discovery/utils` 这类写法。
 - 只使用两种切法：
-  - **技术层**：`core/model`、`core/codec`、`core/stream`、`core/client`、`core/render`、`core/util`。
+  - **技术层**：`core/model`、`core/codec`、`core/stream`、`core/client`、`core/render`、`core/net`、`core/util`。
   - **领域**：`discovery`、`identity`、`settings`。
 - 同一个父包下不混用两种切法：`discovery` 的子包按发现领域内的职责划分，`core` 的子包按技术层划分，二者不互相嵌套。
+- `core/net` 承载网络分帧与重组等纯 JVM 传输机制（帧格式、握手、重排与重装、选路决策），只依赖 JDK 与 `core/model`/`core/util`，不含 socket 与平台 API；socket、TLS 与协议胶水留在顶层 `transport`。
 
 ### 1.2 禁止新增的包
 

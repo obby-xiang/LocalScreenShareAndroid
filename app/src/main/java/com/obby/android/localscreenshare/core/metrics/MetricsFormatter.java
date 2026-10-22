@@ -1,5 +1,7 @@
 package com.obby.android.localscreenshare.core.metrics;
 
+import com.obby.android.localscreenshare.core.net.MediaTransportKind;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -247,7 +249,9 @@ public final class MetricsFormatter {
      * <p>The session owns its own metric scope, so its send duration, queue residency and queue
      * depth never reach the process-wide line. This method prints them under the same framing and
      * keys, with the session identifier that matches the viewer's own line, which is what makes
-     * "the server blocked on this viewer" readable from a log capture.</p>
+     * "the server blocked on this viewer" readable from a log capture. The line also carries the
+     * media channel, because two readings of the same key are not comparable across channels: the
+     * control-plane carrier and a dedicated media channel have different backpressure.</p>
      *
      * @param snapshot  snapshot of one session's metric scope; must not be null
      * @param sessionId session identifier to append, or null to omit the field
@@ -255,10 +259,27 @@ public final class MetricsFormatter {
      * @throws IllegalArgumentException if {@code snapshot} is null
      */
     public static String toSessionLogLine(MetricsSnapshot snapshot, String sessionId) {
+        return toSessionLogLine(snapshot, sessionId, MediaTransportKind.GRPC);
+    }
+
+    /**
+     * Renders one send session with the media channel it is talking over.
+     *
+     * @param snapshot  snapshot of one session's metric scope; must not be null
+     * @param sessionId session identifier to append, or null to omit the field
+     * @param transport media channel of that session; must not be null
+     * @return one line starting with {@link MetricNames#PREFIX}, without a trailing newline
+     * @throws IllegalArgumentException if a required argument is null
+     */
+    public static String toSessionLogLine(MetricsSnapshot snapshot, String sessionId,
+                                          MediaTransportKind transport) {
         if (snapshot == null) {
             throw new IllegalArgumentException("snapshot must not be null");
         }
-        StringBuilder out = new StringBuilder(192);
+        if (transport == null) {
+            throw new IllegalArgumentException("transport must not be null");
+        }
+        StringBuilder out = new StringBuilder(200);
         out.append(MetricNames.PREFIX).append(' ')
                 .append(MetricNames.KEY_ROLE).append("=server")
                 .append(' ').append(MetricNames.KEY_PERIOD).append('=')
@@ -266,6 +287,7 @@ public final class MetricsFormatter {
         if (sessionId != null) {
             out.append(' ').append(MetricNames.KEY_SESSION_ID).append('=').append(sessionId);
         }
+        out.append(' ').append(MetricNames.KEY_CHANNEL).append('=').append(transport.getLabel());
         appendRows(out, snapshot, SESSION_ROWS);
         appendCounters(out, snapshot, ServerMetricNames.TX_SENT,
                 PipelineMetrics.Counter.SENT_UNITS, null);

@@ -2055,7 +2055,7 @@ public class ScreenShareService extends Service {
                 continue;
             }
             Log.i(mTag, MetricsFormatter.toSessionLogLine(session.getMetrics(),
-                session.getClientIdTail()));
+                session.getClientIdTail(), session.getTransport()));
         }
     }
 

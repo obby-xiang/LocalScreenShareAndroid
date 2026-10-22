@@ -6,6 +6,7 @@ import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 import com.obby.android.localscreenshare.core.metrics.MetricsFormatter.Role;
+import com.obby.android.localscreenshare.core.net.MediaTransportKind;
 import com.obby.android.localscreenshare.core.support.MutableNanoClock;
 
 import org.junit.Test;
@@ -108,14 +109,25 @@ public class MetricsFormatterTest {
 
         String line = MetricsFormatter.toSessionLogLine(session.snapshot(5000L), "1a2b3c4d");
 
-        assertEquals("lss.metrics role=server period=5000 sid=1a2b3c4d tx.send.p50=12.3"
+        assertEquals("lss.metrics role=server period=5000 sid=1a2b3c4d chan=grpc tx.send.p50=12.3"
                 + " tx.send.p95=12.3 tx.send.max=12.3 tx.qResidency.p95=120.0"
                 + " tx.qResidency.max=120.0 tx.qDepth.max=4 tx.sent=1489 tx.resync=2", line);
     }
 
     @Test
+    public void sessionLine_printsTheChannelOfTheSession() {
+        PipelineMetrics session = PipelineMetrics.create(new MutableNanoClock(), 16);
+        session.add(PipelineMetrics.Counter.SENT_UNITS, 7L);
+
+        String line = MetricsFormatter.toSessionLogLine(session.snapshot(5000L), "1a2b3c4d",
+                MediaTransportKind.TCP);
+
+        assertEquals("lss.metrics role=server period=5000 sid=1a2b3c4d chan=tcp tx.sent=7", line);
+    }
+
+    @Test
     public void sessionLine_keepsOnlyTheFramingFieldsWhenNothingWasRecorded() {
-        assertEquals("lss.metrics role=server period=5000",
+        assertEquals("lss.metrics role=server period=5000 chan=grpc",
                 MetricsFormatter.toSessionLogLine(PipelineMetrics.NONE.snapshot(5000L), null));
     }
 

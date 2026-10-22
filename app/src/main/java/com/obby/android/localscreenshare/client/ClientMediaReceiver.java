@@ -23,13 +23,22 @@ import com.obby.android.localscreenshare.transport.ScreenStreamProtoMapper;
  * touch disjoint state - {@code lastSecure} and the video session belong to the decode thread, the
  * audio session to the audio thread and its own lock - which is why the split needs no further
  * serialization.</p>
+ *
+ * <p><b>Two entry points.</b> A message can be applied either as the raw wire format of the
+ * control plane ({@link #onServerMessage}) or as the model objects a media channel already decoded
+ * ({@link #onDescriptor} and {@link #onAccessUnit}). Both paths converge on the same model entry
+ * points, so geometry, the secure flag, arrival tracking, the receive counters and the session see
+ * exactly one implementation regardless of the channel the bytes arrived on.</p>
  */
 public final class ClientMediaReceiver {
 
     /**
      * Arrival marker for a message whose arrival time was not measured.
+     *
+     * <p>Shared with the model entry points so a channel that cannot timestamp a unit reports no
+     * arrival sample instead of a fabricated one.</p>
      */
-    private static final long UNKNOWN_ARRIVAL_NS = Long.MIN_VALUE;
+    public static final long UNKNOWN_ARRIVAL_NS = Long.MIN_VALUE;
 
     private final StreamKey streamKey;
 
@@ -196,39 +205,15 @@ public final class ClientMediaReceiver {
         }
         switch (message.getPayloadCase()) {
             case DESCRIPTOR: {
-                com.obby.android.localscreenshare.grpc.screenstream.Descriptor descriptor =
+                final com.obby.android.localscreenshare.grpc.screenstream.Descriptor descriptor =
                         message.getDescriptor();
-                boolean secure = descriptor.getSecure();
-                if (lastSecure == null || lastSecure != secure) {
-                    lastSecure = secure;
-                    if (secureListener != null) {
-                        secureListener.onSecureChanged(secure);
-                    }
-                }
-                final StreamDescriptor streamDescriptor =
-                        ScreenStreamProtoMapper.toStreamDescriptor(streamKey, descriptor);
-                if (geometryListener != null && streamDescriptor.getVisibleWidth() > 0
-                        && streamDescriptor.getVisibleHeight() > 0) {
-                    geometryListener.onStreamGeometry(streamDescriptor.getVisibleWidth(),
-                            streamDescriptor.getVisibleHeight(),
-                            streamDescriptor.getRotationDegrees());
-                }
-                session.onDescriptor(streamDescriptor);
+                onDescriptor(ScreenStreamProtoMapper.toStreamDescriptor(streamKey, descriptor),
+                        descriptor.getSecure());
                 break;
             }
             case ACCESS_UNIT: {
-                final EncodedAccessUnit accessUnit = ScreenStreamProtoMapper.toAccessUnit(streamKey,
-                        message.getAccessUnit());
-                // One write per received unit: the frame-rate and bitrate the viewer reports are
-                // counts of what actually arrived, not of what the server believed it sent.
-                metrics.increment(PipelineMetrics.Counter.ACCESS_UNITS);
-                metrics.add(PipelineMetrics.Counter.ACCESS_UNIT_BYTES,
-                        accessUnit.getPayloadLength());
-                if (arrivalTracker != null && arrivalNs != UNKNOWN_ARRIVAL_NS) {
-                    arrivalTracker.feed(accessUnit.getConfigEpoch(), accessUnit.getSequence(),
-                            accessUnit.getPtsUs(), arrivalNs);
-                }
-                session.onAccessUnit(accessUnit);
+                onAccessUnit(ScreenStreamProtoMapper.toAccessUnit(streamKey,
+                        message.getAccessUnit()), arrivalNs);
                 break;
             }
             case AUDIO_DESCRIPTOR: {
@@ -245,6 +230,63 @@ public final class ClientMediaReceiver {
             default:
                 break;
         }
+    }
+
+    /**
+     * Applies one descriptor that a media channel already decoded.
+     *
+     * <p>This is the entry point a channel other than the gRPC stream uses: it owns the same
+     * side effects as the descriptor case of {@link #onServerMessage}, in the same order - the
+     * secure flag is reported only on a change, the geometry is reported for every descriptor
+     * before the session applies it, and one session drives both paths. A null descriptor or a
+     * closed session is ignored.</p>
+     *
+     * @param descriptor descriptor of one config epoch; may be null
+     * @param secure     whether the peer reported this stream as secure
+     */
+    public void onDescriptor(StreamDescriptor descriptor, boolean secure) {
+        if (descriptor == null || session.isClosed()) {
+            return;
+        }
+        if (lastSecure == null || lastSecure != secure) {
+            lastSecure = secure;
+            if (secureListener != null) {
+                secureListener.onSecureChanged(secure);
+            }
+        }
+        if (geometryListener != null && descriptor.getVisibleWidth() > 0
+                && descriptor.getVisibleHeight() > 0) {
+            geometryListener.onStreamGeometry(descriptor.getVisibleWidth(),
+                    descriptor.getVisibleHeight(), descriptor.getRotationDegrees());
+        }
+        session.onDescriptor(descriptor);
+    }
+
+    /**
+     * Applies one access unit that a media channel already decoded.
+     *
+     * <p>This is the entry point a channel other than the gRPC stream uses, and it carries the
+     * same single write of the receive counters and the same arrival sample as the access-unit case
+     * of {@link #onServerMessage}: a channel never reimplements the metrics, so a frame is counted
+     * once no matter which path delivered it. A null unit or a closed session is ignored.</p>
+     *
+     * @param accessUnit access unit in receive order; may be null
+     * @param arrivalNs  local monotonic arrival time in nanoseconds, or
+     *                   {@link #UNKNOWN_ARRIVAL_NS} when the arrival was not measured
+     */
+    public void onAccessUnit(EncodedAccessUnit accessUnit, long arrivalNs) {
+        if (accessUnit == null || session.isClosed()) {
+            return;
+        }
+        // One write per received unit: the frame-rate and bitrate the viewer reports are
+        // counts of what actually arrived, not of what the server believed it sent.
+        metrics.increment(PipelineMetrics.Counter.ACCESS_UNITS);
+        metrics.add(PipelineMetrics.Counter.ACCESS_UNIT_BYTES, accessUnit.getPayloadLength());
+        if (arrivalTracker != null && arrivalNs != UNKNOWN_ARRIVAL_NS) {
+            arrivalTracker.feed(accessUnit.getConfigEpoch(), accessUnit.getSequence(),
+                    accessUnit.getPtsUs(), arrivalNs);
+        }
+        session.onAccessUnit(accessUnit);
     }
 
     /**
