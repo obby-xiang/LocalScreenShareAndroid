@@ -75,3 +75,35 @@
 ## 8. 验证口径
 
 每批：清空 test-results 后全量 `:app:testDebugUnitTest` 0 failures（数字只增不减）；`./gradlew build :app:assembleDebugAndroidTest`；`:app:lintDebug`（B2 起加 `:app:lintRelease`）0 errors；B2 起加 `:app:assembleRelease` 成功（无材料时产物为 unsigned 属预期）；文档/脚本改动跑三项 checks。
+
+## 9. B2 落地证据（2026-10-22）
+
+### 9.1 规则来源核对（`app/build/outputs/mapping/release/configuration.txt`）
+
+参与本次 shrink 的规则段共 26 个来源文件加 1 个 `<unknown>` 尾段（728 行）。与本批相关的归属如下：
+
+| 规则 | 来源 | 说明 |
+| --- | --- | --- |
+| `-keepattributes SourceFile,LineNumberTable`、`-renamesourcefileattribute SourceFile` | `app/proguard-rules.pro` | AGP 默认文件不保留这两项，只有本项目规则能提供 |
+| `-keepattributes Signature` | `app/proguard-rules.pro`（显式重申） | AGP 默认 `proguard-android-optimize.txt` 与 gson 的 `META-INF/proguard/gson.pro` 都已保留；本文件重复一条，使五份落盘 DTO 的泛型要求不依赖另外两个文件的现状 |
+| 五个 Gson DTO 的 `-keep class … { <fields>; }` | `app/proguard-rules.pro` | gson 自带规则只覆盖 `@SerializedName`、`TypeToken` 与 `TypeAdapter` 家族，不保留无注解 DTO 的字段名 |
+| `-keep class * extends com.google.protobuf.GeneratedMessageLite { <fields>; }` | `app/proguard-rules.pro` | 26 个来源段中没有 protobuf 自带规则 |
+| 四个 gRPC provider 的 `-keep class … { *; }` | `app/proguard-rules.pro` | 同上，没有 grpc 自带规则段；ServiceLoader 按类名装载，类名与无参构造必须保留 |
+| `-dontwarn org.codehaus.mojo.animal_sniffer.*` | okio 的 `META-INF/proguard/okio.pro` | 候选警告之一已由库覆盖，本项目未写 `-dontwarn` |
+| Kotlin 运行时相关（`coroutines.pro` 两份、`okio.pro`、`androidx-annotations.pro`、各 AndroidX AAR 的 `proguard.txt`） | 传递依赖 | 与本批规则无关，仅登记以免把库规则误算成项目规则 |
+
+`-dontwarn`：首轮 `:app:assembleRelease` 的 R8 输出 **0 条 `Missing class` 警告**，因此本文件未添加任何 `-dontwarn`。计划里列出的四个候选（`animal_sniffer`、`j2objc`、`javax.annotation`、`jetty.alpn`）中，只有 `animal_sniffer` 被覆盖且已由 okio 提供，其余本次未出现。
+
+### 9.2 混淆结果抽查（`mapping.txt`、`seeds.txt`、`usage.txt`）
+
+- `mapping.txt`：`AuthorizationStore$Document`、`AuthorizationStore$EntryRecord`、`TlsPinStore$Document`、`TlsPinStore$PinRecord`、`FavoriteStore$FavoriteRecord` 五个类名均为 identity 映射（左侧原名、右侧同名）；字段没有出现在重命名表里，即保持原名。
+- `seeds.txt`：五个 DTO 的全部字段按原名被 keep，例如 `TlsPinStore$PinRecord: java.lang.String fingerprint`、`AuthorizationStore$EntryRecord: java.lang.String deviceId`、`FavoriteStore$FavoriteRecord: boolean customAlias`；生成的 protobuf 字段（`AccessUnit`、`Capabilities`、`Descriptor` 等的 `_` 结尾字段）同样保留；四个 provider 与 `GeneratedMessageLite` 的字段也在列。
+- `usage.txt`：五个 DTO 没有任何字段被删除；被删的只有 `*Store$InstanceHolder`、仅测试用到的 `FavoriteStore` 构造重载与被合并的枚举，与本批规则无关。
+- 混淆后仅方法被改名（例如 R8 合成的 `-$$Nest$fgetdeviceId` 访问器变成 `a`），这是预期行为：Gson 只读字段名，不读访问器。
+
+### 9.3 本批验证
+
+- `:app:assembleRelease`（本地存在 `signing.properties`，产物为已签名；无材料环境应由 B4 产出 unsigned）：BUILD SUCCESSFUL，无 R8 警告。
+- 全量 **1446 tests / 145 classes / 0 failures / 0 errors / 0 skipped**（B1 后 1443/144，+3 条 / +1 类），`scripts/checks/test_baseline.json` 同批更新为 1446/145。
+- `./gradlew build :app:assembleDebugAndroidTest` 通过；`:app:lintDebug` 0 errors / 146 warnings（与基线同数）、`:app:lintRelease` 0 errors / 136 warnings。
+- 设备侧 11 个点位（冷启动、发现、TLS 首连、信任持久化、授权持久化、收藏与位置持久化、共享观看一轮、音频一轮、通知按钮/审批弹窗、覆盖安装同/异签名、mapping 留存）归 TB-ENG-013。
