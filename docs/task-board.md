@@ -301,9 +301,9 @@
 </details>
 
 <a id="tb-core-001"></a>
-<details><summary>TB-CORE-001 正确性与资源清理（🔶 部分完成 · B1 已落地 · 2026-10-22）</summary>
+<details><summary>TB-CORE-001 正确性与资源清理（🔶 部分完成 · B1–B2 已落地 · 2026-10-22）</summary>
 
-- **状态 / 优先级 / 创建 / 完成**：🔶 部分完成 / 🔴 P0 / 2026-10-17 / —（B1 完成 2026-10-22）
+- **状态 / 优先级 / 创建 / 完成**：🔶 部分完成 / 🔴 P0 / 2026-10-17 / —（B1、B2 完成 2026-10-22）
 - **任务**：正确性与资源清理：幂等停止、单一生命周期所有者、线程池终止、缩短临界区、媒体路径移除 `CallerRunsPolicy`、resize 代次隔离、权限撤销降级、重连退避、IPv6 地址与 NSD 服务类型修正、服务名隐私。
 - **交付物 / 验证证据**：交付：代码改动与单元/仪器/压力测试。验证：阶段 1 的启动停止、旋转尺寸、网络、慢客户端、权限、回归各项通过；JVM 分批执行，设备项待棒。
 - **子项核对（2026-10-22，代码复核，计划见[实施计划](superpowers/plans/2026-10-22-core-correctness-cleanup.md)）**：
@@ -312,7 +312,8 @@
   - ✅ 发现侧重连退避：`support/BackoffPolicy` 按服务类型各自持有，由 `NsdDiscoveryCoordinator` 使用（同上提交）。
   - 🔶 ①③⑥⑦ 部分完成、②④⑧ 未做；逐项状态与位置见计划第 2 章。
 - **B1 完成（2026-10-22，提交 `6ee4790`）**：`StreamRuntime.start()` 在分配 attempt 后的所有步骤（关旧编码器、`registry.require`、工厂创建、surface 校验、`start`）收敛到 `failAttempt` 失败出口——状态置 `FAILED`、清 `publishedDescriptor` 与 `deferred`、清 `activeEncoder`、锁外关闭编码器、监听器只通知一次；`CodecNotFoundException` 保持原类型，其余包成 `EncoderException`，`FAILED && 未发布` 因此可重试，不再只能 `close()`。旧编码器 `close()` 失败也按失败处理，并把该编码器移入 retired 列表由后续 `close()` 重试释放。`switchDescriptor()` 的 `registry.require` 移出状态锁，未注册 codec 包成 `CodecSwitchException`，旧编码器/descriptor/epoch 不变、同一 epoch 可重试。`updateParameters()` 不再在状态锁内调用编码器（锁内取 encoder+generation → 锁外调用 → 锁内按代次提交缓存），代次已变时对新编码器重试一次；编码器抛异常仍保持缓存不变并上抛。JVM 证据：新增 `StreamRuntimeStartFailureTest` 8 条（未注册 codec 的 `FAILED` 与可重试、注册后重试成功、旧编码器关闭失败仍可重试、`READY` 再启动被拒、switch 到未注册 codec 保状态并同 epoch 重试、`updateParameters` 不持状态锁、编码器更新失败保缓存、并发 switch 后重放到新编码器）；全量 **1389 tests / 133 classes / 0 failures / 0 errors / 0 skipped**（基线 1381/132，+8 条 / +1 类）。`./gradlew :app:assembleDebug` 通过；`:app:lintDebug` **0 errors / 146 warnings**（与基线同数）。
-- **未完成部分**：按计划第 3 章分 B2–B6，依次为采集线程代次 + 缩短临界区（①④⑥ 的服务侧部分）、单一生命周期所有者 + 幂等停止（①②）、线程池与线程收尾（③）、悬浮窗/权限撤销降级（⑦）、重连退避与上限（⑧）。设备/仪器/长时验证归 [TB-ENG-013](#tb-eng-013)。
+- **B2 完成（2026-10-22，提交 `1c4789d`）**：采集线程改为「锁内只碰 `Image` 生命周期、锁外压缩与投递」。新增纯 JVM `service/ProjectionGeneration`（`AtomicLong`；`begin()`/`isCurrent()`/`invalidate()`）与 `service/CaptureThrottlePolicy`（纯节流决策，帧率 ≤0 按 1、首帧接受、时间戳回落接受）；`ScreenShareService` 的 `onImageAvailable` 在 `mImageReaderLock` 内只做 reader 身份检查、节流判断、`acquireLatestImage`、ARGB 像素拷贝进**采集线程私有** Bitmap、`image.close()` 与 `(runtime, generation)` 快照，JPEG 压缩与 `submitFrame` 移到锁外并在投递前用 `isCurrent` 校验代次；共享字段 `mScreenFrameBitmap` 删除（teardown 不再 recycle）；`mStreamRuntime` 改 `volatile`；reader 创建（`onServerStarted`）与替换（`updateProjectionSize`）处 `begin()`，`stopService()` 关 reader 前 `invalidate()`；新增 `volatile ProjectionSettings mCaptureSettings`，由 `buildProjectionSettings()` 在主线程发布，采集线程只读该快照（替代直接读 `mProjectionQuality`/`mProjectionFrameRate`），偏好变更（质量、帧率、全量刷新）与热档变化处补发布。JVM 证据：新增 `ProjectionGenerationTest` 5 条（新 token 有效、`begin()` 淘汰旧 token、`invalidate()` 全失效、并发 `begin()` 唯一递增、`isCurrent` 无副作用）与 `CaptureThrottlePolicyTest` 6 条（首帧、间隔不足、间隔足够、帧率 0/负值、时间戳回落、同时间戳只过一次）；全量 **1400 tests / 135 classes / 0 failures / 0 errors / 0 skipped**（B1 后基线 1389/133，+11 条 / +2 类）。`./gradlew :app:assembleDebug` 通过；`:app:lintDebug` **0 errors / 146 warnings**（与基线同数）。JPEG 帧率/质量/尺寸口径未变（节流仍按有效帧率、质量仍取偏好快照、reader 尺寸仍由 `mProjectionSize` 决定）；H.264 路径未触及。
+- **未完成部分**：按计划第 3 章余 B3–B6，依次为单一生命周期所有者 + 幂等停止（①②）、线程池与线程收尾（③）、悬浮窗/权限撤销降级（⑦）、重连退避与上限（⑧）。设备/仪器/长时验证归 [TB-ENG-013](#tb-eng-013)。
 - **关联文档**：[实施计划](superpowers/plans/2026-10-22-core-correctness-cleanup.md)、[路线图阶段 1](optimization-roadmap.md)、[项目现状风险清单](project-assessment.md)
 
 </details>
