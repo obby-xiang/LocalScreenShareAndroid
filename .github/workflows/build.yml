@@ -58,7 +58,7 @@ jobs:
   build:
     name: Build Android
     env:
-      SIGNING_STORE_FILE: "${{ github.workspace }}/keystore.jks"
+      SIGNING_STORE_FILE: "${{ runner.temp }}/keystore.jks"
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -85,11 +85,7 @@ jobs:
       - name: Assemble (pull request)
         if: github.event_name == 'pull_request'
         run: |
-          ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest \
-            -Psigning.storeFile=unused.jks \
-            -Psigning.storePassword=unused \
-            -Psigning.keyAlias=unused \
-            -Psigning.keyPassword=unused
+          ./gradlew :app:assembleDebug :app:assembleRelease :app:assembleDebugAndroidTest
 
       - name: Assemble
         if: github.event_name != 'pull_request'
@@ -99,10 +95,15 @@ jobs:
           SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
         run: |
           ./gradlew :app:assembleDebug :app:assembleRelease :app:assembleDebugAndroidTest \
+            -PrequireSigning=true \
             -Psigning.storeFile="$SIGNING_STORE_FILE" \
             -Psigning.storePassword="$SIGNING_STORE_PASSWORD" \
             -Psigning.keyAlias="$SIGNING_KEY_ALIAS" \
             -Psigning.keyPassword="$SIGNING_KEY_PASSWORD"
+
+      - name: Remove Keystore File
+        if: always() && github.event_name != 'pull_request'
+        run: rm -f "$SIGNING_STORE_FILE"
 
       - name: Upload Build Artifact
         if: github.event_name != 'pull_request'
