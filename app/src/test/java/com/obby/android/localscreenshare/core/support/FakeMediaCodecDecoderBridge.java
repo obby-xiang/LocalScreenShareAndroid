@@ -2,6 +2,7 @@ package com.obby.android.localscreenshare.core.support;
 
 import com.obby.android.localscreenshare.core.codec.mediacodec.DecodedOutput;
 import com.obby.android.localscreenshare.core.codec.mediacodec.DecoderFormat;
+import com.obby.android.localscreenshare.core.codec.mediacodec.LowLatencyState;
 import com.obby.android.localscreenshare.core.codec.mediacodec.MediaCodecDecoderBridge;
 
 import java.util.ArrayList;
@@ -59,6 +60,8 @@ public final class FakeMediaCodecDecoderBridge implements MediaCodecDecoderBridg
 
     private volatile DecoderFormat lastConfigureFormat;
 
+    private volatile LowLatencyState lowLatencyState = LowLatencyState.NOT_REQUESTED;
+
     @Override
     public void configure(DecoderFormat format) {
         RuntimeException failure = nextConfigureFailure.getAndSet(null);
@@ -67,6 +70,25 @@ public final class FakeMediaCodecDecoderBridge implements MediaCodecDecoderBridg
         }
         lastConfigureFormat = format;
         configureCount.incrementAndGet();
+    }
+
+    /**
+     * Returns the low-latency state reported to the decoder; {@code NOT_REQUESTED} by default.
+     */
+    @Override
+    public LowLatencyState getLowLatencyState() {
+        return lowLatencyState;
+    }
+
+    /**
+     * Sets the state reported by {@link #getLowLatencyState()}; a test preloads it before the
+     * decoder configures this bridge.
+     */
+    public void setLowLatencyState(LowLatencyState state) {
+        if (state == null) {
+            throw new IllegalArgumentException("state must not be null");
+        }
+        lowLatencyState = state;
     }
 
     @Override

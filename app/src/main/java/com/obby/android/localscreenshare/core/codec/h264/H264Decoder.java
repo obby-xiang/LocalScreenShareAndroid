@@ -9,6 +9,7 @@ import com.obby.android.localscreenshare.core.codec.DecoderException;
 import com.obby.android.localscreenshare.core.codec.KeyFrameRequester;
 import com.obby.android.localscreenshare.core.codec.mediacodec.DecodedOutput;
 import com.obby.android.localscreenshare.core.codec.mediacodec.DecoderFormat;
+import com.obby.android.localscreenshare.core.codec.mediacodec.LowLatencyState;
 import com.obby.android.localscreenshare.core.codec.mediacodec.MediaCodecBridgeFactory;
 import com.obby.android.localscreenshare.core.codec.mediacodec.MediaCodecDecoderBridge;
 import com.obby.android.localscreenshare.core.metrics.PipelineMetrics;
@@ -294,6 +295,37 @@ public final class H264Decoder implements Decoder {
         if (metrics.isEnabled()) {
             this.configuredAtNs = clock.nowNs();
             this.blackoutPending = true;
+        }
+        recordLowLatencyState(created);
+    }
+
+    /**
+     * Records the low-latency state of the bridge that just finished starting.
+     *
+     * <p>Written only after {@code configure} and {@code start} both succeeded: a start failure
+     * releases the codec and leaves the session without a decoder, so a value written earlier would
+     * describe a decoder that never ran. {@code NOT_REQUESTED} writes nothing at all, keeping the
+     * gauge at its "no capability" value of zero, which the formatter omits.</p>
+     */
+    private void recordLowLatencyState(MediaCodecDecoderBridge configuredBridge) {
+        if (!metrics.isEnabled() || configuredBridge == null) {
+            return;
+        }
+        LowLatencyState state = configuredBridge.getLowLatencyState();
+        if (state == null) {
+            return;
+        }
+        switch (state) {
+            case APPLIED:
+            case APPLIED_WITHOUT_PRIORITY:
+                metrics.setGauge(PipelineMetrics.Gauge.DECODER_LOW_LATENCY, 1L);
+                break;
+            case REJECTED:
+                metrics.setGauge(PipelineMetrics.Gauge.DECODER_LOW_LATENCY, 2L);
+                break;
+            case NOT_REQUESTED:
+            default:
+                break;
         }
     }
 

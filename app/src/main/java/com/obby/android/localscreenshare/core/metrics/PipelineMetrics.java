@@ -421,7 +421,15 @@ public final class PipelineMetrics {
          * of the window, not a promise about latency: a unit is still delivered the moment its last
          * fragment lands.</p>
          */
-        MEDIA_HOLD_UP_MS
+        MEDIA_HOLD_UP_MS,
+
+        /**
+         * Which optional decoder keys took effect: one when the low-latency request was applied
+         * (with or without the priority key), two when every attempt was rejected and the codec
+         * fell back to the plain configuration, and zero when the platform is too old to request
+         * them. Zero is also the "never wrote" value, so it is never printed.
+         */
+        DECODER_LOW_LATENCY
     }
 
     /**

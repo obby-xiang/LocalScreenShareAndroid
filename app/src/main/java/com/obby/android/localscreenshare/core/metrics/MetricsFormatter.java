@@ -525,6 +525,8 @@ public final class MetricsFormatter {
                 PipelineMetrics.Counter.DECODE_MERGED, null);
         appendCounters(out, snapshot, ClientMetricNames.DEC_SHED,
                 PipelineMetrics.Counter.DECODE_SHEDS, null);
+        appendCounters(out, snapshot, DecoderMetricNames.DEC_LOW_LATENCY, null,
+                PipelineMetrics.Gauge.DECODER_LOW_LATENCY);
         appendCounters(out, snapshot, ClientMetricNames.PRES_DROP,
                 PipelineMetrics.Counter.PRESENT_DROPS, null);
         appendCounters(out, snapshot, ClientMetricNames.FREEZE,

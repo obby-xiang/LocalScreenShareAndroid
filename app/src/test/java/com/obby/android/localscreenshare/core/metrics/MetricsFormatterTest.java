@@ -326,6 +326,27 @@ public class MetricsFormatterTest {
     }
 
     @Test
+    public void decLowLat_printsWhenOneOrTwo() {
+        PipelineMetrics metrics = PipelineMetrics.create(new MutableNanoClock(), 16);
+
+        metrics.setGauge(PipelineMetrics.Gauge.DECODER_LOW_LATENCY, 1L);
+        assertTrue(MetricsFormatter.toLogLine(Role.CLIENT, metrics.snapshot(5000L))
+                .contains(" dec.lowLat=1"));
+
+        metrics.setGauge(PipelineMetrics.Gauge.DECODER_LOW_LATENCY, 2L);
+        assertTrue(MetricsFormatter.toLogLine(Role.CLIENT, metrics.snapshot(5000L))
+                .contains(" dec.lowLat=2"));
+    }
+
+    @Test
+    public void decLowLat_isOmittedForZero() {
+        PipelineMetrics metrics = PipelineMetrics.create(new MutableNanoClock(), 16);
+
+        assertFalse(MetricsFormatter.toLogLine(Role.CLIENT, metrics.snapshot(5000L))
+                .contains("dec.lowLat"));
+    }
+
+    @Test
     public void clientLine_printsTheAudioBlockAfterTheVideoFields() {
         PipelineMetrics metrics = PipelineMetrics.create(new MutableNanoClock(), 16);
         metrics.record(PipelineMetrics.Window.AV_OFFSET, 3_100_000L);

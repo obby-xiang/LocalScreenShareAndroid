@@ -30,6 +30,16 @@ public interface MediaCodecDecoderBridge {
     void configure(DecoderFormat format);
 
     /**
+     * Returns which of the optional low-latency keys the last {@link #configure(DecoderFormat)}
+     * accepted.
+     *
+     * <p>{@link LowLatencyState#NOT_REQUESTED} means the platform is too old to ask, or that no
+     * configuration happened yet. The value is a record of the request, not a promise about
+     * latency, and it is only meaningful after {@link #configure(DecoderFormat)} returned.</p>
+     */
+    LowLatencyState getLowLatencyState();
+
+    /**
      * Starts the codec so queued input can be decoded.
      */
     void start();

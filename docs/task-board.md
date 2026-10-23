@@ -117,6 +117,7 @@
 | ID | 状态 | 优先级 | 标题 | 创建 | 完成 | 关联 |
 | --- | --- | --- | --- | --- | --- | --- |
 | TB-ENG-016 | 📋 待办 | 🟠 P1 | 性能候选实施批次（用户 2026-10-23 批准五项：解码低延迟参数、刷新率匹配、热余量预测降档、追赶采样覆盖修复（原「阈值收紧」已改写，阈值不动）、背压回传；`SurfaceView` 另立评估，不在本批） | 2026-10-23 | — | [性能优化调研](performance-research.md) |
+| TB-MEDIA-006 | 🔶 部分完成 | 🟠 P1 | 客户端解码器低延迟参数（`KEY_LOW_LATENCY` + `KEY_PRIORITY`，API 30+ 请求、三级回退、`dec.lowLat` 三态；**未含** `KEY_OPERATING_RATE`；代码完成，设备验证与收益实测未做） | 2026-10-23 | — | [TB-ENG-016](#tb-eng-016) |
 | TB-CLIENT-007 | 🔶 部分完成 | 🟠 P1 | 追赶采样覆盖修复（`CatchUpSampler` 统一 gRPC/媒体通道/丢片三条路径；丢片以外部追赶计入 `rx.catchup` 但不占连续预算；阈值未收紧、HOLD 语义未改；代码完成，设备复验未做） | 2026-10-23 | — | [TB-ENG-016](#tb-eng-016) |
 | TB-MEDIA-008 | 🔶 部分完成 | 🟠 P1 | JPEG+UDP 重组窗口抖动容忍修复（代码完成；r4 设备复验判据 1/2/3/5 通过、4 基本满足；待校准参数与残余项保留） | 2026-10-23 | — | [TB-ENG-013](#tb-eng-013) |
 | TB-SEC-002 | 🔶 部分完成 | 🔴 P0 | 身份密钥瞬时故障静默删键与三份身份快照（N3；代码完成，设备复测待棒） | 2026-10-21 | — | [决策 DB-SEC-003](decision-board.md#db-sec-003) |
@@ -231,7 +232,7 @@
 - **状态 / 优先级 / 创建 / 完成**：📋 待办（用户已批准实施范围，代码未开始）/ 🟠 P1 / 2026-10-23 / —
 - **来源**：[性能优化业界调研](performance-research.md) §4.2 的候选清单与交接 §2.2 的「性能调研候选棒」；2026-10-23 用户裁决：批准其中五项开工，`SurfaceView` 另立评估。
 - **已批准的五项**（各占独立分棒 ID，实施时合并跟踪进度，不重复计算完成率；分棒详情块在各自落棒时补）：
-  1. `TB-MEDIA-006` **客户端解码器低延迟参数**：`KEY_LOW_LATENCY`（先查 `FEATURE_LowLatency`）、`KEY_OPERATING_RATE`、`KEY_PRIORITY`；降低解码延迟与抖动、不增加功耗。依据 §4.2 #1 与 §5。
+  1. `TB-MEDIA-006` **客户端解码器低延迟参数**（2026-10-23 按范围裁决改写为“两键 + 未含项”）：`KEY_LOW_LATENCY`（API 30+）与 `KEY_PRIORITY`（实时优先级）；**未含** `KEY_OPERATING_RATE`——解码侧目标帧率需要新的描述符契约，会与 B4 的内容帧率提示重复定义。厂商拒绝时按“全键 → 去优先级 → 全去”三级回退，`dec.lowLat` 三态上报。依据 §4.2 #1 与 §5。
   2. `TB-MEDIA-007` **显示刷新率/帧率匹配**：客户端呈现面 `Surface.setFrameRate(fps)`，刷新率非整数倍时再评估切 `Display.Mode`；消除 3:2 节奏抖动。依据 §4.2 #5、§6 触发条件 4。
   3. `TB-POWER-002` **热余量预测降档**：`PowerManager.getThermalHeadroom(10)` ≥0.7 与 ≥0.85 两级，早于 `SEVERE` 的「撞墙式」掉帧。依据 §4.2 #6、§6 触发条件 3。
   4. `TB-CLIENT-007` **追赶采样覆盖修复 + 丢片并轨**（原登记为「收紧追赶阈值 + 自适应队列」，2026-10-23 按主裁决改写）：`CatchUpSampler` 统一 gRPC、专用媒体通道与丢片三条路径，丢片以外部追赶计入 `rx.catchup`/`rx.catchup.lat`（reason=`ext`）但**不占**连续失败预算、不设冷却、不启动收敛计时；`CatchUpPolicy` 的阈值与判定顺序一律不收紧，HOLD 语义与 [DV-027](decision-board.md) 状态不变。依据 §4.2 #3。
@@ -240,6 +241,23 @@
 - **口径约束**：① 追赶采样口径变化（本轮为**采样覆盖修复 + 丢片并轨**，不是阈值收紧）会改 `rx.catchup*` / `rx.converge.fail` 的观察口径，落棒时必须写机制理由并同步决策板 `DV-021` 与 [DB-OBS-002](decision-board.md#db-obs-002)（判据改写先例见 N-r2-2）；② 热余量阈值、`setFrameRate` 参数与队列上限默认标 **待设备校准**，不得写成已验证；③ 背压回传只改服务端编码参数，不新建通道、不引入新依赖。
 - **完成判据**：五项各自落地并有 JVM 证据与设备点位，且分别写回自己的条目；五项全部写回后本批次总项转 ✅，在此之前保持 📋 待办。
 - **关联文档**：[性能优化调研](performance-research.md)、[TB-POWER-001](#tb-power-001)、[TB-CLIENT-005](#tb-client-005)、[TB-OBS-001](#tb-obs-001)
+
+</details>
+
+<a id="tb-media-006"></a>
+<details><summary>TB-MEDIA-006 客户端解码器低延迟参数（🔶 部分完成 · 代码完成，设备验证与收益实测未做）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：🔶 部分完成（代码与 JVM 用例已落地，设备验证与收益实测未执行）/ 🟠 P1 / 2026-10-23 / —
+- **来源**：[TB-ENG-016](#tb-eng-016) 第 1 项。2026-10-23 按范围裁决改写为“两键 + 未含项”：只请求 `KEY_LOW_LATENCY`（API 30+）与 `KEY_PRIORITY=0`；**未含** `KEY_OPERATING_RATE`——解码侧目标帧率需要新的描述符契约，会与内容帧率提示重复定义（[性能候选设计 §4.1](superpowers/specs/2026-10-23-performance-candidates-design.md)）。
+- **交付物**：
+  - `core/codec/mediacodec/LowLatencyState`（`NOT_REQUESTED` / `APPLIED` / `APPLIED_WITHOUT_PRIORITY` / `REJECTED`）与 `MediaCodecDecoderBridge.getLowLatencyState()`；三个实现（Android 桥、`FakeMediaCodecDecoderBridge`、测试内 `BudgetDecoderBridge`）同步。
+  - `AndroidMediaCodecDecoderBridge`：`Build.VERSION.SDK_INT >= 30` 时才请求；`configureWithFallback` 是纯 JVM 可测的三级回退（全键 → 去优先级 → 全去），每次被可选键拒绝后先 `reset()` 再重配；与可选键无关的失败按原类型抛出；`FormatApplier` 只传 boolean，不向测试暴露 `MediaFormat`。
+  - `H264Decoder.configure`：`configure` 与 `start` **整体成功之后**一次性写 `dec.lowLat`；`APPLIED` / `APPLIED_WITHOUT_PRIORITY` → 1，`REJECTED` → 2，`NOT_REQUESTED` 不写。失败路径不写，热路径无探针。
+  - `PipelineMetrics.Gauge.DECODER_LOW_LATENCY`、`DecoderMetricNames.DEC_LOW_LATENCY = "dec.lowLat"`、格式化器客户端行（0 不打印、1/2 打印）。`ClientMetricNames` 未追加。
+- **验证**：`AndroidMediaCodecDecoderBridgeTest`（6 条）、`H264DecoderTest`（+5）、`MetricsFormatterTest`（+2）。TDD：先写用例，红测为编译失败（`LowLatencyState`、`configureWithFallback`、`Gauge.DECODER_LOW_LATENCY`、`setNextDecoderLowLatencyState` 缺失，共 43 个错误）；实现后定向用例全绿。双变体全量 **1788 tests / 180 classes，0 失败 / 0 错误 / 0 跳过**（基线同提交更新为实测值）。
+- **收益未实测**：本项只证明“请求与回退按预期执行、三态可区分”，`dec.lat` 的改善幅度、功耗与温升影响均未测量，不得据此宣称延迟改善。
+- **未完成**：设备验证——API 30+ 机型出现 `dec.lowLat=1`（含只保留低延迟的情形）、厂商拒绝时出现 `2`、API < 30 机型不打印；以及收益实测（`dec.lat.p50/p95` 前后对照）。
+- **关联文档**：[性能优化调研 §4.2 #1、§6](performance-research.md)、[性能候选设计 §4.1](superpowers/specs/2026-10-23-performance-candidates-design.md)、[TB-ENG-016](#tb-eng-016)
 
 </details>
 

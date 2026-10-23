@@ -8,6 +8,7 @@ import com.obby.android.localscreenshare.core.codec.DecoderException;
 import com.obby.android.localscreenshare.core.codec.KeyFrameRequester;
 import com.obby.android.localscreenshare.core.codec.mediacodec.DecodedOutput;
 import com.obby.android.localscreenshare.core.codec.mediacodec.DecoderFormat;
+import com.obby.android.localscreenshare.core.codec.mediacodec.LowLatencyState;
 import com.obby.android.localscreenshare.core.codec.mediacodec.MediaCodecBridgeFactory;
 import com.obby.android.localscreenshare.core.codec.mediacodec.MediaCodecDecoderBridge;
 import com.obby.android.localscreenshare.core.codec.mediacodec.MediaCodecEncoderBridge;
@@ -21,6 +22,7 @@ import com.obby.android.localscreenshare.core.model.StreamDescriptor;
 import com.obby.android.localscreenshare.core.model.StreamKey;
 import com.obby.android.localscreenshare.core.render.EncodedImageFrame;
 import com.obby.android.localscreenshare.core.render.RenderTarget;
+import com.obby.android.localscreenshare.core.support.FakeMediaCodecBridgeFactory;
 import com.obby.android.localscreenshare.core.support.FakeMediaCodecDecoderBridge;
 import com.obby.android.localscreenshare.core.support.FakeRenderTarget;
 import com.obby.android.localscreenshare.core.support.H264Fixtures;
@@ -418,6 +420,65 @@ public class H264DecoderTest {
     }
 
     @Test
+    public void configure_recordsLowLatencyApplied() {
+        MutableNanoClock clock = new MutableNanoClock();
+        PipelineMetrics metrics = PipelineMetrics.create(clock, 8);
+        H264Decoder measured = newPresetLowLatencyDecoder(LowLatencyState.APPLIED, metrics, clock);
+        measured.configure(descriptor(CONFIG_EPOCH, CodecIds.H264, validConfigParts()));
+
+        assertEquals(1L, metrics.getGauge(PipelineMetrics.Gauge.DECODER_LOW_LATENCY));
+    }
+
+    @Test
+    public void configure_recordsPartialLowLatencyAsApplied() {
+        MutableNanoClock clock = new MutableNanoClock();
+        PipelineMetrics metrics = PipelineMetrics.create(clock, 8);
+        H264Decoder measured = newPresetLowLatencyDecoder(
+                LowLatencyState.APPLIED_WITHOUT_PRIORITY, metrics, clock);
+        measured.configure(descriptor(CONFIG_EPOCH, CodecIds.H264, validConfigParts()));
+
+        assertEquals(1L, metrics.getGauge(PipelineMetrics.Gauge.DECODER_LOW_LATENCY));
+    }
+
+    @Test
+    public void configure_recordsLowLatencyFallback() {
+        MutableNanoClock clock = new MutableNanoClock();
+        PipelineMetrics metrics = PipelineMetrics.create(clock, 8);
+        H264Decoder measured = newPresetLowLatencyDecoder(LowLatencyState.REJECTED, metrics, clock);
+        measured.configure(descriptor(CONFIG_EPOCH, CodecIds.H264, validConfigParts()));
+
+        assertEquals(2L, metrics.getGauge(PipelineMetrics.Gauge.DECODER_LOW_LATENCY));
+    }
+
+    @Test
+    public void configure_startFailureLeavesGaugeUnwritten() {
+        MutableNanoClock clock = new MutableNanoClock();
+        PipelineMetrics metrics = PipelineMetrics.create(clock, 8);
+        H264Decoder measured = newMeasuredDecoder(metrics, clock);
+        // The bridge reports an applied request before start fails: a gauge written before the
+        // whole configure/start sequence succeeds would wrongly record 1 here.
+        bridge.setLowLatencyState(LowLatencyState.APPLIED);
+        bridge.failNextStart(new IllegalStateException("start rejected"));
+
+        assertThrows(DecoderException.class,
+                () -> measured.configure(descriptor(CONFIG_EPOCH, CodecIds.H264,
+                        validConfigParts())));
+
+        assertEquals(0L, metrics.getGauge(PipelineMetrics.Gauge.DECODER_LOW_LATENCY));
+    }
+
+    @Test
+    public void configure_notRequestedLeavesGaugeUnwritten() {
+        MutableNanoClock clock = new MutableNanoClock();
+        PipelineMetrics metrics = PipelineMetrics.create(clock, 8);
+        H264Decoder measured = newPresetLowLatencyDecoder(
+                LowLatencyState.NOT_REQUESTED, metrics, clock);
+        measured.configure(descriptor(CONFIG_EPOCH, CodecIds.H264, validConfigParts()));
+
+        assertEquals(0L, metrics.getGauge(PipelineMetrics.Gauge.DECODER_LOW_LATENCY));
+    }
+
+    @Test
     public void firstFrame_isPresentedImmediatelyWhenTheSessionClockMapsItAhead() {
         MutableNanoClock clock = new MutableNanoClock(NOW_NS);
         SessionClock sessionClock = new SessionClock();
@@ -538,6 +599,19 @@ public class H264DecoderTest {
         return new H264Decoder(STREAM_KEY, descriptor(CONFIG_EPOCH, CodecIds.H264,
                 validConfigParts()), renderTarget, bridgeFactory, KeyFrameRequester.NONE,
                 PipelineMetrics.NONE, clock, sessionClock);
+    }
+
+    /**
+     * Creates a decoder whose bridge is created with {@code state} already set, so the gauge can be
+     * observed without touching the shared bridge of the constructor fixture.
+     */
+    private H264Decoder newPresetLowLatencyDecoder(LowLatencyState state, PipelineMetrics metrics,
+                                                   NanoClock clock) {
+        FakeMediaCodecBridgeFactory presetFactory = new FakeMediaCodecBridgeFactory();
+        presetFactory.setNextDecoderLowLatencyState(state);
+        return new H264Decoder(STREAM_KEY, descriptor(CONFIG_EPOCH, CodecIds.H264,
+                validConfigParts()), renderTarget, presetFactory, KeyFrameRequester.NONE, metrics,
+                clock);
     }
 
     private static EncodedAccessUnit accessUnit(int configEpoch, long sequence, long ptsUs,
@@ -720,6 +794,11 @@ public class H264DecoderTest {
 
         @Override
         public void stop() {
+        }
+
+        @Override
+        public LowLatencyState getLowLatencyState() {
+            return LowLatencyState.NOT_REQUESTED;
         }
 
         @Override
