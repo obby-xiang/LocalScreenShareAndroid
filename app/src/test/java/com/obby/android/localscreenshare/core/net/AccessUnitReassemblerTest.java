@@ -90,6 +90,56 @@ public class AccessUnitReassemblerTest {
         assertEquals(0, listener.frames.size());
     }
 
+    /**
+     * A unit whose fragments keep arriving over a window longer than the hold-up is assembled.
+     *
+     * <p>The hold-up bounds silence, not the lifetime of an assembly. A paced sender spreads a large
+     * unit over hundreds of milliseconds - a JPEG compatibility frame of a screen needs dozens of
+     * fragments - so a deadline anchored at the first fragment expires every such unit while its
+     * fragments are still on the wire. The r2 device run showed exactly that: the viewer received no
+     * frame at all while {@code udp.recv} climbed, {@code udp.lost} stayed low and
+     * {@code udp.auIncomplete} grew by several drops per frame.</p>
+     */
+    @Test
+    public void fragmentsSpanningMoreThanTheHoldUp_areStillAssembled() {
+        int size = 20 * UdpMediaPacketCodec.MAX_FRAGMENT_BYTES;
+        int count = UdpMediaPacketCodec.fragmentCount(size);
+        for (int index = 0; index < count; index++) {
+            reassembler.onPacket(packet(11, index + 1L, index, size));
+            reassembler.onTick();
+            clock.advance(AccessUnitReassembler.HOLD_UP_NS / 2L);
+        }
+
+        assertEquals("a paced unit must not expire while its fragments still arrive",
+                1, listener.frames.size());
+        assertEquals(size, listener.frames.get(0).getPayloadLength());
+        assertEquals(0, reassembler.getDroppedCount());
+        assertEquals(0, reassembler.getInFlightCount());
+    }
+
+    /**
+     * Silence, by contrast, is still what ends an unfinished unit: the wait restarts with every
+     * fragment, so a unit that stops half-way is dropped one hold-up later.
+     */
+    @Test
+    public void silenceAfterProgress_isDroppedOnTheHoldUp() {
+        int size = 3 * UdpMediaPacketCodec.MAX_FRAGMENT_BYTES;
+        reassembler.onPacket(packet(12, 1, 0, size));
+        clock.advance(AccessUnitReassembler.HOLD_UP_NS / 2L);
+        reassembler.onPacket(packet(12, 2, 1, size));
+
+        clock.advance(AccessUnitReassembler.HOLD_UP_NS - 1L);
+        reassembler.onTick();
+        assertEquals("the hold-up restarts with the last fragment",
+                1, reassembler.getInFlightCount());
+
+        clock.advance(1L);
+        reassembler.onTick();
+        assertEquals(0, reassembler.getInFlightCount());
+        assertEquals(1, listener.dropped.size());
+        assertEquals("timeout", listener.dropped.get(0).reason);
+    }
+
     @Test
     public void newerDelivery_supersedesAnOlderIncompleteUnit() {
         int size = 2 * UdpMediaPacketCodec.MAX_FRAGMENT_BYTES;

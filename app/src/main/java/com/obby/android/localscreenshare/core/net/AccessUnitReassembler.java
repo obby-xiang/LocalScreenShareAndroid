@@ -18,10 +18,13 @@ import java.util.Map;
  * delivered on arrival; a multi-fragment unit is delivered the moment its last fragment lands.</p>
  *
  * <p><b>Giving up.</b> An incomplete unit is dropped whole - never handed on half-built - in three
- * cases: its fragments stopped coming for {@value #HOLD_UP_MS} milliseconds, a newer unit was
- * delivered and made it useless, or the buffer budget forced the oldest unit out. Every drop is
- * reported with its reason so the caller can count it and decide whether to ask for a key frame.
- * State from a fragment of an already delivered unit is counted as late and ignored.</p>
+ * cases: it has been silent for {@value #HOLD_UP_MS} milliseconds, a newer unit was delivered and
+ * made it useless, or the buffer budget forced the oldest unit out. Silence is measured from the
+ * <i>last</i> fragment, not from the first one: a sender paces its fragments, so a unit that keeps
+ * arriving is making progress however long its assembly takes, and the hold-up only decides when a
+ * stalled unit is hopeless. Every drop is reported with its reason so the caller can count it and
+ * decide whether to ask for a key frame. State from a fragment of an already delivered unit is
+ * counted as late and ignored.</p>
  *
  * <p><b>Why the hold-up and not "a newer id arrived".</b> A newer unit's first fragment may overtake
  * the previous unit's last one on the wire: datagrams of different units are unrelated. Dropping on
@@ -47,7 +50,15 @@ public final class AccessUnitReassembler {
     public static final long MAX_IN_FLIGHT_BYTES = 8L * 1024L * 1024L;
 
     /**
-     * How long an incomplete unit may stay pending, in milliseconds.
+     * How long an unfinished unit may stay silent before it is abandoned, in milliseconds.
+     *
+     * <p>Silence is measured from the last fragment that arrived, not from the first one. Anchoring
+     * the deadline at the first fragment makes the boundary a limit on the whole assembly, which
+     * only works for units small enough to land in one burst: a JPEG compatibility frame of a
+     * screen is about six times the size of an H.264 one, its fragments are paced over hundreds of
+     * milliseconds, and the r2 device run expired every such unit ten milliseconds after it
+     * started - the viewer received nothing while the fragments kept arriving and almost no
+     * sequence number was actually missing.</p>
      */
     public static final long HOLD_UP_MS = 10L;
 
@@ -152,6 +163,7 @@ public final class AccessUnitReassembler {
             drop(packet.getAuId(), "size_mismatch");
             return;
         }
+        unit.touch(nowNs);
         if (unit.put(packet)) {
             pending.remove(packet.getAuId());
             pendingBytes -= unit.bytes.length;
@@ -213,7 +225,7 @@ public final class AccessUnitReassembler {
         List<Integer> expired = null;
         for (Map.Entry<Integer, Pending> entry : pending.entrySet()) {
             Pending unit = entry.getValue();
-            if (nowNs - unit.firstArrivalNs >= HOLD_UP_NS) {
+            if (nowNs - unit.lastArrivalNs >= HOLD_UP_NS) {
                 if (expired == null) {
                     expired = new ArrayList<>(2);
                 }
@@ -273,7 +285,7 @@ public final class AccessUnitReassembler {
 
         private final long[] received;
 
-        private final long firstArrivalNs;
+        private long lastArrivalNs;
 
         private final long ptsUs;
 
@@ -294,12 +306,21 @@ public final class AccessUnitReassembler {
             this.fragmentCount = first.getFragmentCount();
             this.bytes = new byte[first.getAuSize()];
             this.received = new long[(fragmentCount + 63) / 64];
-            this.firstArrivalNs = nowNs;
+            this.lastArrivalNs = nowNs;
             this.ptsUs = first.getPtsUs();
             this.configEpoch = first.getConfigEpoch();
             this.config = first.isConfig();
             this.syncPoint = first.isSyncPoint();
             this.joinPoint = first.isJoinPoint();
+        }
+
+        /**
+         * Records that a fragment of this unit arrived, which restarts the hold-up.
+         *
+         * @param nowNs arrival time on the reassembler clock
+         */
+        private void touch(long nowNs) {
+            lastArrivalNs = nowNs;
         }
 
         /**

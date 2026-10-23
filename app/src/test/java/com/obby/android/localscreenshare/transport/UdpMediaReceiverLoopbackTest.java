@@ -89,6 +89,31 @@ public class UdpMediaReceiverLoopbackTest {
         assertNull(recorder.failure.get());
     }
 
+    /**
+     * A unit of the size a JPEG compatibility frame needs is reassembled whole.
+     *
+     * <p>A screen frame of the JPEG mode is roughly six times the size of an H.264 one, so it needs
+     * dozens of fragments instead of a handful; nothing in the datagram format bounds that, and the
+     * receiver has to keep the unit while its fragments arrive. See
+     * {@code AccessUnitReassemblerTest} for the hold-up boundary that made such a unit impossible
+     * on the device.</p>
+     */
+    @Test
+    public void aJpegSizedUnit_isReassembledWhole() throws Exception {
+        Recorder recorder = new Recorder();
+        mPeer = new Peer();
+        start(recorder);
+        assertTrue(recorder.awaitReady());
+        mPeer.awaitBind();
+        int size = 70 * UdpMediaPacketCodec.MAX_FRAGMENT_BYTES;
+
+        mPeer.sendUnit(0, size);
+
+        assertTrue(recorder.awaitUnits(1));
+        assertEquals(size, recorder.units.get(0).getPayloadLength());
+        assertArrayEquals(payload(size), recorder.units.get(0).getPayload());
+    }
+
     @Test
     public void reorderedFragments_areReassembledIntoOneUnit() throws Exception {
         Recorder recorder = new Recorder();
