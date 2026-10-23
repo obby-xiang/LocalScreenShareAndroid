@@ -479,6 +479,47 @@ public class H264DecoderTest {
     }
 
     @Test
+    public void close_clearsAppliedLowLatencyGauge() {
+        MutableNanoClock clock = new MutableNanoClock();
+        PipelineMetrics metrics = PipelineMetrics.create(clock, 8);
+        H264Decoder measured = newPresetLowLatencyDecoder(LowLatencyState.APPLIED, metrics, clock);
+        measured.configure(descriptor(CONFIG_EPOCH, CodecIds.H264, validConfigParts()));
+        assertEquals(1L, metrics.getGauge(PipelineMetrics.Gauge.DECODER_LOW_LATENCY));
+
+        measured.close();
+
+        // A session that switches to another codec keeps the same metric scope: the closed decoder
+        // must not leave its "applied" reading behind for the next line to print.
+        assertEquals(0L, metrics.getGauge(PipelineMetrics.Gauge.DECODER_LOW_LATENCY));
+    }
+
+    @Test
+    public void close_clearsRejectedLowLatencyGauge() {
+        MutableNanoClock clock = new MutableNanoClock();
+        PipelineMetrics metrics = PipelineMetrics.create(clock, 8);
+        H264Decoder measured = newPresetLowLatencyDecoder(LowLatencyState.REJECTED, metrics, clock);
+        measured.configure(descriptor(CONFIG_EPOCH, CodecIds.H264, validConfigParts()));
+        assertEquals(2L, metrics.getGauge(PipelineMetrics.Gauge.DECODER_LOW_LATENCY));
+
+        measured.close();
+
+        assertEquals(0L, metrics.getGauge(PipelineMetrics.Gauge.DECODER_LOW_LATENCY));
+    }
+
+    @Test
+    public void close_notRequestedLowLatencyLeavesGaugeUnwritten() {
+        MutableNanoClock clock = new MutableNanoClock();
+        PipelineMetrics metrics = PipelineMetrics.create(clock, 8);
+        H264Decoder measured = newPresetLowLatencyDecoder(
+                LowLatencyState.NOT_REQUESTED, metrics, clock);
+        measured.configure(descriptor(CONFIG_EPOCH, CodecIds.H264, validConfigParts()));
+
+        measured.close();
+
+        assertEquals(0L, metrics.getGauge(PipelineMetrics.Gauge.DECODER_LOW_LATENCY));
+    }
+
+    @Test
     public void firstFrame_isPresentedImmediatelyWhenTheSessionClockMapsItAhead() {
         MutableNanoClock clock = new MutableNanoClock(NOW_NS);
         SessionClock sessionClock = new SessionClock();

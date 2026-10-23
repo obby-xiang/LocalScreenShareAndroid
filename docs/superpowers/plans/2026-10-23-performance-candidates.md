@@ -256,7 +256,7 @@ git commit -m "feat(client): 统一追赶采样入口并接入丢片追赶"
 - Create: `$MAIN/core/codec/mediacodec/LowLatencyState.java`
 - Modify: `$MAIN/core/codec/mediacodec/MediaCodecDecoderBridge.java` — 新增 `LowLatencyState getLowLatencyState()`
 - Modify: `$MAIN/core/codec/mediacodec/AndroidMediaCodecDecoderBridge.java` — `configure` 走 `configureWithFallback`；新增键常量、`FormatApplier`、三级回退
-- Modify: `$MAIN/core/codec/h264/H264Decoder.java` — `configure` 与 `start` 整体成功后写三态 gauge
+- Modify: `$MAIN/core/codec/h264/H264Decoder.java` — `configure` 与 `start` 整体成功后写三态 gauge；`close` 时把本解码器写过的值清零（B2 复核补充）
 - Modify: `$MAIN/core/metrics/PipelineMetrics.java` — `Gauge.DECODER_LOW_LATENCY`
 - Create: `$MAIN/core/metrics/DecoderMetricNames.java`
 - Modify: `$MAIN/core/metrics/MetricsFormatter.java` — 客户端行打印 `dec.lowLat`（1/2 才打印）

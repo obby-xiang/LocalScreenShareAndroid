@@ -427,7 +427,9 @@ public final class PipelineMetrics {
          * Which optional decoder keys took effect: one when the low-latency request was applied
          * (with or without the priority key), two when every attempt was rejected and the codec
          * fell back to the plain configuration, and zero when the platform is too old to request
-         * them. Zero is also the "never wrote" value, so it is never printed.
+         * them. The decoder clears it back to zero when it is closed, so a session that switched to
+         * another codec stops reporting the decoder it no longer has. Zero is also the "never
+         * wrote" value, so it is never printed.
          */
         DECODER_LOW_LATENCY
     }

@@ -253,8 +253,9 @@
   - `core/codec/mediacodec/LowLatencyState`（`NOT_REQUESTED` / `APPLIED` / `APPLIED_WITHOUT_PRIORITY` / `REJECTED`）与 `MediaCodecDecoderBridge.getLowLatencyState()`；三个实现（Android 桥、`FakeMediaCodecDecoderBridge`、测试内 `BudgetDecoderBridge`）同步。
   - `AndroidMediaCodecDecoderBridge`：`Build.VERSION.SDK_INT >= 30` 时才请求；`configureWithFallback` 是纯 JVM 可测的三级回退（全键 → 去优先级 → 全去），每次被可选键拒绝后先 `reset()` 再重配；与可选键无关的失败按原类型抛出；`FormatApplier` 只传 boolean，不向测试暴露 `MediaFormat`。
   - `H264Decoder.configure`：`configure` 与 `start` **整体成功之后**一次性写 `dec.lowLat`；`APPLIED` / `APPLIED_WITHOUT_PRIORITY` → 1，`REJECTED` → 2，`NOT_REQUESTED` 不写。失败路径不写，热路径无探针。
+  - `H264Decoder.close`：把本解码器写过的 `dec.lowLat` 清零（`NOT_REQUESTED` 未写过，`close` 不触碰），避免同一指标作用域在 `H.264 → JPEG` 之后继续打印上一解码器的值；`LowLatencyState` 与 `PipelineMetrics.Gauge.DECODER_LOW_LATENCY` 的 Javadoc 同步改为“枚举四态、上报值三态”。
   - `PipelineMetrics.Gauge.DECODER_LOW_LATENCY`、`DecoderMetricNames.DEC_LOW_LATENCY = "dec.lowLat"`、格式化器客户端行（0 不打印、1/2 打印）。`ClientMetricNames` 未追加。
-- **验证**：`AndroidMediaCodecDecoderBridgeTest`（6 条）、`H264DecoderTest`（+5）、`MetricsFormatterTest`（+2）。TDD：先写用例，红测为编译失败（`LowLatencyState`、`configureWithFallback`、`Gauge.DECODER_LOW_LATENCY`、`setNextDecoderLowLatencyState` 缺失，共 43 个错误）；实现后定向用例全绿。双变体全量 **1788 tests / 180 classes，0 失败 / 0 错误 / 0 跳过**（基线同提交更新为实测值）。
+- **验证**：`AndroidMediaCodecDecoderBridgeTest`（6 条）、`H264DecoderTest`（+5）、`MetricsFormatterTest`（+2）。TDD：先写用例，红测为编译失败（`LowLatencyState`、`configureWithFallback`、`Gauge.DECODER_LOW_LATENCY`、`setNextDecoderLowLatencyState` 缺失，共 43 个错误）；实现后定向用例全绿。双变体全量 **1788 tests / 180 classes，0 失败 / 0 错误 / 0 跳过**（基线同提交更新为实测值）。B2 复核补 `close` 清零 3 条用例（先红 2 条失败、后绿，`H264DecoderTest` 36 条），双变体全量 **1791 tests / 180 classes，0 失败 / 0 错误 / 0 跳过**（基线同提交更新）。
 - **收益未实测**：本项只证明“请求与回退按预期执行、三态可区分”，`dec.lat` 的改善幅度、功耗与温升影响均未测量，不得据此宣称延迟改善。
 - **未完成**：设备验证——API 30+ 机型出现 `dec.lowLat=1`（含只保留低延迟的情形）、厂商拒绝时出现 `2`、API < 30 机型不打印；以及收益实测（`dec.lat.p50/p95` 前后对照）。
 - **关联文档**：[性能优化调研 §4.2 #1、§6](performance-research.md)、[性能候选设计 §4.1](superpowers/specs/2026-10-23-performance-candidates-design.md)、[TB-ENG-016](#tb-eng-016)

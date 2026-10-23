@@ -139,6 +139,9 @@ public final class H264Decoder implements Decoder {
     private boolean closed;
     private boolean firstFrameSeen;
 
+    // Whether configure() wrote the low-latency gauge; close() clears exactly that reading.
+    private boolean lowLatencyGaugeWritten;
+
     public H264Decoder(StreamKey streamKey, StreamDescriptor descriptor,
                        RenderTarget renderTarget, MediaCodecBridgeFactory bridgeFactory) {
         this(streamKey, descriptor, renderTarget, bridgeFactory, KeyFrameRequester.NONE);
@@ -319,14 +322,31 @@ public final class H264Decoder implements Decoder {
             case APPLIED:
             case APPLIED_WITHOUT_PRIORITY:
                 metrics.setGauge(PipelineMetrics.Gauge.DECODER_LOW_LATENCY, 1L);
+                lowLatencyGaugeWritten = true;
                 break;
             case REJECTED:
                 metrics.setGauge(PipelineMetrics.Gauge.DECODER_LOW_LATENCY, 2L);
+                lowLatencyGaugeWritten = true;
                 break;
             case NOT_REQUESTED:
             default:
                 break;
         }
+    }
+
+    /**
+     * Clears the low-latency gauge this decoder wrote, so the session scope stops reporting a
+     * reading for a decoder that no longer exists (for example after a switch to JPEG).
+     *
+     * <p>Only a decoder that actually wrote the gauge clears it: {@code NOT_REQUESTED} never wrote
+     * a value, so closing such a decoder must not touch the scope at all.</p>
+     */
+    private void clearLowLatencyGauge() {
+        if (!lowLatencyGaugeWritten) {
+            return;
+        }
+        lowLatencyGaugeWritten = false;
+        metrics.setGauge(PipelineMetrics.Gauge.DECODER_LOW_LATENCY, 0L);
     }
 
     @Override
@@ -672,6 +692,10 @@ public final class H264Decoder implements Decoder {
     /**
      * Releases the bridge exactly once and never throws. The render target is not closed: it is a
      * caller-owned resource whose lifetime outlives any single decoder.
+     *
+     * <p>The low-latency gauge this decoder wrote is cleared, so a session scope that outlives the
+     * decoder (a switch to another codec keeps the same scope) does not keep printing a reading
+     * that describes a decoder which is already gone.</p>
      */
     @Override
     public void close() {
@@ -680,6 +704,7 @@ public final class H264Decoder implements Decoder {
         }
         closed = true;
         releaseBridgeQuietly(bridge, started);
+        clearLowLatencyGauge();
     }
 
     /**
