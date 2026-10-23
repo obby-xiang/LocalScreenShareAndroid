@@ -36,12 +36,63 @@ public class BackpressureCoordinatorTest {
 
         coordinator.offer(feedback(1), target);
         coordinator.offer(feedback(2), target);
-        coordinator.offer(feedback(3), target);
+        coordinator.offer(feedback(9), target);
 
         assertEquals(1, executor.size());
         executor.drain();
         assertEquals(1, target.applyCount);
-        assertTrue(coordinator.lastActionLog.contains("depth=3"));
+        assertTrue(coordinator.lastActionLog.contains("depth=9"));
+    }
+
+    @Test
+    public void offer_holdReportDoesNotLower() {
+        QueueExecutor executor = new QueueExecutor();
+        FakeTarget target = new FakeTarget();
+        PipelineMetrics metrics = PipelineMetrics.create(new MutableNanoClock(), 16);
+        RecordingCoordinator coordinator = new RecordingCoordinator(metrics, new MutableClock(),
+                () -> true, executor);
+
+        coordinator.offer(feedback(3), target);
+        executor.drain();
+
+        assertEquals(0, target.applyCount);
+        assertEquals(CEILING_BPS, target.bitrateBps);
+        assertEquals(0L, metrics.count(PipelineMetrics.Counter.BACKPRESSURE_APPLIED));
+    }
+
+    @Test
+    public void offer_holdResetsClearStreak() {
+        QueueExecutor executor = new QueueExecutor();
+        FakeTarget target = new FakeTarget();
+        MutableClock clock = new MutableClock();
+        RecordingCoordinator coordinator = coordinator(executor, clock, target);
+
+        coordinator.offer(feedback(8), target);
+        executor.drain();
+        assertEquals(1, target.applyCount);
+        assertEquals(3_000_000, target.bitrateBps);
+
+        clock.advance(5_000L);
+        coordinator.offer(feedback(0), target);
+        executor.drain();
+        assertEquals(1, target.applyCount);
+
+        clock.advance(5_000L);
+        coordinator.offer(feedback(3), target);
+        executor.drain();
+        assertEquals(1, target.applyCount);
+
+        clock.advance(5_000L);
+        coordinator.offer(feedback(0), target);
+        executor.drain();
+        assertEquals(1, target.applyCount);
+        assertEquals(3_000_000, target.bitrateBps);
+
+        clock.advance(5_000L);
+        coordinator.offer(feedback(0), target);
+        executor.drain();
+        assertEquals(2, target.applyCount);
+        assertEquals(CEILING_BPS, target.bitrateBps);
     }
 
     @Test
@@ -180,6 +231,134 @@ public class BackpressureCoordinatorTest {
         assertEquals(1, target.applyCount);
     }
 
+    @Test
+    public void offer_externalWriteBeforeRestoreClearsOverride() {
+        QueueExecutor executor = new QueueExecutor();
+        FakeTarget target = new FakeTarget();
+        MutableClock clock = new MutableClock();
+        PipelineMetrics metrics = PipelineMetrics.create(new MutableNanoClock(), 16);
+        RecordingCoordinator coordinator = new RecordingCoordinator(metrics, clock,
+                () -> true, executor);
+
+        coordinator.offer(feedback(8), target);
+        executor.drain();
+        assertEquals(1, target.applyCount);
+        assertEquals(3_000_000, target.bitrateBps);
+
+        clock.advance(5_000L);
+        target.sessionCount = 2;
+        target.bitrateBps = 2_500_000;
+        coordinator.offer(feedback(0), target);
+        executor.drain();
+
+        assertEquals(1, target.applyCount);
+        assertEquals(2_500_000, target.bitrateBps);
+        assertEquals(1L, metrics.count(PipelineMetrics.Counter.BACKPRESSURE_SKIPPED));
+        assertTrue(coordinator.lastActionLog.contains("external write"));
+    }
+
+    @Test
+    public void offer_lowerAtFloorDoesNotCallEncoderOrLog() {
+        QueueExecutor executor = new QueueExecutor();
+        FakeTarget target = new FakeTarget();
+        MutableClock clock = new MutableClock();
+        PipelineMetrics metrics = PipelineMetrics.create(new MutableNanoClock(), 16);
+        RecordingCoordinator coordinator = new RecordingCoordinator(metrics, clock,
+                () -> true, executor);
+
+        for (int i = 0; i < 4; i++) {
+            coordinator.offer(feedback(8), target);
+            executor.drain();
+            clock.advance(5_000L);
+        }
+        assertEquals(4, target.applyCount);
+        assertEquals(1_600_000, target.bitrateBps);
+
+        final String lastActionLog = coordinator.lastActionLog;
+        final long applied = metrics.count(PipelineMetrics.Counter.BACKPRESSURE_APPLIED);
+        coordinator.offer(feedback(8), target);
+        executor.drain();
+
+        assertEquals(4, target.applyCount);
+        assertEquals(1_600_000, target.bitrateBps);
+        assertEquals(applied, metrics.count(PipelineMetrics.Counter.BACKPRESSURE_APPLIED));
+        assertEquals(lastActionLog, coordinator.lastActionLog);
+        assertEquals(1L, metrics.count(PipelineMetrics.Counter.BACKPRESSURE_SKIPPED));
+    }
+
+    @Test
+    public void offer_containsEnabledSupplierFailure() {
+        QueueExecutor executor = new QueueExecutor();
+        FakeTarget target = new FakeTarget();
+        PipelineMetrics metrics = PipelineMetrics.create(new MutableNanoClock(), 16);
+        RecordingCoordinator coordinator = new RecordingCoordinator(metrics, new MutableClock(),
+                () -> {
+                    throw new IllegalStateException("switch failed");
+                }, executor);
+
+        coordinator.offer(feedback(8), target);
+        executor.drain();
+
+        assertEquals(0, target.applyCount);
+        assertEquals(1L, metrics.count(PipelineMetrics.Counter.BACKPRESSURE_SKIPPED));
+        assertEquals(1, coordinator.failureLogs);
+    }
+
+    @Test
+    public void offer_containsTargetGetterFailure() {
+        QueueExecutor executor = new QueueExecutor();
+        FakeTarget target = new FakeTarget();
+        target.sessionCountFailure = new IllegalStateException("hub failed");
+        PipelineMetrics metrics = PipelineMetrics.create(new MutableNanoClock(), 16);
+        RecordingCoordinator coordinator = new RecordingCoordinator(metrics, new MutableClock(),
+                () -> true, executor);
+
+        coordinator.offer(feedback(8), target);
+        executor.drain();
+
+        assertEquals(0, target.applyCount);
+        assertEquals(1L, metrics.count(PipelineMetrics.Counter.BACKPRESSURE_SKIPPED));
+        assertEquals(1, coordinator.failureLogs);
+    }
+
+    @Test
+    public void offer_containsBitrateGetterFailure() {
+        QueueExecutor executor = new QueueExecutor();
+        FakeTarget target = new FakeTarget();
+        target.bitrateReadFailure = new IllegalStateException("parameters failed");
+        PipelineMetrics metrics = PipelineMetrics.create(new MutableNanoClock(), 16);
+        RecordingCoordinator coordinator = new RecordingCoordinator(metrics, new MutableClock(),
+                () -> true, executor);
+
+        coordinator.offer(feedback(8), target);
+        executor.drain();
+
+        assertEquals(0, target.applyCount);
+        assertEquals(1L, metrics.count(PipelineMetrics.Counter.BACKPRESSURE_SKIPPED));
+        assertEquals(1, coordinator.failureLogs);
+    }
+
+    @Test
+    public void offer_rateLimitsCoordinatorFailureLog() {
+        QueueExecutor executor = new QueueExecutor();
+        FakeTarget target = new FakeTarget();
+        MutableClock clock = new MutableClock();
+        PipelineMetrics metrics = PipelineMetrics.create(new MutableNanoClock(), 16);
+        RecordingCoordinator coordinator = new RecordingCoordinator(metrics, clock,
+                () -> {
+                    throw new IllegalStateException("switch failed");
+                }, executor);
+
+        coordinator.offer(feedback(8), target);
+        executor.drain();
+        clock.advance(59_000L);
+        coordinator.offer(feedback(8), target);
+        executor.drain();
+
+        assertEquals(2L, metrics.count(PipelineMetrics.Counter.BACKPRESSURE_SKIPPED));
+        assertEquals(1, coordinator.failureLogs);
+    }
+
     private static RecordingCoordinator coordinator(QueueExecutor executor, MutableClock clock,
                                                     FakeTarget target) {
         return new RecordingCoordinator(PipelineMetrics.NONE, clock, () -> true, executor);
@@ -252,8 +431,15 @@ public class BackpressureCoordinatorTest {
 
         RuntimeException failure;
 
+        RuntimeException sessionCountFailure;
+
+        RuntimeException bitrateReadFailure;
+
         @Override
         public int getSessionCount() {
+            if (sessionCountFailure != null) {
+                throw sessionCountFailure;
+            }
             return sessionCount;
         }
 
@@ -264,6 +450,9 @@ public class BackpressureCoordinatorTest {
 
         @Override
         public int getTargetBitrateBps() {
+            if (bitrateReadFailure != null) {
+                throw bitrateReadFailure;
+            }
             return bitrateBps;
         }
 

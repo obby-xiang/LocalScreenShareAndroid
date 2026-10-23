@@ -77,6 +77,12 @@ public final class BackpressurePolicy {
         CONGESTED,
 
         /**
+         * The readings sit between the congested and clear thresholds: neither a reason to lower
+         * nor evidence that the backlog cleared.
+         */
+        HOLD,
+
+        /**
          * All three readings are at or below their clear thresholds.
          */
         CLEAR
@@ -117,8 +123,9 @@ public final class BackpressurePolicy {
      *
      * <p>Congestion needs only one signal at its threshold: depth at {@value #CONGESTED_DEPTH}, a
      * wait at {@value #CONGESTED_WAIT_MS} ms or any catch-up. Clear needs all three at or below
-     * their clear thresholds, so a reading between the two sets stays congested and cannot start a
-     * raise on an ambiguous report.</p>
+     * their clear thresholds. A reading between the two sets is {@link Level#HOLD}: it neither
+     * lowers the target nor counts as evidence that the backlog cleared, so an ambiguous report can
+     * neither add pressure nor start a raise.</p>
      *
      * @param feedback the report; must not be null
      * @return the level of this report
@@ -138,7 +145,7 @@ public final class BackpressurePolicy {
                 && feedback.getCatchUpEvents() == 0) {
             return Level.CLEAR;
         }
-        return Level.CONGESTED;
+        return Level.HOLD;
     }
 
     /**
@@ -147,22 +154,28 @@ public final class BackpressurePolicy {
      * <p>The caller passes {@code current} as {@link Action#LOWER} only while an override is in
      * force. A non-positive or non-H.264 stream never acts, but an existing override is restored so
      * a lowered stream cannot keep serving a client set that no longer qualifies. The minimum
-     * action interval also bounds a restore. A report whose {@code clearStreak} is zero is
-     * congested; otherwise the streak counts consecutive clear reports and a raise needs
-     * {@value #CLEAR_REPORTS_TO_RAISE} of them.</p>
+     * action interval also bounds a restore. A {@link Level#CONGESTED} report lowers; a {@link
+     * Level#HOLD} report does nothing and the caller resets the streak; only a {@link Level#CLEAR}
+     * report adds to {@code clearStreak}, and a raise needs {@value #CLEAR_REPORTS_TO_RAISE} of
+     * them while an override is in force.</p>
      *
+     * @param level         classification of the latest report
      * @param current       action in force, {@link Action#LOWER} while overridden
      * @param currentBps    target bitrate currently in force
      * @param ceilingBps    bitrate before the override, or zero when none is in force
      * @param sessionCount  attached clients
      * @param h264          whether the published codec is H.264
-     * @param clearStreak   consecutive clear reports, zero when the latest report was congested
+     * @param clearStreak   consecutive clear reports, zero when the latest report was not clear
      * @param sinceActionMs time since the last applied action
      * @return the action to apply
-     * @throws IllegalArgumentException if {@code current} is null
+     * @throws IllegalArgumentException if {@code level} or {@code current} is null
      */
-    public static Action decide(Action current, int currentBps, int ceilingBps, int sessionCount,
-                                boolean h264, int clearStreak, long sinceActionMs) {
+    public static Action decide(Level level, Action current, int currentBps, int ceilingBps,
+                                int sessionCount, boolean h264, int clearStreak,
+                                long sinceActionMs) {
+        if (level == null) {
+            throw new IllegalArgumentException("level must not be null");
+        }
         if (current == null) {
             throw new IllegalArgumentException("current must not be null");
         }
@@ -172,10 +185,11 @@ public final class BackpressurePolicy {
         if (sessionCount != 1 || !h264) {
             return current == Action.LOWER ? Action.RESTORE : Action.NONE;
         }
-        if (clearStreak <= 0) {
+        if (level == Level.CONGESTED) {
             return Action.LOWER;
         }
-        if (current == Action.LOWER && clearStreak >= CLEAR_REPORTS_TO_RAISE) {
+        if (level == Level.CLEAR && current == Action.LOWER
+                && clearStreak >= CLEAR_REPORTS_TO_RAISE) {
             return Action.RAISE;
         }
         return Action.NONE;

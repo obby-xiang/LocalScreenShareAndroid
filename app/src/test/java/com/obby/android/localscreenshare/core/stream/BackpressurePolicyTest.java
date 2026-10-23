@@ -36,36 +36,89 @@ public class BackpressurePolicyTest {
         assertEquals(BackpressurePolicy.Level.CLEAR,
                 BackpressurePolicy.classify(new StreamFeedback(2, 0, 100, 0L)));
 
-        assertEquals(BackpressurePolicy.Level.CONGESTED,
+        assertEquals(BackpressurePolicy.Level.HOLD,
                 BackpressurePolicy.classify(new StreamFeedback(3, 0, 100, 0L)));
-        assertEquals(BackpressurePolicy.Level.CONGESTED,
+        assertEquals(BackpressurePolicy.Level.HOLD,
                 BackpressurePolicy.classify(new StreamFeedback(2, 0, 101, 0L)));
         assertEquals(BackpressurePolicy.Level.CONGESTED,
                 BackpressurePolicy.classify(new StreamFeedback(2, 1, 100, 0L)));
     }
 
     @Test
+    public void classify_middleBandIsHold() {
+        assertEquals(BackpressurePolicy.Level.HOLD,
+                BackpressurePolicy.classify(new StreamFeedback(3, 0, 0, 0L)));
+        assertEquals(BackpressurePolicy.Level.HOLD,
+                BackpressurePolicy.classify(new StreamFeedback(7, 0, 99, 0L)));
+        assertEquals(BackpressurePolicy.Level.HOLD,
+                BackpressurePolicy.classify(new StreamFeedback(0, 0, 399, 0L)));
+    }
+
+    @Test
+    public void decide_classifiedThresholdsGateActions() {
+        final BackpressurePolicy.Level atDepth = BackpressurePolicy.classify(
+                new StreamFeedback(8, 0, 0, 0L));
+        final BackpressurePolicy.Level atWait = BackpressurePolicy.classify(
+                new StreamFeedback(0, 0, 400, 0L));
+        final BackpressurePolicy.Level belowThresholds = BackpressurePolicy.classify(
+                new StreamFeedback(3, 0, 0, 0L));
+
+        assertEquals(BackpressurePolicy.Action.LOWER,
+                BackpressurePolicy.decide(atDepth, BackpressurePolicy.Action.NONE, CEILING_BPS,
+                        CEILING_BPS, 1, true, 0, 5_000L));
+        assertEquals(BackpressurePolicy.Action.LOWER,
+                BackpressurePolicy.decide(atWait, BackpressurePolicy.Action.NONE, CEILING_BPS,
+                        CEILING_BPS, 1, true, 0, 5_000L));
+        assertEquals(BackpressurePolicy.Action.NONE,
+                BackpressurePolicy.decide(belowThresholds, BackpressurePolicy.Action.NONE,
+                        CEILING_BPS, CEILING_BPS, 1, true, 0, 5_000L));
+    }
+
+    @Test
+    public void decide_clearNeverLowers() {
+        assertEquals(BackpressurePolicy.Action.NONE,
+                BackpressurePolicy.decide(BackpressurePolicy.Level.CLEAR,
+                        BackpressurePolicy.Action.NONE, CEILING_BPS, CEILING_BPS,
+                        1, true, 5, 5_000L));
+    }
+
+    @Test
     public void decide_multipleClientsNeverAct() {
         assertEquals(BackpressurePolicy.Action.NONE,
-                BackpressurePolicy.decide(BackpressurePolicy.Action.NONE, CEILING_BPS, CEILING_BPS,
+                BackpressurePolicy.decide(BackpressurePolicy.Level.CONGESTED,
+                        BackpressurePolicy.Action.NONE, CEILING_BPS, CEILING_BPS,
                         2, true, 0, 5_000L));
     }
 
     @Test
     public void decide_nonH264NeverActs() {
         assertEquals(BackpressurePolicy.Action.NONE,
-                BackpressurePolicy.decide(BackpressurePolicy.Action.NONE, CEILING_BPS, CEILING_BPS,
+                BackpressurePolicy.decide(BackpressurePolicy.Level.CONGESTED,
+                        BackpressurePolicy.Action.NONE, CEILING_BPS, CEILING_BPS,
                         1, false, 0, 5_000L));
     }
 
     @Test
     public void decide_congestedLowersOneStep() {
         assertEquals(BackpressurePolicy.Action.LOWER,
-                BackpressurePolicy.decide(BackpressurePolicy.Action.NONE, CEILING_BPS, CEILING_BPS,
+                BackpressurePolicy.decide(BackpressurePolicy.Level.CONGESTED,
+                        BackpressurePolicy.Action.NONE, CEILING_BPS, CEILING_BPS,
                         1, true, 0, 5_000L));
         assertEquals(3_000_000,
                 BackpressurePolicy.targetBitrate(BackpressurePolicy.Action.LOWER, CEILING_BPS,
                         CEILING_BPS));
+    }
+
+    @Test
+    public void decide_holdNeitherLowersNorRaises() {
+        assertEquals(BackpressurePolicy.Action.NONE,
+                BackpressurePolicy.decide(BackpressurePolicy.Level.HOLD,
+                        BackpressurePolicy.Action.NONE, CEILING_BPS, CEILING_BPS,
+                        1, true, 0, 5_000L));
+        assertEquals(BackpressurePolicy.Action.NONE,
+                BackpressurePolicy.decide(BackpressurePolicy.Level.HOLD,
+                        BackpressurePolicy.Action.LOWER, 3_000_000, CEILING_BPS,
+                        1, true, 2, 5_000L));
     }
 
     @Test
@@ -88,20 +141,24 @@ public class BackpressurePolicyTest {
     @Test
     public void decide_respectsMinActionInterval() {
         assertEquals(BackpressurePolicy.Action.NONE,
-                BackpressurePolicy.decide(BackpressurePolicy.Action.NONE, CEILING_BPS, CEILING_BPS,
+                BackpressurePolicy.decide(BackpressurePolicy.Level.CONGESTED,
+                        BackpressurePolicy.Action.NONE, CEILING_BPS, CEILING_BPS,
                         1, true, 0, 4_999L));
         assertEquals(BackpressurePolicy.Action.LOWER,
-                BackpressurePolicy.decide(BackpressurePolicy.Action.NONE, CEILING_BPS, CEILING_BPS,
+                BackpressurePolicy.decide(BackpressurePolicy.Level.CONGESTED,
+                        BackpressurePolicy.Action.NONE, CEILING_BPS, CEILING_BPS,
                         1, true, 0, 5_000L));
     }
 
     @Test
     public void decide_raiseNeedsTwoClearReports() {
         assertEquals(BackpressurePolicy.Action.NONE,
-                BackpressurePolicy.decide(BackpressurePolicy.Action.LOWER, 3_000_000, CEILING_BPS,
+                BackpressurePolicy.decide(BackpressurePolicy.Level.CLEAR,
+                        BackpressurePolicy.Action.LOWER, 3_000_000, CEILING_BPS,
                         1, true, 1, 5_000L));
         assertEquals(BackpressurePolicy.Action.RAISE,
-                BackpressurePolicy.decide(BackpressurePolicy.Action.LOWER, 3_000_000, CEILING_BPS,
+                BackpressurePolicy.decide(BackpressurePolicy.Level.CLEAR,
+                        BackpressurePolicy.Action.LOWER, 3_000_000, CEILING_BPS,
                         1, true, 2, 5_000L));
     }
 
@@ -115,10 +172,12 @@ public class BackpressurePolicyTest {
     @Test
     public void decide_restoreOnlyWhenOverridden() {
         assertEquals(BackpressurePolicy.Action.NONE,
-                BackpressurePolicy.decide(BackpressurePolicy.Action.NONE, CEILING_BPS, 0,
+                BackpressurePolicy.decide(BackpressurePolicy.Level.CONGESTED,
+                        BackpressurePolicy.Action.NONE, CEILING_BPS, 0,
                         2, true, 0, 5_000L));
         assertEquals(BackpressurePolicy.Action.RESTORE,
-                BackpressurePolicy.decide(BackpressurePolicy.Action.LOWER, 2_000_000, CEILING_BPS,
+                BackpressurePolicy.decide(BackpressurePolicy.Level.CONGESTED,
+                        BackpressurePolicy.Action.LOWER, 2_000_000, CEILING_BPS,
                         2, true, 0, 5_000L));
     }
 

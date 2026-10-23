@@ -793,13 +793,14 @@ public final class BackpressurePolicy {
     public static final int CLEAR_REPORTS_TO_RAISE = 2;       // pending calibration
     public static final long MIN_ACTION_INTERVAL_MS = 5000L;  // pending calibration
 
-    public enum Level { CONGESTED, CLEAR }
+    public enum Level { CONGESTED, HOLD, CLEAR }
     public enum Action { NONE, LOWER, RAISE, RESTORE }
 
     public static Level classify(StreamFeedback feedback);
 
-    public static Action decide(Action current, int currentBps, int ceilingBps, int sessionCount,
-                                boolean h264, int clearStreak, long sinceActionMs);
+    public static Action decide(Level level, Action current, int currentBps, int ceilingBps,
+                                int sessionCount, boolean h264, int clearStreak,
+                                long sinceActionMs);
 
     /**
      * LOWER: one step down, clamped at the floor. RAISE: straight to the ceiling.
@@ -869,12 +870,12 @@ public class BackpressureCoordinator implements FeedbackSink {
 
 1. 只有 `target.getSessionCount() == 1` 才动作；否则 `NONE` + `bp.skip`。
 2. 先判 `target.getCodecId() == null` → `NONE` + `bp.skip`；非 H.264 → 同样跳过。判空必须在取 codec 之前，因为发布描述符在 defer 期间与失败之后可为 null。
-3. 首次 `LOWER` 前记 `ceilingBps = target.getTargetBitrateBps()`；读回的当前值不等于上次应用值 ⇒ 外部写入，清空覆盖、不 RESTORE、不重试（用户改设置、热降档、旋转/尺寸变化都会写回用户码率）。此行为写进 Javadoc。
-4. `LOWER`：一步 ×75%，钳到 `ceiling × 40%`。`RAISE`：一步回到 `ceiling` 并立即结束覆盖。
-5. 回升需连续 2 份 CLEAR 且距上次动作 ≥5 s。
-6. `RESTORE`：多客户端、非 H.264、总闸关闭、`close()` 前置检查时，若有覆盖则回 `ceiling` 并结束覆盖，同样受 5 s 间隔约束。
+3. 首次 `LOWER` 前记 `ceilingBps = target.getTargetBitrateBps()`；读回的当前值不等于上次应用值 ⇒ 外部写入，清空覆盖、不 RESTORE、不重试，并记 `bp.skip`（external-write）；RESTORE 前也要做同一检测，避免覆盖用户/热降档刚写的码率（用户改设置、热降档、旋转/尺寸变化都会写回用户码率）。此行为写进 Javadoc。
+4. `LOWER`：一步 ×75%，钳到 `ceiling × 40%`；目标等于当前码率（已在下限）时不调用 `applyTargetBitrate`、不记 `bp.apply`、不写动作日志，只记 `bp.skip`（at-floor）。`RAISE`：一步回到 `ceiling` 并立即结束覆盖。
+5. 回升需连续 2 份 CLEAR 且距上次动作 ≥5 s；HOLD 不降档且把连续 CLEAR 计数归零。
+6. `RESTORE`：多客户端、非 H.264、总闸关闭、`close()` 前置检查时，若已有覆盖且读回值仍等于上次应用值，则回 `ceiling` 并结束覆盖，同样受 5 s 间隔约束；读回值不同则按第 3 条放弃恢复。
 7. `enabled.getAsBoolean()` 每次 apply 现读；false → `NONE` + `bp.skip`。
-8. `applyTargetBitrate` 抛 `RuntimeException`：吞掉、状态不变、`bp.skip` 增加、失败日志最多每 60 s 一条（`WARN_INTERVAL_MS = 60_000`）。
+8. `applyTargetBitrate` 抛 `RuntimeException`：吞掉、状态不变、`bp.skip` 增加、失败日志最多每 60 s 一条（`WARN_INTERVAL_MS = 60_000`）。`runPass` 外层再兜底 `RuntimeException`（含总闸 supplier 与 target getter）：记 `bp.skip`（coordinator）、日志同样限流、不冒泡。
 9. 每次真正执行的动作打一行日志（动作、来源值、目标值、深度、等待、追赶、客户端数），**同一动作只一行**。
 10. **指标实例只来自 `setMetrics()` 注入的那个 scope**：协调器在 `setMetrics()` 内创建，`stream()` 把同一实例交给 handler；禁止在 `ScreenShareServer` 构造期创建（构造期字段是 `PipelineMetrics.NONE`，`bp.apply`/`bp.skip`/`bp.bitrate` 会被静默丢弃，JVM 用例注入真实 scope 也查不出来）。`bp.bitrate` 记录最近一次成功应用的值。
 11. **执行器与最新值胜出**：`offer` 只把报告放进“最新一份”槽位并对 `AtomicBoolean scheduled` 做一次 CAS；已在途时后续 `offer` 不排队。因此连发 3 份、再 drain 一次，只会应用第 3 份一次。
@@ -890,21 +891,25 @@ public class BackpressureCoordinator implements FeedbackSink {
 
 **Steps:**
 
-- [ ] **Step 1：先写失败用例（42 条）**
+- [ ] **Step 1：先写失败用例（54 条）**
 
 `StreamFeedbackTest`（4）：构造拒绝负值、`EMPTY` 全零、getter 回读、不可变。
 `BacklogFeedbackTest`（6）：峰值深度、峰值等待换算毫秒、追赶计数、读取后重置、空快照全零、`hasActivity` 仅在有深度或追赶时为真。
-`BackpressurePolicyTest`（13）：
+`BackpressurePolicyTest`（17）：
 
 | 用例 | 断言 |
 | --- | --- |
 | `classify_depthAtThresholdIsCongested` | 深度 8 → 拥塞 |
 | `classify_waitAtThresholdIsCongested` | 等待 400 → 拥塞 |
 | `classify_anyCatchUpIsCongested` | 追赶 1 次 → 拥塞 |
-| `classify_clearNeedsAllThreeBelow` | 2 / 100 / 0 → 清除；任一超限即非清除 |
+| `classify_clearNeedsAllThreeBelow` | 2 / 100 / 0 → CLEAR；3 / 100、2 / 101 → HOLD；追赶 1 → CONGESTED |
+| `classify_middleBandIsHold` | 3 / 0、7 / 99、0 / 399 → HOLD |
+| `decide_classifiedThresholdsGateActions` | 深度 8 与等待 400 经 `classify` 后均降档；3 / 0 经 `classify` 后无动作 |
+| `decide_clearNeverLowers` | CLEAR + 无覆盖 → 无动作 |
 | `decide_multipleClientsNeverAct` | 客户端数 2 → 无动作 |
 | `decide_nonH264NeverActs` | 非 H.264 → 无动作 |
 | `decide_congestedLowersOneStep` | 无覆盖 + 拥塞 + 间隔足够 → 降档，目标为 75% |
+| `decide_holdNeitherLowersNorRaises` | HOLD + 无覆盖 → 无动作；HOLD + 有覆盖 + streak 2 → 无动作 |
 | `decide_floorsAtFortyPercent` | 连续降档 → 不低于上限的 40% |
 | `decide_respectsMinActionInterval` | 4999 ms → 无动作；5000 ms → 允许 |
 | `decide_raiseNeedsTwoClearReports` | 连续清除 1 → 无动作；2 → 回升 |
@@ -912,11 +917,13 @@ public class BackpressureCoordinator implements FeedbackSink {
 | `decide_restoreOnlyWhenOverridden` | 无覆盖 + 多客户端 → 无动作；有覆盖 + 多客户端 → 恢复 |
 | `decide_restoreTargetsCeiling` | 恢复目标等于上限 |
 
-`BackpressureCoordinatorTest`（8，**手动 drain 的队列执行器** + 假目标；每条用例先 `offer`，再显式 drain，再断言）：
+`BackpressureCoordinatorTest`（16，**手动 drain 的队列执行器** + 假目标；每条用例先 `offer`，再显式 drain，再断言）：
 
 | 用例 | 断言 |
 | --- | --- |
-| `offer_appliesOnlyTheNewestReport` | 连发 3 份（中间不 drain）→ 队列里只有 1 个任务；drain 后应用恰好 1 次且用第 3 份 |
+| `offer_appliesOnlyTheNewestReport` | 连发 3 份（中间不 drain，第 3 份深度 9）→ 队列里只有 1 个任务；drain 后应用恰好 1 次且用第 3 份 |
+| `offer_holdReportDoesNotLower` | 深度 3 → 不降档、`bp.apply` 为 0 |
+| `offer_holdResetsClearStreak` | 降档后 CLEAR、HOLD、CLEAR 不回升；HOLD 清零 streak，再两份 CLEAR 才回上限 |
 | `offer_recordsApplyAndBitrateMetrics` | 注入真实 metrics scope → `bp.apply` 加 1、`bp.bitrate` 等于生效值 |
 | `offer_containsEncoderFailure` | 目标抛异常 → 不冒泡、`bp.skip` 加 1 |
 | `offer_rateLimitsFailureLog` | 59 s 内连续两次失败 → 只 1 条失败日志 |
@@ -924,6 +931,12 @@ public class BackpressureCoordinator implements FeedbackSink {
 | `offer_afterCloseIsNoOp` | `close()` 后 `offer` 不入队、无异常；`close()` 幂等；`NONE` 的 `offer` 不产生任何目标调用或指标写入 |
 | `offer_multiClientRestoresOnce` | 有覆盖 + 客户端数 2 → 一次恢复至上限，之后不再调用 |
 | `offer_externalWriteClearsOverride` | 读回值不等于上次应用值 → 不恢复、不重试 |
+| `offer_externalWriteBeforeRestoreClearsOverride` | 多客户端前码率被外部改写 → 不恢复、`bp.skip` 加 1、动作日志说明 external write |
+| `offer_lowerAtFloorDoesNotCallEncoderOrLog` | 已在下限再收到拥塞 → 不调编码器、`bp.apply` 不变、动作日志不变、`bp.skip` 加 1 |
+| `offer_containsEnabledSupplierFailure` | 总闸 supplier 抛异常 → 不冒泡、`bp.skip` 加 1、限流失败日志 |
+| `offer_containsTargetGetterFailure` | 会话数 getter 抛异常 → 不冒泡、`bp.skip` 加 1 |
+| `offer_containsBitrateGetterFailure` | 码率 getter 抛异常 → 不冒泡、`bp.skip` 加 1 |
+| `offer_rateLimitsCoordinatorFailureLog` | 59 s 内两次协调器异常 → 2 次 skip、只 1 条日志 |
 
 `RuntimeBitrateTargetTest`（3）：描述符未发布时返回 null、会话数读 hub、应用码率走运行时更新参数。
 `ScreenStreamProtoMapperTest`（+3）：`feedbackRoundTrip`、`feedbackDefaultsAreZero`、`feedbackIsDispatchedToListener`（同时保留“无已知载荷仍抛异常”的既有断言）。

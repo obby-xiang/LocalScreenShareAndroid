@@ -255,12 +255,12 @@
 - **交付物**：
   - 协议与模型：`ClientMessage.feedback = 6`、`StreamFeedback`；mapper 双向映射与 `ClientMessageListener.onFeedback`（默认空实现）。
   - 客户端上报：`BacklogFeedback` 在两条解码路径的**出队点**采样深度与等待、追赶开始计数；`ScreenShareClient` 事件驱动排程（首次有积压才排 3 s、发送后仍有活动才续排、干净即停），`fb.sent` / `fb.skip`，`stop()` 清理回调与排程标志。
-  - 纯策略：`BackpressurePolicy`（8 / 400 ms / 任意追赶判拥塞；2 / 100 ms / 0 判清除；×75%、40% 下限、2 份 CLEAR、5 s 间隔；8 为早期预警、64 为追赶策略的不可恢复阈值）。
-  - 服务端执行：`BitrateTarget` / `RuntimeBitrateTarget` / `FeedbackSink` / `BackpressureCoordinator`；生产惰性单线程 `lss-backpressure`、测试注入 Executor、最新值胜出、`AtomicBoolean` 排程、异常吞掉且失败日志每 60 s 一条、`close()` 幂等有界；`NONE` 与关闭后 offer 空操作。
+  - 纯策略：`BackpressurePolicy`（8 / 400 ms / 任意追赶判 `CONGESTED`；2 / 100 ms / 0 判 `CLEAR`；两者之间 `HOLD` 不降档且清零 CLEAR streak；×75%、40% 下限、2 份 CLEAR、5 s 间隔；8 为早期预警、64 为追赶策略的不可恢复阈值）。
+  - 服务端执行：`BitrateTarget` / `RuntimeBitrateTarget` / `FeedbackSink` / `BackpressureCoordinator`；生产惰性单线程 `lss-backpressure`、测试注入 Executor、最新值胜出、`AtomicBoolean` 排程、编码器异常与协调器自身 RuntimeException 均吞掉且失败日志每 60 s 一条、RESTORE 前也检测外部写入、降档目标等于当前码率时不调用编码器、`close()` 幂等有界；`NONE` 与关闭后 offer 空操作。
   - 装配：`ScreenShareServer.setMetrics()` 内用同一个 `PipelineMetrics` 创建协调器，`stream()` 交给 handler，`stop()` 关停；handler 同步区内只做 attach 门控与 proto→模型拷贝，同步区外 offer。
   - 指标与开关：`bp.apply` / `bp.skip` / `bp.bitrate`（服务端恰 20 键）、`fb.sent` / `fb.skip`（客户端域）、隐藏键 `backpressure`（默认开、`BooleanSupplier` 现读）。
-- **语义要点**：多客户端、非 H.264、总闸关闭只观测并记 `bp.skip`；已有覆盖时回上限并结束覆盖。外部写入（读回值 ≠ 上次应用值）清空覆盖、不回升、不重试。回升一步回上限。
-- **验证证据**：定向用例 `BackpressurePolicyTest`（13）、`BackpressureCoordinatorTest`（8）、`BacklogFeedbackTest`（6）、`StreamFeedbackTest`（4）、`RuntimeBitrateTargetTest`（3），以及 mapper +3、handler +3、formatter +2，共 **42 条**；双变体全量 **1875 tests / 188 classes、0 失败**；`lintDebug` 与 `lintRelease` 通过；`check_cjk` / `check_strings` / `check_docs` 通过；`./gradlew build :app:assembleDebugAndroidTest` 通过。
+- **语义要点**：多客户端、非 H.264、总闸关闭只观测并记 `bp.skip`；已有覆盖时回上限并结束覆盖。外部写入（读回值 ≠ 上次应用值）清空覆盖、不回升、不重试，RESTORE 前同样检测。HOLD 报告不降档、不累计 CLEAR。回升一步回上限。未 attach 的反馈不解析、不 offer。
+- **验证证据**：定向用例 `BackpressurePolicyTest`（17）、`BackpressureCoordinatorTest`（16）、`BacklogFeedbackTest`（6）、`StreamFeedbackTest`（4）、`RuntimeBitrateTargetTest`（3），以及 mapper +3、handler +3、formatter +2，共 **54 条**；TDD：H1 先红（缺失 `HOLD` 与 `decide` 新签名，20 个编译错误），M1/M2/L3 再红（6 条断言失败），修正后定向全绿；双变体全量 **1887 tests / 188 classes、0 失败 / 0 错误 / 0 跳过**；`lintDebug` 与 `lintRelease` 通过；`check_cjk` / `check_strings` / `check_docs` 通过；`./gradlew build :app:assembleDebugAndroidTest` 通过。
 - **未完成项**：阈值与步进全部**待设备校准**（`8 / 400 ms / 2 / 100 ms / 75% / 40% / 5 s`）；真实弱网收益与功耗影响未实测；多客户端只观测，不做任何多客户端动作。
 - **关联文档**：[媒体架构 §6.5](media-architecture.md)、[性能候选设计 §4.5 / §6.5](superpowers/specs/2026-10-23-performance-candidates-design.md)、[DB-MULTI-007](decision-board.md#db-multi-007)、[TB-ENG-016](#tb-eng-016)
 

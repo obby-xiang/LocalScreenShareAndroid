@@ -40,13 +40,16 @@ import java.util.function.BooleanSupplier;
  * <p><b>External writes.</b> The policy writes only what a lower or a restore computed. Reading a
  * different bitrate back means somebody else wrote it - the user setting, a thermal tier, a
  * rotation or a size change - so the override is dropped without restoring and without retrying.
- * That is deliberate: the external value is the user's or another policy's decision, and fighting it
- * would make both oscillate.</p>
+ * The check also runs before a restore, so a value written while the override was in force is never
+ * overwritten when the client set changes. That is deliberate: the external value is the user's or
+ * another policy's decision, and fighting it would make both oscillate.</p>
  *
  * <p><b>Failure and close.</b> An encoder exception is contained: state is unchanged, the skip
- * counter grows, and at most one warning line per {@value #WARN_INTERVAL_MS} ms is written. {@link
- * #close()} is idempotent and waits at most {@value #CLOSE_WAIT_MS} ms for the owned executor; it
- * never creates that executor just to shut it down. Offers after a close are no-ops.</p>
+ * counter grows, and at most one warning line per {@value #WARN_INTERVAL_MS} ms is written. A
+ * failure outside the encoder call - the master switch or a target getter - is contained by the
+ * pass itself and counted as a coordinator skip under the same log throttle. {@link #close()} is
+ * idempotent and waits at most {@value #CLOSE_WAIT_MS} ms for the owned executor; it never creates
+ * that executor just to shut it down. Offers after a close are no-ops.</p>
  *
  * <p>The class is not final so a test can observe the two log methods; production code always uses
  * the factory with the metrics scope of the session.</p>
@@ -226,7 +229,14 @@ public class BackpressureCoordinator implements FeedbackSink {
             }
             final Report report = mLatest.getAndSet(null);
             if (report != null && !mClosed.get()) {
-                apply(report);
+                try {
+                    apply(report);
+                } catch (RuntimeException e) {
+                    // The master switch, a target getter or the policy itself may fail on a broken
+                    // peer or a torn-down runtime; the pass thread must never see the exception.
+                    skip("coordinator");
+                    logFailureLimited("apply: coordinator failed, error = " + e);
+                }
             }
         } finally {
             mScheduled.set(false);
@@ -255,25 +265,27 @@ public class BackpressureCoordinator implements FeedbackSink {
             } else {
                 reason = "multi-client";
             }
-            if (mOverridden
-                    && nowMs - mLastActionMs >= BackpressurePolicy.MIN_ACTION_INTERVAL_MS) {
-                applyAction(BackpressurePolicy.Action.RESTORE, target.getTargetBitrateBps(),
-                        target, report.feedback);
-            } else {
-                skip(reason);
+            if (mOverridden) {
+                final int currentBps = target.getTargetBitrateBps();
+                if (currentBps != mLastAppliedBps) {
+                    // Somebody else wrote the bitrate while the override was in force. Restoring
+                    // would overwrite that decision, so the override is dropped instead.
+                    clearOverrideForExternalWrite(currentBps);
+                    return;
+                }
+                if (nowMs - mLastActionMs >= BackpressurePolicy.MIN_ACTION_INTERVAL_MS) {
+                    applyAction(BackpressurePolicy.Action.RESTORE, currentBps, target,
+                            report.feedback);
+                    return;
+                }
             }
+            skip(reason);
             return;
         }
 
         final int currentBps = target.getTargetBitrateBps();
         if (mOverridden && currentBps != mLastAppliedBps) {
-            // Somebody else wrote the bitrate; that decision wins over the override. Do not restore
-            // and do not retry, or the two writers would keep undoing each other.
-            mOverridden = false;
-            mCeilingBps = 0;
-            mClearStreak = 0;
-            logAction("apply: override cleared by an external write, read = " + currentBps
-                    + ", applied = " + mLastAppliedBps);
+            clearOverrideForExternalWrite(currentBps);
             return;
         }
         if (currentBps <= 0) {
@@ -284,14 +296,26 @@ public class BackpressureCoordinator implements FeedbackSink {
         final BackpressurePolicy.Level level = BackpressurePolicy.classify(report.feedback);
         mClearStreak = level == BackpressurePolicy.Level.CLEAR ? mClearStreak + 1 : 0;
         final BackpressurePolicy.Action action = BackpressurePolicy.decide(
+                level,
                 mOverridden ? BackpressurePolicy.Action.LOWER : BackpressurePolicy.Action.NONE,
                 currentBps, mOverridden ? mCeilingBps : 0, sessionCount, true, mClearStreak,
                 nowMs - mLastActionMs);
         if (action == BackpressurePolicy.Action.NONE) {
-            // A measured report with no action (interval, or one clear report) is not a skip.
+            // A measured report with no action (interval, a hold or one clear report) is not a skip.
             return;
         }
         applyAction(action, currentBps, target, report.feedback);
+    }
+
+    // The override is dropped without restoring: the external value is the user's or another
+    // policy's decision, and fighting it would make both oscillate.
+    private void clearOverrideForExternalWrite(int currentBps) {
+        mOverridden = false;
+        mCeilingBps = 0;
+        mClearStreak = 0;
+        logAction("apply: override cleared by an external write, read = " + currentBps
+                + ", applied = " + mLastAppliedBps);
+        skip("external-write");
     }
 
     private void applyAction(BackpressurePolicy.Action action, int currentBps,
@@ -300,6 +324,12 @@ public class BackpressureCoordinator implements FeedbackSink {
         final int nextBps = BackpressurePolicy.targetBitrate(action, currentBps, ceilingBps);
         if (nextBps <= 0) {
             skip("invalid-target");
+            return;
+        }
+        if (action == BackpressurePolicy.Action.LOWER && nextBps == currentBps) {
+            // Already at the floor: applying the same value would count an action and write a log
+            // line for a bitrate that did not change.
+            skip("at-floor");
             return;
         }
         try {
