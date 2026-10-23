@@ -88,6 +88,9 @@ public final class MediaChannelCoordinator {
     // Diagnostic sink of this negotiation; NONE when the caller does not install one.
     private final MediaChannelLog log;
 
+    // Owner callback of "this channel lost a unit and needs a join point"; never null.
+    private final Runnable joinPointRequester;
+
     private final Map<String, MediaChannelLink> links = new HashMap<>();
 
     private final Set<String> closed = new HashSet<>();
@@ -126,6 +129,28 @@ public final class MediaChannelCoordinator {
      */
     public MediaChannelCoordinator(AnswerSink answerSink, Executor executor,
                                    ChannelFactory channelFactory, MediaChannelLog log) {
+        this(answerSink, executor, channelFactory, log, () -> {
+        });
+    }
+
+    /**
+     * Creates a coordinator that forwards a channel's join-point request to its owner.
+     *
+     * <p>A datagram channel loses whole access units, and the channel itself cannot ask the server
+     * for a fresh random-access point: it reports the need, and the owner turns it into a request
+     * on the control stream. Without this callback the report dies at the coordinator, which is
+     * exactly what a device capture showed - losses every second, almost no key-frame requests.</p>
+     *
+     * @param answerSink          output for the answers; required
+     * @param executor            executor that runs each channel until it ends; required
+     * @param channelFactory      builder of the channels; required
+     * @param log                 diagnostic sink; required, may be {@link MediaChannelLog#NONE}
+     * @param joinPointRequester  owner callback of a join-point request; required, may be a no-op
+     * @throws IllegalArgumentException if an argument is null
+     */
+    public MediaChannelCoordinator(AnswerSink answerSink, Executor executor,
+                                   ChannelFactory channelFactory, MediaChannelLog log,
+                                   Runnable joinPointRequester) {
         if (answerSink == null) {
             throw new IllegalArgumentException("answerSink must not be null");
         }
@@ -138,10 +163,14 @@ public final class MediaChannelCoordinator {
         if (log == null) {
             throw new IllegalArgumentException("log must not be null");
         }
+        if (joinPointRequester == null) {
+            throw new IllegalArgumentException("joinPointRequester must not be null");
+        }
         this.answerSink = answerSink;
         this.executor = executor;
         this.channelFactory = channelFactory;
         this.log = log;
+        this.joinPointRequester = joinPointRequester;
     }
 
     /**
@@ -282,6 +311,11 @@ public final class MediaChannelCoordinator {
                 @Override
                 public void onChannelFailed(String reason) {
                     answerFailedAfterOpen(channelIdHex, reason);
+                }
+
+                @Override
+                public void onJoinPointNeeded() {
+                    joinPointRequester.run();
                 }
             });
         } catch (RuntimeException e) {

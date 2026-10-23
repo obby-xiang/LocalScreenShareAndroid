@@ -561,6 +561,8 @@ public final class MetricsFormatter {
                 PipelineMetrics.Counter.ACCESS_UNITS_INCOMPLETE, null);
         appendCounters(out, snapshot, MediaMetricNames.UDP_AUTH_FAILURE,
                 PipelineMetrics.Counter.MEDIA_AUTH_FAILURES, null);
+        appendCounters(out, snapshot, MediaMetricNames.UDP_IDR_REQUEST,
+                PipelineMetrics.Counter.UDP_JOIN_POINT_REQUESTS, null);
     }
 
     /**

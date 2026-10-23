@@ -19,6 +19,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
@@ -245,6 +246,58 @@ public class MediaChannelCoordinatorTest {
     }
 
     @Test
+    public void joinPointNeeded_reachesTheOwner() {
+        RecordingSink sink = new RecordingSink();
+        FakeLink link = new FakeLink(true, null);
+        link.requestJoinPoints(2);
+        AtomicInteger requests = new AtomicInteger();
+        MediaChannelCoordinator coordinator = new MediaChannelCoordinator(sink, Runnable::run,
+                (offer, status) -> {
+                    link.attach(status);
+                    return link;
+                }, MediaChannelLog.NONE, requests::incrementAndGet);
+
+        coordinator.onOffer(offer(CHANNEL_ID, "udp"));
+
+        assertEquals(2, requests.get());
+    }
+
+    @Test
+    public void joinPointRequests_areBoundByTheOwnerThrottle() {
+        RecordingSink sink = new RecordingSink();
+        FakeLink link = new FakeLink(true, null);
+        link.requestJoinPoints(3);
+        AtomicInteger sent = new AtomicInteger();
+        long[] nowMs = {0L};
+        com.obby.android.localscreenshare.client.KeyFrameRequestThrottle throttle =
+                new com.obby.android.localscreenshare.client.KeyFrameRequestThrottle();
+        MediaChannelCoordinator coordinator = new MediaChannelCoordinator(sink, Runnable::run,
+                (offer, status) -> {
+                    link.attach(status);
+                    return link;
+                }, MediaChannelLog.NONE, () -> {
+                    if (throttle.tryAcquire(nowMs[0])) {
+                        sent.incrementAndGet();
+                    }
+                });
+
+        coordinator.onOffer(offer(CHANNEL_ID, "udp"));
+        assertEquals("one request must survive the throttle, the burst must not", 1, sent.get());
+
+        nowMs[0] = 500L;
+        coordinator.reset();
+        link.requestJoinPoints(1);
+        coordinator.onOffer(offer(CHANNEL_ID, "udp"));
+        assertEquals(1, sent.get());
+
+        nowMs[0] = 1_000L;
+        coordinator.reset();
+        link.requestJoinPoints(1);
+        coordinator.onOffer(offer(CHANNEL_ID, "udp"));
+        assertEquals(2, sent.get());
+    }
+
+    @Test
     public void declaredTransports_namesBothChannels() {
         String[] declared = MediaChannelCoordinator.declaredTransports();
 
@@ -324,6 +377,8 @@ public class MediaChannelCoordinatorTest {
 
         private volatile boolean closed;
 
+        private volatile int joinPointRequests;
+
         FakeLink(boolean ready, String failure) {
             this.ready = ready;
             this.failure = failure;
@@ -331,6 +386,10 @@ public class MediaChannelCoordinatorTest {
 
         void block() {
             block = true;
+        }
+
+        void requestJoinPoints(int count) {
+            joinPointRequests = count;
         }
 
         boolean awaitStarted() throws InterruptedException {
@@ -351,6 +410,9 @@ public class MediaChannelCoordinatorTest {
             if (status != null) {
                 if (ready) {
                     status.onChannelReady();
+                }
+                for (int i = 0; i < joinPointRequests; i++) {
+                    status.onJoinPointNeeded();
                 }
                 if (failure != null) {
                     status.onChannelFailed(failure);

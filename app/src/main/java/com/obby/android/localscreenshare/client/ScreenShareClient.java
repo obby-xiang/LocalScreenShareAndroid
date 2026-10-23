@@ -639,7 +639,7 @@ public final class ScreenShareClient {
                 public void warn(final String message) {
                     Log.w(mTag, "mediaChannel: " + message);
                 }
-            });
+            }, this::requestKeyFrameThrottledFromMediaPath);
         mClientId = "client-" + UUID.randomUUID();
         final ClientCapabilities advertised = mAdvertisedCapabilities != null
             ? mAdvertisedCapabilities : CodecCapabilityProbe.probeClientDecoders();

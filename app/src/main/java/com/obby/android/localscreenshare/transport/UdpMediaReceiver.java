@@ -318,6 +318,7 @@ public final class UdpMediaReceiver implements MediaChannelLink {
             // The decision belongs to the drop itself: by the time the next complete unit is
             // applied it would already have cleared the consecutive evidence.
             if (lossTracker.shouldRequestJoinPoint()) {
+                metrics.increment(PipelineMetrics.Counter.UDP_JOIN_POINT_REQUESTS);
                 statusListener.onJoinPointNeeded();
             }
         }

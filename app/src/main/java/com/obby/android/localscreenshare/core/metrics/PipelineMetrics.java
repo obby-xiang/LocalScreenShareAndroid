@@ -327,7 +327,16 @@ public final class PipelineMetrics {
         /**
          * Datagrams refused by authentication.
          */
-        MEDIA_AUTH_FAILURES
+        MEDIA_AUTH_FAILURES,
+
+        /**
+         * Key-frame requests raised because a datagram channel lost a whole access unit.
+         *
+         * <p>Counted where the receiver decides to ask, before the outbound throttle, so a request
+         * the throttle drops is still visible as "loss wanted a key frame" - which is what tells a
+         * field capture whether the loss-to-IDR chain fired at all.</p>
+         */
+        UDP_JOIN_POINT_REQUESTS
     }
 
     /**

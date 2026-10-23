@@ -130,6 +130,30 @@ public class UdpMediaReceiverLoopbackTest {
         assertTrue(recorder.awaitUnits(1));
         assertTrue("no catch-up was requested", recorder.awaitCatchUp());
         assertTrue("no join point was requested", recorder.awaitJoinPoint());
+        assertEquals(1L, recorder.metrics.count(PipelineMetrics.Counter.UDP_JOIN_POINT_REQUESTS));
+
+        // A second burst inside the tracker cooldown raises nothing new, so a loss storm cannot
+        // turn into a key-frame storm either.
+        clock.advance(500_000_000L);
+        mPeer.sendFragment(incomplete, 3, 0);
+        mPeer.sendFragment(incomplete, 4, 0);
+        clock.advance(com.obby.android.localscreenshare.core.net.AccessUnitReassembler.HOLD_UP_NS);
+        mPeer.sendUnit(5, 10);
+        Thread.sleep(200L);
+        assertEquals(1L, recorder.metrics.count(PipelineMetrics.Counter.UDP_JOIN_POINT_REQUESTS));
+
+        // Past the cooldown the next burst asks again.
+        clock.advance(com.obby.android.localscreenshare.core.net.DatagramLossTracker.COOLDOWN_NS);
+        mPeer.sendFragment(incomplete, 6, 0);
+        mPeer.sendFragment(incomplete, 7, 0);
+        clock.advance(com.obby.android.localscreenshare.core.net.AccessUnitReassembler.HOLD_UP_NS);
+        mPeer.sendUnit(8, 10);
+        long deadline = System.currentTimeMillis() + TIMEOUT_MS;
+        while (System.currentTimeMillis() < deadline
+                && recorder.metrics.count(PipelineMetrics.Counter.UDP_JOIN_POINT_REQUESTS) < 2L) {
+            Thread.sleep(10L);
+        }
+        assertEquals(2L, recorder.metrics.count(PipelineMetrics.Counter.UDP_JOIN_POINT_REQUESTS));
     }
 
     @Test

@@ -194,6 +194,7 @@ public class MetricsFormatterTest {
         metrics.add(PipelineMetrics.Counter.DATAGRAMS_REORDERED, 3L);
         metrics.add(PipelineMetrics.Counter.ACCESS_UNITS_INCOMPLETE, 4L);
         metrics.add(PipelineMetrics.Counter.MEDIA_AUTH_FAILURES, 1L);
+        metrics.add(PipelineMetrics.Counter.UDP_JOIN_POINT_REQUESTS, 9L);
 
         String line = MetricsFormatter.toLogLine(Role.CLIENT, metrics.snapshot(5000L));
 
@@ -203,6 +204,7 @@ public class MetricsFormatterTest {
         assertTrue(line.contains(" udp.reorder=3"));
         assertTrue(line.contains(" udp.auIncomplete=4"));
         assertTrue(line.contains(" udp.authFail=1"));
+        assertTrue(line.contains(" udp.idrReq=9"));
     }
 
     @Test
