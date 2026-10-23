@@ -280,7 +280,7 @@ flowchart LR
   - `udp.hold`（`Gauge.MEDIA_HOLD_UP_MS`）：当时是创建重组器后写入一次的常量 10；`e22dbb2` 起随窗口变化重写。
   - `udp.auTimeout`（`Counter.ACCESS_UNITS_TIMED_OUT`）：`FrameSink.onAccessUnitDropped` 按 reason 分流，仅 `timeout` 递增；`udp.auIncomplete` 仍是总量，口径不变。
   - 热路径纪律：窗口为定长环形数组、计数器为 `LongAdder`、gauge 为定长数组，无新增锁、无字符串拼接；格式化只在聚合线程执行。
-- **JVM 证据（本棒）**：1749 tests / 177 classes 双变体全绿，`test_baseline.json` 随提交更新；`./gradlew build :app:assembleDebugAndroidTest` 通过。新增用例覆盖：超时后残片只计一次且不重建、evicted/oversized 残片不再增计、交付后 late 行为保持、77 片每 5 片 15 ms 间隔整帧交付、40 ms 尾部间隔抬窗到 [40,100] 且不丢帧、16 个小间隔后回落到 10、上界 100 夹紧、warmup 30 覆盖首个 AU、`udp.auDrop`/`udp.hold` 打印与窗口跟随。
+- **JVM 证据（本棒）**：1750 tests / 177 classes 双变体全绿，`test_baseline.json` 随提交更新；`./gradlew build :app:assembleDebugAndroidTest` 通过。新增用例覆盖：超时后残片只计一次且不重建、evicted/oversized 残片不再增计、交付后 late 行为保持、77 片每 5 片 15 ms 间隔整帧交付、40 ms 尾部间隔抬窗到 [40,100] 且不丢帧、16 个小间隔后回落到 10、上界 100 夹紧、warmup 下限由跨 AU 驱动的 `theWarmUpFloorCoversTheFirstStall` 钉住（20 ms 不丢、30 ms 超时）、64 槽 tombstone 覆盖整个重排窗（连续放弃 60 个 AU 后最早残片仍只计 `late`，不重建、不二次计数）、`udp.auDrop`/`udp.hold` 打印与窗口跟随。
 - **审查残余（2026-10-23 登记，本棒不处理）**：① **`oversized` 分支线上不可达**——`UdpMediaPacketCodec.decode` 已按 `MAX_AU_BYTES` 校验 `auSize`（`core/net/UdpMediaPacketCodec.java:123`），线上分片无法让 `AccessUnitReassembler` 进入该分支，它只剩手工构包与未来协议版本的防御价值；② **`udp.gap` 与估计器样本集不一致**——接收端探针记录每个通过重排窗的可用数据报，重组器只用「未被放弃、未落后于最高已交付」的分片喂环，故 `udp.gap.max` 不必然等于驱动窗口的那个最大值；要逐样本对照需单独暴露估计器的环，本棒不做。
 - **关联文档**：[TB-ENG-013](#tb-eng-013) 第 18 项（**仍需复验**）、[TB-NET-003](#tb-net-003)「r2 观察修复」、[传输方式调研](transport-research.md)、[媒体传输计划](superpowers/plans/2026-10-22-media-transports.md)
 
