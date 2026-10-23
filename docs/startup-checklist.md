@@ -213,6 +213,30 @@ Build workflow 的非 PR 构建（以及手动 dispatch 的 Release workflow）�
 - 为 Debug 准备 release 证书。
 - 当前版本不需要音频或无障碍/反控权限。
 
+## F. 设备偏好注入（`run-as` 与隐藏键）
+
+> 口径核对：2026-10-23（r2 设备轮 `media_transport` "写入不生效" 的定性结论：**测试方法问题，不是产品缺陷**）。
+
+设备验证常需要在不装 UI 的情况下改隐藏键（`media_transport`、`metrics_enabled`、`viewer_hud_enabled` 等）：`adb shell run-as <pkg> sh -c 'cat > shared_prefs/lss-preferences.xml'` 覆写偏好文件。**这个写法本身有严格的时序要求**，否则会得到"写进去了但没生效"的假象：
+
+| 事实 | 机制 |
+| --- | --- |
+| 进程内读取只看内存 | `SharedPreferences` 在进程首次访问时解析一次文件，之后所有读取来自内存快照；`registerOnSharedPreferenceChangeListener` 只对**进程内**的修改触发。外部改写文件不会让已运行的进程重新加载。 |
+| 进程内任何一次 `commit()` 会按内存快照重写整个文件 | 外部新增、而 App 从未写过的键因此会被**抹掉**。`media_transport` 正是这种键：没有 UI、`Preferences.setMediaTransport()` 没有调用方。 |
+| App 自己写过的键会在重写中保留 | 例如 `media_udp_enabled`（视频设置开关）、`projection_secure`（画面私密开关）都由 App 写过，重新加载后仍在内存里。 |
+
+**正确顺序**（缺一步就可能白跑一轮）：
+
+1. `adb shell am force-stop com.obby.android.localscreenshare`——先停进程，再动文件；
+2. 用 `run-as` 覆写 `shared_prefs/lss-preferences.xml`（保留其余键，勿只写一行）；
+3. 启动 App；
+4. **在本次共享/观看开始前不要再改任何应用内设置**（每个开关都会触发一次整文件重写）；
+5. 用**行为证据**确认生效，而不是只把文件 `cat` 回来：
+   - `media_transport=grpc` ⇒ 服务端**不应**出现 `mediaChannel: offer:` 行（恒留在 gRPC）；
+   - `media_transport=auto` + `media_udp_enabled=true` ⇒ 第一条 offer 是 `transport = udp`；开关关 ⇒ `transport = tcp`。
+
+**已解释的历史现象**：r2 设备轮里布尔键 `media_udp_enabled` 4/4 生效、字符串键 `media_transport` 0/3 生效，`projection_secure` 时好时坏——写入与下一次协商之间没有冷启动，进程仍在用旧快照；布尔键之所以"看起来有效"，是因为它曾被 App 自己写入过、也在同一批写入里命中了冷启动。**代码侧无需修改**：`settings/Preferences.java` 的单例只在构造时取一次 `SharedPreferences`，`getMediaTransport()` 每次读缓存、不做本地记忆，读路径本身没有问题。
+
 ## 建议命令
 
 以下命令只作为操作参考，本次未执行安装：
