@@ -47,10 +47,11 @@ import java.net.SocketTimeoutException;
  *
  * <p><b>Readings.</b> Three probes on the receive path feed the metrics scope, none of them
  * allocating or locking: the interval between two fragments of the same unit, the fragments the
- * reassembler refused after delivery (the delta of its late count around each datagram), and the
- * reason of every abandoned unit. The hold-up itself is published once, when the reassembler is
- * created, so a capture states the threshold its gap readings were taken under rather than leaving
- * it implicit in the build.</p>
+ * reassembler refused after delivery or abandonment (the delta of its late count around each
+ * datagram), and the reason of every abandoned unit - a timeout, an eviction or a newer delivery
+ * that made it useless. The hold-up itself is published once, when the reassembler is created, so a
+ * capture states the threshold its gap readings were taken under rather than leaving it implicit in
+ * the build.</p>
  *
  * <p>Every abnormal end is reported once through the status listener and through
  * {@link MediaChannelListener#onChannelFailed(String)}; a close from the outside reports nothing.</p>
@@ -366,9 +367,12 @@ public final class UdpMediaReceiver implements MediaChannelLink {
             metrics.increment(PipelineMetrics.Counter.ACCESS_UNITS_INCOMPLETE);
             // The total says how much was lost; the reason says which defect produced it. A unit
             // that was superseded proves the pipeline moved on, a silent one proves the hold-up
-            // expired - the two lead to opposite conclusions about a widened window.
+            // expired - the two lead to opposite conclusions about a widened window. The reassembler
+            // reports each abandoned unit once, so both reason counters stay one-per-unit.
             if ("timeout".equals(reason)) {
                 metrics.increment(PipelineMetrics.Counter.ACCESS_UNITS_TIMED_OUT);
+            } else if ("superseded".equals(reason)) {
+                metrics.increment(PipelineMetrics.Counter.ACCESS_UNITS_SUPERSEDED);
             }
             lossTracker.onAccessUnitIncomplete();
             listener.onCatchUp();

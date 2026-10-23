@@ -13,12 +13,13 @@ package com.obby.android.localscreenshare.core.metrics;
  * <p><b>Omission.</b> A key is printed only when something measured it: an unmeasured tier prints
  * nothing rather than zeros, so a gRPC-only session and a UDP session never look comparable when
  * they are not. The keys below without a producer in this version are registered so the log
- * vocabulary is fixed before a producer exists - {@code tcp.frame}, {@code tcp.frameDrop} and
- * {@code udp.auDrop} have no counter yet, and a future batch adds them without renaming anything.
- * {@link #UDP_LATE} has left that group: the reassembler counts the fragments it refuses, and the
- * receiver reports the delta around each datagram. {@link #UDP_IDR_REQUEST} left it earlier with
- * the join-point counter, and {@link #UDP_GAP}, {@link #UDP_HOLD} and {@link #UDP_AU_TIMEOUT} join
- * the printed block with their own producers in the receiver.</p>
+ * vocabulary is fixed before a producer exists - {@code tcp.frame} and {@code tcp.frameDrop} have
+ * no counter yet, and a future batch adds them without renaming anything.
+ * {@link #UDP_LATE} and {@link #UDP_AU_DROPPED} have left that group: the reassembler counts the
+ * fragments it refuses after delivery or abandonment, and reports a unit discarded because a newer
+ * one was delivered. {@link #UDP_IDR_REQUEST} left it earlier with the join-point counter, and
+ * {@link #UDP_GAP}, {@link #UDP_HOLD} and {@link #UDP_AU_TIMEOUT} join the printed block with their
+ * own producers in the receiver.</p>
  */
 public final class MediaMetricNames {
 
@@ -65,9 +66,9 @@ public final class MediaMetricNames {
     /**
      * Fragments that arrived after their access unit was delivered or abandoned.
      *
-     * <p>The intended meaning covers both endings, because neither can still produce a frame. This
-     * version detects only the delivered case: an abandoned unit leaves no tombstone, so its
-     * residue is not counted here yet - that arrives with the tombstone batch.</p>
+     * <p>Both endings are covered, because neither can still produce a frame: a delivered unit is
+     * gone, and an abandoned one lost fragments that never arrive. Rebuilding an abandoned unit from
+     * its residue used to count it again - this key is the evidence that the residue is only late.</p>
      */
     public static final String UDP_LATE = "udp.late";
 
@@ -92,7 +93,7 @@ public final class MediaMetricNames {
     public static final String UDP_AU_INCOMPLETE = "udp.auIncomplete";
 
     /**
-     * Access units discarded whole after an incomplete one made them useless.
+     * Access units discarded whole because a newer unit was delivered first.
      */
     public static final String UDP_AU_DROPPED = "udp.auDrop";
 

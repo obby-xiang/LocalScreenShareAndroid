@@ -183,6 +183,90 @@ public class AccessUnitReassemblerTest {
         assertEquals("evicted", listener.dropped.get(0).reason);
     }
 
+    /**
+     * A unit abandoned for silence is remembered: its residue is late, not a new unit.
+     *
+     * <p>The fragments an abandoned unit lost are gone, so no later fragment of that id can ever
+     * complete it. Counting the residue as a late datagram is also what keeps the drop count at one
+     * per unit: the device report measured 2.4-2.7 timeouts for every unit that really lost a
+     * fragment, because the residue rebuilt the unit, its buffer and its countdown.</p>
+     */
+    @Test
+    public void fragmentsAfterTimeout_areOnlyCountedLate() {
+        int size = 4 * UdpMediaPacketCodec.MAX_FRAGMENT_BYTES;
+        reassembler.onPacket(packet(21, 0, 0, size));
+
+        clock.advance(AccessUnitReassembler.HOLD_UP_NS);
+        reassembler.onTick();
+
+        assertEquals(1, listener.dropped.size());
+        assertEquals("timeout", listener.dropped.get(0).reason);
+
+        reassembler.onPacket(packet(21, 1, 1, size));
+        reassembler.onPacket(packet(21, 2, 2, size));
+        reassembler.onPacket(packet(21, 3, 3, size));
+
+        assertEquals("an abandoned unit is counted once", 1, listener.dropped.size());
+        assertEquals(1L, reassembler.getDroppedCount());
+        assertEquals(3L, reassembler.getLateCount());
+        assertEquals("the residue must not rebuild a buffer", 0, reassembler.getInFlightCount());
+        assertEquals(0, listener.frames.size());
+    }
+
+    /**
+     * The residue of an abandoned unit does not start a second countdown of its own.
+     */
+    @Test
+    public void fragmentsAfterTimeout_doNotStartASecondCountdown() {
+        int size = 4 * UdpMediaPacketCodec.MAX_FRAGMENT_BYTES;
+        reassembler.onPacket(packet(22, 0, 0, size));
+        clock.advance(AccessUnitReassembler.HOLD_UP_NS);
+        reassembler.onTick();
+        assertEquals(1, listener.dropped.size());
+
+        reassembler.onPacket(packet(22, 1, 1, size));
+        clock.advance(AccessUnitReassembler.HOLD_UP_NS);
+        reassembler.onTick();
+
+        assertEquals("no second timeout of the same unit", 1, listener.dropped.size());
+        assertEquals(1L, reassembler.getDroppedCount());
+        assertEquals(0, reassembler.getInFlightCount());
+    }
+
+    /**
+     * A unit evicted for room is abandoned just like a silent one.
+     */
+    @Test
+    public void evictedUnit_residueIsIgnored() {
+        int size = 2 * UdpMediaPacketCodec.MAX_FRAGMENT_BYTES;
+        for (int i = 0; i < AccessUnitReassembler.MAX_IN_FLIGHT; i++) {
+            reassembler.onPacket(packet(i, i, 0, size));
+        }
+        reassembler.onPacket(packet(99, 99, 0, size));
+        assertEquals(1, listener.dropped.size());
+        assertEquals("evicted", listener.dropped.get(0).reason);
+
+        reassembler.onPacket(packet(0, 100, 1, size));
+
+        assertEquals("the evicted unit must not be rebuilt", 1, listener.dropped.size());
+        assertEquals(1L, reassembler.getLateCount());
+        assertEquals(AccessUnitReassembler.MAX_IN_FLIGHT, reassembler.getInFlightCount());
+    }
+
+    /**
+     * An oversized unit is unusable whatever fragment arrives, so it is counted once.
+     */
+    @Test
+    public void oversizedUnit_isCountedOncePerUnit() {
+        reassembler.onPacket(oversizedPacket(31, 0));
+        reassembler.onPacket(oversizedPacket(31, 1));
+
+        assertEquals(1, listener.dropped.size());
+        assertEquals("oversized", listener.dropped.get(0).reason);
+        assertEquals(1L, reassembler.getLateCount());
+        assertEquals(0, reassembler.getInFlightCount());
+    }
+
     @Test
     public void fragmentOfADeliveredUnit_isLate() {
         reassembler.onPacket(packet(7, 0, 0, 10));
@@ -234,6 +318,18 @@ public class AccessUnitReassemblerTest {
         return new UdpMediaPacket(wireSeq, auId, index, count, index * 33_000L, auSize, auId,
                 false, true, true, false, index * UdpMediaPacketCodec.MAX_FRAGMENT_BYTES,
                 fragment, joinParts);
+    }
+
+    /**
+     * Builds a packet whose declared unit size no sender may announce.
+     *
+     * <p>The layout helpers reject such a size, which is the point: only a broken or hostile sender
+     * produces one, so the packet is assembled by hand.</p>
+     */
+    private UdpMediaPacket oversizedPacket(int auId, long wireSeq) {
+        return new UdpMediaPacket(wireSeq, auId, 0, 1, 0L,
+                UdpMediaPacketCodec.MAX_AU_BYTES + 1, auId, false, true, true, false, 0,
+                new byte[8], null);
     }
 
     /**

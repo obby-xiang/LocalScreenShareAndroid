@@ -228,6 +228,28 @@ public class MetricsFormatterTest {
         assertTrue(line.contains(" udp.auTimeout=3"));
     }
 
+    /**
+     * A unit discarded because a newer one was delivered is counted under its own reason.
+     *
+     * <p>{@code udp.auDrop} was registered with no producer. A superseded drop is the healthy path -
+     * the pipeline moved on - while a timeout is the window expiring; the two lead to opposite
+     * conclusions about a widened hold-up, so they cannot share one counter.</p>
+     */
+    @Test
+    public void clientLine_printsTheSupersededDropReason() {
+        PipelineMetrics metrics = PipelineMetrics.create(new MutableNanoClock(), 16);
+        metrics.add(PipelineMetrics.Counter.DATAGRAMS_RECEIVED, 240L);
+        metrics.add(PipelineMetrics.Counter.ACCESS_UNITS_INCOMPLETE, 5L);
+        metrics.add(PipelineMetrics.Counter.ACCESS_UNITS_SUPERSEDED, 2L);
+        metrics.add(PipelineMetrics.Counter.ACCESS_UNITS_TIMED_OUT, 3L);
+
+        String line = MetricsFormatter.toLogLine(Role.CLIENT, metrics.snapshot(5000L));
+
+        assertTrue(line.contains(" udp.auIncomplete=5"));
+        assertTrue(line.contains(" udp.auDrop=2"));
+        assertTrue(line.contains(" udp.auTimeout=3"));
+    }
+
     @Test
     public void clientLine_omitsTheDatagramBlockWhenNothingArrived() {
         PipelineMetrics metrics = PipelineMetrics.create(new MutableNanoClock(), 16);
@@ -252,6 +274,7 @@ public class MetricsFormatterTest {
         assertFalse(line.contains("udp.late"));
         assertFalse(line.contains("udp.hold"));
         assertFalse(line.contains("udp.auTimeout"));
+        assertFalse(line.contains("udp.auDrop"));
     }
 
     @Test

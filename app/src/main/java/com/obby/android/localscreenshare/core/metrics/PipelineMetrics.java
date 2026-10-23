@@ -348,13 +348,12 @@ public final class PipelineMetrics {
         UDP_JOIN_POINT_REQUESTS,
 
         /**
-         * Fragments that arrived after their access unit was already delivered.
+         * Fragments that arrived after their access unit was delivered or abandoned.
          *
          * <p>The receiver compares the reassembler's late count around each datagram, so the counter
-         * measures fragments the reassembler itself refused - it does not re-parse the datagram. In
-         * this version only a delivered unit is remembered, so a fragment of an abandoned unit is
-         * not counted here yet: it starts a new pending unit, and its second timeout appears in
-         * {@link #ACCESS_UNITS_TIMED_OUT} until the tombstone batch stops the rebuild.</p>
+         * measures fragments the reassembler itself refused - it does not re-parse the datagram. Both
+         * endings are covered: a delivered unit and an abandoned one can no longer produce a frame,
+         * and the reassembler remembers both.</p>
          */
         DATAGRAMS_LATE,
 
@@ -367,7 +366,17 @@ public final class PipelineMetrics {
          * fragment this counter staying at zero is the direct evidence that the hold-up no longer
          * kills paced units.</p>
          */
-        ACCESS_UNITS_TIMED_OUT
+        ACCESS_UNITS_TIMED_OUT,
+
+        /**
+         * Access units discarded whole because a newer unit was delivered first.
+         *
+         * <p>The healthy path of a pace that outran assembly, and the opposite reading to
+         * {@link #ACCESS_UNITS_TIMED_OUT}: a superseded unit was overtaken, a timed-out one was
+         * still arriving. Also a subset of {@link #ACCESS_UNITS_INCOMPLETE}, so the total stays the
+         * loss reading while the reason tells which defect produced it.</p>
+         */
+        ACCESS_UNITS_SUPERSEDED
     }
 
     /**

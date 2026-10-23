@@ -17,14 +17,23 @@ import java.util.Map;
  * the sender declared and a bitmap of the fragments it already holds. A single-fragment unit is
  * delivered on arrival; a multi-fragment unit is delivered the moment its last fragment lands.</p>
  *
- * <p><b>Giving up.</b> An incomplete unit is dropped whole - never handed on half-built - in three
+ * <p><b>Giving up.</b> An incomplete unit is dropped whole - never handed on half-built - in four
  * cases: it has been silent for {@value #HOLD_UP_MS} milliseconds, a newer unit was delivered and
- * made it useless, or the buffer budget forced the oldest unit out. Silence is measured from the
- * <i>last</i> fragment, not from the first one: a sender paces its fragments, so a unit that keeps
- * arriving is making progress however long its assembly takes, and the hold-up only decides when a
- * stalled unit is hopeless. Every drop is reported with its reason so the caller can count it and
- * decide whether to ask for a key frame. State from a fragment of an already delivered unit is
- * counted as late and ignored.</p>
+ * made it useless, the buffer budget forced the oldest unit out, or the sender announced a unit this
+ * receiver refuses to hold (an oversized one, or the same identifier with a different size). Silence
+ * is measured from the <i>last</i> fragment, not from the first one: a sender paces its fragments, so
+ * a unit that keeps arriving is making progress however long its assembly takes, and the hold-up
+ * only decides when a stalled unit is hopeless. Every drop is reported with its reason so the caller
+ * can count it and decide whether to ask for a key frame. State from a fragment of an already
+ * delivered or abandoned unit is counted as late and ignored.</p>
+ *
+ * <p><b>Remembering the abandoned.</b> A dropped unit is gone for good - the fragments it lost never
+ * arrive - so every later fragment of its identifier is late by definition. Remembering the
+ * identifiers is what keeps one lost unit at one drop: without it the residue started a new pending
+ * unit, allocated its buffer again, expired again and reached the loss tracker again, which the
+ * device run read as 2.4-2.7 timeouts per unit that really lost a fragment. The memory is a fixed
+ * ring of {@value #ABANDONED_SLOTS} identifiers, so a sender that keeps reusing an identifier cannot
+ * grow the receiver, and the scan is over at most that many ints.</p>
  *
  * <p><b>Why the hold-up and not "a newer id arrived".</b> A newer unit's first fragment may overtake
  * the previous unit's last one on the wire: datagrams of different units are unrelated. Dropping on
@@ -68,6 +77,15 @@ public final class AccessUnitReassembler {
     public static final long HOLD_UP_NS = HOLD_UP_MS * 1_000_000L;
 
     /**
+     * Number of abandoned unit identifiers the reassembler remembers.
+     *
+     * <p>Sixteen covers the units that can be pending at once plus the tail of residue that keeps
+     * arriving after a drop; an identifier pushed out of the ring is old enough that its residue can
+     * no longer arrive, because the reorder window already refuses sequence numbers that far back.</p>
+     */
+    private static final int ABANDONED_SLOTS = 16;
+
+    /**
      * Receiver of the reassembled units and of the drops.
      */
     public interface Listener {
@@ -83,7 +101,8 @@ public final class AccessUnitReassembler {
          * One unit was abandoned before it could be delivered.
          *
          * @param auId   identifier of the abandoned unit
-         * @param reason {@code timeout}, {@code superseded} or {@code evicted}
+         * @param reason {@code timeout}, {@code superseded}, {@code evicted}, {@code oversized} or
+         *               {@code size_mismatch}
          */
         void onAccessUnitDropped(int auId, String reason);
     }
@@ -106,6 +125,13 @@ public final class AccessUnitReassembler {
     private boolean deliveredAny;
 
     private int highestDeliveredAuId;
+
+    // Identifiers of the units that were abandoned, oldest first while the ring fills.
+    private final int[] abandonedAuIds = new int[ABANDONED_SLOTS];
+
+    private int abandonedCursor;
+
+    private int abandonedCount;
 
     /**
      * Creates a reassembler.
@@ -143,7 +169,15 @@ public final class AccessUnitReassembler {
         if (packet.isParity()) {
             return;
         }
+        if (isAbandoned(packet.getAuId())) {
+            // The unit already lost a fragment for good, so nothing that still arrives for it can
+            // complete a frame. It is a late datagram, not a new unit: rebuilding it would allocate
+            // the buffer again and count a second drop for one loss.
+            late++;
+            return;
+        }
         if (packet.getAuSize() > UdpMediaPacketCodec.MAX_AU_BYTES) {
+            abandon(packet.getAuId());
             dropped++;
             listener.onAccessUnitDropped(packet.getAuId(), "oversized");
             return;
@@ -215,10 +249,42 @@ public final class AccessUnitReassembler {
     }
 
     /**
-     * Returns how many fragments belonged to an already delivered unit.
+     * Returns how many fragments belonged to a unit that was already delivered or abandoned.
      */
     public long getLateCount() {
         return late;
+    }
+
+    /**
+     * Remembers that no fragment of this unit can ever produce a frame.
+     *
+     * @param auId identifier of the abandoned unit
+     */
+    private void abandon(int auId) {
+        for (int index = 0; index < abandonedCount; index++) {
+            if (abandonedAuIds[index] == auId) {
+                return;
+            }
+        }
+        abandonedAuIds[abandonedCursor] = auId;
+        abandonedCursor = (abandonedCursor + 1) % abandonedAuIds.length;
+        if (abandonedCount < abandonedAuIds.length) {
+            abandonedCount++;
+        }
+    }
+
+    /**
+     * Returns whether the unit was already abandoned.
+     *
+     * @param auId identifier to look up
+     */
+    private boolean isAbandoned(int auId) {
+        for (int index = 0; index < abandonedCount; index++) {
+            if (abandonedAuIds[index] == auId) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void evictForRoom(int auSize) {
@@ -228,6 +294,7 @@ public final class AccessUnitReassembler {
             Map.Entry<Integer, Pending> eldest = iterator.next();
             pendingBytes -= eldest.getValue().bytes.length;
             iterator.remove();
+            abandon(eldest.getKey());
             dropped++;
             listener.onAccessUnitDropped(eldest.getKey(), "evicted");
         }
@@ -257,6 +324,7 @@ public final class AccessUnitReassembler {
         if (removed != null) {
             pendingBytes -= removed.bytes.length;
         }
+        abandon(auId);
         dropped++;
         listener.onAccessUnitDropped(auId, reason);
     }

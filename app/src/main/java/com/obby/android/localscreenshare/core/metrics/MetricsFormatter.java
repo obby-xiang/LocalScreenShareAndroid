@@ -554,9 +554,10 @@ public final class MetricsFormatter {
      *
      * <p>The fragment-gap distribution answers "how long may a fragment of one unit be held back",
      * which is the quantity the hold-up has to cover; {@code udp.hold} records the threshold those
-     * readings were taken under, and {@code udp.auTimeout} separates a silent unit from the
-     * {@code udp.auIncomplete} total that also counts evictions. A window without samples and a
-     * zero counter are omitted, like every other field on the line.</p>
+     * readings were taken under, {@code udp.auTimeout} separates a silent unit from the
+     * {@code udp.auIncomplete} total that also counts evictions, and {@code udp.auDrop} counts the
+     * units a newer delivery superseded. A window without samples and a zero counter are omitted,
+     * like every other field on the line.</p>
      */
     private static void appendMediaChannelFields(StringBuilder out, MetricsSnapshot snapshot) {
         final long received = snapshot.getCounter(PipelineMetrics.Counter.DATAGRAMS_RECEIVED);
@@ -572,6 +573,8 @@ public final class MetricsFormatter {
                 PipelineMetrics.Counter.DATAGRAMS_REORDERED, null);
         appendCounters(out, snapshot, MediaMetricNames.UDP_AU_INCOMPLETE,
                 PipelineMetrics.Counter.ACCESS_UNITS_INCOMPLETE, null);
+        appendCounters(out, snapshot, MediaMetricNames.UDP_AU_DROPPED,
+                PipelineMetrics.Counter.ACCESS_UNITS_SUPERSEDED, null);
         appendCounters(out, snapshot, MediaMetricNames.UDP_AUTH_FAILURE,
                 PipelineMetrics.Counter.MEDIA_AUTH_FAILURES, null);
         appendCounters(out, snapshot, MediaMetricNames.UDP_IDR_REQUEST,

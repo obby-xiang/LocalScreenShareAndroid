@@ -334,6 +334,79 @@ public class UdpMediaReceiverLoopbackTest {
         assertEquals(1, recorder.units.size());
     }
 
+    /**
+     * The residue of an abandoned unit is late, not a second unit with a second drop.
+     *
+     * <p>A unit the hold-up ended has lost fragments for good, so every later fragment of that id
+     * can only be late. Rebuilding it allocated a buffer again, counted a second drop and fed the
+     * loss tracker a second time - the device report measured 2.4-2.7 timeouts per unit that really
+     * lost a fragment. Here a late datagram of an already delivered unit drives the expiry pass, so
+     * the abandoned id stays newer than everything delivered and the delivered-late rule cannot
+     * stand in for the tombstone.</p>
+     */
+    @Test
+    public void residueOfAnAbandonedUnit_raisesNoSecondDrop() throws Exception {
+        Recorder recorder = new Recorder();
+        mPeer = new Peer();
+        start(recorder);
+        assertTrue(recorder.awaitReady());
+        mPeer.awaitBind();
+
+        mPeer.sendUnit(0, 10);
+        assertTrue(recorder.awaitUnits(1));
+
+        int size = 2 * UdpMediaPacketCodec.MAX_FRAGMENT_BYTES;
+        MediaFrame incomplete = MediaFrame.accessUnit(33_000L, MediaFrame.DTS_UNSET, 1, false, true,
+                true, null, payload(size));
+        mPeer.sendFragment(incomplete, 5, 0);
+        assertTrue(recorder.awaitDatagrams(2));
+
+        clock.advance(AccessUnitReassembler.HOLD_UP_NS);
+        mPeer.sendUnit(0, 10);
+        assertTrue(recorder.awaitCounter(PipelineMetrics.Counter.DATAGRAMS_LATE, 1L));
+        assertEquals(1L, recorder.metrics.count(PipelineMetrics.Counter.ACCESS_UNITS_INCOMPLETE));
+
+        mPeer.sendFragment(incomplete, 5, 1);
+        clock.advance(AccessUnitReassembler.HOLD_UP_NS);
+        mPeer.sendUnit(0, 10);
+        assertTrue(recorder.awaitCounter(PipelineMetrics.Counter.DATAGRAMS_LATE, 3L));
+
+        assertEquals("one drop per abandoned unit",
+                1L, recorder.metrics.count(PipelineMetrics.Counter.ACCESS_UNITS_INCOMPLETE));
+        assertEquals(1L, recorder.metrics.count(PipelineMetrics.Counter.ACCESS_UNITS_TIMED_OUT));
+        assertEquals(3L, recorder.metrics.count(PipelineMetrics.Counter.DATAGRAMS_LATE));
+        assertEquals("no half-built unit may reach the viewer", 1, recorder.units.size());
+    }
+
+    /**
+     * A unit a newer delivery made useless is counted as superseded, not as a timeout.
+     *
+     * <p>The two reasons lead to opposite conclusions: a timeout says the hold-up expired on a unit
+     * that was still arriving, a superseded unit says a newer frame overtook this one, which is the
+     * healthy path of a pace that outran assembly.</p>
+     */
+    @Test
+    public void aSupersededUnit_isCountedByItsOwnReason() throws Exception {
+        Recorder recorder = new Recorder();
+        mPeer = new Peer();
+        start(recorder);
+        assertTrue(recorder.awaitReady());
+        mPeer.awaitBind();
+
+        int size = 2 * UdpMediaPacketCodec.MAX_FRAGMENT_BYTES;
+        MediaFrame incomplete = MediaFrame.accessUnit(0L, MediaFrame.DTS_UNSET, 1, false, true,
+                true, null, payload(size));
+        mPeer.sendFragment(incomplete, 3, 0);
+        assertTrue(recorder.awaitDatagrams(1));
+
+        mPeer.sendUnit(4, 10);
+        assertTrue(recorder.awaitUnits(1));
+        assertTrue(recorder.awaitCounter(PipelineMetrics.Counter.ACCESS_UNITS_SUPERSEDED, 1L));
+
+        assertEquals(1L, recorder.metrics.count(PipelineMetrics.Counter.ACCESS_UNITS_INCOMPLETE));
+        assertEquals(0L, recorder.metrics.count(PipelineMetrics.Counter.ACCESS_UNITS_TIMED_OUT));
+    }
+
     @Test
     public void silentServer_isABindTimeout() throws Exception {
         Recorder recorder = new Recorder();
