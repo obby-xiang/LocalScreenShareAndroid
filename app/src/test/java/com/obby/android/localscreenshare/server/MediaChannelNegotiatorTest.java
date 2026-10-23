@@ -96,7 +96,7 @@ public class MediaChannelNegotiatorTest {
         assertEquals(32, offer.getKeyC2s().length);
         assertEquals(4, offer.getNonceSalt().length);
         assertEquals(1400, offer.getMtu());
-        assertEquals(10, offer.getHoldMs());
+        assertEquals(100, offer.getHoldMs());
         assertNotNull(negotiator.getOfferedKeys());
         assertEquals(32, negotiator.getOfferedKeys().getKeyS2c().length);
     }

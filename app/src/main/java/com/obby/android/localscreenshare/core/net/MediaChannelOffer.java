@@ -138,7 +138,10 @@ public final class MediaChannelOffer {
     }
 
     /**
-     * Returns how long the receiver may hold an incomplete access unit, or zero when unused.
+     * Returns the advisory ceiling of the receiver's hold-up, or zero when unused.
+     *
+     * <p>It states a bound of the design, not a value to apply: the receiver keeps its own window,
+     * measured from the intervals it observes, so a stale number here cannot pin it back.</p>
      */
     public int getHoldMs() {
         return holdMs;
@@ -268,7 +271,7 @@ public final class MediaChannelOffer {
         }
 
         /**
-         * Sets how long the receiver may hold an incomplete access unit.
+         * Sets the advisory ceiling of the receiver's hold-up.
          */
         public Builder holdMs(int holdMs) {
             this.holdMs = holdMs;

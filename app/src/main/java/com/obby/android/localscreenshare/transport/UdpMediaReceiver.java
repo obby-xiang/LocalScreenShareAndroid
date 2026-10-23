@@ -45,12 +45,12 @@ import java.net.SocketTimeoutException;
  * point when the loss turns into a trend. Units are delivered on the thread that reads the socket,
  * so the listener must marshal them the way it marshals stream messages.</p>
  *
- * <p><b>Readings.</b> Three probes on the receive path feed the metrics scope, none of them
+ * <p><b>Readings.</b> Four probes on the receive path feed the metrics scope, none of them
  * allocating or locking: the interval between two fragments of the same unit, the fragments the
  * reassembler refused after delivery or abandonment (the delta of its late count around each
- * datagram), and the reason of every abandoned unit - a timeout, an eviction or a newer delivery
- * that made it useless. The hold-up itself is published once, when the reassembler is created, so a
- * capture states the threshold its gap readings were taken under rather than leaving it implicit in
+ * datagram), the reason of every abandoned unit - a timeout, an eviction or a newer delivery that
+ * made it useless - and the hold-up itself, rewritten only when the reassembler's window moves, so a
+ * capture states the threshold its gap readings were taken under instead of leaving it implicit in
  * the build.</p>
  *
  * <p>Every abnormal end is reported once through the status listener and through
@@ -99,6 +99,9 @@ public final class UdpMediaReceiver implements MediaChannelLink {
 
     private long lastDatagramArrivalNs;
 
+    // Hold-up last written to the gauge; the window only changes when an interval enters the ring.
+    private long publishedHoldUpMs;
+
     /**
      * Creates a receiver for one datagram offer.
      *
@@ -144,9 +147,12 @@ public final class UdpMediaReceiver implements MediaChannelLink {
         this.clock = clock;
         this.metrics = metrics;
         this.lossTracker = new DatagramLossTracker(clock);
+        // The window is the receiver's own: the offer's hold_ms is an advisory ceiling of the
+        // design, not a limit the sender can impose, because a stale sender would otherwise pin a
+        // newer receiver back to a threshold the link has already proven too tight.
         this.reassembler = new AccessUnitReassembler(new FrameSink(), clock);
-        // Published once: the threshold a gap reading was taken under has to be in the same line.
-        metrics.setGauge(PipelineMetrics.Gauge.MEDIA_HOLD_UP_MS, reassembler.getHoldUpMs());
+        this.publishedHoldUpMs = reassembler.getHoldUpMs();
+        metrics.setGauge(PipelineMetrics.Gauge.MEDIA_HOLD_UP_MS, publishedHoldUpMs);
     }
 
     /**
@@ -284,6 +290,22 @@ public final class UdpMediaReceiver implements MediaChannelLink {
             metrics.add(PipelineMetrics.Counter.DATAGRAMS_LATE, lateAfter - lateBefore);
         }
         reassembler.onTick();
+        publishHoldUp();
+    }
+
+    /**
+     * Publishes the hold-up the reassembler now applies, when it changed.
+     *
+     * <p>The window only moves when an interval enters the estimator's ring, so the gauge is written
+     * on the rare datagram that changed it instead of on every datagram: a capture then states the
+     * threshold its gap readings were taken under, and the hot path pays one comparison.</p>
+     */
+    private void publishHoldUp() {
+        long holdUpMs = reassembler.getHoldUpMs();
+        if (holdUpMs != publishedHoldUpMs) {
+            publishedHoldUpMs = holdUpMs;
+            metrics.setGauge(PipelineMetrics.Gauge.MEDIA_HOLD_UP_MS, holdUpMs);
+        }
     }
 
     /**

@@ -76,7 +76,7 @@ public class AccessUnitReassemblerTest {
         int size = 2 * UdpMediaPacketCodec.MAX_FRAGMENT_BYTES;
         reassembler.onPacket(packet(4, 0, 0, size));
 
-        clock.advance(AccessUnitReassembler.HOLD_UP_NS - 1L);
+        clock.advance(AccessUnitReassembler.HOLD_UP_WARMUP_NS - 1L);
         reassembler.onTick();
         assertEquals(1, reassembler.getInFlightCount());
 
@@ -107,7 +107,7 @@ public class AccessUnitReassemblerTest {
         for (int index = 0; index < count; index++) {
             reassembler.onPacket(packet(11, index + 1L, index, size));
             reassembler.onTick();
-            clock.advance(AccessUnitReassembler.HOLD_UP_NS / 2L);
+            clock.advance(AccessUnitReassembler.HOLD_UP_WARMUP_NS / 2L);
         }
 
         assertEquals("a paced unit must not expire while its fragments still arrive",
@@ -125,10 +125,10 @@ public class AccessUnitReassemblerTest {
     public void silenceAfterProgress_isDroppedOnTheHoldUp() {
         int size = 3 * UdpMediaPacketCodec.MAX_FRAGMENT_BYTES;
         reassembler.onPacket(packet(12, 1, 0, size));
-        clock.advance(AccessUnitReassembler.HOLD_UP_NS / 2L);
+        clock.advance(AccessUnitReassembler.HOLD_UP_WARMUP_NS / 2L);
         reassembler.onPacket(packet(12, 2, 1, size));
 
-        clock.advance(AccessUnitReassembler.HOLD_UP_NS - 1L);
+        clock.advance(AccessUnitReassembler.HOLD_UP_WARMUP_NS - 1L);
         reassembler.onTick();
         assertEquals("the hold-up restarts with the last fragment",
                 1, reassembler.getInFlightCount());
@@ -196,7 +196,7 @@ public class AccessUnitReassemblerTest {
         int size = 4 * UdpMediaPacketCodec.MAX_FRAGMENT_BYTES;
         reassembler.onPacket(packet(21, 0, 0, size));
 
-        clock.advance(AccessUnitReassembler.HOLD_UP_NS);
+        clock.advance(AccessUnitReassembler.HOLD_UP_WARMUP_NS);
         reassembler.onTick();
 
         assertEquals(1, listener.dropped.size());
@@ -220,12 +220,12 @@ public class AccessUnitReassemblerTest {
     public void fragmentsAfterTimeout_doNotStartASecondCountdown() {
         int size = 4 * UdpMediaPacketCodec.MAX_FRAGMENT_BYTES;
         reassembler.onPacket(packet(22, 0, 0, size));
-        clock.advance(AccessUnitReassembler.HOLD_UP_NS);
+        clock.advance(AccessUnitReassembler.HOLD_UP_WARMUP_NS);
         reassembler.onTick();
         assertEquals(1, listener.dropped.size());
 
         reassembler.onPacket(packet(22, 1, 1, size));
-        clock.advance(AccessUnitReassembler.HOLD_UP_NS);
+        clock.advance(AccessUnitReassembler.HOLD_UP_WARMUP_NS);
         reassembler.onTick();
 
         assertEquals("no second timeout of the same unit", 1, listener.dropped.size());
@@ -265,6 +265,106 @@ public class AccessUnitReassemblerTest {
         assertEquals("oversized", listener.dropped.get(0).reason);
         assertEquals(1L, reassembler.getLateCount());
         assertEquals(0, reassembler.getInFlightCount());
+    }
+
+    /**
+     * Fragments that pause for 15 ms between bursts still complete their unit.
+     *
+     * <p>The device calibration measured a median of 12.6-14.3 ms for the largest fragment gap of a
+     * five second window, and 76-92% of the windows were above 10 ms: a fixed 10 ms hold-up sits
+     * inside the jitter of the link it judges. A unit paced in bursts of five with 15 ms between
+     * them is that shape, and it must still be delivered whole.</p>
+     */
+    @Test
+    public void gapsOfFifteenMilliseconds_stillCompleteTheUnit() {
+        int size = 77 * UdpMediaPacketCodec.MAX_FRAGMENT_BYTES;
+        for (int index = 0; index < UdpMediaPacketCodec.fragmentCount(size); index++) {
+            if (index % 5 == 0) {
+                clock.advance(15_000_000L);
+            }
+            reassembler.onPacket(packet(41, index + 1L, index, size));
+        }
+
+        assertEquals(1, listener.frames.size());
+        assertEquals(size, listener.frames.get(0).getPayloadLength());
+        assertEquals(0L, reassembler.getDroppedCount());
+    }
+
+    /**
+     * Before any interval has been measured the window covers a stall of 20 ms.
+     */
+    @Test
+    public void theWarmUpWindowCoversTheFragmentsOfTheFirstUnit() {
+        int size = 3 * UdpMediaPacketCodec.MAX_FRAGMENT_BYTES;
+        reassembler.onPacket(packet(42, 0, 0, size));
+        clock.advance(20_000_000L);
+        reassembler.onPacket(packet(42, 1, 1, size));
+        clock.advance(20_000_000L);
+        reassembler.onPacket(packet(42, 2, 2, size));
+
+        assertEquals(1, listener.frames.size());
+        assertEquals(0L, reassembler.getDroppedCount());
+    }
+
+    /**
+     * A stall in the tail raises the window instead of killing the unit that hit it.
+     *
+     * <p>The interval is the only evidence the receiver has about how long one of its fragments may
+     * be held back, and it has to count the very stall that would otherwise expire the unit: a
+     * window that can only learn from intervals it already tolerated can only ever shrink.</p>
+     */
+    @Test
+    public void aLongTailGap_raisesTheWindowWithinItsBounds() {
+        int size = 4 * UdpMediaPacketCodec.MAX_FRAGMENT_BYTES;
+        reassembler.onPacket(packet(43, 0, 0, size));
+        clock.advance(1_000_000L);
+        reassembler.onPacket(packet(43, 1, 1, size));
+        clock.advance(1_000_000L);
+        reassembler.onPacket(packet(43, 2, 2, size));
+
+        clock.advance(40_000_000L);
+        reassembler.onPacket(packet(43, 3, 3, size));
+
+        assertEquals("the stall that raises the window must not cost the unit",
+                1, listener.frames.size());
+        assertTrue("the window has to cover the stall it just measured: "
+                + reassembler.getHoldUpMs(), reassembler.getHoldUpMs() >= 40L);
+        assertTrue(reassembler.getHoldUpMs() <= 100L);
+    }
+
+    /**
+     * The window falls back to its minimum once the measured tail has left the sample ring.
+     */
+    @Test
+    public void smallGapsAfterTheTail_lowerTheWindowBackToTheMinimum() {
+        int tailSize = 4 * UdpMediaPacketCodec.MAX_FRAGMENT_BYTES;
+        reassembler.onPacket(packet(44, 0, 0, tailSize));
+        clock.advance(40_000_000L);
+        reassembler.onPacket(packet(44, 1, 1, tailSize));
+        assertTrue(reassembler.getHoldUpMs() >= 40L);
+
+        int size = 20 * UdpMediaPacketCodec.MAX_FRAGMENT_BYTES;
+        for (int index = 0; index <= AccessUnitReassembler.GAP_SAMPLES; index++) {
+            reassembler.onPacket(packet(45, index + 1L, index, size));
+            clock.advance(1_000_000L);
+        }
+
+        assertEquals(AccessUnitReassembler.HOLD_UP_MIN_MS, reassembler.getHoldUpMs());
+    }
+
+    /**
+     * The window stays bounded even when the link stalls for much longer than it may wait.
+     */
+    @Test
+    public void theWindowNeverExceedsTheConfiguredUpperBound() {
+        AccessUnitReassembler capped =
+                new AccessUnitReassembler(listener, clock, 40L * 1_000_000L);
+        int size = 2 * UdpMediaPacketCodec.MAX_FRAGMENT_BYTES;
+        capped.onPacket(packet(46, 0, 0, size));
+        clock.advance(200_000_000L);
+        capped.onPacket(packet(46, 1, 1, size));
+
+        assertEquals(40L, capped.getHoldUpMs());
     }
 
     @Test

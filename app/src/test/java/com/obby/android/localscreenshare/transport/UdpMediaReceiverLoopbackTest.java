@@ -184,7 +184,7 @@ public class UdpMediaReceiverLoopbackTest {
         // Two units lose their second fragment.
         mPeer.sendFragment(incomplete, 0, 0);
         mPeer.sendFragment(incomplete, 1, 0);
-        clock.advance(com.obby.android.localscreenshare.core.net.AccessUnitReassembler.HOLD_UP_NS);
+        clock.advance(com.obby.android.localscreenshare.core.net.AccessUnitReassembler.HOLD_UP_WARMUP_NS);
 
         // The next complete unit drives the expiry pass.
         mPeer.sendUnit(2, 10);
@@ -199,7 +199,7 @@ public class UdpMediaReceiverLoopbackTest {
         clock.advance(500_000_000L);
         mPeer.sendFragment(incomplete, 3, 0);
         mPeer.sendFragment(incomplete, 4, 0);
-        clock.advance(com.obby.android.localscreenshare.core.net.AccessUnitReassembler.HOLD_UP_NS);
+        clock.advance(com.obby.android.localscreenshare.core.net.AccessUnitReassembler.HOLD_UP_WARMUP_NS);
         mPeer.sendUnit(5, 10);
         Thread.sleep(200L);
         assertEquals(1L, recorder.metrics.count(PipelineMetrics.Counter.UDP_JOIN_POINT_REQUESTS));
@@ -208,7 +208,7 @@ public class UdpMediaReceiverLoopbackTest {
         clock.advance(com.obby.android.localscreenshare.core.net.DatagramLossTracker.COOLDOWN_NS);
         mPeer.sendFragment(incomplete, 6, 0);
         mPeer.sendFragment(incomplete, 7, 0);
-        clock.advance(com.obby.android.localscreenshare.core.net.AccessUnitReassembler.HOLD_UP_NS);
+        clock.advance(com.obby.android.localscreenshare.core.net.AccessUnitReassembler.HOLD_UP_WARMUP_NS);
         mPeer.sendUnit(8, 10);
         long deadline = System.currentTimeMillis() + TIMEOUT_MS;
         while (System.currentTimeMillis() < deadline
@@ -247,10 +247,10 @@ public class UdpMediaReceiverLoopbackTest {
         assertEquals(4_000_000L, recorder.metrics.stats(PipelineMetrics.Window.FRAGMENT_GAP)
                 .getP50());
 
-        // A gap wider than the hold-up is recorded as well, because the probe runs before the
-        // expiry pass: that is what makes the window a calibration input for the threshold instead
-        // of a replay of the healthy path. The unit itself is still abandoned - this batch only
-        // observes the behaviour of TB-MEDIA-008, it does not widen the window.
+        // A gap wider than the minimum hold-up is recorded as well, because the probe runs before the
+        // expiry pass: that is what makes the window a calibration input for the threshold instead of
+        // a replay of the healthy path. Since the window follows the intervals it measures, this
+        // fragment also raises it and the unit completes.
         MediaFrame second = MediaFrame.accessUnit(33_000L, MediaFrame.DTS_UNSET, 1, false, true,
                 true, null, payload(size));
         mPeer.sendFragment(second, 1, 0);
@@ -290,14 +290,14 @@ public class UdpMediaReceiverLoopbackTest {
         mPeer.sendFragment(incomplete, 0, 0);
         assertTrue(recorder.awaitDatagrams(1));
 
-        clock.advance(AccessUnitReassembler.HOLD_UP_NS);
+        clock.advance(AccessUnitReassembler.HOLD_UP_WARMUP_NS);
         mPeer.sendUnit(1, 10);
         assertTrue(recorder.awaitUnits(1));
 
         // A second advance covers the case where the receiver processed the incomplete fragment
         // after the first one: its pending unit is then created at the later time and expires on
         // this pass instead. Either way the unit is abandoned exactly once.
-        clock.advance(AccessUnitReassembler.HOLD_UP_NS);
+        clock.advance(AccessUnitReassembler.HOLD_UP_WARMUP_NS);
         mPeer.sendUnit(2, 10);
         assertTrue(recorder.awaitUnits(2));
 
@@ -361,13 +361,13 @@ public class UdpMediaReceiverLoopbackTest {
         mPeer.sendFragment(incomplete, 5, 0);
         assertTrue(recorder.awaitDatagrams(2));
 
-        clock.advance(AccessUnitReassembler.HOLD_UP_NS);
+        clock.advance(AccessUnitReassembler.HOLD_UP_WARMUP_NS);
         mPeer.sendUnit(0, 10);
         assertTrue(recorder.awaitCounter(PipelineMetrics.Counter.DATAGRAMS_LATE, 1L));
         assertEquals(1L, recorder.metrics.count(PipelineMetrics.Counter.ACCESS_UNITS_INCOMPLETE));
 
         mPeer.sendFragment(incomplete, 5, 1);
-        clock.advance(AccessUnitReassembler.HOLD_UP_NS);
+        clock.advance(AccessUnitReassembler.HOLD_UP_WARMUP_NS);
         mPeer.sendUnit(0, 10);
         assertTrue(recorder.awaitCounter(PipelineMetrics.Counter.DATAGRAMS_LATE, 3L));
 
@@ -405,6 +405,36 @@ public class UdpMediaReceiverLoopbackTest {
 
         assertEquals(1L, recorder.metrics.count(PipelineMetrics.Counter.ACCESS_UNITS_INCOMPLETE));
         assertEquals(0L, recorder.metrics.count(PipelineMetrics.Counter.ACCESS_UNITS_TIMED_OUT));
+    }
+
+    /**
+     * The published hold-up follows the window the reassembler actually applies.
+     *
+     * <p>{@code udp.hold} is what a capture reads the gap distribution against, so it must not stay
+     * at the value of construction time while the window adapts: the calibration run reported a
+     * hold-up of 10 ms in every line, which was true only because the window was a constant.</p>
+     */
+    @Test
+    public void theHoldUpGaugeFollowsTheMeasuredWindow() throws Exception {
+        Recorder recorder = new Recorder();
+        mPeer = new Peer();
+        start(recorder);
+        assertTrue(recorder.awaitReady());
+        mPeer.awaitBind();
+
+        int size = 2 * UdpMediaPacketCodec.MAX_FRAGMENT_BYTES;
+        MediaFrame unit = MediaFrame.accessUnit(0L, MediaFrame.DTS_UNSET, 1, false, true, true,
+                null, payload(size));
+        mPeer.sendFragment(unit, 0, 0);
+        assertTrue(recorder.awaitDatagrams(1));
+
+        clock.advance(40_000_000L);
+        mPeer.sendFragment(unit, 0, 1);
+        assertTrue(recorder.awaitUnits(1));
+
+        long published = recorder.metrics.getGauge(PipelineMetrics.Gauge.MEDIA_HOLD_UP_MS);
+        assertTrue("the gauge must state the window the readings were taken under: " + published,
+                published >= 40L);
     }
 
     @Test

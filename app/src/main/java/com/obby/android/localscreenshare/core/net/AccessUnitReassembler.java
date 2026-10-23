@@ -18,14 +18,30 @@ import java.util.Map;
  * delivered on arrival; a multi-fragment unit is delivered the moment its last fragment lands.</p>
  *
  * <p><b>Giving up.</b> An incomplete unit is dropped whole - never handed on half-built - in four
- * cases: it has been silent for {@value #HOLD_UP_MS} milliseconds, a newer unit was delivered and
- * made it useless, the buffer budget forced the oldest unit out, or the sender announced a unit this
- * receiver refuses to hold (an oversized one, or the same identifier with a different size). Silence
- * is measured from the <i>last</i> fragment, not from the first one: a sender paces its fragments, so
+ * cases: it has been silent for longer than the hold-up, a newer unit was delivered and made it
+ * useless, the buffer budget forced the oldest unit out, or the sender announced a unit this receiver
+ * refuses to hold (an oversized one, or the same identifier with a different size). Silence is
+ * measured from the <i>last</i> fragment, not from the first one: a sender paces its fragments, so
  * a unit that keeps arriving is making progress however long its assembly takes, and the hold-up
  * only decides when a stalled unit is hopeless. Every drop is reported with its reason so the caller
  * can count it and decide whether to ask for a key frame. State from a fragment of an already
  * delivered or abandoned unit is counted as late and ignored.</p>
+ *
+ * <p><b>The hold-up is measured, not guessed.</b> A constant threshold has no physical meaning: the
+ * device calibration of this bug measured fragment intervals of one unit with a median of 0.1 ms and
+ * a p95 of 3.0 ms, but the longest interval of a five second window had a median of 12.6 ms and 76%
+ * to 92% of the windows crossed 10 ms - and the control-plane round trip alone was 14.8 ms. A
+ * receiver cannot wait forever (memory is bounded, and a unit nobody completed delays nothing but
+ * still occupies a slot), so the wait follows what this link actually produced: {@link #GAP_FACTOR}
+ * times the longest of the last {@value #GAP_SAMPLES} intervals between two fragments of the same
+ * unit, clamped to [{@value #HOLD_UP_MIN_MS}, {@value #HOLD_UP_MAX_MS}] milliseconds. Before the ring
+ * holds a full window the wait is {@value #HOLD_UP_WARMUP_MS} milliseconds as a floor, so one quiet
+ * burst cannot shrink the window before the tail of the stream has been seen. Only fragments that
+ * still belong to a pending unit feed the estimator, and only intervals inside one unit count: the
+ * interval across two units contains the frame interval and says nothing about jitter. The numbers
+ * are the pending device calibration of TB-MEDIA-008; the shape - bounded, derived from measured
+ * intervals of the same unit, decaying after {@value #GAP_SAMPLES} samples - is what the fix rests
+ * on.</p>
  *
  * <p><b>Remembering the abandoned.</b> A dropped unit is gone for good - the fragments it lost never
  * arrive - so every later fragment of its identifier is late by definition. Remembering the
@@ -59,7 +75,7 @@ public final class AccessUnitReassembler {
     public static final long MAX_IN_FLIGHT_BYTES = 8L * 1024L * 1024L;
 
     /**
-     * How long an unfinished unit may stay silent before it is abandoned, in milliseconds.
+     * Smallest hold-up applied to an unfinished unit, in milliseconds.
      *
      * <p>Silence is measured from the last fragment that arrived, not from the first one. Anchoring
      * the deadline at the first fragment makes the boundary a limit on the whole assembly, which
@@ -69,12 +85,61 @@ public final class AccessUnitReassembler {
      * started - the viewer received nothing while the fragments kept arriving and almost no
      * sequence number was actually missing.</p>
      */
-    public static final long HOLD_UP_MS = 10L;
+    public static final long HOLD_UP_MIN_MS = 10L;
 
     /**
-     * Hold-up converted to the clock unit.
+     * Minimum hold-up converted to the clock unit.
      */
-    public static final long HOLD_UP_NS = HOLD_UP_MS * 1_000_000L;
+    public static final long HOLD_UP_MIN_NS = HOLD_UP_MIN_MS * 1_000_000L;
+
+    /**
+     * Hold-up applied while the estimator does not yet hold a full window of intervals, in
+     * milliseconds.
+     *
+     * <p>It is a floor rather than a constant part of the rule: until {@value #GAP_SAMPLES} intervals
+     * of one unit have been seen, one quiet burst would otherwise shrink the window straight to the
+     * minimum, and the first stall of the stream would cost a frame for no reason other than being
+     * early. A receiver that has measured nothing yet still has to be able to deliver.</p>
+     */
+    public static final long HOLD_UP_WARMUP_MS = 30L;
+
+    /**
+     * Warm-up hold-up converted to the clock unit.
+     */
+    public static final long HOLD_UP_WARMUP_NS = HOLD_UP_WARMUP_MS * 1_000_000L;
+
+    /**
+     * Largest hold-up applied to an unfinished unit, in milliseconds.
+     *
+     * <p>This is the bound of the fix, not its target: a stall longer than this is a capacity or
+     * pacing problem of the link, and widening the window further would only hide it while holding
+     * buffers and delaying the recovery of every later unit. It is also the ceiling the negotiation
+     * announces as {@code hold_ms}.</p>
+     */
+    public static final long HOLD_UP_MAX_MS = 100L;
+
+    /**
+     * Maximum hold-up converted to the clock unit.
+     */
+    public static final long HOLD_UP_MAX_NS = HOLD_UP_MAX_MS * 1_000_000L;
+
+    /**
+     * Number of fragment intervals the estimator keeps.
+     *
+     * <p>Sixteen is the device calibration's pending value: long enough that one outlier still shows
+     * up in the maximum, short enough that the window falls back to its minimum a fraction of a
+     * second after the link calms down.</p>
+     */
+    public static final int GAP_SAMPLES = 16;
+
+    /**
+     * Factor applied to the longest interval of the ring.
+     *
+     * <p>The factor, not the longest interval itself, is the wait: the interval that was measured is
+     * exactly the one the receiver just survived, and the next one of that size has to fit with
+     * margin. Pending the device calibration, like the ring size.</p>
+     */
+    public static final int GAP_FACTOR = 2;
 
     /**
      * Number of abandoned unit identifiers the reassembler remembers.
@@ -133,22 +198,63 @@ public final class AccessUnitReassembler {
 
     private int abandonedCount;
 
+    // Intervals between two fragments of the same unit, newest over the oldest.
+    private final long[] gapSamples = new long[GAP_SAMPLES];
+
+    private int gapCursor;
+
+    private int gapCount;
+
+    private final long minHoldUpNs;
+
+    private final long maxHoldUpNs;
+
+    // The hold-up currently applied; replaced whenever a new interval enters the ring.
+    private long holdUpNs;
+
+    private boolean hasLastFragment;
+
+    private int lastFragmentAuId;
+
+    private long lastFragmentArrivalNs;
+
     /**
-     * Creates a reassembler.
+     * Creates a reassembler with the calibrated upper bound.
      *
      * @param listener receiver of units and drops; required
      * @param clock    clock used for the hold-up; required
      * @throws IllegalArgumentException if an argument is null
      */
     public AccessUnitReassembler(Listener listener, NanoClock clock) {
+        this(listener, clock, HOLD_UP_MAX_NS);
+    }
+
+    /**
+     * Creates a reassembler with an explicit upper bound of the hold-up.
+     *
+     * <p>Package private: a test pins the bound instead of feeding intervals long enough to reach
+     * the production ceiling, and the receiver uses the calibrated one.</p>
+     *
+     * @param listener    receiver of units and drops; required
+     * @param clock       clock used for the hold-up; required
+     * @param maxHoldUpNs ceiling of the hold-up on the clock unit; at least {@link #HOLD_UP_MIN_NS}
+     * @throws IllegalArgumentException if an argument is null or the bound is below the minimum
+     */
+    AccessUnitReassembler(Listener listener, NanoClock clock, long maxHoldUpNs) {
         if (listener == null) {
             throw new IllegalArgumentException("listener must not be null");
         }
         if (clock == null) {
             throw new IllegalArgumentException("clock must not be null");
         }
+        if (maxHoldUpNs < HOLD_UP_MIN_NS) {
+            throw new IllegalArgumentException("maxHoldUpNs must not be below the minimum");
+        }
         this.listener = listener;
         this.clock = clock;
+        this.minHoldUpNs = HOLD_UP_MIN_NS;
+        this.maxHoldUpNs = maxHoldUpNs;
+        this.holdUpNs = Math.min(HOLD_UP_WARMUP_NS, maxHoldUpNs);
     }
 
     /**
@@ -165,11 +271,20 @@ public final class AccessUnitReassembler {
             throw new IllegalArgumentException("packet must not be null");
         }
         long nowNs = clock.nowNs();
+        int auId = packet.getAuId();
+        // Only a fragment that still belongs to a unit feeds the estimator: residue of a delivered
+        // or abandoned unit measures nothing about how long a fragment of a live unit may wait.
+        if (!packet.isParity() && !isAbandoned(auId)
+                && !(deliveredAny && !UdpMediaPacket.isNewer(auId, highestDeliveredAuId))) {
+            observeGap(auId, nowNs);
+        }
+        // The interval is recorded before the verdict, so the stall that would expire a unit also
+        // widens the window that judges it - an interval is only evidence once a fragment follows it.
         expire(nowNs);
         if (packet.isParity()) {
             return;
         }
-        if (isAbandoned(packet.getAuId())) {
+        if (isAbandoned(auId)) {
             // The unit already lost a fragment for good, so nothing that still arrives for it can
             // complete a frame. It is a late datagram, not a new unit: rebuilding it would allocate
             // the buffer again and count a second drop for one loss.
@@ -177,29 +292,29 @@ public final class AccessUnitReassembler {
             return;
         }
         if (packet.getAuSize() > UdpMediaPacketCodec.MAX_AU_BYTES) {
-            abandon(packet.getAuId());
+            abandon(auId);
             dropped++;
-            listener.onAccessUnitDropped(packet.getAuId(), "oversized");
+            listener.onAccessUnitDropped(auId, "oversized");
             return;
         }
-        if (deliveredAny && !UdpMediaPacket.isNewer(packet.getAuId(), highestDeliveredAuId)) {
+        if (deliveredAny && !UdpMediaPacket.isNewer(auId, highestDeliveredAuId)) {
             late++;
             return;
         }
-        Pending unit = pending.get(packet.getAuId());
+        Pending unit = pending.get(auId);
         if (unit == null) {
             evictForRoom(packet.getAuSize());
             unit = new Pending(packet, nowNs);
-            pending.put(packet.getAuId(), unit);
+            pending.put(auId, unit);
             pendingBytes += unit.bytes.length;
         } else if (unit.bytes.length != packet.getAuSize()) {
             // The same id with a different size is a protocol violation; the unit is unusable.
-            drop(packet.getAuId(), "size_mismatch");
+            drop(auId, "size_mismatch");
             return;
         }
         unit.touch(nowNs);
         if (unit.put(packet)) {
-            pending.remove(packet.getAuId());
+            pending.remove(auId);
             pendingBytes -= unit.bytes.length;
             deliver(unit);
         }
@@ -237,15 +352,52 @@ public final class AccessUnitReassembler {
     }
 
     /**
-     * Returns the silence after which an unfinished unit is abandoned, in milliseconds.
+     * Returns the silence after which an unfinished unit is currently abandoned, in milliseconds.
      *
      * <p>The receiver publishes it as the hold-up gauge, so a capture records the threshold its
-     * readings were taken under. In this version the value is the constant {@link #HOLD_UP_MS}; a
-     * later batch replaces the constant with a window calibrated from measured fragment gaps, and
-     * this accessor is what keeps the gauge honest across that change.</p>
+     * readings were taken under; it is the value of the moment, not the ceiling of the window.</p>
      */
     public long getHoldUpMs() {
-        return HOLD_UP_MS;
+        return holdUpNs / 1_000_000L;
+    }
+
+    /**
+     * Records the interval since the previous fragment of the same unit, and re-derives the window.
+     *
+     * <p>An interval across two units contains the frame interval and says nothing about how long a
+     * fragment of one unit may be held back, so only a fragment of the same unit contributes.</p>
+     *
+     * @param auId      unit the fragment belongs to
+     * @param arrivalNs arrival time on this reassembler's clock
+     */
+    private void observeGap(int auId, long arrivalNs) {
+        if (hasLastFragment && auId == lastFragmentAuId) {
+            gapSamples[gapCursor] = arrivalNs - lastFragmentArrivalNs;
+            gapCursor = (gapCursor + 1) % gapSamples.length;
+            if (gapCount < gapSamples.length) {
+                gapCount++;
+            }
+            updateHoldUp();
+        }
+        hasLastFragment = true;
+        lastFragmentAuId = auId;
+        lastFragmentArrivalNs = arrivalNs;
+    }
+
+    /**
+     * Re-derives the window from the ring of intervals.
+     */
+    private void updateHoldUp() {
+        long longest = 0L;
+        for (int index = 0; index < gapCount; index++) {
+            if (gapSamples[index] > longest) {
+                longest = gapSamples[index];
+            }
+        }
+        long estimate = Math.max(minHoldUpNs, Math.min(maxHoldUpNs, GAP_FACTOR * longest));
+        long floor = gapCount < gapSamples.length ? Math.min(HOLD_UP_WARMUP_NS, maxHoldUpNs)
+                : minHoldUpNs;
+        holdUpNs = Math.max(floor, estimate);
     }
 
     /**
@@ -304,7 +456,7 @@ public final class AccessUnitReassembler {
         List<Integer> expired = null;
         for (Map.Entry<Integer, Pending> entry : pending.entrySet()) {
             Pending unit = entry.getValue();
-            if (nowNs - unit.lastArrivalNs >= HOLD_UP_NS) {
+            if (nowNs - unit.lastArrivalNs >= holdUpNs) {
                 if (expired == null) {
                     expired = new ArrayList<>(2);
                 }

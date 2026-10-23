@@ -201,7 +201,9 @@ public final class MediaChannelNegotiator {
                     .keyC2s(keys.getKeyC2s())
                     .nonceSalt(keys.getNonceSalt())
                     .mtu(UdpMediaPacketCodec.MAX_DATAGRAM_BYTES)
-                    .holdMs((int) AccessUnitReassembler.HOLD_UP_MS);
+                    // An advisory ceiling, not a demand: the receiver owns its window and only
+                    // announces what it may reach, so a stale value here cannot pin it back.
+                    .holdMs((int) AccessUnitReassembler.HOLD_UP_MAX_MS);
         }
         try {
             offerTarget.sendOffer(builder.build());
