@@ -29,9 +29,10 @@ import java.net.SocketTimeoutException;
  * Client side of a datagram media channel: binds the socket, then reassembles access units.
  *
  * <p>{@link #start()} blocks for the life of the channel and must run on a thread of its own. It
- * sends the bind packet of the offer, waits for the first authenticated datagram - the channel is
- * ready only then, and a silent server is reported as {@code udp_bind_timeout} after
- * {@value UdpMediaConstants#BIND_TIMEOUT_MS} milliseconds - and then enters the receive loop.</p>
+ * sends the bind packet of the offer, reports the channel ready while the server is still working on
+ * the swap, and then waits up to {@value UdpMediaConstants#FIRST_FRAME_TIMEOUT_MS} milliseconds for
+ * the first authenticated datagram - a silent server is reported as {@code udp_bind_timeout}. The
+ * window only bounds the first datagram: once the channel carries data it has no timeout at all.</p>
  *
  * <p><b>Order of checks per datagram.</b> The sequence number is compared with the reorder window
  * before anything is decrypted, so a replay of something long past costs nothing; the datagram is
@@ -193,7 +194,9 @@ public final class UdpMediaReceiver implements MediaChannelLink {
         }
         datagramSocket.send(new DatagramPacket(datagram, datagram.length,
                 new InetSocketAddress(host, offer.getPort())));
-        datagramSocket.setSoTimeout((int) UdpMediaConstants.BIND_TIMEOUT_MS);
+        // READY is reported right after this write, but the first datagram needs a control-plane
+        // round trip, the server's swap and a join point; the window covers all three.
+        datagramSocket.setSoTimeout((int) UdpMediaConstants.FIRST_FRAME_TIMEOUT_MS);
     }
 
     private void receive(DatagramSocket datagramSocket) throws IOException {

@@ -109,6 +109,42 @@ public class UdpMediaReceiverLoopbackTest {
     }
 
     @Test
+    public void firstFrameMayArriveAfterTheOldBindWindow() throws Exception {
+        Recorder recorder = new Recorder();
+        mPeer = new Peer();
+        start(recorder);
+        assertTrue(recorder.awaitReady());
+        mPeer.awaitBind();
+
+        // The server only sends after it has received READY, swapped and asked for a join point;
+        // on a loaded device that took more than the old 300 ms window.
+        Thread.sleep(800L);
+
+        mPeer.sendUnit(0, 60);
+
+        assertTrue("the channel was abandoned before the first frame", recorder.awaitUnits(1));
+        assertNull(recorder.failure.get());
+    }
+
+    @Test
+    public void framesAfterTheFirstOne_areNotBoundedByTheWindow() throws Exception {
+        Recorder recorder = new Recorder();
+        mPeer = new Peer();
+        start(recorder);
+        assertTrue(recorder.awaitReady());
+        mPeer.awaitBind();
+
+        mPeer.sendUnit(0, 60);
+        assertTrue(recorder.awaitUnits(1));
+
+        Thread.sleep(2_100L);
+        mPeer.sendUnit(1, 60);
+
+        assertTrue("a quiet stretch must not end the channel", recorder.awaitUnits(2));
+        assertNull(recorder.failure.get());
+    }
+
+    @Test
     public void lostUnits_catchUpAndAskForAJoinPoint() throws Exception {
         Recorder recorder = new Recorder();
         mPeer = new Peer();
