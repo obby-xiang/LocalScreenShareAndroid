@@ -38,13 +38,15 @@ public final class FrameRatePolicy {
      * <p>Below {@link #MIN_SDK} and for a non-positive frame rate nothing is applied, so the
      * caller's applier is not invoked at all. From {@link #SEAMLESS_SDK} on the request is marked
      * seamless, which asks the platform to change the display mode only when the change does not
-     * cause a visible glitch; API 30 has no strategy argument and gets the plain variant.</p>
+     * cause a visible glitch; API 30 has no strategy argument and gets the plain variant. The
+     * method is package-private because {@link FrameRateApplier} is: only the rendering package
+     * calls it, and a public method must not expose a package-private parameter type.</p>
      *
      * @param frameRate content frame rate in frames per second; non-positive means unknown
      * @param sdkInt    platform API level, passed in so the branch is testable on the JVM
      * @param applier   performs the actual platform call; exceptions propagate unchanged
      */
-    public static void applyFrameRate(int frameRate, int sdkInt, FrameRateApplier applier) {
+    static void applyFrameRate(int frameRate, int sdkInt, FrameRateApplier applier) {
         if (frameRate <= 0 || sdkInt < MIN_SDK) {
             return;
         }

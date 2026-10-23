@@ -31,7 +31,7 @@
 
 以下每条都在每棒评审时逐项打勾；违反任一条即阻断。
 
-- **G1 协议只加字段。** `ClientMessage.feedback = 6`、`Descriptor.frame_rate = 17`；`PROTOCOL_VERSION` 保持 1。旧服务端收到 `feedback` 时 `getPayloadCase()` 为 `PAYLOAD_NOT_SET`，既有 `switch` 的 `default` 无动作；旧客户端把缺失的 `frame_rate` 读成 0，等于不提示。三档媒体面共用同一 mapper，**只改 mapper 一处**，禁止另开 UDP 描述符通道。
+- **G1 协议只加字段。** `ClientMessage.feedback = 6`、`Descriptor.frame_rate = 17`；`PROTOCOL_VERSION` 保持 1。旧服务端收到 `feedback` 时 `getPayloadCase()` 为 `PAYLOAD_NOT_SET`，既有 `switch` 的 `default` 无动作；旧服务端不填 `frame_rate` 时新客户端读到 0，等于不提示；新服务端填的值对旧客户端是 proto3 未知字段，被忽略。三档媒体面共用同一 mapper，**只改 mapper 一处**，禁止另开 UDP 描述符通道。
 - **G2 编解码口径唯一。** 服务端对 H.264 与 JPEG 都填 `frame_rate`；客户端只按 `isSurfaceOutputRequired()` 决定是否消费。不得出现“JPEG 不填”的第二套说法。
 - **G3 热路径零分配、零字符串拼接、不新增锁。** 允许新增 `volatile`；不允许新增锁对象。逐路径约束见设计文档 §6.7。
 - **G4 事件驱动优先。** 客户端反馈上报、热余量采样都不得是常驻高频定时器：空闲时必须零定时器。
@@ -618,15 +618,15 @@ interface FrameRateApplier {
  * Applies the platform hint for one API level. Nothing is applied below API 30 or for a
  * non-positive frame rate; API 30 uses the two-argument variant, API 31+ the seamless variant.
  */
-public static void applyFrameRate(int frameRate, int sdkInt, FrameRateApplier applier);
+static void applyFrameRate(int frameRate, int sdkInt, FrameRateApplier applier);
 ```
 
 **Semantics（写死）:**
 
-`FrameRateApplier` 与 `applyFrameRate` 放在同一个文件 `render/FrameRatePolicy.java` 内，包私有，便于 JVM 测试直接构造；不新增第二个顶层类型文件。
+`FrameRateApplier` 与 `applyFrameRate` 放在同一个文件 `render/FrameRatePolicy.java` 内，包私有，便于 JVM 测试直接构造；不新增第二个顶层类型文件。包私有也避免公共方法暴露包私有参数类型。
 
 1. `SurfaceRenderTarget`：`frameRate` 与 `surface` 都改 `volatile`；`setFrameRate(fps <= 0)` 记 0、**不调平台**、`appliedFrameRate = 0`；正值在 surface 非空且有效时经策略调用平台，`RuntimeException` 吞掉。
-2. `getSurface()` 创建/刷新 surface 后重放一次（覆盖“设置时还没有 surface”）。
+2. `getSurface()` 创建/刷新 surface 后重放一次（覆盖“设置时还没有 surface”）；新建 surface 后先把 `appliedFrameRate` 清 0，再调用 `applyFrameRate()`，确保同值早退不会漏到新 surface。
 3. `SwitchableRenderTarget`：与当前值相同则直接返回（幂等）；`setDelegate` 只在 `frameRate > 0` 时重放，0 不重放旧值。
 4. `ClientMediaSession.applyDescriptor`：`setContentSize` 之后、创建解码器之前，**仅当** `isSurfaceOutputRequired()` 时下发。
 5. 同 epoch + 同 hash 分支：帧率不同 → 更新描述符、下发、返回 false；帧率相同 → 维持原行为。**这是防御性代码**，当前服务端每次参数变化都推进 epoch，端到端不可复现，不得为此造设备用例。
@@ -723,7 +723,7 @@ git add app/src/main/proto/screen_stream.proto \
 git commit -m "feat(render): 下发内容帧率提示到呈现面"
 ```
 
-**回退**：两处独立开关——客户端不下发、服务端不填；字段与映射保留无害（旧端读 0）。不做 `Display.Mode` 切换，不影响屏幕刷新率本身。
+**回退**：两处独立开关——客户端不下发、服务端不填；字段与映射保留无害（旧服务端不填时新客户端读 0，旧客户端忽略未知字段）。不做 `Display.Mode` 切换，不影响屏幕刷新率本身。
 
 ---
 

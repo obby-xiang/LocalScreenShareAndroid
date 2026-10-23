@@ -50,7 +50,7 @@
 | [DV-011](../../decision-board.md) 帧率是提示不是严格上限 | B4 只下发内容帧率**提示**，不构成严格限帧；也不改已有的编码前限帧路径 |
 | [DV-012 / DB-MULTI-006](../../decision-board.md#db-multi-006) 不做多档流 | 背压只在**单客户端**自动动作；多客户端只观测，不构成重开多档流的理由 |
 | [DV-027](../../decision-board.md) HOLD 期滞后无界增长，待产品裁决 | 本设计**不改变** HOLD 语义，只防止 B1 把丢片路径误送进 HOLD；风险与设备判据见 §9 |
-| [DB-CODEC-011](../../decision-board.md) 描述符与运行参数分离 | `frame_rate` 是显示提示，**不进** `configHash`，因此不推进 `configEpoch` |
+| [DB-CODEC-011](../../decision-board.md) 描述符与运行参数分离 | `frame_rate` 是显示提示，**不进** `configHash`，表示解码配置身份不变；字段本身不推进 `configEpoch`，但当前 H.264 帧率设置变化会经编码器重建推进 epoch、让客户端重配一次 |
 
 ### 1.4 五项之间的耦合
 
@@ -196,7 +196,7 @@ HOLD 期边界是**有意行为**，不是漏记账：`CatchUpPolicy` 在 30 s H
 | 项 | 结论 | 证据级别 |
 | --- | --- | --- |
 | 承载 | 描述符新增 `int32 frame_rate = 17`，`0` = 未知或清除 | 建议 |
-| 冲突面 | **不进 `configHash`**，因此不推进 `configEpoch`、不重建解码器 | 建议（主裁决） |
+| 冲突面 | **不进 `configHash`**，表示解码配置身份不变；字段本身不推进 `configEpoch`。但当前 H.264 帧率设置变化仍经编码器重建推进 `configEpoch`，客户端重配一次；不得写成“永不推进 epoch / 永不重建” | 建议（主裁决） |
 | 下发 | 服务端 H.264 与 JPEG 都填；客户端只在需要 surface 输出时消费 | 建议 |
 | 平台门控 | API < 30 不调用；API 30 用两参版本；API 31+ 用 seamless 三参版本；异常吞掉 | 建议 |
 | `0` 语义 | 清除：不调用平台、**停止重放旧值**；重放路径只在值大于 0 时重放 | 建议（主裁决） |
@@ -304,7 +304,7 @@ message Descriptor {
 }
 ```
 
-兼容性论证：proto3 的未知 oneof 字段进入 `unknownFields`，`getPayloadCase()` 返回 `PAYLOAD_NOT_SET`；旧服务端的消息分发对 `PAYLOAD_NOT_SET` 无动作，因此旧服务端收到 `feedback` 既不断流也不报错。旧客户端收到带 `frame_rate` 的描述符时读到 0，等于“未提示”。
+兼容性论证：proto3 的未知 oneof 字段进入 `unknownFields`，`getPayloadCase()` 返回 `PAYLOAD_NOT_SET`；旧服务端的消息分发对 `PAYLOAD_NOT_SET` 无动作，因此旧服务端收到 `feedback` 既不断流也不报错。描述符的 `frame_rate` 按两个方向看：旧服务端不填该字段时，新客户端读到 0，等于“未提示”；新服务端填了该字段时，它对旧客户端是 proto3 未知字段，被忽略，不会断流。
 
 ### 6.3 追赶采样状态机
 

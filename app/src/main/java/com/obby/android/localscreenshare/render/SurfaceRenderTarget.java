@@ -32,8 +32,10 @@ import com.obby.android.localscreenshare.core.render.RenderTarget;
  * display hint. It is applied only while a surface exists and the platform has the API for it
  * ({@link FrameRatePolicy} decides the variant); a hint that arrives before the surface is
  * remembered and applied when {@link #getSurface()} creates it. The same value is never sent
- * twice, and zero clears the local hint without touching the platform and without being replayed
- * later. A platform or vendor rejection is swallowed: the hint is best effort and must not disturb
+ * twice to one surface, but a newly created surface always starts with no applied value and
+ * receives the hint once more, so the "equal value" early return can never suppress the replay.
+ * Zero clears the local hint without touching the platform and without being replayed later. A
+ * platform or vendor rejection is swallowed: the hint is best effort and must not disturb
  * playback.</p>
  */
 public final class SurfaceRenderTarget implements RenderTarget {
@@ -41,6 +43,8 @@ public final class SurfaceRenderTarget implements RenderTarget {
     private final TextureView textureView;
 
     private final Runnable onSurfaceAvailable;
+
+    private final SurfaceFactory surfaceFactory;
 
     private SurfaceTexture lastTexture;
 
@@ -71,11 +75,31 @@ public final class SurfaceRenderTarget implements RenderTarget {
      * @throws IllegalArgumentException if {@code textureView} is null
      */
     public SurfaceRenderTarget(TextureView textureView, Runnable onSurfaceAvailable) {
+        this(textureView, onSurfaceAvailable, Surface::new);
+    }
+
+    /**
+     * Creates a target over {@code textureView} with an injected surface factory.
+     *
+     * <p>Package-private seam for JVM tests: a unit test cannot construct a platform
+     * {@link Surface}.</p>
+     *
+     * @param onSurfaceAvailable optional callback, run on the main thread each time the view's
+     *                           surface texture becomes available again
+     * @param surfaceFactory     creates the platform surface for a texture; required
+     * @throws IllegalArgumentException if {@code textureView} or {@code surfaceFactory} is null
+     */
+    SurfaceRenderTarget(TextureView textureView, Runnable onSurfaceAvailable,
+                        SurfaceFactory surfaceFactory) {
         if (textureView == null) {
             throw new IllegalArgumentException("textureView must not be null");
         }
+        if (surfaceFactory == null) {
+            throw new IllegalArgumentException("surfaceFactory must not be null");
+        }
         this.textureView = textureView;
         this.onSurfaceAvailable = onSurfaceAvailable;
+        this.surfaceFactory = surfaceFactory;
         textureView.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
             @Override
             public void onSurfaceTextureAvailable(SurfaceTexture surface, int width, int height) {
@@ -116,10 +140,14 @@ public final class SurfaceRenderTarget implements RenderTarget {
         applyBufferSize(texture);
         boolean created = false;
         if (surface == null) {
-            surface = new Surface(texture);
+            surface = surfaceFactory.create(texture);
             created = true;
         }
         if (created) {
+            // A new surface owns no assertion yet. Clear the value recorded on the previous one
+            // first, otherwise an equal hint would take the early return and the new surface
+            // would never receive it.
+            appliedFrameRate = 0;
             // Covers a hint that arrived before the surface existed, and a re-attached texture.
             applyFrameRate();
         }
@@ -202,7 +230,8 @@ public final class SurfaceRenderTarget implements RenderTarget {
      * <p>The API split lives in {@link FrameRatePolicy}; the explicit level checks here are what
      * let the platform call sites be verified statically, and they repeat a decision the policy
      * makes anyway. The applied value is recorded before the call so a failing surface is not
-     * retried on every frame; a new surface resets it through {@link #releaseSurface()}.</p>
+     * retried on every frame; a new surface resets it through {@link #releaseSurface()} and again
+     * when {@link #getSurface()} creates it.</p>
      */
     private void applyFrameRate() {
         final Surface current = surface;
@@ -235,5 +264,22 @@ public final class SurfaceRenderTarget implements RenderTarget {
             surface = null;
         }
         appliedFrameRate = 0;
+    }
+
+    /**
+     * Creates the platform surface that receives decoded frames.
+     *
+     * <p>Package-private so a JVM test can supply a marker surface: the platform constructor is
+     * native and cannot run off-device.</p>
+     */
+    interface SurfaceFactory {
+
+        /**
+         * Creates a surface for {@code texture}.
+         *
+         * @param texture texture the surface renders into
+         * @return a new surface; must not be null
+         */
+        Surface create(SurfaceTexture texture);
     }
 }

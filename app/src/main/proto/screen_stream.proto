@@ -249,8 +249,12 @@ message Descriptor {
   string config_hash = 15;
   bool secure = 16;
   // Content frame-rate hint for the display side; 0 means unknown or cleared. It is deliberately
-  // outside config_hash, so changing it never forces a decoder reconfiguration. An old client
-  // reads 0 and simply keeps its current hint.
+  // outside config_hash, so it describes the decode configuration's identity and a different value
+  // alone does not force a decoder reconfiguration. Compatibility both ways: an old server leaves
+  // the field unset and a new client reads 0 (no hint); a new server's value is an unknown proto3
+  // field that an old client ignores. Changing the H.264 frame-rate setting still rebuilds the
+  // encoder and advances config_epoch, so the client reconfigures once; this field never does that
+  // by itself.
   int32 frame_rate = 17;
 }
 
