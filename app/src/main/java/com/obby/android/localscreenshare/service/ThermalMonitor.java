@@ -120,4 +120,28 @@ final class ThermalMonitor {
             return ThermalThrottlePolicy.STATUS_NONE;
         }
     }
+
+    /**
+     * Reads the thermal pressure the platform predicts for the given forecast window.
+     *
+     * <p>The platform method exists from API 30, so its annotation is on this method rather than on
+     * the class: the owner checks {@code Build.VERSION.SDK_INT} at the call site, which is the
+     * explicit comparison lint can see. A missing power service or a platform failure yields NaN,
+     * which the headroom policy ignores, so a device without the capability keeps its
+     * status-driven tier instead of failing the share.</p>
+     *
+     * @param forecastSeconds how far ahead the platform should look; must be positive
+     * @return the thermal pressure ratio, or NaN when unavailable
+     */
+    @RequiresApi(Build.VERSION_CODES.R)
+    float getThermalHeadroom(final int forecastSeconds) {
+        if (mPowerManager == null) {
+            return Float.NaN;
+        }
+        try {
+            return mPowerManager.getThermalHeadroom(forecastSeconds);
+        } catch (RuntimeException e) {
+            return Float.NaN;
+        }
+    }
 }

@@ -6,6 +6,11 @@ package com.obby.android.localscreenshare.core.metrics;
  * <p>Every key names one stage of the server path: capture to encoder output, encoder output
  * cadence and size, join-point handling, fan-out and the per-client send queue. Latency values are
  * printed in milliseconds with one decimal, sizes and counts as integers.</p>
+ *
+ * <p><b>Domain capacity.</b> The class is budgeted for the twenty server-side keys of the
+ * performance batch: the thermal forecaster adds a pair and the backpressure coordinator the last
+ * three, which fills that budget. A further server-side key must first split this class by domain
+ * instead of growing it past twenty.</p>
  */
 public final class ServerMetricNames {
 
@@ -83,6 +88,23 @@ public final class ServerMetricNames {
      * Send-session resynchronization episodes.
      */
     public static final String TX_RESYNC = "tx.resync";
+
+    /**
+     * Thermal pressure in permille, predicted by the platform for the next ten seconds.
+     *
+     * <p>One thousand means the platform starts throttling and larger values mean the device is
+     * already throttled, so the value is read for its trend and is never clamped. Zero means never
+     * sampled, or a sample that was NaN or out of range; it is not printed.</p>
+     */
+    public static final String THERMAL_HEADROOM = "thermalHeadroom";
+
+    /**
+     * Thermal tier in force: one for none, two for the reduced tier, three for the minimal tier.
+     *
+     * <p>Zero means the headroom has never been sampled and is not printed; the key is therefore
+     * absent from a line that did not sample rather than present with a "not throttled" value.</p>
+     */
+    public static final String THERMAL_TIER = "thermalTier";
 
     private ServerMetricNames() {
     }

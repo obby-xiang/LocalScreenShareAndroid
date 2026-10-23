@@ -89,6 +89,7 @@
 | DB-OBS-003 | ✔️ 已裁决·当前实现符合 | 可观测性 | 速率只能由已关闭区间导出 | 2026-10-21 | — | [任务看板](task-board.md#tb-obs-001) |
 | DB-POWER-001 | 🔶 已裁决·代码已实施 | 功耗与热 | 热降档是临时覆盖，不写回用户设置 | 2026-10-21 | — | [任务看板](task-board.md#tb-power-001) |
 | DB-POWER-002 | 🔶 已裁决·代码已实施 | 功耗与热 | 无观看者暂停采集，首个配置前不暂停 | 2026-10-21 | — | [任务看板](task-board.md#tb-power-001) |
+| DB-POWER-003 | 🔶 已裁决·代码已实施 | 功耗与热 | 热余量预测只收紧档位，按会话采样 | 2026-10-23 | — | [任务看板](task-board.md#tb-power-002) |
 | DB-SEC-002 | ✔️ 已裁决·当前实现符合 | 平台安全 | 「画面私密」只保护显示，公告 secure/auth 恒表示传输能力 | 2026-10-21 | — | [任务看板](task-board.md#tb-sec-003) |
 | DB-SEC-003 | 🔶 已裁决·代码已实施 | 平台安全 | 身份密钥只在密钥本身永久不可用时才替换 | 2026-10-21 | — | [任务看板](task-board.md#tb-sec-002) |
 | DB-RENDER-001 | ✔️ 已裁决·当前实现符合 | 渲染显示 | 客户端保持内容宽高比 | 2026-10-20 | 2026-10-20 | [任务看板](task-board.md#tb-client-003) |
@@ -199,6 +200,18 @@
 - **理由**：第 8 问的四条发烫根因里，「没有客户端时也持续编码」是唯一不需要换编码格式就能消除的一条；暂停而不是关闭编码器，是因为重建编码器会推进 `configEpoch`、让客户端重新同步，而暂停/恢复只是一次面绑定。
 - **重新评估条件 / 验证证据**：需要设备实测：0 观看者时 `enc.auRate`/`enc.bitrate` 停更、`enc.cap2out` 无样本、CPU/温度曲线下降；首个观看者从加入到首帧的时延（预期 ≤1 s 轮询 + 一次 IDR）。若某机型 `setSurface(null)` 后重新绑定黑屏，则改为「暂停即关闭并重建运行时」并重新评估首帧时延。代码证据：`core/stream/ViewerCapturePolicy`（纯 JVM 用例）、`ScreenShareService.syncVideoCapture`/`pauseCapture`/`resumeCapture`；实施证据见任务看板 [TB-POWER-001](task-board.md#tb-power-001)。边界：**未做设备验证；暂停期间编码器仍占用硬件实例**。
 - **关联文档**：本地录屏与投屏问答第 8 问（发烫与功耗的根因与手段清单）、[任务看板](task-board.md#tb-power-001)、[DV-025](#待决策--待验证)、[DB-CAP-002](#db-cap-002)
+
+</details>
+
+<a id="db-power-003"></a>
+<details><summary>DB-POWER-003 热余量预测只收紧档位，按会话采样（🔶 已裁决·代码已实施 · 2026-10-23）</summary>
+
+- **状态 / 主题 / 裁决日期 / 验证日期**：🔶 已裁决·代码已实施 / 功耗与热 / 2026-10-23 / —
+- **备注**：代码与 JVM 用例已落地（实施证据见任务看板 [TB-POWER-002](task-board.md#tb-power-002)）；设备侧的阈值触发点、降档时刻与功耗口径未验证
+- **当前裁决**：在既有热状态阶梯之上增加 `PowerManager.getThermalHeadroom(10)`（API 30+）预测，但只允许**收紧**档位。平台返回值是热压力比值——`1.0` 表示平台开始限流、`>1.0` 表示已经限流、越大越热——所以指标 `thermalHeadroom` 按千分比记录热压力：`Math.round(headroom * 1000f)`，值域 0–2000，`>1000` **不钳制**；有效样本域是 `[0, 2]`，NaN 与越界值忽略、档位不变。阈值：进入 `REDUCED` 700‰、进入 `MINIMAL` 850‰、退出 `MINIMAL` 780‰、退出 `REDUCED` 600‰，**全部待设备校准**。预测档与状态档经 `ThermalThrottlePolicy.stricter` 合并，结果恒不弱于任一入参：状态已要求的档位不会被预测回落放宽。采样至多 1 次/秒；`ThermalMonitor` 仍只在 `onCreate`/`onDestroy` 注册与注销，1 Hz 轮询随**会话启动成功** arm、随每次 teardown 与 `onDestroy` disarm。开关关闭时立即 `removeCallbacks` + 策略 `reset` + 档位回 `NONE`，不等下一次 tick；开关打开时立即采样一次，**只有会话运行中才重新 arm**，没有会话就只留这一次采样、不产生定时器。
+- **理由**：`getCurrentThermalStatus` 是滞后指标，平台进入 `SEVERE` 时已经撞墙；预测值把降档提前一个预测窗，代价只是提前把帧率/采集比例降到用户设置允许的更低值。把 arm 绑定到会话而不是服务生命周期，是因为「服务存在」与「正在共享」不是同一件事：绑在 `onCreate` 会让第一个会话结束后轮询永久停摆，绑在服务而不管会话又会让空闲期出现 1 Hz 采样，两者都违反功耗口径。合并只取严格档，是因为状态是事实、预测是趋势；让预测去放宽事实等于用噪声覆盖确定信号。千分比统一四舍五入而不是截断，是因为 `0.70f` 的实际值是 `0.69999998…`，截断会得到 699，阈值用例会自己假失败。
+- **重新评估条件 / 验证证据**：需要设备项 ②（设计文档 §8）：注入温升后 `thermalHeadroom` 单调上升（越大越热）、降档早于平台高热状态、回落不抖动、开关关闭后无 1 Hz 采样痕迹、未开始共享时切换开关只允许一次立即采样。阈值按 [性能候选设计 §10](superpowers/specs/2026-10-23-performance-candidates-design.md) 回填。若预测噪声导致误降档或长期 NaN，回退为「只按平台状态取档」：删除 `startStreamPipeline` 与开关打开分支的 arm 调用即可，策略类与两个指标可保留（没有 arm 就不会采样）。代码证据：`core/stream/ThermalHeadroomPolicy`（纯 JVM 用例）、`core/stream/ThermalThrottlePolicy.stricter`、`service/ThermalMonitor.getThermalHeadroom`（方法级 `@RequiresApi(30)`）、`ScreenShareService` 的 arm/disarm/sample 生命周期、`thermalHeadroom` / `thermalTier` 两个服务端键。边界：**未做设备验证，阈值未校准；协议与偏好格式未变**。
+- **关联文档**：[性能候选设计](superpowers/specs/2026-10-23-performance-candidates-design.md) §4.2/§6.4/§8/§10、[性能优化调研](performance-research.md) §6 触发条件 3、[任务看板](task-board.md#tb-power-002)、[DB-POWER-001](#db-power-001)、[DV-024](#待决策--待验证)
 
 </details>
 

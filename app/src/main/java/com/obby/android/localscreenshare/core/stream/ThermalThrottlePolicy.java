@@ -111,6 +111,22 @@ public final class ThermalThrottlePolicy {
     }
 
     /**
+     * Returns the stricter of two tiers.
+     *
+     * <p>The thermal status and the headroom forecast are independent signals; merging them may
+     * only tighten the ladder, never relax it. A lower forecast therefore cannot undo a status
+     * that already demands throttling, and the result is always at least as strict as either
+     * input. The tier order is the ladder order, so the comparison is the enum's ordinal.</p>
+     *
+     * @param a one tier; required
+     * @param b another tier; required
+     * @return {@code a} or {@code b}, whichever is stricter
+     */
+    public static Tier stricter(final Tier a, final Tier b) {
+        return a.ordinal() >= b.ordinal() ? a : b;
+    }
+
+    /**
      * Applies the tier's frame-rate cap to a requested frame rate.
      *
      * @param tier   tier to apply; required

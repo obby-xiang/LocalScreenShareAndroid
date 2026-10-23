@@ -101,6 +101,7 @@ import com.obby.android.localscreenshare.core.stream.SessionMetricsSnapshot;
 import com.obby.android.localscreenshare.core.stream.StreamHub;
 import com.obby.android.localscreenshare.core.stream.StreamQueueLimits;
 import com.obby.android.localscreenshare.core.stream.StreamRuntime;
+import com.obby.android.localscreenshare.core.stream.ThermalHeadroomPolicy;
 import com.obby.android.localscreenshare.core.stream.ThermalThrottlePolicy;
 import com.obby.android.localscreenshare.core.stream.ViewerCapturePolicy;
 import com.obby.android.localscreenshare.core.util.NanoClock;
@@ -497,6 +498,15 @@ public class ScreenShareService extends Service {
     // Thermal status source; non-null only between onCreate and onDestroy, and only on API 29+.
     @Nullable
     private ThermalMonitor mThermalMonitor;
+
+    // Thermal headroom forecaster. Pure state, written on the main thread only, and reset whenever
+    // the headroom poll is disarmed so a new session starts from the status-driven tier.
+    @NonNull
+    private final ThermalHeadroomPolicy mThermalHeadroomPolicy = new ThermalHeadroomPolicy();
+
+    // One tick of the session-level headroom poll; a field so arming allocates nothing.
+    @NonNull
+    private final Runnable mThermalHeadroomPollRunnable = this::onThermalHeadroomPoll;
 
     // Thermal tier currently applied to the capture parameters. NONE means the user's stored values
     // apply; a hotter tier lowers what is applied without touching the preferences.
@@ -1359,6 +1369,9 @@ public class ScreenShareService extends Service {
     private void cancelScheduledWork() {
         mMainHandler.removeCallbacks(mMetricsLogRunnable);
         mMainHandler.removeCallbacks(mEncoderRebuildRunnable);
+        // The headroom poll belongs to the session, so every teardown disarms it. The policy is
+        // reset with it: a forecast taken during one session must not throttle the next one.
+        disarmThermalHeadroomPolling();
         mMetrics = null;
         mRateSampler = null;
         mMetricsLogCount = 0;
@@ -2005,6 +2018,10 @@ public class ScreenShareService extends Service {
         if (mMetrics.isEnabled()) {
             mMainHandler.postDelayed(mMetricsLogRunnable, UPDATE_METRICS_INTERVAL_MS);
         }
+
+        // The headroom poll is armed per session, never in onCreate: the monitor lives as long as
+        // the service, while the one-hertz sampling only has a reason to run while a pipeline is up.
+        armThermalHeadroomPolling();
     }
 
     /**
@@ -2431,6 +2448,10 @@ public class ScreenShareService extends Service {
      * configuration is created in {@link #onStartCommand} from the effective values, which runs
      * before the listener's main-thread post, so a device that was hot before the share started
      * would otherwise keep the unthrottled parameters until its next status transition.</p>
+     *
+     * <p>Headroom sampling is deliberately not started here. It is armed per session after the
+     * pipeline starts and disarmed by every teardown, so the one-hertz poll exists exactly while a
+     * share runs.</p>
      */
     private void startThermalMonitor() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
@@ -2453,6 +2474,9 @@ public class ScreenShareService extends Service {
      * where the monitor is created in the first place.</p>
      */
     private void stopThermalMonitor() {
+        // The poll is armed only while a session runs, but onDestroy can follow a teardown that
+        // already disarmed it; the call is idempotent and also clears the forecast.
+        disarmThermalHeadroomPolling();
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             return;
         }
@@ -2473,22 +2497,36 @@ public class ScreenShareService extends Service {
     /**
      * Recomputes the tier for a reported status and applies it when it changed.
      *
-     * <p>Only a tier change is acted on: {@code LIGHT} to {@code MODERATE} is still the band in
-     * which the user's settings apply, and an unchanged tier rebuilds nothing.</p>
+     * <p>The status is the current signal; the headroom policy holds the forecast. Both are merged
+     * through {@link ThermalThrottlePolicy#stricter}, so a status that already demands a tier is
+     * never relaxed by a lower forecast. Only a tier change is acted on: {@code LIGHT} to
+     * {@code MODERATE} is still the band in which the user's settings apply, and an unchanged tier
+     * rebuilds nothing.</p>
      */
     private void onThermalStatusChanged(final int status) {
         mThermalStatus = status;
-        final ThermalThrottlePolicy.Tier next = Preferences.get().isThermalThrottleEnabled()
-            ? ThermalThrottlePolicy.tierFor(status) : ThermalThrottlePolicy.Tier.NONE;
+        if (!Preferences.get().isThermalThrottleEnabled()) {
+            applyThermalTier(ThermalThrottlePolicy.Tier.NONE, "disabled");
+            return;
+        }
+        final ThermalThrottlePolicy.Tier next = ThermalThrottlePolicy.stricter(
+            ThermalThrottlePolicy.tierFor(status), mThermalHeadroomPolicy.getTier());
         applyThermalTier(next, next == ThermalThrottlePolicy.Tier.NONE ? "recover" : "throttle");
     }
 
     /**
-     * Applies the switch: turning it off restores the user's settings at once, turning it on
-     * applies the status the device reports right now.
+     * Applies the switch: turning it off restores the user's settings at once, turning it on takes
+     * one immediate sample and resumes polling only while a session is running.
+     *
+     * <p>Turning the switch off must not wait for the next tick: the poll is removed, the forecast
+     * is forgotten and the gauges are cleared before the tier is reset, so no reading can arrive
+     * after the user asked the feature to stop. Turning it on always takes one sample; the
+     * one-hertz timer is armed only when {@code mStreamRuntime} is non-null, because a bound
+     * service with no share running must not own a timer.</p>
      */
     private void onThermalThrottleSettingChanged() {
         if (!Preferences.get().isThermalThrottleEnabled()) {
+            disarmThermalHeadroomPolling();
             applyThermalTier(ThermalThrottlePolicy.Tier.NONE, "disabled");
             return;
         }
@@ -2500,6 +2538,98 @@ public class ScreenShareService extends Service {
         if (monitor != null) {
             onThermalStatusChanged(monitor.getCurrentStatus());
         }
+        sampleThermalHeadroomOnce();
+        armThermalHeadroomPolling();
+    }
+
+    /**
+     * Arms the session-level headroom poll; idempotent.
+     *
+     * <p>The conditions are checked together: the platform has to expose the forecast, the switch
+     * has to stay on, the monitor has to exist and a session has to be running. The session
+     * condition is what keeps an idle service free of a one-hertz timer. Every call removes a
+     * pending tick first, so arming twice cannot create two chains.</p>
+     */
+    private void armThermalHeadroomPolling() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R
+            || !Preferences.get().isThermalThrottleEnabled()
+            || mThermalMonitor == null
+            || mStreamRuntime == null) {
+            return;
+        }
+        mMainHandler.removeCallbacks(mThermalHeadroomPollRunnable);
+        mMainHandler.postDelayed(mThermalHeadroomPollRunnable,
+            ThermalHeadroomPolicy.POLL_INTERVAL_MS);
+    }
+
+    /**
+     * Stops the headroom poll and forgets the forecast; idempotent.
+     *
+     * <p>Called for every session teardown, when the switch is turned off and from
+     * {@link #stopThermalMonitor()}. Clearing the gauges is part of the disarm: after this call the
+     * log must not keep showing the last reading as if sampling continued.</p>
+     */
+    private void disarmThermalHeadroomPolling() {
+        mMainHandler.removeCallbacks(mThermalHeadroomPollRunnable);
+        mThermalHeadroomPolicy.reset();
+        final PipelineMetrics metrics = mMetrics;
+        if (metrics != null) {
+            metrics.setGauge(PipelineMetrics.Gauge.THERMAL_HEADROOM_PERMILLE, 0L);
+            metrics.setGauge(PipelineMetrics.Gauge.THERMAL_TIER, 0L);
+        }
+    }
+
+    /**
+     * One poll tick: re-reads the switch first, then samples and re-arms only while a session runs.
+     *
+     * <p>Re-reading the switch inside the tick is what makes a switch turned off by another path
+     * stop the timer within one interval instead of waiting for the next teardown.</p>
+     */
+    private void onThermalHeadroomPoll() {
+        if (!Preferences.get().isThermalThrottleEnabled()) {
+            disarmThermalHeadroomPolling();
+            applyThermalTier(ThermalThrottlePolicy.Tier.NONE, "disabled");
+            return;
+        }
+        sampleThermalHeadroomOnce();
+        armThermalHeadroomPolling();
+    }
+
+    /**
+     * Samples the thermal pressure once and applies the stricter of the forecast and status tiers.
+     *
+     * <p>The SDK gate is explicit at the call site because the platform method exists from API 30
+     * only, while the monitor itself exists from API 29. The permille value uses
+     * {@code Math.round(headroom * 1000f)}, never a cast: {@code 0.70f} is
+     * {@code 0.69999998...}, so a cast yields 699 and the documented threshold would be missed. A
+     * valid reading is written as-is, including values above 1000, and is only accepted inside
+     * {@code [0, 2]}. A NaN or out-of-range reading clears the pressure gauge, leaves the forecast
+     * tier alone and applies the status tier merged with the retained forecast, so the merge never
+     * relaxes what was already in force.</p>
+     */
+    private void sampleThermalHeadroomOnce() {
+        final ThermalMonitor monitor = mThermalMonitor;
+        if (monitor == null || !Preferences.get().isThermalThrottleEnabled()) {
+            return;
+        }
+        final float headroom = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
+            ? monitor.getThermalHeadroom(ThermalHeadroomPolicy.FORECAST_SECONDS)
+            : Float.NaN;
+        final boolean valid = !Float.isNaN(headroom)
+            && headroom >= 0f
+            && headroom <= ThermalHeadroomPolicy.MAX_VALID_HEADROOM;
+        final ThermalThrottlePolicy.Tier forecast = mThermalHeadroomPolicy.onSample(headroom);
+        final ThermalThrottlePolicy.Tier next = ThermalThrottlePolicy.stricter(
+            ThermalThrottlePolicy.tierFor(mThermalStatus), forecast);
+        final PipelineMetrics metrics = mMetrics;
+        if (metrics != null) {
+            metrics.setGauge(PipelineMetrics.Gauge.THERMAL_HEADROOM_PERMILLE,
+                valid ? Math.round(headroom * 1000f) : 0L);
+            if (valid) {
+                metrics.setGauge(PipelineMetrics.Gauge.THERMAL_TIER, next.ordinal() + 1L);
+            }
+        }
+        applyThermalTier(next, valid ? "forecast" : "status");
     }
 
     /**

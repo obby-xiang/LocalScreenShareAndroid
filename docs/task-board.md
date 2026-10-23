@@ -119,6 +119,7 @@
 | TB-ENG-016 | 📋 待办 | 🟠 P1 | 性能候选实施批次（用户 2026-10-23 批准五项：解码低延迟参数、刷新率匹配、热余量预测降档、追赶采样覆盖修复（原「阈值收紧」已改写，阈值不动）、背压回传；`SurfaceView` 另立评估，不在本批） | 2026-10-23 | — | [性能优化调研](performance-research.md) |
 | TB-MEDIA-006 | 🔶 部分完成 | 🟠 P1 | 客户端解码器低延迟参数（`KEY_LOW_LATENCY` + `KEY_PRIORITY`，API 30+ 请求、三级回退、`dec.lowLat` 三态；**未含** `KEY_OPERATING_RATE`；代码完成，设备验证与收益实测未做） | 2026-10-23 | — | [TB-ENG-016](#tb-eng-016) |
 | TB-CLIENT-007 | 🔶 部分完成 | 🟠 P1 | 追赶采样覆盖修复（`CatchUpSampler` 统一 gRPC/媒体通道/丢片三条路径；丢片以外部追赶计入 `rx.catchup` 但不占连续预算；阈值未收紧、HOLD 语义未改；代码完成，设备复验未做） | 2026-10-23 | — | [TB-ENG-016](#tb-eng-016) |
+| TB-POWER-002 | 🔶 部分完成 | 🟠 P1 | 热余量预测降档（API 30 `getThermalHeadroom(10)`；预测与状态取严格档、≤1 Hz、会话级 arm/disarm、开关关闭立即恢复；`thermalHeadroom` / `thermalTier`；阈值待设备校准） | 2026-10-23 | — | [决策 DB-POWER-003](decision-board.md#db-power-003) |
 | TB-MEDIA-008 | 🔶 部分完成 | 🟠 P1 | JPEG+UDP 重组窗口抖动容忍修复（代码完成；r4 设备复验判据 1/2/3/5 通过、4 基本满足；待校准参数与残余项保留） | 2026-10-23 | — | [TB-ENG-013](#tb-eng-013) |
 | TB-SEC-002 | 🔶 部分完成 | 🔴 P0 | 身份密钥瞬时故障静默删键与三份身份快照（N3；代码完成，设备复测待棒） | 2026-10-21 | — | [决策 DB-SEC-003](decision-board.md#db-sec-003) |
 | TB-DISC-013 | 🔶 部分完成 | 🟠 P1 | 发现行首连的证书指纹引导（N2；代码完成，设备复测待棒） | 2026-10-21 | — | [TB-DISC-012](#tb-disc-012) |
@@ -277,6 +278,24 @@
 - **DV-027 风险（未裁决，必须登记）**：B1 之前 TCP/UDP 档几乎不会进入收敛失败路径；B1 之后默认档的负载追赶会正常走到 `rx.converge.fail` → 30 s HOLD，HOLD 期滞后无界增长与约 12 s 同一帧的取舍仍按 [DV-027](decision-board.md) 未裁决处理。**本轮不收紧任何阈值，也不改变 HOLD 语义**。设备复验须在 `rx.converge.fail` 后同时记录 `freeze` 与 `pres.drop`，并观察 `rx.catchup.why=ext` 的占比是否掩盖解码赤字（设备项 ③）。
 - **未完成**：设备验证——TCP/UDP 两档出现 `rx.catchup`/`rx.catchup.lat`、丢片 reason=`ext`、HOLD 期表现与回滚判据。
 - **关联文档**：[媒体架构 §5.3.1](media-architecture.md)、[性能候选设计 §4.3](superpowers/specs/2026-10-23-performance-candidates-design.md)、[DB-OBS-002](decision-board.md#db-obs-002)、[DV-027](decision-board.md)、[TB-CLIENT-005](#tb-client-005)
+
+</details>
+
+<a id="tb-power-002"></a>
+<details><summary>TB-POWER-002 热余量预测降档（🔶 部分完成 · 代码完成，阈值校准与设备验证未做）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：🔶 部分完成（代码与 JVM 用例已落地，设备验证与阈值校准未执行）/ 🟠 P1 / 2026-10-23 / —
+- **来源**：[TB-ENG-016](#tb-eng-016) 第 3 项。平台 `PowerManager.getThermalHeadroom(10)`（API 30+）给出热压力预测；本项把预测档与既有状态档合并，只允许收紧，并让采样随会话与开关正确上下线。
+- **交付物**：
+  - `core/stream/ThermalHeadroomPolicy`（纯 JVM）：`POLL_INTERVAL_MS=1000`、`FORECAST_SECONDS=10`、有效域 `[0, 2]`；进入 700/850‰、退出 600/780‰ 的回差阶梯；千分比统一 `Math.round(headroom * 1000f)`，NaN 与越界样本忽略且档位不变；`reset()` 回 `NONE`；采样路径零分配、无锁。
+  - `core/stream/ThermalThrottlePolicy.stricter(Tier, Tier)`：两个信号只取严格档，结果恒不弱于任一入参；既有状态阶梯与 `CatchUpPolicy` 阈值均未改。
+  - `service/ThermalMonitor.getThermalHeadroom(int)`：方法级 `@RequiresApi(30)`，调用点显式 `Build.VERSION.SDK_INT >= 30`；平台异常与缺失服务返回 NaN。
+  - `service/ScreenShareService`：`armThermalHeadroomPolling()` 入口同时要求 API 30+、开关打开、monitor 非空、`mStreamRuntime` 非空，先 `removeCallbacks` 再 `postDelayed`（幂等）；`startStreamPipeline()` 成功路径 arm，每次 teardown 的 `cancelScheduledWork()` 与 `onDestroy` 的 `stopThermalMonitor()` disarm 并 `reset`；tick 先重读开关，关闭时 disarm + 回 `NONE` 且不 re-arm；开关关闭立即 disarm + `NONE`，开关打开立即采样一次、仅在会话运行中重新 arm；`sampler` 写千分比与档位 gauge，有效样本才写 `thermalTier`。
+  - 指标：`PipelineMetrics.Gauge.THERMAL_HEADROOM_PERMILLE` / `THERMAL_TIER`、`ServerMetricNames.THERMAL_HEADROOM="thermalHeadroom"` / `THERMAL_TIER="thermalTier"`、服务端行格式化（0 不打印）。`ServerMetricNames` 的 Javadoc 记下本批 20 键上限与拆域规则；未改 `ClientMetricNames`。
+- **验证**：`ThermalHeadroomPolicyTest`（12 条）、`ThermalThrottlePolicyTest`（+4，含 3×3 组合、交换律与“不减档”断言）、`MetricsFormatterTest`（+2）。TDD：先写用例，红测为编译失败（`ThermalHeadroomPolicy`、`stricter`、两个 gauge 与两个键缺失，共 74 个错误）；实现后定向用例全绿。双变体全量 **1809 tests / 181 classes**，0 失败 / 0 错误 / 0 跳过（基线同提交更新为实测值）。
+- **未完成**：设备项 ②（注入温升后 `thermalHeadroom` 单调上升、降档早于平台高热状态、回落不抖动、开关关闭后无 1 Hz 采样痕迹、未开始共享时切换开关只产生一次立即采样）；0.70 / 0.85 与 0.60 / 0.78 阈值按[性能候选设计 §10](superpowers/specs/2026-10-23-performance-candidates-design.md) 回填，**当前不得写成已验证**。
+- **回退**：恢复“只按平台状态取档”，删除 `startStreamPipeline()` 与开关打开分支的 arm 调用点；策略类与两个指标可保留（没有 arm 就不会采样）。代码与文档口径必须同一次回滚。
+- **关联文档**：[性能候选设计 §4.2/§6.4/§8/§10](superpowers/specs/2026-10-23-performance-candidates-design.md)、[性能优化调研 §4.2 #6/§6](performance-research.md)、[媒体架构 §4.4.1](media-architecture.md)、[DB-POWER-003](decision-board.md#db-power-003)、[DB-POWER-001](decision-board.md#db-power-001)、[DV-024](decision-board.md)
 
 </details>
 

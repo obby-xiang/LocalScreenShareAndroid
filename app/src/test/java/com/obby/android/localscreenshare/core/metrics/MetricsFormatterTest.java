@@ -347,6 +347,28 @@ public class MetricsFormatterTest {
     }
 
     @Test
+    public void thermalHeadroomAndTier_printWhenSampled() {
+        PipelineMetrics metrics = PipelineMetrics.create(new MutableNanoClock(), 16);
+        metrics.setGauge(PipelineMetrics.Gauge.THERMAL_HEADROOM_PERMILLE, 1_234L);
+        metrics.setGauge(PipelineMetrics.Gauge.THERMAL_TIER, 2L);
+
+        String line = MetricsFormatter.toLogLine(Role.SERVER, metrics.snapshot(5000L));
+
+        assertTrue(line.contains(" thermalHeadroom=1234"));
+        assertTrue(line.contains(" thermalTier=2"));
+    }
+
+    @Test
+    public void thermalGauges_areOmittedWhenZero() {
+        PipelineMetrics metrics = PipelineMetrics.create(new MutableNanoClock(), 16);
+
+        String line = MetricsFormatter.toLogLine(Role.SERVER, metrics.snapshot(5000L));
+
+        assertFalse(line.contains("thermalHeadroom"));
+        assertFalse(line.contains("thermalTier"));
+    }
+
+    @Test
     public void clientLine_printsTheAudioBlockAfterTheVideoFields() {
         PipelineMetrics metrics = PipelineMetrics.create(new MutableNanoClock(), 16);
         metrics.record(PipelineMetrics.Window.AV_OFFSET, 3_100_000L);

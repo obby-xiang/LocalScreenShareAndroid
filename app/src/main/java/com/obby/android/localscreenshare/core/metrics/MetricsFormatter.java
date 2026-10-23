@@ -499,6 +499,10 @@ public final class MetricsFormatter {
                 PipelineMetrics.Counter.JOIN_POINTS, null);
         appendCounters(out, snapshot, MediaMetricNames.TX_FRAGMENT,
                 PipelineMetrics.Counter.FRAGMENTS_SENT, null);
+        appendCounters(out, snapshot, ServerMetricNames.THERMAL_HEADROOM, null,
+                PipelineMetrics.Gauge.THERMAL_HEADROOM_PERMILLE);
+        appendCounters(out, snapshot, ServerMetricNames.THERMAL_TIER, null,
+                PipelineMetrics.Gauge.THERMAL_TIER);
     }
 
     /**

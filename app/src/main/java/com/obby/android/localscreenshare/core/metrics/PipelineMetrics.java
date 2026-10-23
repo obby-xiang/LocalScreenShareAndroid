@@ -431,7 +431,22 @@ public final class PipelineMetrics {
          * another codec stops reporting the decoder it no longer has. Zero is also the "never
          * wrote" value, so it is never printed.
          */
-        DECODER_LOW_LATENCY
+        DECODER_LOW_LATENCY,
+
+        /**
+         * Thermal pressure in permille as predicted by the platform, where 1000 means the platform
+         * starts throttling and larger values mean the device is already throttled. Zero means
+         * never sampled, or a sample that was NaN or out of range; it is never printed, so the
+         * gauge is read for the trend, not as a liveness signal.
+         */
+        THERMAL_HEADROOM_PERMILLE,
+
+        /**
+         * Thermal tier in force: one for {@code NONE}, two for {@code REDUCED}, three for
+         * {@code MINIMAL}, and zero while the headroom has never been sampled. Zero is never
+         * printed, so a log line without the key means "not sampled" rather than "not throttled".
+         */
+        THERMAL_TIER
     }
 
     /**

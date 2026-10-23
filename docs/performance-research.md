@@ -107,7 +107,7 @@
 | 3 | **收紧追赶阈值 + 自适应队列**：队列 2 帧或 100–150 ms 就丢最旧；持续 500 ms 超阈值才 drop-to-IDR | 卡顿与延迟爬升显著减少 | M |
 | 4 | **背压回传编码端**：客户端上报队列深度/迟到帧比例 → 服务端降 fps 或 `PARAMETER_KEY_VIDEO_BITRATE` | 防延迟爬升，比事后追赶更平滑 | M |
 | 5 | **显示刷新率/帧率匹配**：`Surface.setFrameRate(fps)`，刷新率非整数倍时选 `Display.Mode` | 消除 3:2 pulldown 抖动；面板降刷新省电 | S–M |
-| 6 | **热余量预测降档**：`getThermalHeadroom(10)` ≥0.7 / ≥0.85 两级，早于 SEVERE | 避免“撞墙式”突然掉帧 | S |
+| 6 | **热余量预测降档**：`getThermalHeadroom(10)` ≥0.7 / ≥0.85 两级，早于 SEVERE（**代码已落地**，2026-10-23：预测与状态取严格档、≤1 Hz、会话级 arm/disarm、`thermalHeadroom` / `thermalTier` 指标；0.70/0.85 与 0.60/0.78 **待设备校准**，收益未实测） | 避免“撞墙式”突然掉帧 | S |
 | 7 | **编码器运行时参数**：`PARAMETER_KEY_REQUEST_SYNC_FRAME`、`PARAMETER_KEY_VIDEO_BITRATE`、`KEY_OPERATING_RATE` | IDR/码率调整不重建编码器 | S |
 | 8 | **指标补全**：p99、迟到帧率、`OnFrameRenderedListener` 真呈现时刻、JankStats | 把“卡顿”从 p50 里拆出来，能归因 | S–M |
 | 9 | **编码器异常恢复**：按 `isRecoverable/isTransient` 分类，静默线程后重建；连续失败降档 | 稳定性 | M |
@@ -172,13 +172,15 @@ flowchart LR
 
 1. **静态画面仍有编码输入帧**（encode-input-rate 指标：静止桌面 >5 fps）→ 引入 `PARAMETER_KEY_SUSPEND` 或调整 `KEY_REPEAT_PREVIOUS_FRAME_AFTER`；顺带验证 VirtualDisplay 是否真按 damage 出帧。
 2. **客户端端到端 p99 − p50 > 2 个帧间隔，或迟到帧 >1%** → 启用自适应队列（2 帧上限 + 500 ms 滞后判据），并把队列深度回传编码端降 fps/码率；不要再等 2 s。
-3. **热余量 `getThermalHeadroom(10) ≥ 0.7`** → 一级降档；**≥0.85** → 二级（再降分辨率/采集比例）。
+3. **热余量 `getThermalHeadroom(10) ≥ 0.7`** → 一级降档；**≥0.85** → 二级（再降分辨率/采集比例）。**代码已落地（2026-10-23）**：预测档与状态档经 `stricter` 合并、只收紧不放宽；采样至多 1 次/秒且只在会话运行中 arm；开关关闭立即恢复；0.70 / 0.85 与 0.60 / 0.78 的回差**待设备校准**。
 4. **显示刷新率不是流帧率的整数倍**（如 60 fps on 90 Hz），或 jank 呈 3:2 周期性 → `setFrameRate(fps)`；仍不行则切 `Display.Mode` 到整数倍。
 5. **Wi-Fi 丢包 >1% 或 RTT p95 抖动 >20 ms，或追赶每分钟触发超过 N 次** → 启动传输层改造评估（UDP + FEC/NACK 或 QUIC datagram）。
 
 可选第 6 条：**解码器输出队列长期 ≥2 或 `dequeueOutputBuffer` 超时增多** → 呈现端是瓶颈，优先查 SurfaceView/刷新率/主线程阻塞。
 
 > `dec.lowLat` 三态口径（2026-10-23 落地）：`0` = 未请求（API < 30，不写也不打印，与“未采样”同值）；`1` = 低延迟生效（含只保留低延迟、优先级被厂商去掉）；`2` = 请求后完全回退到普通配置。值只在 `configure` 与 `start` **整体成功之后**写一次，失败路径不写；解码器 `close` 时把本解码器写过的值清零（同一指标作用域跨解码器复用，H.264 → JPEG 后不得继续打印上一解码器的值），`NOT_REQUESTED` 从未写过、`close` 也不触碰；因此设备判据只用 `1` / `2`，不能拿 `0` 当“回退”判据。
+
+> `thermalHeadroom` / `thermalTier` 口径（2026-10-23 落地）：`thermalHeadroom` 是**热压力千分比**（`Math.round(getThermalHeadroom(10) × 1000)`），`1000` = 平台开始限流、`>1000` = 已限流且**不钳制**，值域 0–2000；`0` 同时表示“未采样或无效样本”，不打印，因此判据不依赖它的 0 值。`thermalTier`：`1` = NONE、`2` = REDUCED、`3` = MINIMAL，`0` = 未采样、不打印。两个键只在服务端行出现，且只有有效样本才更新 `thermalTier`；开关关闭会立即清空两者——日志里继续出现读数就说明采样没有停。设备判据只用可打印的 `thermalHeadroom` / `thermalTier` 与既有 `thermal` 状态，不把 gauge 的 0 当判据。
 
 ## 7. 证据强度与局限
 

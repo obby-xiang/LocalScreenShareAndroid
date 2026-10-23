@@ -1,6 +1,7 @@
 package com.obby.android.localscreenshare.core.stream;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
 
@@ -78,5 +79,57 @@ public class ThermalThrottlePolicyTest {
 
         assertEquals(60, ThermalThrottlePolicy.capFrameRate(tier, 60));
         assertEquals(100, ThermalThrottlePolicy.capScalePercent(tier, 100));
+    }
+
+    @Test
+    public void stricter_picksTheHigherTier() {
+        assertEquals(ThermalThrottlePolicy.Tier.NONE, ThermalThrottlePolicy.stricter(
+                ThermalThrottlePolicy.Tier.NONE, ThermalThrottlePolicy.Tier.NONE));
+        assertEquals(ThermalThrottlePolicy.Tier.REDUCED, ThermalThrottlePolicy.stricter(
+                ThermalThrottlePolicy.Tier.NONE, ThermalThrottlePolicy.Tier.REDUCED));
+        assertEquals(ThermalThrottlePolicy.Tier.MINIMAL, ThermalThrottlePolicy.stricter(
+                ThermalThrottlePolicy.Tier.NONE, ThermalThrottlePolicy.Tier.MINIMAL));
+        assertEquals(ThermalThrottlePolicy.Tier.REDUCED, ThermalThrottlePolicy.stricter(
+                ThermalThrottlePolicy.Tier.REDUCED, ThermalThrottlePolicy.Tier.NONE));
+        assertEquals(ThermalThrottlePolicy.Tier.REDUCED, ThermalThrottlePolicy.stricter(
+                ThermalThrottlePolicy.Tier.REDUCED, ThermalThrottlePolicy.Tier.REDUCED));
+        assertEquals(ThermalThrottlePolicy.Tier.MINIMAL, ThermalThrottlePolicy.stricter(
+                ThermalThrottlePolicy.Tier.REDUCED, ThermalThrottlePolicy.Tier.MINIMAL));
+        assertEquals(ThermalThrottlePolicy.Tier.MINIMAL, ThermalThrottlePolicy.stricter(
+                ThermalThrottlePolicy.Tier.MINIMAL, ThermalThrottlePolicy.Tier.NONE));
+        assertEquals(ThermalThrottlePolicy.Tier.MINIMAL, ThermalThrottlePolicy.stricter(
+                ThermalThrottlePolicy.Tier.MINIMAL, ThermalThrottlePolicy.Tier.REDUCED));
+        assertEquals(ThermalThrottlePolicy.Tier.MINIMAL, ThermalThrottlePolicy.stricter(
+                ThermalThrottlePolicy.Tier.MINIMAL, ThermalThrottlePolicy.Tier.MINIMAL));
+    }
+
+    @Test
+    public void stricter_isCommutative() {
+        for (ThermalThrottlePolicy.Tier left : ThermalThrottlePolicy.Tier.values()) {
+            for (ThermalThrottlePolicy.Tier right : ThermalThrottlePolicy.Tier.values()) {
+                assertEquals(ThermalThrottlePolicy.stricter(left, right),
+                        ThermalThrottlePolicy.stricter(right, left));
+            }
+        }
+    }
+
+    @Test
+    public void stricter_neverRelaxesEitherInput() {
+        for (ThermalThrottlePolicy.Tier left : ThermalThrottlePolicy.Tier.values()) {
+            for (ThermalThrottlePolicy.Tier right : ThermalThrottlePolicy.Tier.values()) {
+                final ThermalThrottlePolicy.Tier merged =
+                        ThermalThrottlePolicy.stricter(left, right);
+
+                assertTrue(merged.ordinal() >= left.ordinal());
+                assertTrue(merged.ordinal() >= right.ordinal());
+            }
+        }
+    }
+
+    @Test
+    public void stricter_keepsEqualTiers() {
+        for (ThermalThrottlePolicy.Tier tier : ThermalThrottlePolicy.Tier.values()) {
+            assertEquals(tier, ThermalThrottlePolicy.stricter(tier, tier));
+        }
     }
 }
