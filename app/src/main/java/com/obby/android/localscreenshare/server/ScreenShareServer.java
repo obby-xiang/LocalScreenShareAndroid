@@ -89,6 +89,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -829,6 +830,28 @@ public final class ScreenShareServer {
                 mTransportSecure);
     }
 
+    /**
+     * Logs the media path a new call will use next to the value the preference actually held.
+     *
+     * <p>The two are logged together because they can disagree in ways only one of them shows: a
+     * hand-injected preference that the platform reads as empty, or a value this build does not
+     * know, both resolve to {@code auto} and leave no other trace. Without the stored value a
+     * capture cannot tell a configured {@code auto} from an unreadable {@code grpc}, which is
+     * exactly the ambiguity that kept device rounds guessing at the read path.</p>
+     *
+     * @param mode   effective mode of the call, as decided from the stored value
+     * @param stored raw stored value; blank is shown as {@code <empty>}
+     */
+    private void logMediaTransportSelection(@NonNull final MediaTransportPolicy.Mode mode,
+                                           @NonNull final String stored) {
+        final String trimmed = stored.trim();
+        final String shown = trimmed.isEmpty() ? "<empty>" : "\"" + stored + "\"";
+        final boolean unknown = mode == MediaTransportPolicy.Mode.AUTO && !trimmed.isEmpty()
+                && !"auto".equalsIgnoreCase(trimmed);
+        mMediaChannelLog.info("mode = " + mode.name().toLowerCase(Locale.ROOT) + ", stored = "
+                + shown + (unknown ? " (unknown value, falling back to auto)" : ""));
+    }
+
     @NonNull
     private Server grpcServer() {
         final Server server = mGrpcServer;
@@ -1375,8 +1398,10 @@ public final class ScreenShareServer {
             }
             final InetSocketAddress remoteAddress = REMOTE_ADDRESS.get();
             final GrpcMediaTransport transport = new GrpcMediaTransport(responseObserver, mSecure);
+            final String storedMediaTransport = Preferences.get().getMediaTransport();
             final MediaTransportPolicy.Mode mediaMode = MediaTransportPolicy.Mode.parse(
-                Preferences.get().getMediaTransport());
+                    storedMediaTransport);
+            logMediaTransportSelection(mediaMode, storedMediaTransport);
             final MediaChannelNegotiator mediaNegotiator = new MediaChannelNegotiator(mediaMode,
                     MediaTransportPolicy.allowsUdp(mediaMode,
                             Preferences.get().isMediaUdpEnabled()),

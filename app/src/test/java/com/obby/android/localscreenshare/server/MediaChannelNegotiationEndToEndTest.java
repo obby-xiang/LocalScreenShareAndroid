@@ -249,6 +249,21 @@ public class MediaChannelNegotiationEndToEndTest {
         assertEquals(MediaTransportKind.TCP, fixture.offers.get(0).getTransport());
     }
 
+    /**
+     * The {@code udp} mode of the hidden setting opens the call on datagrams even with the
+     * user-facing tier switch off, which is the device check of the r4 round reproduced here: with
+     * the switch off, {@code auto} offers the stream and only the explicit mode offers datagrams.
+     */
+    @Test
+    public void modeUdp_offersDatagramsFirst() throws Exception {
+        Fixture fixture = fixture(MediaTransportPolicy.Mode.UDP);
+        fixture.handler.onClientMessage(hello("tcp", "udp"));
+
+        assertEquals(1, fixture.offers.size());
+        assertEquals(MediaTransportKind.UDP, fixture.offers.get(0).getTransport());
+        assertEquals(fixture.mediaServer.getUdpPort(), fixture.offers.get(0).getPort());
+    }
+
     @Test
     public void pinnedToTheCarrierNoChannelIsOffered() throws Exception {
         Fixture fixture = fixture(MediaTransportPolicy.Mode.GRPC);

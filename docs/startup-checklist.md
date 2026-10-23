@@ -215,27 +215,41 @@ Build workflow 的非 PR 构建（以及手动 dispatch 的 Release workflow）�
 
 ## F. 设备偏好注入（`run-as` 与隐藏键）
 
-> 口径核对：2026-10-23（r2 设备轮 `media_transport` "写入不生效" 的定性结论：**测试方法问题，不是产品缺陷**）。
+> 口径核对：2026-10-23（r4 结论：r2–r4 三轮的"字符串键 `media_transport` 写入不生效"是**注入 XML 形式错误**，不是读取路径的缺陷；产品侧补了一行选路日志，见下文）。
 
-设备验证常需要在不装 UI 的情况下改隐藏键（`media_transport`、`metrics_enabled`、`viewer_hud_enabled` 等）：`adb shell run-as <pkg> sh -c 'cat > shared_prefs/lss-preferences.xml'` 覆写偏好文件。**这个写法本身有严格的时序要求**，否则会得到"写进去了但没生效"的假象：
+设备验证常需要在不装 UI 的情况下改隐藏键（`media_transport`、`metrics_enabled`、`viewer_hud_enabled` 等）：`adb shell run-as <pkg> sh -c 'cat > shared_prefs/lss-preferences.xml'` 覆写偏好文件。**这个写法有两个硬性要求**——XML 类型写法正确、时序正确——否则都会得到"写进去了但没生效"的假象。
+
+### 字符串键必须写成元素文本
+
+`SharedPreferences` 的 XML 由 `XmlUtils.readThisSharedPreferencesFromXml` 解析，**不同类型的取值位置不同**：
+
+| 条目类型 | 值存放在哪 | 正确写法 |
+| --- | --- | --- |
+| `<string>` | 元素**文本内容**（`parser.nextText()`） | `<string name="media_transport">grpc</string>` |
+| `<boolean>` / `<int>` / `<long>` / `<float>` | `value` **属性** | `<boolean name="media_udp_enabled" value="true" />` |
+
+把字符串写成 `value="grpc"` 属性，平台读到的是**空串**，`Mode.parse("")` 回落 `auto`——这正好解释了 r2–r4 的对照结果：布尔键 4/4 生效（它读的正是 `value` 属性），字符串键 0/3 生效（读的却不是你写的位置）。r3 看到文件里 `media_transport` 变成 `<string name="media_transport"></string>`，也不是 App 擦掉了键，而是 App 把解析出来的空串随任一次 `commit()` 原样写了回去。
+
+**时序要求**（与上一节并列，缺一步同样白跑一轮）：
 
 | 事实 | 机制 |
 | --- | --- |
 | 进程内读取只看内存 | `SharedPreferences` 在进程首次访问时解析一次文件，之后所有读取来自内存快照；`registerOnSharedPreferenceChangeListener` 只对**进程内**的修改触发。外部改写文件不会让已运行的进程重新加载。 |
-| 进程内任何一次 `commit()` 会按内存快照重写整个文件 | 外部新增、而 App 从未写过的键因此会被**抹掉**。`media_transport` 正是这种键：没有 UI、`Preferences.setMediaTransport()` 没有调用方。 |
-| App 自己写过的键会在重写中保留 | 例如 `media_udp_enabled`（视频设置开关）、`projection_secure`（画面私密开关）都由 App 写过，重新加载后仍在内存里。 |
+| 进程内任何一次 `commit()` 会按内存快照重写整个文件 | 外部新增、而 App 从未写过的键因此会被**抹掉**。`media_transport` 正是这种键：没有 UI、`Preferences.setMediaTransport()` 没有调用方（`PreferenceWriteContractTest` 钉住了这一点）。 |
 
-**正确顺序**（缺一步就可能白跑一轮）：
+**正确顺序**：
 
 1. `adb shell am force-stop com.obby.android.localscreenshare`——先停进程，再动文件；
-2. 用 `run-as` 覆写 `shared_prefs/lss-preferences.xml`（保留其余键，勿只写一行）；
+2. 用 `run-as` 覆写 `shared_prefs/lss-preferences.xml`（保留其余键，勿只写一行；字符串用文本形式）；
 3. 启动 App；
 4. **在本次共享/观看开始前不要再改任何应用内设置**（每个开关都会触发一次整文件重写）；
 5. 用**行为证据**确认生效，而不是只把文件 `cat` 回来：
-   - `media_transport=grpc` ⇒ 服务端**不应**出现 `mediaChannel: offer:` 行（恒留在 gRPC）；
-   - `media_transport=auto` + `media_udp_enabled=true` ⇒ 第一条 offer 是 `transport = udp`；开关关 ⇒ `transport = tcp`。
+   - 每次呼叫协商都会打印一行 `mediaChannel: mode = <生效档>, stored = "<原始值>"`，两者不一致即注入没被读到（空串打 `<empty>`，无法识别的非空值追加 `(unknown value, falling back to auto)`）；
+   - `media_transport=grpc` ⇒ 除该行外**不应**出现任何 `mediaChannel: offer:` 行（恒留在 gRPC）；
+   - `media_transport=auto` + `media_udp_enabled=true` ⇒ 第一条 offer 是 `transport = udp`；开关关 ⇒ `transport = tcp`；
+   - `media_transport=udp` ⇒ 开关关时第一条 offer 仍是 `transport = udp`（`udp` 档自己打开数据报层）。
 
-**已解释的历史现象**：r2 设备轮里布尔键 `media_udp_enabled` 4/4 生效、字符串键 `media_transport` 0/3 生效，`projection_secure` 时好时坏——写入与下一次协商之间没有冷启动，进程仍在用旧快照；布尔键之所以"看起来有效"，是因为它曾被 App 自己写入过、也在同一批写入里命中了冷启动。**代码侧无需修改**：`settings/Preferences.java` 的单例只在构造时取一次 `SharedPreferences`，`getMediaTransport()` 每次读缓存、不做本地记忆，读路径本身没有问题。
+**已解释的历史现象**：r3 的检查清单曾把 r2 的"字符串键不生效、布尔键生效"归因为"布尔键被 App 自己写过、同批写入命中了冷启动"。该解释已被 r4 证伪——两种键的差别与进程冷启动无关，而是上面那张表的取值位置不同。**读取路径无需修改**：`settings/Preferences.java` 的 `getMediaTransport()` 每次直接返回存储值（默认 `auto`），`getMediaTransport()` 不缓存、也不回写；产品侧只补了那行日志，因为缺的正是"生效档与原始值"的可见性。
 
 ## 建议命令
 
