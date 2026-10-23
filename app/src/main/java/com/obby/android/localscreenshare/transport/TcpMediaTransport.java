@@ -40,7 +40,12 @@ public final class TcpMediaTransport implements MediaTransport, MediaChannelAwar
 
     private final TimeSource timeSource;
 
+    // Closes the socket off the calling thread; a TLS close writes a close_notify.
+    private final MediaChannelCloser closer;
+
     private final Object writeLock = new Object();
+
+    private final Object closeLock = new Object();
 
     private volatile long lastSuccessfulWriteMs;
 
@@ -60,15 +65,33 @@ public final class TcpMediaTransport implements MediaTransport, MediaChannelAwar
      */
     public TcpMediaTransport(Socket socket, boolean secure, TimeSource timeSource)
             throws IOException {
+        this(socket, secure, timeSource, MediaChannelCloser.daemon());
+    }
+
+    /**
+     * Creates a transport that closes its socket through {@code closer}.
+     *
+     * @param socket     connected socket, already handshaken when the channel is TLS; required
+     * @param secure     whether the control plane of this call reported the stream as secure
+     * @param timeSource clock used for the stall detection; required
+     * @param closer     closer of the channel socket; required
+     * @throws IOException if the socket streams cannot be obtained
+     */
+    public TcpMediaTransport(Socket socket, boolean secure, TimeSource timeSource,
+                             MediaChannelCloser closer) throws IOException {
         if (socket == null) {
             throw new IllegalArgumentException("socket must not be null");
         }
         if (timeSource == null) {
             throw new IllegalArgumentException("timeSource must not be null");
         }
+        if (closer == null) {
+            throw new IllegalArgumentException("closer must not be null");
+        }
         this.socket = socket;
         this.secure = secure;
         this.timeSource = timeSource;
+        this.closer = closer;
         socket.setTcpNoDelay(true);
         this.out = socket.getOutputStream();
         this.lastSuccessfulWriteMs = timeSource.nowMs();
@@ -158,12 +181,21 @@ public final class TcpMediaTransport implements MediaTransport, MediaChannelAwar
         }
     }
 
+    /**
+     * Closes the channel; the socket itself is closed off the calling thread.
+     *
+     * <p>The transport counts as closed immediately, so a write that is in flight fails instead of
+     * waiting for a peer that is gone, while the socket close - which writes a {@code close_notify}
+     * on a TLS channel - is performed by {@link MediaChannelCloser}. That is what lets a teardown on
+     * the main thread close a channel without performing network I/O there.</p>
+     */
     private void closeQuietly() {
-        closed = true;
-        try {
-            socket.close();
-        } catch (IOException ignored) {
-            // Closing an already broken socket is not an event.
+        synchronized (closeLock) {
+            if (closed) {
+                return;
+            }
+            closed = true;
         }
+        closer.closeQuietly(socket);
     }
 }

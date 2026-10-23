@@ -161,6 +161,11 @@ public final class UdpMediaReceiver implements MediaChannelLink {
 
     /**
      * Closes the channel from the outside; idempotent and safe from any thread.
+     *
+     * <p>Unlike a TLS stream, closing a datagram socket performs no network I/O - there is no
+     * close record to send and no FIN to write - so this path may run on the main thread and the
+     * socket is closed inline. That also matters for the channel's own progress: the read loop is
+     * blocked in {@code receive()} and only this close unblocks it.</p>
      */
     @Override
     public void close() {

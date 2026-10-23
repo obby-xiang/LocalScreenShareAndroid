@@ -66,6 +66,12 @@ public final class TcpMediaReceiver implements MediaChannelLink {
 
     private Socket socket;
 
+    // Closes this channel's socket off the calling thread; see MediaChannelCloser.
+    private final MediaChannelCloser closer;
+
+    // Whether the socket was already handed to the closer, so repeated close() calls queue one.
+    private boolean closeHandedOff;
+
     /**
      * Creates a receiver for one offer.
      *
@@ -82,6 +88,27 @@ public final class TcpMediaReceiver implements MediaChannelLink {
     public TcpMediaReceiver(StreamKey streamKey, String host, MediaChannelOffer offer,
                             MediaChannelListener listener, MediaChannelStatusListener statusListener,
                             SSLContext sslContext) {
+        this(streamKey, host, offer, listener, statusListener, sslContext,
+                MediaChannelCloser.daemon());
+    }
+
+    /**
+     * Creates a receiver that closes its socket through {@code closer}.
+     *
+     * @param streamKey      stream identity, implicit on the wire; required
+     * @param host           address to connect to, already resolved from the offer or the control
+     *                       plane; required
+     * @param offer          offer this channel answers; required
+     * @param listener       receiver of descriptors and access units; required
+     * @param statusListener receiver of the lifecycle events; required
+     * @param sslContext     client context built by {@link MediaTlsFactory}, or null for the
+     *                       plaintext debug transport
+     * @param closer         closer of the channel socket; required
+     * @throws IllegalArgumentException if a required argument is null
+     */
+    public TcpMediaReceiver(StreamKey streamKey, String host, MediaChannelOffer offer,
+                            MediaChannelListener listener, MediaChannelStatusListener statusListener,
+                            SSLContext sslContext, MediaChannelCloser closer) {
         if (streamKey == null) {
             throw new IllegalArgumentException("streamKey must not be null");
         }
@@ -97,12 +124,16 @@ public final class TcpMediaReceiver implements MediaChannelLink {
         if (statusListener == null) {
             throw new IllegalArgumentException("statusListener must not be null");
         }
+        if (closer == null) {
+            throw new IllegalArgumentException("closer must not be null");
+        }
         this.streamKey = streamKey;
         this.host = host;
         this.offer = offer;
         this.listener = listener;
         this.statusListener = statusListener;
         this.sslContext = sslContext;
+        this.closer = closer;
     }
 
     /**
@@ -151,13 +182,24 @@ public final class TcpMediaReceiver implements MediaChannelLink {
 
     /**
      * Closes the channel from the outside; idempotent and safe from any thread.
+     *
+     * <p>The socket itself is closed through {@link MediaChannelCloser}, because a TLS close writes
+     * a {@code close_notify} and must not run on the main thread of the process. The channel counts
+     * as closed the moment this method returns, so a write or a read stops immediately even though
+     * the socket is still being torn down.</p>
      */
     @Override
     public void close() {
+        final Socket current;
         synchronized (closeLock) {
             closed = true;
+            if (socket == null || closeHandedOff) {
+                return;
+            }
+            closeHandedOff = true;
+            current = socket;
         }
-        closeQuietly(socket);
+        closer.closeQuietly(current);
     }
 
     private boolean greet(Socket channel) throws IOException {

@@ -28,10 +28,12 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
@@ -117,6 +119,41 @@ public class TcpMediaLoopbackTest {
         receiver.close();
     }
 
+    /**
+     * Closing the channel from the caller does not close the socket on the caller's thread.
+     *
+     * <p>This is the fix of the device crash: the viewer's teardown runs on the main thread, and a
+     * TLS close writes its {@code close_notify} there, which {@code StrictMode} turns into a fatal
+     * {@code NetworkOnMainThreadException}. The channel counts as closed the moment the call
+     * returns - the read loop stops - while the socket itself is torn down on the closer.</p>
+     */
+    @Test
+    public void close_handsTheSocketToItsCloserInsteadOfClosingItInline() throws Exception {
+        Fixture fixture = fixture();
+        fixture.authority.ticket = ticket(fixture, fixture.client.getDeviceId());
+        fixture.server.start(0);
+        RecordingStatus status = new RecordingStatus();
+        RecordingQueue closes = new RecordingQueue();
+        TcpMediaReceiver receiver = receiver(fixture, new RecordingListener(), status,
+                fixture.authority.ticket, new MediaChannelCloser(closes));
+        Thread thread = start(receiver);
+        assertTrue(status.awaitReady());
+        assertTrue(fixture.authority.awaitEstablished());
+
+        receiver.close();
+        receiver.close();
+
+        assertEquals("repeated closes must queue one socket close", 1, closes.pending());
+        assertTrue("the caller must not close the greeting socket itself", thread.isAlive());
+        assertNull("a close from outside reports nothing", status.failure.get());
+
+        closes.runAll();
+
+        thread.join(TimeUnit.SECONDS.toMillis(TIMEOUT_SECONDS));
+        assertFalse("the reader must end once the socket is closed", thread.isAlive());
+        assertNull(status.failure.get());
+    }
+
     @Test
     public void wrongToken_isRefusedBeforeAnyFrame() throws Exception {
         Fixture fixture = fixture();
@@ -173,6 +210,13 @@ public class TcpMediaLoopbackTest {
     private TcpMediaReceiver receiver(Fixture fixture, RecordingListener listener,
                                       RecordingStatus status, MediaChannelTicket issue)
             throws GeneralSecurityException {
+        return receiver(fixture, listener, status, issue, MediaChannelCloser.daemon());
+    }
+
+    private TcpMediaReceiver receiver(Fixture fixture, RecordingListener listener,
+                                      RecordingStatus status, MediaChannelTicket issue,
+                                      MediaChannelCloser closer)
+            throws GeneralSecurityException {
         MediaChannelOffer offer = MediaChannelOffer
                 .builder(issue.getChannelId(), MediaTransportKind.TCP)
                 .host("127.0.0.1")
@@ -181,7 +225,7 @@ public class TcpMediaLoopbackTest {
                 .token(issue.getToken())
                 .build();
         return new TcpMediaReceiver(STREAM_KEY, "127.0.0.1", offer, listener, status,
-                fixture.clientContext);
+                fixture.clientContext, closer);
     }
 
     private static Thread start(TcpMediaReceiver receiver) {
@@ -331,13 +375,13 @@ public class TcpMediaLoopbackTest {
             }
             return accessUnits.size() >= count;
         }
+
     }
 
     /**
      * Records the lifecycle of the channel.
      */
     private static final class RecordingStatus implements MediaChannelStatusListener {
-
         private final CountDownLatch ready = new CountDownLatch(1);
 
         private final CountDownLatch failed = new CountDownLatch(1);
@@ -361,6 +405,29 @@ public class TcpMediaLoopbackTest {
 
         boolean awaitFailure() throws InterruptedException {
             return failed.await(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        }
+    }
+
+    /**
+     * Executor that queues tasks until the test runs them, so a dispatch is observable.
+     */
+    private static final class RecordingQueue implements Executor {
+
+        private final List<Runnable> tasks = new ArrayList<>();
+
+        @Override
+        public void execute(final Runnable command) {
+            tasks.add(command);
+        }
+
+        int pending() {
+            return tasks.size();
+        }
+
+        void runAll() {
+            for (Runnable task : new ArrayList<>(tasks)) {
+                task.run();
+            }
         }
     }
 }
