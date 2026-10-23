@@ -127,6 +127,23 @@ public class ThermalThrottlePolicyTest {
     }
 
     @Test
+    public void tierAtSessionEnd_forgetsTheForecastAndKeepsOnlyTheStatus() {
+        final ThermalHeadroomPolicy forecast = new ThermalHeadroomPolicy();
+        assertEquals(ThermalThrottlePolicy.Tier.MINIMAL, forecast.onSample(0.90f));
+
+        forecast.reset();
+        assertEquals(ThermalThrottlePolicy.Tier.NONE, forecast.getTier());
+        assertEquals(ThermalThrottlePolicy.Tier.NONE,
+                ThermalThrottlePolicy.tierAtSessionEnd(true, ThermalThrottlePolicy.STATUS_NONE));
+        assertEquals(ThermalThrottlePolicy.Tier.REDUCED,
+                ThermalThrottlePolicy.tierAtSessionEnd(true, ThermalThrottlePolicy.STATUS_SEVERE));
+        assertEquals(ThermalThrottlePolicy.Tier.MINIMAL,
+                ThermalThrottlePolicy.tierAtSessionEnd(true, ThermalThrottlePolicy.STATUS_CRITICAL));
+        assertEquals(ThermalThrottlePolicy.Tier.NONE,
+                ThermalThrottlePolicy.tierAtSessionEnd(false, ThermalThrottlePolicy.STATUS_CRITICAL));
+    }
+
+    @Test
     public void stricter_keepsEqualTiers() {
         for (ThermalThrottlePolicy.Tier tier : ThermalThrottlePolicy.Tier.values()) {
             assertEquals(tier, ThermalThrottlePolicy.stricter(tier, tier));

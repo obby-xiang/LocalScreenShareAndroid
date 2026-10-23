@@ -2518,16 +2518,17 @@ public class ScreenShareService extends Service {
      * Applies the switch: turning it off restores the user's settings at once, turning it on takes
      * one immediate sample and resumes polling only while a session is running.
      *
-     * <p>Turning the switch off must not wait for the next tick: the poll is removed, the forecast
-     * is forgotten and the gauges are cleared before the tier is reset, so no reading can arrive
-     * after the user asked the feature to stop. Turning it on always takes one sample; the
+     * <p>Turning the switch off must not wait for the next tick: the tier returns to {@code NONE}
+     * first, so a running pipeline gets the user's values back and the notification loses its
+     * thermal line; the poll is then removed and the forecast forgotten before this main-thread
+     * method returns, so no further reading can arrive. Turning it on always takes one sample; the
      * one-hertz timer is armed only when {@code mStreamRuntime} is non-null, because a bound
      * service with no share running must not own a timer.</p>
      */
     private void onThermalThrottleSettingChanged() {
         if (!Preferences.get().isThermalThrottleEnabled()) {
-            disarmThermalHeadroomPolling();
             applyThermalTier(ThermalThrottlePolicy.Tier.NONE, "disabled");
+            disarmThermalHeadroomPolling();
             return;
         }
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
@@ -2563,11 +2564,19 @@ public class ScreenShareService extends Service {
     }
 
     /**
-     * Stops the headroom poll and forgets the forecast; idempotent.
+     * Stops the headroom poll, forgets the forecast and drops the tier it produced; idempotent.
      *
      * <p>Called for every session teardown, when the switch is turned off and from
      * {@link #stopThermalMonitor()}. Clearing the gauges is part of the disarm: after this call the
      * log must not keep showing the last reading as if sampling continued.</p>
+     *
+     * <p>The applied tier is restored as well: a forecast belongs to the session that sampled it,
+     * so a finished session must not leave its prediction in the configuration the next session
+     * starts with. What remains is the switch and the current status, which
+     * {@link ThermalThrottlePolicy#tierAtSessionEnd} resolves. Only the tier, the published
+     * snapshot and the notification change here; the capture pipeline is untouched because every
+     * teardown disarms while the encoder is still alive, and a rebuild scheduled at that point
+     * would outlive the release.</p>
      */
     private void disarmThermalHeadroomPolling() {
         mMainHandler.removeCallbacks(mThermalHeadroomPollRunnable);
@@ -2577,6 +2586,9 @@ public class ScreenShareService extends Service {
             metrics.setGauge(PipelineMetrics.Gauge.THERMAL_HEADROOM_PERMILLE, 0L);
             metrics.setGauge(PipelineMetrics.Gauge.THERMAL_TIER, 0L);
         }
+        final boolean enabled = Preferences.get().isThermalThrottleEnabled();
+        setThermalTier(ThermalThrottlePolicy.tierAtSessionEnd(enabled, mThermalStatus),
+            enabled ? "session-end" : "disabled");
     }
 
     /**
@@ -2587,8 +2599,8 @@ public class ScreenShareService extends Service {
      */
     private void onThermalHeadroomPoll() {
         if (!Preferences.get().isThermalThrottleEnabled()) {
-            disarmThermalHeadroomPolling();
             applyThermalTier(ThermalThrottlePolicy.Tier.NONE, "disabled");
+            disarmThermalHeadroomPolling();
             return;
         }
         sampleThermalHeadroomOnce();
@@ -2601,11 +2613,11 @@ public class ScreenShareService extends Service {
      * <p>The SDK gate is explicit at the call site because the platform method exists from API 30
      * only, while the monitor itself exists from API 29. The permille value uses
      * {@code Math.round(headroom * 1000f)}, never a cast: {@code 0.70f} is
-     * {@code 0.69999998...}, so a cast yields 699 and the documented threshold would be missed. A
-     * valid reading is written as-is, including values above 1000, and is only accepted inside
-     * {@code [0, 2]}. A NaN or out-of-range reading clears the pressure gauge, leaves the forecast
-     * tier alone and applies the status tier merged with the retained forecast, so the merge never
-     * relaxes what was already in force.</p>
+     * {@code 0.69999998...}, so a cast yields 699 and the documented threshold would be missed.
+     * {@link ThermalHeadroomPolicy#isValid} owns the sample domain, so this method does not restate
+     * it. A valid reading is written as-is, including values above 1000. A NaN or out-of-range
+     * reading clears the pressure gauge, leaves the forecast tier alone and applies the status tier
+     * merged with the retained forecast, so the merge never relaxes what was already in force.</p>
      */
     private void sampleThermalHeadroomOnce() {
         final ThermalMonitor monitor = mThermalMonitor;
@@ -2615,9 +2627,7 @@ public class ScreenShareService extends Service {
         final float headroom = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
             ? monitor.getThermalHeadroom(ThermalHeadroomPolicy.FORECAST_SECONDS)
             : Float.NaN;
-        final boolean valid = !Float.isNaN(headroom)
-            && headroom >= 0f
-            && headroom <= ThermalHeadroomPolicy.MAX_VALID_HEADROOM;
+        final boolean valid = ThermalHeadroomPolicy.isValid(headroom);
         final ThermalThrottlePolicy.Tier forecast = mThermalHeadroomPolicy.onSample(headroom);
         final ThermalThrottlePolicy.Tier next = ThermalThrottlePolicy.stricter(
             ThermalThrottlePolicy.tierFor(mThermalStatus), forecast);
@@ -2645,8 +2655,30 @@ public class ScreenShareService extends Service {
      */
     private void applyThermalTier(@NonNull final ThermalThrottlePolicy.Tier tier,
                                   @NonNull final String event) {
-        if (tier == mThermalTier) {
+        if (!setThermalTier(tier, event)) {
             return;
+        }
+        if (mStreamRuntime == null || mVirtualDisplay == null) {
+            // The start path reads the effective values, so a tier that changed while stopped is
+            // already part of the next session.
+            return;
+        }
+        if (!Objects.equals(mProjectionSize, getProjectionSize())) {
+            updateProjectionSize();
+        } else {
+            scheduleEncoderRebuild();
+        }
+    }
+
+    /**
+     * Records the tier and republishes the capture snapshot without touching a running pipeline.
+     *
+     * @return true when the tier changed
+     */
+    private boolean setThermalTier(@NonNull final ThermalThrottlePolicy.Tier tier,
+                                   @NonNull final String event) {
+        if (tier == mThermalTier) {
+            return false;
         }
         mThermalTier = tier;
         Log.i(mTag, "thermal: event=" + event + " status=" + mThermalStatus + " tier=" + tier
@@ -2659,16 +2691,7 @@ public class ScreenShareService extends Service {
         if (mServer != null) {
             updateNotification();
         }
-        if (mStreamRuntime == null || mVirtualDisplay == null) {
-            // The start path reads the effective values, so a tier that changed while stopped is
-            // already part of the next session.
-            return;
-        }
-        if (!Objects.equals(mProjectionSize, getProjectionSize())) {
-            updateProjectionSize();
-        } else {
-            scheduleEncoderRebuild();
-        }
+        return true;
     }
 
     /**

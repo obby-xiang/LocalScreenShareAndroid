@@ -111,6 +111,22 @@ public final class ThermalThrottlePolicy {
     }
 
     /**
+     * Returns the tier a session boundary leaves in force.
+     *
+     * <p>A headroom forecast belongs to the session that sampled it, so the tier must not carry it
+     * into the next configuration. Only the switch and the current platform status remain: with
+     * the switch off the user's settings apply, and with it on only the status ladder may
+     * throttle. The caller resets the forecast before asking, so no forecast input exists.</p>
+     *
+     * @param throttleEnabled whether the thermal throttle switch is on
+     * @param thermalStatus   status as reported by the platform, or {@link #STATUS_NONE}
+     * @return the tier to apply; never null
+     */
+    public static Tier tierAtSessionEnd(final boolean throttleEnabled, final int thermalStatus) {
+        return throttleEnabled ? tierFor(thermalStatus) : Tier.NONE;
+    }
+
+    /**
      * Returns the stricter of two tiers.
      *
      * <p>The thermal status and the headroom forecast are independent signals; merging them may

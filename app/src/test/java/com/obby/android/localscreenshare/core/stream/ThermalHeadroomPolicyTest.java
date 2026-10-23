@@ -1,6 +1,7 @@
 package com.obby.android.localscreenshare.core.stream;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import com.obby.android.localscreenshare.core.stream.ThermalThrottlePolicy.Tier;
@@ -83,7 +84,21 @@ public class ThermalHeadroomPolicyTest {
         assertEquals(Tier.MINIMAL, policy.onSample(0.90f));
         assertEquals(Tier.MINIMAL, policy.onSample(-0.1f));
         assertEquals(Tier.MINIMAL, policy.onSample(2.5f));
+
+        // Start over, so the valid sample cannot pass by keeping an already-MINIMAL tier.
+        policy.reset();
+        assertEquals(Tier.NONE, policy.getTier());
         assertEquals(Tier.MINIMAL, policy.onSample(1.5f));
+    }
+
+    @Test
+    public void isValid_acceptsOnlyTheDocumentedDomain() {
+        assertTrue(ThermalHeadroomPolicy.isValid(0f));
+        assertTrue(ThermalHeadroomPolicy.isValid(1.5f));
+        assertTrue(ThermalHeadroomPolicy.isValid(ThermalHeadroomPolicy.MAX_VALID_HEADROOM));
+        assertFalse(ThermalHeadroomPolicy.isValid(-0.1f));
+        assertFalse(ThermalHeadroomPolicy.isValid(2.5f));
+        assertFalse(ThermalHeadroomPolicy.isValid(Float.NaN));
     }
 
     @Test

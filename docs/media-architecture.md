@@ -214,10 +214,10 @@ HEVC 与 AV1 的边界：
 既有热降档按 `PowerManager.getCurrentThermalStatus` 取档，是**滞后**信号：平台进入 `SEVERE` 时已经开始限流。B3 在它之上增加 `PowerManager.getThermalHeadroom(10)`（API 30+）预测，但只允许收紧：
 
 - **读数方向**：返回值是热压力比值（当前温度 / 平台开始限流的温度），不是“剩余余量”。`1.0` = 平台开始限流，`>1.0` = 已限流，越大越热。指标 `thermalHeadroom` 记录热压力千分比，`1000` = 开始限流，允许 `>1000` 且**不钳制**（值域 0–2000）。
-- **换算**：统一 `Math.round(headroom * 1000f)`。**禁止** `(int)` 截断：`0.70f` 的实际值是 `0.69999998…`，截断得 699，会让 700 阈值不可达。有效样本域 `[0, 2]`；NaN 与越界值忽略、档位不变。
+- **换算**：统一 `Math.round(headroom * 1000f)`。**禁止** `(int)` 截断：`0.70f` 的实际值是 `0.69999998…`，截断得 699，会让 700 阈值不可达。有效样本域 `[0, 2]`（由 `ThermalHeadroomPolicy.isValid` 单点判定，服务复用）；NaN 与越界值忽略、预测档不变，`thermalHeadroom` 写 0（不打印）且不写档位指标，档位仍按“状态档 × 保留的预测档”取严格档。
 - **阈值与回差**：进入 `REDUCED` 700‰、进入 `MINIMAL` 850‰、退出 `MINIMAL` 780‰、退出 `REDUCED` 600‰。四个值都是**待设备校准**的初值，回差用于避免阈值附近来回抖动。
 - **合并**：预测档与状态档经 `ThermalThrottlePolicy.stricter` 合并，结果恒不弱于任一入参；状态已要求的档位不会被预测回落放宽。既有状态阶梯（`SEVERE` → 帧率 30；`CRITICAL` 及以上 → 帧率 30 + 采集 50%）不改变。
-- **生命周期**：`ThermalMonitor` 仍只在 `onCreate`/`onDestroy` 注册与注销平台监听；1 Hz 轮询是**会话级**——`startStreamPipeline()` 成功后 arm，每次 teardown 与 `onDestroy` disarm 并 `reset` 预测档。开关关闭时立即 `removeCallbacks` + `reset` + 档位回 `NONE`；开关打开时立即采样一次，只有会话运行中才重新 arm，**没有会话就只留这一次采样、不产生定时器**。
+- **生命周期**：`ThermalMonitor` 仍只在 `onCreate`/`onDestroy` 注册与注销平台监听；1 Hz 轮询是**会话级**——`startStreamPipeline()` 成功后 arm，每次 teardown 与 `onDestroy` disarm、`reset` 预测档并把已生效档位回落为只由当前状态决定的档位（无状态档则 `NONE`），上一会话的预测档不会被下一会话继承。开关关闭时立即把档位回 `NONE`（恢复用户设置），随后 `removeCallbacks` + `reset`；开关打开时立即采样一次，只有会话运行中才重新 arm，**没有会话就只留这一次采样、不产生定时器**。
 - **指标**：服务端行打印 `thermalHeadroom`（千分比，0 不打印）与 `thermalTier`（`1`=NONE / `2`=REDUCED / `3`=MINIMAL，`0`=未采样、不打印）。开关关闭会清空两者。判据见[性能优化调研](performance-research.md) §6 与[性能候选设计](superpowers/specs/2026-10-23-performance-candidates-design.md) §8 设备项 ②。
 - **边界**：只改当前生效值、不写偏好；协议与描述符不变；不新增依赖、不新增锁，采样路径零分配。
 

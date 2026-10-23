@@ -74,6 +74,20 @@ public final class ThermalHeadroomPolicy {
     private Tier mTier = Tier.NONE;
 
     /**
+     * Tells whether a reading is a sample this policy accepts.
+     *
+     * <p>The rule lives here, next to {@link #MAX_VALID_HEADROOM}, so a caller that also has to
+     * decide whether to publish the reading never restates the domain. A rejected reading leaves
+     * the tier unchanged; it is not clamped.</p>
+     *
+     * @param headroom thermal pressure ratio as reported by the platform
+     * @return true when the reading is inside {@code [0, MAX_VALID_HEADROOM]} and not NaN
+     */
+    public static boolean isValid(final float headroom) {
+        return !Float.isNaN(headroom) && headroom >= 0f && headroom <= MAX_VALID_HEADROOM;
+    }
+
+    /**
      * Samples one thermal pressure ratio and returns the tier in force after it.
      *
      * <p>NaN and out-of-range values are ignored and leave the current tier unchanged. A valid
@@ -84,7 +98,7 @@ public final class ThermalHeadroomPolicy {
      * @return the tier in force after this sample; never null
      */
     public Tier onSample(final float headroom) {
-        if (Float.isNaN(headroom) || headroom < 0f || headroom > MAX_VALID_HEADROOM) {
+        if (!isValid(headroom)) {
             return mTier;
         }
         final int permille = Math.round(headroom * 1000f);

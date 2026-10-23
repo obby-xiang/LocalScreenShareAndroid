@@ -160,8 +160,8 @@ flowchart LR
 | 进入 / 退出阈值 | 热压力进入 REDUCED 0.70、进入 MINIMAL 0.85、退出 MINIMAL 0.78、退出 REDUCED 0.60（千分比 700 / 850 / 780 / 600） | **待设备校准** |
 | 千分比换算 | 统一 `Math.round(headroom * 1000f)`；**禁止** `(int)` 强制截断（`0.70f` 的实际值是 `0.69999998…`，截断得 699，会让阈值用例自己假失败） | 建议（实现口径） |
 | 有效样本域 | 接受 `[0.0, 2.0]`；`NaN` 与区间外的值忽略、档位不变。有效值**不钳制**：`>1.0` 原样保留，指标可打印到 2000 | 建议（实现口径） |
-| 生命周期 | **会话级 arm / disarm**：arm 的入口条件必须同时满足“平台 ≥ API 30”“开关打开”“`ThermalMonitor` 非空”“**会话运行中**（`StreamRuntime` 非空）”；随每次会话启动成功 arm，随每次 teardown 与 `onDestroy` disarm | 建议（本设计的关键修正） |
-| 开关关闭 | 立即 `removeCallbacks` + `reset()` + `Tier.NONE`，不等下一次 tick；之后不再 re-arm | 建议 |
+| 生命周期 | **会话级 arm / disarm**：arm 的入口条件必须同时满足“平台 ≥ API 30”“开关打开”“`ThermalMonitor` 非空”“**会话运行中**（`StreamRuntime` 非空）”；随每次会话启动成功 arm，随每次 teardown 与 `onDestroy` disarm；disarm 除 `reset` 预测档外，把已生效档位回落为只由当前状态决定的档位（无状态档则 `NONE`），预测档不跨会话 | 建议（本设计的关键修正） |
+| 开关关闭 | 立即 `Tier.NONE`（恢复用户设置）+ `removeCallbacks` + `reset()`，不等下一次 tick；之后不再 re-arm | 建议 |
 | 开关打开 | 立即采样一次；**只有会话运行中才 arm 1 Hz 轮询，没有会话就只采样这一次** | 建议 |
 | 异常样本 | `NaN` 与越界值忽略，档位不变 | 建议 |
 
@@ -349,10 +349,10 @@ sequenceDiagram
         end
     end
     S->>V: 会话 teardown
-    V->>V: disarm 并重置策略
+    V->>V: disarm、重置策略并恢复状态档
 ```
 
-开关的打开/关闭是另一条入口：设置关闭 → 立即 disarm 并恢复；设置打开 → 立即采样一次，**只有 `StreamRuntime` 非空时才 arm**。没有会话时的“打开”只留这一次采样，不产生定时器。
+开关的打开/关闭是另一条入口：设置关闭 → 立即恢复用户档位（回 `NONE`）并 disarm；设置打开 → 立即采样一次，**只有 `StreamRuntime` 非空时才 arm**。没有会话时的“打开”只留这一次采样，不产生定时器。
 
 ### 6.5 背压时序
 

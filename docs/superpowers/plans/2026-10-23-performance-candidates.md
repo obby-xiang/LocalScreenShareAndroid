@@ -407,8 +407,8 @@ git commit -m "feat(codec): 解码器请求低延迟参数并按三态上报"
 
 **Files:**
 
-- Modify: `$MAIN/core/stream/ThermalThrottlePolicy.java` — 新增 `static Tier stricter(Tier, Tier)`
-- Create: `$MAIN/core/stream/ThermalHeadroomPolicy.java`
+- Modify: `$MAIN/core/stream/ThermalThrottlePolicy.java` — 新增 `static Tier stricter(Tier, Tier)`、`static Tier tierAtSessionEnd(boolean, int)`
+- Create: `$MAIN/core/stream/ThermalHeadroomPolicy.java` — 含 `static boolean isValid(float)`
 - Modify: `$MAIN/service/ThermalMonitor.java` — 新增方法级 `@RequiresApi(R) float getThermalHeadroom(int forecastSeconds)`
 - Modify: `$MAIN/service/ScreenShareService.java` — 字段、`armThermalHeadroomPolling()`、`disarmThermalHeadroomPolling()`、`sampleThermalHeadroomOnce()`；改 `startThermalMonitor`、`stopThermalMonitor`、`cancelScheduledWork`、`onThermalStatusChanged`、`onThermalThrottleSettingChanged`，并在 `startStreamPipeline()` 成功路径 arm
 - Modify: `$MAIN/core/metrics/PipelineMetrics.java` — `Gauge.THERMAL_HEADROOM_PERMILLE`、`Gauge.THERMAL_TIER`
@@ -418,7 +418,7 @@ git commit -m "feat(codec): 解码器请求低延迟参数并按三态上报"
 - Modify: `$TEST/core/stream/ThermalThrottlePolicyTest.java`
 - Modify: `$TEST/core/metrics/MetricsFormatterTest.java`
 - Modify: `scripts/checks/test_baseline.json`
-- Modify: `docs/decision-board.md`、`docs/task-board.md`、`docs/performance-research.md`
+- Modify: `docs/decision-board.md`、`docs/task-board.md`、`docs/performance-research.md`、`docs/media-architecture.md`（§4.4.1 已在 B3 范围）
 
 **Interfaces:**
 
@@ -429,6 +429,12 @@ git commit -m "feat(codec): 解码器请求低延迟参数并按三态上报"
  */
 public static Tier stricter(Tier a, Tier b);
 
+/**
+ * The tier a session boundary leaves in force: the switch and the current status only, never the
+ * forecast (the caller resets it first).
+ */
+public static Tier tierAtSessionEnd(boolean throttleEnabled, int thermalStatus);
+
 // ThermalHeadroomPolicy (pure, JVM testable)
 public final class ThermalHeadroomPolicy {
     public static final long POLL_INTERVAL_MS = 1000L;       // at most one sample per second
@@ -438,6 +444,12 @@ public final class ThermalHeadroomPolicy {
     public static final int ENTER_MINIMAL_PERMILLE = 850;     // pending device calibration
     public static final int EXIT_MINIMAL_PERMILLE = 780;      // pending device calibration
     public static final int EXIT_REDUCED_PERMILLE = 600;      // pending device calibration
+
+    /**
+     * Whether a reading is inside [0, MAX_VALID_HEADROOM] and not NaN; the service reuses this
+     * instead of restating the domain.
+     */
+    public static boolean isValid(float headroom);
 
     /**
      * Samples one ratio, where 1.0 means the platform starts throttling and values above it mean
@@ -464,11 +476,11 @@ float getThermalHeadroom(int forecastSeconds);
 | 入口 | 动作 | 触发点 |
 | --- | --- | --- |
 | arm | 先 `removeCallbacks` 再 `postDelayed`（幂等）；入口条件 `SDK_INT >= 30 && isThermalThrottleEnabled() && mThermalMonitor != null && mStreamRuntime != null`（**会话运行中**），不满足直接返回 | `startStreamPipeline()` 成功之后，**每次会话**都执行，不是只在 `onCreate` |
-| disarm | `removeCallbacks` + `policy.reset()` | `cancelScheduledWork()`（每次 teardown）与 `stopThermalMonitor()`（`onDestroy`） |
-| tick body | 先重读开关；false → disarm + `applyThermalTier(NONE, "disabled")` 且**不 re-arm**；true → 采样一次再 `postDelayed` | 轮询自身 |
-| 设置关闭 | 立即 disarm + `applyThermalTier(NONE, "disabled")`，不等 tick | `onThermalThrottleSettingChanged` |
+| disarm | `removeCallbacks` + `policy.reset()` + 档位回落为 `tierAtSessionEnd(开关, 当前状态)`（即只由状态取档，无状态档则 `NONE`；开关关闭仍为 `NONE`） | `cancelScheduledWork()`（每次 teardown）与 `stopThermalMonitor()`（`onDestroy`） |
+| tick body | 先重读开关；false → `applyThermalTier(NONE, "disabled")` + disarm 且**不 re-arm**；true → 采样一次再 `postDelayed` | 轮询自身 |
+| 设置关闭 | 立即 `applyThermalTier(NONE, "disabled")` + disarm，不等 tick | `onThermalThrottleSettingChanged` |
 | 设置打开 | 立即采样一次；`mStreamRuntime != null` 时再 arm（重排），**否则只采样这一次、不 arm** | 同上 |
-| 采样 | 显式判断 `SDK_INT >= 30` 后调平台；NaN → 写 gauge 0（不打印）并只按状态取档；有效 → `Math.round(headroom * 1000f)` 写千分比、采样策略、与状态档取严格档、写档位 gauge（NONE=1 / REDUCED=2 / MINIMAL=3）、应用 | `sampleThermalHeadroomOnce` |
+| 采样 | 显式判断 `SDK_INT >= 30` 后调平台；无效样本（NaN 或越界）不改档——保留既有预测档、`thermalHeadroom` gauge 写 0（不打印）且不写档位 gauge，再与状态档取严格档；有效 → `Math.round(headroom * 1000f)` 写千分比、采样策略、与状态档取严格档、写档位 gauge（NONE=1 / REDUCED=2 / MINIMAL=3）、应用 | `sampleThermalHeadroomOnce` |
 
 不变式：`applyThermalTier` 只改生效值、绝不写偏好；先换编码器再改显示；开关关闭后不再有任何 1 Hz 采样；**没有会话时不存在 1 Hz 定时器**（设置打开最多产生一次立即采样）。
 
@@ -489,7 +501,7 @@ float getThermalHeadroom(int forecastSeconds);
 | `onSample_exitsReducedBelowExit` | REDUCED 下 0.59 → NONE |
 | `onSample_keepsMinimalAboveExit` | MINIMAL 下 0.79 → MINIMAL |
 | `onSample_downgradesMinimalBelowExit` | MINIMAL 下 0.77 → REDUCED |
-| `onSample_ignoresOutOfRangeValues` | -0.1 与 2.5 不改变档位（`1.5` 是有效样本、应得 MINIMAL，不能拿来做本用例） |
+| `onSample_ignoresOutOfRangeValues` | -0.1 与 2.5 不改变档位；`1.5` 是有效样本、应得 MINIMAL，只能 reset 后作正向对照，不能用来证明忽略 |
 | `onSample_bandFlappingDoesNotOscillate` | 0.60–0.70 交替 10 次 → 档位变化不超过 1 次 |
 | `reset_returnsToNone` | 任意档位后 reset → NONE |
 | `pollIntervalRespectsOneHertz` | `POLL_INTERVAL_MS >= 1000L` |
