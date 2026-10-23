@@ -96,6 +96,7 @@ ui / service
 | `*Factory` | 创建 | `EncoderFactory`、`H264EncoderFactory` |
 | `*Mapper` | 无状态转换 | `RegisterProtoMapper`、`ScreenStreamProtoMapper` |
 | `*Registry` | 查找表 | `CodecRegistry` |
+| `*Recorder` | 把一次外部事件按序记账到共享状态 | `ExternalCatchUpRecorder` |
 | `*Target` | 输出端 | `RenderTarget`、`SurfaceRenderTarget` |
 | `*Listener` | 回调接口 | `DiscoveryProviderListener`、`ClientStateListener` |
 
