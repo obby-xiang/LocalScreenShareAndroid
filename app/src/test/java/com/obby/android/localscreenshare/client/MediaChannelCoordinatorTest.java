@@ -14,6 +14,7 @@ import org.junit.Test;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -226,6 +227,7 @@ public class MediaChannelCoordinatorTest {
                     });
             coordinator.onOffer(offer(CHANNEL_ID, "tcp"));
             assertTrue(link.awaitStarted());
+            assertTrue(sink.awaitEvents(1));
 
             coordinator.onMediaClose(close(CHANNEL_ID));
             coordinator.onMediaClose(close(CHANNEL_ID));
@@ -396,11 +398,29 @@ public class MediaChannelCoordinatorTest {
      */
     private static final class RecordingSink implements MediaChannelCoordinator.AnswerSink {
 
-        private final List<MediaChannelEvent> events = new ArrayList<>();
+        private final List<MediaChannelEvent> events =
+                Collections.synchronizedList(new ArrayList<>());
 
         @Override
         public void send(MediaChannelEvent event) {
-            events.add(event);
+            synchronized (events) {
+                events.add(event);
+                events.notifyAll();
+            }
+        }
+
+        boolean awaitEvents(int count) throws InterruptedException {
+            long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+            synchronized (events) {
+                while (events.size() < count) {
+                    long remainingNanos = deadlineNanos - System.nanoTime();
+                    if (remainingNanos <= 0) {
+                        return false;
+                    }
+                    TimeUnit.NANOSECONDS.timedWait(events, remainingNanos);
+                }
+                return true;
+            }
         }
     }
 
