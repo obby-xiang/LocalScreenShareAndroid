@@ -1566,9 +1566,18 @@ public class MainActivity extends AppCompatActivity {
         portSettingView.setValue(MIN_SERVER_PORT);
         portSettingView.setMinValue(MIN_SERVER_PORT);
         portSettingView.setMaxValue(MAX_SERVER_PORT);
-        portSettingView.setOnValueChangedListener((picker, oldVal, newVal) -> {
-            if (Preferences.get().getServerPort() != newVal) {
-                Preferences.get().setServerPort(newVal);
+        // The port is persisted when the wheel comes to rest, never per intermediate value: a
+        // fling would otherwise write ports the user never chose (a device round found
+        // random-looking values in the preference file), and the programmatic sync on show must
+        // never become a "user" change either. The encoding sliders already follow this rule for
+        // the same reason.
+        portSettingView.setOnScrollListener((picker, scrollState) -> {
+            if (scrollState != NumberPicker.OnScrollListener.SCROLL_STATE_IDLE) {
+                return;
+            }
+            final int port = picker.getValue();
+            if (Preferences.get().getServerPort() != port) {
+                Preferences.get().setServerPort(port);
                 updateServiceInfoView();
             }
         });
@@ -1601,9 +1610,14 @@ public class MainActivity extends AppCompatActivity {
         final NumberPicker multicastPortView = settingsDialog.findViewById(R.id.multicast_port_setting);
         multicastPortView.setMinValue(DiscoverySettings.MIN_MULTICAST_PORT);
         multicastPortView.setMaxValue(DiscoverySettings.MAX_MULTICAST_PORT);
-        multicastPortView.setOnValueChangedListener((picker, oldVal, newVal) -> {
-            if (Preferences.get().getMulticastPort() != newVal) {
-                Preferences.get().setMulticastPort(newVal);
+        // Same rule as the service port: persist the value the wheel settles on, not every tick.
+        multicastPortView.setOnScrollListener((picker, scrollState) -> {
+            if (scrollState != NumberPicker.OnScrollListener.SCROLL_STATE_IDLE) {
+                return;
+            }
+            final int port = picker.getValue();
+            if (Preferences.get().getMulticastPort() != port) {
+                Preferences.get().setMulticastPort(port);
             }
         });
 
