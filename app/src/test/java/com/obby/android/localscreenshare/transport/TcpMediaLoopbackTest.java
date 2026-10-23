@@ -154,6 +154,60 @@ public class TcpMediaLoopbackTest {
         assertNull(status.failure.get());
     }
 
+    /**
+     * The secure flag of a descriptor is the content flag, not the TLS state of the channel.
+     *
+     * <p>The two used to be the same field on a media channel, so a viewer on a TLS channel marked
+     * its window {@code FLAG_SECURE} even with the private-picture setting off, and a device round
+     * saw every screenshot of that viewer come back black (DB-SEC-002 separates the two).</p>
+     */
+    @Test
+    public void descriptorSecure_isTheContentFlagNotTheChannelTls() throws Exception {
+        Fixture fixture = fixture();
+        fixture.authority.ticket = ticket(fixture, fixture.client.getDeviceId());
+        fixture.server.start(0);
+        RecordingListener listener = new RecordingListener();
+        RecordingStatus status = new RecordingStatus();
+        TcpMediaReceiver receiver = receiver(fixture, listener, status, fixture.authority.ticket);
+        Thread thread = start(receiver);
+        assertTrue(status.awaitReady());
+        assertTrue(fixture.authority.awaitEstablished());
+
+        fixture.authority.transport.sendDescriptor(descriptor());
+
+        assertTrue("descriptor not delivered", listener.awaitDescriptors(1));
+        assertFalse("the offer is TLS, but the picture is not private",
+                listener.descriptorsSecure.get(0));
+        receiver.close();
+        thread.join(TimeUnit.SECONDS.toMillis(TIMEOUT_SECONDS));
+    }
+
+    /**
+     * A private picture reaches the viewer through the descriptor, so the channel must carry the
+     * flag the session was given.
+     */
+    @Test
+    public void descriptorSecure_carriesAPrivatePicture() throws Exception {
+        Fixture fixture = fixture();
+        fixture.server.setDescriptorSecure(() -> true);
+        fixture.authority.ticket = ticket(fixture, fixture.client.getDeviceId());
+        fixture.server.start(0);
+        RecordingListener listener = new RecordingListener();
+        RecordingStatus status = new RecordingStatus();
+        TcpMediaReceiver receiver = receiver(fixture, listener, status, fixture.authority.ticket);
+        Thread thread = start(receiver);
+        assertTrue(status.awaitReady());
+        assertTrue(fixture.authority.awaitEstablished());
+
+        fixture.authority.transport.sendDescriptor(descriptor());
+
+        assertTrue("descriptor not delivered", listener.awaitDescriptors(1));
+        assertTrue("the private-picture flag must reach the viewer",
+                listener.descriptorsSecure.get(0));
+        receiver.close();
+        thread.join(TimeUnit.SECONDS.toMillis(TIMEOUT_SECONDS));
+    }
+
     @Test
     public void wrongToken_isRefusedBeforeAnyFrame() throws Exception {
         Fixture fixture = fixture();
@@ -348,12 +402,16 @@ public class TcpMediaLoopbackTest {
         private final List<EncodedAccessUnit> accessUnits =
                 Collections.synchronizedList(new ArrayList<>());
 
+        private final List<Boolean> descriptorsSecure =
+                Collections.synchronizedList(new ArrayList<>());
+
         private final CountDownLatch units = new CountDownLatch(2);
 
         @Override
         public void onDescriptor(StreamDescriptor descriptor, boolean secure) {
             order.add("descriptor");
             descriptors.add(descriptor);
+            descriptorsSecure.add(secure);
         }
 
         @Override
@@ -376,6 +434,13 @@ public class TcpMediaLoopbackTest {
             return accessUnits.size() >= count;
         }
 
+        boolean awaitDescriptors(int count) throws InterruptedException {
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(TIMEOUT_SECONDS);
+            while (descriptors.size() < count && System.nanoTime() < deadline) {
+                Thread.sleep(10L);
+            }
+            return descriptors.size() >= count;
+        }
     }
 
     /**

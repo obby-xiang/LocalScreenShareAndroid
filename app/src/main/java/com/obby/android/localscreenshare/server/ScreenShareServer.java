@@ -802,6 +802,9 @@ public final class ScreenShareServer {
             }
             final MediaChannelServer server = new MediaChannelServer(context,
                     mMediaChannelRegistry, TimeSource.MONOTONIC, mMetrics);
+            // A descriptor of a channel must carry the same content flag as one sent on the control
+            // plane; the channel's own TLS state is not that flag.
+            server.setDescriptorSecure(() -> mSecure);
             final int port = server.start(Preferences.get().getServerPort() + 1,
                     Preferences.get().getServerPort());
             mMediaChannelServer = server;

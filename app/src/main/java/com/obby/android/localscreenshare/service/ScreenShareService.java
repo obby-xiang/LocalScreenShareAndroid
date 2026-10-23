@@ -783,9 +783,16 @@ public class ScreenShareService extends Service {
         }
 
         switch (key) {
-            case Preferences.KEY_PROJECTION_SECURE:
+            case Preferences.KEY_PROJECTION_SECURE: {
                 mIsProjectionSecure = Preferences.get().isProjectionSecure();
+                // The flag only travels inside a descriptor, and the server builds those, so it has
+                // to learn the new value now; a viewer picks it up with the next descriptor.
+                final ScreenShareServer secureServer = mServer;
+                if (secureServer != null) {
+                    secureServer.setSecure(mIsProjectionSecure);
+                }
                 break;
+            }
             case Preferences.KEY_PROJECTION_SCALE:
                 mProjectionScale = Preferences.get().getProjectionScale();
                 updateProjectionSize();

@@ -31,6 +31,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BooleanSupplier;
 
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLServerSocket;
@@ -80,6 +81,9 @@ public final class MediaChannelServer {
     private final TimeSource timeSource;
 
     private final PipelineMetrics metrics;
+
+    // Content-privacy flag of the descriptors this session sends; see setDescriptorSecure().
+    private volatile BooleanSupplier descriptorSecure = () -> false;
 
     private final List<TcpMediaTransport> channels = new CopyOnWriteArrayList<>();
 
@@ -142,6 +146,26 @@ public final class MediaChannelServer {
         this.authority = authority;
         this.timeSource = timeSource;
         this.metrics = metrics;
+    }
+
+    /**
+     * Sets the source of the content-privacy flag carried by every descriptor of a channel.
+     *
+     * <p>The flag says "this picture must not be captured on the viewer", which belongs to the
+     * sharing session, not to the channel: a media channel hands the descriptor to the receiver
+     * exactly like the control plane does, so it must carry the same flag. Without this source the
+     * channel had nothing but its own TLS state to report, and a viewer on a TLS channel was marked
+     * secure even with the private-picture setting off - a device round saw every screenshot of such
+     * a viewer come back black.</p>
+     *
+     * @param source readable on any thread, may return a different value per call; required
+     * @throws IllegalArgumentException if {@code source} is null
+     */
+    public void setDescriptorSecure(final BooleanSupplier source) {
+        if (source == null) {
+            throw new IllegalArgumentException("source must not be null");
+        }
+        descriptorSecure = source;
     }
 
     /**
@@ -425,7 +449,7 @@ public final class MediaChannelServer {
             out.flush();
             accepted.setSoTimeout(0);
             TcpMediaTransport transport = new TcpMediaTransport(accepted,
-                    serverContext != null, timeSource);
+                    descriptorSecure.getAsBoolean(), timeSource);
             channels.add(transport);
             authority.onChannelEstablished(hello.getChannelIdHex(), transport);
         } catch (IOException | RuntimeException e) {

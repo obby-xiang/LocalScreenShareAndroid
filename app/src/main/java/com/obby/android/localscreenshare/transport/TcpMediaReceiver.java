@@ -230,9 +230,13 @@ public final class TcpMediaReceiver implements MediaChannelLink {
 
     private void deliver(MediaFrame frame, long arrivalNs) throws IOException {
         if (frame.getType() == MediaFrame.Type.DESCRIPTOR) {
+            Descriptor parsed = Descriptor.parseFrom(frame.getPayload());
             StreamDescriptor descriptor = ScreenStreamProtoMapper.toStreamDescriptor(streamKey,
-                    Descriptor.parseFrom(frame.getPayload()));
-            listener.onDescriptor(descriptor, offer.isSecure());
+                    parsed);
+            // The flag of the descriptor, not the TLS state of this channel: a secure channel and a
+            // private picture are two different things, and only the second one hides the viewer
+            // window from screenshots (DB-SEC-002).
+            listener.onDescriptor(descriptor, parsed.getSecure());
             return;
         }
         // The payload of an access unit is the encoded bitstream, not a protocol message: the
