@@ -38,7 +38,7 @@
 - **G5 线程边界。** 编码器更新只在 `lss-backpressure` 单线程执行；`onClientMessage` 的同步区内只做 gate 与字段拷贝，同步区外 `offer`；任何 `RuntimeException` 在协调器内吞掉，不冒泡到 gRPC 回调线程。
 - **G6 指标常量。** 新建 `DecoderMetricNames`（1 值）与 `FeedbackMetricNames`（2 值）；`ServerMetricNames` 追加 5 个后恰好 20，Javadoc 明写“已达上限，下一条服务端键必须先按域拆类”；`ClientMetricNames` **不再追加**。
 - **G7 文档与注释。** 仓库文档中文；Java 注释一律英文多行块（`/**` 独立成行、` * ` 前缀、` */` 独立成行）。注意 `check_cjk.py` 只扫 `$MAIN` 与 `app/src/main/res/values`，**不扫测试源码**——守卫不拦不代表可以写中文注释。
-- **G8 测试与提交纪律。** 先写失败用例再实现；只用 JVM 短测试，不新增仪器测试或长时用例；每棒同一提交更新 `test_baseline.json`，`failures/errors/skipped` 必须全 0，`tests` 只增不减（`classes` 可变）。每棒至少跑 `:app:lintDebug`；**B2、B3、B4、B5 必须同时跑 `:app:lintRelease`**（CI 两个变体都跑；本计划对四个涉及平台门控的棒统一取更严格的要求）。
+- **G8 测试与提交纪律。** 先写失败用例再实现；只用 JVM 短测试，不新增仪器测试或长时用例；每棒同一提交更新 `test_baseline.json`，`failures/errors/skipped` 必须全 0。`check_test_count.py` 对 `tests` **与** `classes` 都要求 `current >= baseline`，因此两者都只能不减；合并测试类等同于删测试，必须先确认零损失（断言只搬家、不减少）并在同一提交把基线更新为实测值。双变体还要求 `testDebugUnitTest` 与 `testReleaseUnitTest` 两个结果目录的 `tests`/`classes` 完全一致。每棒至少跑 `:app:lintDebug`；**B2、B3、B4、B5 必须同时跑 `:app:lintRelease`**（CI 两个变体都跑；本计划对四个涉及平台门控的棒统一取更严格的要求）。
 - **G9 禁止夹带。** 任何一棒都不得修改 `CatchUpPolicy` 的阈值与判定顺序、不得替换 `SurfaceView`、不得做多档流/每客户端转码、不得改 `minSdk`、不得新增依赖、不得改 `DV-027` 的裁决状态。
 - **G10 文档不写本机信息。** 不写绝对路径、电脑名、用户名、账号、设备标识、会话或 agent ID，也不写仓库外的输出日志路径。
 
@@ -47,7 +47,7 @@
 以下是最容易咬人的失败模式，每一处都必须在对应 Task 的用例或评审步骤中出现，不能靠注释或“将来会做”代替：
 
 1. **三态指标自相矛盾。** `dec.lowLat` 的 0 与“未采样”同值且 `MetricsFormatter` 不打印 0；若仍按 0 写判据，设备端永远不通过。B2 必须先用 `MetricsFormatterTest` 钉住“0 不打印、1 打印、2 打印”。
-2. **热余量轮询生命周期。** arm 只在 `onCreate`、disarm 在每会话 teardown ⇒ 第一个会话之后永久停摆；或者开关关闭只 `applyThermalTier(NONE)` ⇒ 下一秒 tick 又合并回高热档。B3 用会话级 arm/disarm + 关闭立即 reset 两个不变量钉死。
+2. **热余量轮询生命周期。** arm 只在 `onCreate`、disarm 在每会话 teardown ⇒ 第一个会话之后永久停摆；或者开关关闭只 `applyThermalTier(NONE)` ⇒ 下一秒 tick 又合并回高热档；或者设置打开就 arm 而不看会话 ⇒ 空闲期出现 1 Hz 采样。B3 用会话级 arm/disarm + 关闭立即 reset + “有会话才 arm”三个不变量钉死。
 3. **丢片并轨的预算污染。** 若外部追赶计入连续失败预算，高丢包会把 HOLD 推到主路径（`DV-027` 未裁决）。B1 的用例必须断言外部追赶不增加连续计数、不触发收敛失败。
 4. **一帧同时是结束点与新起点。** 单值枚举无法同时表达“结束 episode”和“本帧仍积压要开始下一次”。B1 返回两个字段，且顺序固定为先结束再采样。
 5. **接口实现漏一个就编译失败。** 解码桥有 3 个实现，其中一个是测试文件内的私有类。B2 文件表必须列全。
@@ -56,7 +56,7 @@
 8. **`frame_rate` 与配置哈希。** 放进 hash 会为纯显示提示付出解码器重建；0 若被当成“忽略”，旧提示会永久残留并继续重放。
 9. **平台方法运行期不存在。** `setFrameRate` 两参在 30、三参在 31；只靠 lint 挡不住 `NoSuchMethodError`，必须有纯 JVM 策略用例钉住分支并吞异常。
 10. **重放幂等。** 宿主切换与 surface 重建会重复下发同一值；0 表示清除时必须停止重放旧值。
-11. **背压的死角。** 未 attach 就解析/下发、多客户端仍动作、外部写入被当成自己写的、编码器拒绝冒泡、失败日志每帧一条——B5 逐条有对应用例。
+11. **背压的死角。** 未 attach 就解析/下发、多客户端仍动作、外部写入被当成自己写的、编码器拒绝冒泡、失败日志每帧一条、协调器在构造期捕获 `PipelineMetrics.NONE` 导致 `bp.*` 永不打印——B5 逐条有对应用例或装配约束。
 12. **上报变常驻定时器。** 恒定 3 s 上报与功耗方向相反；B5 的排程必须在“无积压”时归零，且设备项 ⑨ 复核唤醒次数。
 
 ## 棒次总览
@@ -99,7 +99,9 @@ package com.obby.android.localscreenshare.core.client;
 
 public final class CatchUpSampler {
 
-    /** One decoded unit: the episode may end and a new sample may still start one. */
+    /**
+     * One decoded unit: the episode may end and a new sample may still start one.
+     */
     public static final class Result {
         public final boolean finishedEpisode;
         public final CatchUpPolicy.Decision decision;
@@ -124,13 +126,17 @@ public final class CatchUpSampler {
 
     public boolean isCatchingUp();
 
-    /** Start of the current episode, or Long.MIN_VALUE when no episode is open. */
+    /**
+     * Start of the current episode, or Long.MIN_VALUE when no episode is open.
+     */
     public long getEpisodeStartedNs();
 
     public CatchUpPolicy.Reason getLastReason();
     public int getConsecutiveCatchUps();
 
-    /** Units sampled; diagnostics only, never used for a decision. */
+    /**
+     * Units sampled; diagnostics only, never used for a decision.
+     */
     public long getSampleCount();
 }
 ```
@@ -138,7 +144,9 @@ public final class CatchUpSampler {
 `CatchUpPolicy` 新增：
 
 ```java
-/** External episode reason (a lost whole access unit), distinct from backlog reasons. */
+/**
+ * External episode reason (a lost whole access unit), distinct from backlog reasons.
+ */
 EXTERNAL;
 
 /**
@@ -254,6 +262,7 @@ git commit -m "feat(client): 统一追赶采样入口并接入丢片追赶"
 - Modify: `$MAIN/core/metrics/MetricsFormatter.java` — 客户端行打印 `dec.lowLat`（1/2 才打印）
 - Create: `$TEST/core/codec/mediacodec/AndroidMediaCodecDecoderBridgeTest.java`
 - Modify: `$TEST/core/support/FakeMediaCodecDecoderBridge.java` — 实现新方法 + `setLowLatencyState(...)`
+- Modify: `$TEST/core/support/FakeMediaCodecBridgeFactory.java` — 新增 `setNextDecoderLowLatencyState(LowLatencyState)`，在 `createDecoder` 内套用到新建的桥；用于“桥在 `H264Decoder.configure` 之前就必须带上状态”的 gauge 用例
 - Modify: `$TEST/core/codec/h264/H264DecoderTest.java` — 私有 `BudgetDecoderBridge`（约 `:701`）**必须**实现新方法；追加 5 条用例
 - Modify: `$TEST/core/metrics/MetricsFormatterTest.java`
 - Modify: `scripts/checks/test_baseline.json`
@@ -263,13 +272,21 @@ git commit -m "feat(client): 统一追赶采样入口并接入丢片追赶"
 
 ```java
 public enum LowLatencyState {
-    /** The platform is too old, so the optional keys were never sent. */
+    /**
+     * The platform is too old, so the optional keys were never sent.
+     */
     NOT_REQUESTED,
-    /** Both optional keys were accepted. */
+    /**
+     * Both optional keys were accepted.
+     */
     APPLIED,
-    /** The low-latency key survived, the priority key was dropped. */
+    /**
+     * The low-latency key survived, the priority key was dropped.
+     */
     APPLIED_WITHOUT_PRIORITY,
-    /** Every attempt that carried the low-latency key was rejected. */
+    /**
+     * Every attempt that carried the low-latency key was rejected.
+     */
     REJECTED
 }
 
@@ -280,7 +297,9 @@ LowLatencyState getLowLatencyState();
 private static final String LOW_LATENCY_KEY = "low-latency";
 private static final int PRIORITY_REALTIME = 0;
 
-/** Applies one configuration. Flags only: never a MediaFormat, so JVM tests can drive it. */
+/**
+ * Applies one configuration. Flags only: never a MediaFormat, so JVM tests can drive it.
+ */
 interface FormatApplier {
     void configure(boolean lowLatency, boolean priority);
 }
@@ -319,7 +338,7 @@ static LowLatencyState configureWithFallback(boolean requestLowLatency, FormatAp
 | `configure_unrelatedFailureKeepsOriginalType` | 不请求可选键且抛 `IllegalStateException` → 原样抛出、applier 1 次、reset 0 次 |
 | `configure_notRequestedNeverSendsOptionalKeys` | 不请求 → 入参恒 `(false,false)`、返回 `NOT_REQUESTED` |
 
-`H264DecoderTest`（+5，经 `FakeMediaCodecDecoderBridge`）：
+`H264DecoderTest`（+5，经 `FakeMediaCodecBridgeFactory.setNextDecoderLowLatencyState(...)` 预设桥状态）：
 
 | 用例 | 断言 |
 | --- | --- |
@@ -341,7 +360,7 @@ Expected: 编译失败（枚举、方法、常量、两个桥实现缺失），`
 
 - [ ] **Step 3：实现**
 
-按 Interfaces 与 Write-down rules 实现；`FakeMediaCodecDecoderBridge` 默认返回 `NOT_REQUESTED`，并提供 setter。`BudgetDecoderBridge` 同样返回 `NOT_REQUESTED`（它只测预算，不关心低延迟）。`H264Decoder` 读桥的返回值并映射写 gauge；`MetricsFormatter` 在客户端行追加一个非 0 才打印的 gauge 字段，键取自新常量类。
+按 Interfaces 与 Write-down rules 实现；`FakeMediaCodecDecoderBridge` 默认返回 `NOT_REQUESTED`，并提供 `setLowLatencyState(...)`。`FakeMediaCodecBridgeFactory` 增加 `setNextDecoderLowLatencyState(...)`（一次性，套用到下一次 `createDecoder` 新建的桥并随后清空），因为 `H264DecoderTest.newMeasuredDecoder` 复用的是共享工厂，桥是在 `H264Decoder.configure` 内部才被创建的——没有这个入口，三条 `configure_records*` 用例无法在 configure 之前把状态塞进去。若不想改工厂，替代方案是在 `H264DecoderTest` 内按 `BudgetBridgeFactory` 的既有范式新增一个带 metrics 的私有工厂，但**不要**同时保留两种写法。`BudgetDecoderBridge` 同样返回 `NOT_REQUESTED`（它只测预算，不关心低延迟）。`H264Decoder` 读桥的返回值并映射写 gauge；`MetricsFormatter` 在客户端行追加一个非 0 才打印的 gauge 字段，键取自新常量类。
 
 - [ ] **Step 4：跑绿测（定向）**
 
@@ -384,6 +403,8 @@ git commit -m "feat(codec): 解码器请求低延迟参数并按三态上报"
 
 **目标**：用 `getThermalHeadroom(10)` 预测温升，提前进入 REDUCED / MINIMAL；预测与现状只允许“取严格档”；采样随会话与开关正确上下线。
 
+平台返回值是**热压力比值**（`1.0` = 平台开始限流，`>1.0` = 已限流，越大越热），指标按千分比打印且**不钳制**上界；阈值仍按 0.70 / 0.85 的千分比 700 / 850。开关的打开/关闭与 arm 的分离见下方 Lifecycle rules：**没有会话时只允许一次立即采样，不得 arm 1 Hz**。
+
 **Files:**
 
 - Modify: `$MAIN/core/stream/ThermalThrottlePolicy.java` — 新增 `static Tier stricter(Tier, Tier)`
@@ -403,21 +424,33 @@ git commit -m "feat(codec): 解码器请求低延迟参数并按三态上报"
 
 ```java
 // ThermalThrottlePolicy
-/** Two signals may only tighten the ladder, never relax it. */
+/**
+ * Two signals may only tighten the ladder, never relax it.
+ */
 public static Tier stricter(Tier a, Tier b);
 
 // ThermalHeadroomPolicy (pure, JVM testable)
 public final class ThermalHeadroomPolicy {
     public static final long POLL_INTERVAL_MS = 1000L;       // at most one sample per second
     public static final int FORECAST_SECONDS = 10;
+    public static final float MAX_VALID_HEADROOM = 2.0f;      // above this the ratio is garbage
     public static final int ENTER_REDUCED_PERMILLE = 700;     // pending device calibration
     public static final int ENTER_MINIMAL_PERMILLE = 850;     // pending device calibration
     public static final int EXIT_MINIMAL_PERMILLE = 780;      // pending device calibration
     public static final int EXIT_REDUCED_PERMILLE = 600;      // pending device calibration
 
-    /** NaN and out-of-range samples are ignored and leave the tier unchanged. */
+    /**
+     * Samples one ratio, where 1.0 means the platform starts throttling and values above it mean
+     * the device is already throttled.
+     *
+     * <p>The permille value is {@code Math.round(headroom * 1000f)}. A cast must not be used:
+     * 0.70f is 0.69999998..., so a cast yields 699 and the threshold test would fail on its own.
+     * NaN and ratios outside [0, MAX_VALID_HEADROOM] are ignored and leave the tier unchanged.</p>
+     */
     public Tier onSample(float headroom);
+
     public Tier getTier();
+
     public void reset();
 }
 
@@ -430,31 +463,33 @@ float getThermalHeadroom(int forecastSeconds);
 
 | 入口 | 动作 | 触发点 |
 | --- | --- | --- |
-| arm | 先 `removeCallbacks` 再 `postDelayed`（幂等）；入口条件 `SDK_INT >= 30 && isThermalThrottleEnabled() && mThermalMonitor != null`，不满足直接返回 | `startStreamPipeline()` 成功之后，**每次会话**都执行，不是只在 `onCreate` |
+| arm | 先 `removeCallbacks` 再 `postDelayed`（幂等）；入口条件 `SDK_INT >= 30 && isThermalThrottleEnabled() && mThermalMonitor != null && mStreamRuntime != null`（**会话运行中**），不满足直接返回 | `startStreamPipeline()` 成功之后，**每次会话**都执行，不是只在 `onCreate` |
 | disarm | `removeCallbacks` + `policy.reset()` | `cancelScheduledWork()`（每次 teardown）与 `stopThermalMonitor()`（`onDestroy`） |
 | tick body | 先重读开关；false → disarm + `applyThermalTier(NONE, "disabled")` 且**不 re-arm**；true → 采样一次再 `postDelayed` | 轮询自身 |
 | 设置关闭 | 立即 disarm + `applyThermalTier(NONE, "disabled")`，不等 tick | `onThermalThrottleSettingChanged` |
-| 设置打开 | 立即采样一次 + arm（重排） | 同上 |
-| 采样 | 显式判断 `SDK_INT >= 30` 后调平台；NaN → 写 gauge 0（不打印）并只按状态取档；有效 → 写千分比、采样策略、与状态档取严格档、写档位 gauge（NONE=1 / REDUCED=2 / MINIMAL=3）、应用 | `sampleThermalHeadroomOnce` |
+| 设置打开 | 立即采样一次；`mStreamRuntime != null` 时再 arm（重排），**否则只采样这一次、不 arm** | 同上 |
+| 采样 | 显式判断 `SDK_INT >= 30` 后调平台；NaN → 写 gauge 0（不打印）并只按状态取档；有效 → `Math.round(headroom * 1000f)` 写千分比、采样策略、与状态档取严格档、写档位 gauge（NONE=1 / REDUCED=2 / MINIMAL=3）、应用 | `sampleThermalHeadroomOnce` |
 
-不变式：`applyThermalTier` 只改生效值、绝不写偏好；先换编码器再改显示；开关关闭后不再有任何 1 Hz 采样。
+不变式：`applyThermalTier` 只改生效值、绝不写偏好；先换编码器再改显示；开关关闭后不再有任何 1 Hz 采样；**没有会话时不存在 1 Hz 定时器**（设置打开最多产生一次立即采样）。
 
 **Steps:**
 
 - [ ] **Step 1：先写失败用例（18 条）**
+
+18 条全部是纯 JVM 用例。arm 的“会话运行中”条件属于服务生命周期，JVM 侧无法覆盖，改由 Step 3 的实现约束 + 设备项 ② 核对；不要为它新增冒烟测试类，也不要因此改动 18 这个数字。
 
 `ThermalHeadroomPolicyTest`（12 条）：
 
 | 用例 | 断言 |
 | --- | --- |
 | `onSample_nanKeepsCurrentTier` | 0.72 → REDUCED；NaN → 仍 REDUCED |
-| `onSample_entersReducedAtThreshold` | 0.69 → NONE；0.70 → REDUCED |
-| `onSample_entersMinimalAtThreshold` | 0.84 → REDUCED；0.85 → MINIMAL |
+| `onSample_entersReducedAtThreshold` | 0.69 → NONE；0.70 → REDUCED（`0.70f` 经 `Math.round` 得 700；用 `(int)` 截断会得 699，用例会自己假失败） |
+| `onSample_entersMinimalAtThreshold` | 0.84 → REDUCED；0.85 → MINIMAL（`0.85f` 同理，必须四舍五入到 850） |
 | `onSample_keepsReducedAboveExit` | REDUCED 下 0.65 → REDUCED |
 | `onSample_exitsReducedBelowExit` | REDUCED 下 0.59 → NONE |
 | `onSample_keepsMinimalAboveExit` | MINIMAL 下 0.79 → MINIMAL |
 | `onSample_downgradesMinimalBelowExit` | MINIMAL 下 0.77 → REDUCED |
-| `onSample_ignoresOutOfRangeValues` | -0.1 与 1.5 不改变档位 |
+| `onSample_ignoresOutOfRangeValues` | -0.1 与 2.5 不改变档位（`1.5` 是有效样本、应得 MINIMAL，不能拿来做本用例） |
 | `onSample_bandFlappingDoesNotOscillate` | 0.60–0.70 交替 10 次 → 档位变化不超过 1 次 |
 | `reset_returnsToNone` | 任意档位后 reset → NONE |
 | `pollIntervalRespectsOneHertz` | `POLL_INTERVAL_MS >= 1000L` |
@@ -475,6 +510,8 @@ Expected: 编译失败（策略类、`stricter`、两个 gauge 常量与键缺�
 - [ ] **Step 3：实现**
 
 先实现纯策略与 `stricter`，再改服务生命周期，最后接指标。`ThermalMonitor.getThermalHeadroom` 用方法级 `@RequiresApi(R)`，调用点显式版本判断——两个变体的 lint 才能一致。`ServerMetricNames` 追加后检查常量数量恰为 20。
+
+实现时按三条写死的口径落地：① 千分比一律 `Math.round(headroom * 1000f)`，**不写 `(int)` 强制转换**；`onSample` 只接受 `[0, 2]`，NaN 与区间外样本原样忽略。② `armThermalHeadroomPolling()` 的入口条件补 `mStreamRuntime != null`；`onThermalThrottleSettingChanged()` 打开分支先 `sampleThermalHeadroomOnce()`，再**仅在有会话时** arm。③ 服务生命周期没有 JVM 用例（该服务依赖 Android 框架），这两条由代码评审与设备项 ② 核对，不要为它造只做冒烟的空测试类，也不要改动用例数。
 
 - [ ] **Step 4：跑绿测（定向）**
 
@@ -650,7 +687,7 @@ python scripts/checks/check_cjk.py
 
 - `docs/media-architecture.md` §4.4 增“客户端内容帧率提示”：不入配置哈希、API 30 门控、服务端两种编解码都填、客户端按 surface 输出消费、0 表示清除且不重放。
 - `docs/task-board.md`：新增 `TB-MEDIA-007` 行与详情块。
-- `docs/performance-research.md` §4.2 第 5 条标已落地。
+- `docs/performance-research.md` §4.2 第 5 条标“**部分落地**（2026-10-23）：仅 `Surface.setFrameRate` 提示，**未含 `Display.Mode` 切换**”；该行原文把两者写在一起，不得整条标已落地。
 - `docs/decision-board.md`：`DV-011` 补注“内容帧率提示不等于严格限帧”。
 
 - [ ] **Step 7：提交**
@@ -694,9 +731,10 @@ git commit -m "feat(render): 下发内容帧率提示到呈现面"
 - Create: `$MAIN/core/stream/BackpressurePolicy.java`
 - Create: `$MAIN/server/BitrateTarget.java`
 - Create: `$MAIN/server/RuntimeBitrateTarget.java`
-- Create: `$MAIN/server/BackpressureCoordinator.java`
-- Modify: `$MAIN/server/StreamCallHandler.java` — 末尾参数为协调器的新构造重载；`onClientMessage` 增加 FEEDBACK 分支（同步区内只 gate，同步区外 offer）
-- Modify: `$MAIN/server/ScreenShareServer.java` — 构造期创建协调器（注入开关 supplier），`stream()` 注入 handler，`stop()` 有界关停
+- Create: `$MAIN/server/FeedbackSink.java` — 窄接口：`offer(StreamFeedback, BitrateTarget)` 与 `close()`；handler 只依赖它
+- Create: `$MAIN/server/BackpressureCoordinator.java` — 实现 `FeedbackSink`；非 `final`；提供生产工厂与可注入执行器的构造
+- Modify: `$MAIN/server/StreamCallHandler.java` — 末尾参数为 `FeedbackSink` 的新构造重载（可 null，null 视同 `NONE`）；`onClientMessage` 增加 FEEDBACK 分支（同步区内只 gate，同步区外 offer）
+- Modify: `$MAIN/server/ScreenShareServer.java` — **在 `setMetrics()` 内**创建协调器（捕获传入的同一 `PipelineMetrics` 实例、注入开关 supplier；若已有则先关停旧的），`stream()` 把同一实例交给 handler，`stop()` 有界关停；**禁止**在构造期创建（构造期字段仍是 `PipelineMetrics.NONE`）
 - Modify: `$MAIN/core/metrics/PipelineMetrics.java`、Create `$MAIN/core/metrics/FeedbackMetricNames.java`、Modify `$MAIN/core/metrics/ServerMetricNames.java`、`$MAIN/core/metrics/MetricsFormatter.java`
 - Create: `$TEST/core/model/StreamFeedbackTest.java`
 - Create: `$TEST/client/BacklogFeedbackTest.java`
@@ -751,30 +789,66 @@ public final class BackpressurePolicy {
     public static Action decide(Action current, int currentBps, int ceilingBps, int sessionCount,
                                 boolean h264, int clearStreak, long sinceActionMs);
 
-    /** LOWER: one step down, clamped at the floor. RAISE: straight to the ceiling. */
+    /**
+     * LOWER: one step down, clamped at the floor. RAISE: straight to the ceiling.
+     */
     public static int targetBitrate(Action action, int currentBps, int ceilingBps);
 }
 
 // server/BitrateTarget (seam so the coordinator is JVM testable)
 public interface BitrateTarget {
     int getSessionCount();
-    /** Codec id of the published descriptor, or null while none is published. */
+
+    /**
+     * Codec id of the published descriptor, or null while none is published.
+     */
     String getCodecId();
+
     int getTargetBitrateBps();
-    /** Applies a new target; throws RuntimeException when the encoder refuses. */
+
+    /**
+     * Applies a new target; throws RuntimeException when the encoder refuses.
+     */
     void applyTargetBitrate(int bitrateBps);
 }
 
-// server/BackpressureCoordinator
-public final class BackpressureCoordinator {
-    public static final BackpressureCoordinator NONE;
+// server/FeedbackSink (the only view the handler sees)
+public interface FeedbackSink {
+    /**
+     * Records the newest report and schedules one apply pass; never blocks, never calls a codec.
+     */
+    void offer(StreamFeedback feedback, BitrateTarget target);
 
+    /**
+     * Stops the executor within a bounded wait; idempotent. Offers after this call are no-ops.
+     */
+    void close();
+}
+
+// server/BackpressureCoordinator implements FeedbackSink; not final so a test may observe it
+public class BackpressureCoordinator implements FeedbackSink {
+    /**
+     * No-op sink: never creates a thread, never writes metrics, never calls a codec.
+     */
+    public static final FeedbackSink NONE;
+
+    /**
+     * Production factory: the executor is created lazily on the first offer, as one thread named
+     * "lss-backpressure". Nothing is created while no report arrives or after close().
+     */
+    public static BackpressureCoordinator create(PipelineMetrics metrics, TimeSource timeSource,
+                                                 BooleanSupplier enabled);
+
+    /**
+     * Test seam: the caller owns the executor, so a test can enqueue and drain it by hand.
+     */
     public BackpressureCoordinator(PipelineMetrics metrics, TimeSource timeSource,
-                                   BooleanSupplier enabled);
+                                   BooleanSupplier enabled, Executor executor);
 
-    /** Records the newest report and schedules one apply pass; never blocks, never calls a codec. */
+    @Override
     public void offer(StreamFeedback feedback, BitrateTarget target);
 
+    @Override
     public void close();
 }
 ```
@@ -790,6 +864,9 @@ public final class BackpressureCoordinator {
 7. `enabled.getAsBoolean()` 每次 apply 现读；false → `NONE` + `bp.skip`。
 8. `applyTargetBitrate` 抛 `RuntimeException`：吞掉、状态不变、`bp.skip` 增加、失败日志最多每 60 s 一条（`WARN_INTERVAL_MS = 60_000`）。
 9. 每次真正执行的动作打一行日志（动作、来源值、目标值、深度、等待、追赶、客户端数），**同一动作只一行**。
+10. **指标实例只来自 `setMetrics()` 注入的那个 scope**：协调器在 `setMetrics()` 内创建，`stream()` 把同一实例交给 handler；禁止在 `ScreenShareServer` 构造期创建（构造期字段是 `PipelineMetrics.NONE`，`bp.apply`/`bp.skip`/`bp.bitrate` 会被静默丢弃，JVM 用例注入真实 scope 也查不出来）。`bp.bitrate` 记录最近一次成功应用的值。
+11. **执行器与最新值胜出**：`offer` 只把报告放进“最新一份”槽位并对 `AtomicBoolean scheduled` 做一次 CAS；已在途时后续 `offer` 不排队。因此连发 3 份、再 drain 一次，只会应用第 3 份一次。
+12. **`NONE` 与 `close()` 之后**：`offer` 直接返回——不排程、不建线程、不写指标、不调编码器、不抛异常；`close()` 幂等，等待在途任务最多 1 s，且不会为了关停而创建线程。
 
 **Reporting semantics（写死）:**
 
@@ -823,22 +900,22 @@ public final class BackpressureCoordinator {
 | `decide_restoreOnlyWhenOverridden` | 无覆盖 + 多客户端 → 无动作；有覆盖 + 多客户端 → 恢复 |
 | `decide_restoreTargetsCeiling` | 恢复目标等于上限 |
 
-`BackpressureCoordinatorTest`（8，直接执行器 + 假目标）：
+`BackpressureCoordinatorTest`（8，**手动 drain 的队列执行器** + 假目标；每条用例先 `offer`，再显式 drain，再断言）：
 
 | 用例 | 断言 |
 | --- | --- |
-| `offer_appliesOnlyTheNewestReport` | 连发 3 份 → 应用不超过 1 次且用第 3 份 |
-| `offer_recordsApplyAndBitrateMetrics` | `bp.apply` 加 1、`bp.bitrate` 等于生效值 |
+| `offer_appliesOnlyTheNewestReport` | 连发 3 份（中间不 drain）→ 队列里只有 1 个任务；drain 后应用恰好 1 次且用第 3 份 |
+| `offer_recordsApplyAndBitrateMetrics` | 注入真实 metrics scope → `bp.apply` 加 1、`bp.bitrate` 等于生效值 |
 | `offer_containsEncoderFailure` | 目标抛异常 → 不冒泡、`bp.skip` 加 1 |
 | `offer_rateLimitsFailureLog` | 59 s 内连续两次失败 → 只 1 条失败日志 |
 | `offer_skipsWhenDisabled` | 开关假 → 0 次应用、跳过增长；随后开关真 → 立即可用 |
-| `offer_afterCloseIsNoOp` | `close()` 后无调用、无异常 |
+| `offer_afterCloseIsNoOp` | `close()` 后 `offer` 不入队、无异常；`close()` 幂等；`NONE` 的 `offer` 不产生任何目标调用或指标写入 |
 | `offer_multiClientRestoresOnce` | 有覆盖 + 客户端数 2 → 一次恢复至上限，之后不再调用 |
 | `offer_externalWriteClearsOverride` | 读回值不等于上次应用值 → 不恢复、不重试 |
 
 `RuntimeBitrateTargetTest`（3）：描述符未发布时返回 null、会话数读 hub、应用码率走运行时更新参数。
 `ScreenStreamProtoMapperTest`（+3）：`feedbackRoundTrip`、`feedbackDefaultsAreZero`、`feedbackIsDispatchedToListener`（同时保留“无已知载荷仍抛异常”的既有断言）。
-`StreamCallHandlerTest`（+3）：未 attach 时反馈被忽略（协调器 0 次、无异常、attach 键为 null）、attach 后反馈到达（1 份、未关闭、attach 状态不变）、`close()` 后反馈被丢弃。
+`StreamCallHandlerTest`（+3，用测试文件内的记录式 `FeedbackSink` 观察；不需要子类化协调器）：未 attach 时反馈被忽略（sink 收到 0 次、无异常、attach 键为 null）、attach 后反馈到达（1 份、未关闭、attach 状态不变）、`close()` 后反馈被丢弃。
 `MetricsFormatterTest`（+2）：`bpKeys_printWhenMeasured`、`fbKeys_omittedWhenZero`。
 
 - [ ] **Step 2：跑红测**
@@ -857,9 +934,9 @@ Expected: 编译失败（新增类与 proto 字段缺失）；`ScreenStreamProto
 2. mapper：两个方向的映射 + `dispatchClientMessage` 的 FEEDBACK 分支；监听器加 `default` 空实现（不加抽象方法，避免所有实现被迫修改）。
 3. 客户端累加器与上报：`BacklogFeedback` 零分配；`ScreenShareClient` 在两条解码路径的出队点采样，按 Reporting semantics 排程；`stop()` 清理。
 4. 纯策略：`BackpressurePolicy`（`classify` / `decide` / `targetBitrate`），Javadoc 解释“8 = 早期预警、64 = 不可恢复”。
-5. 服务端：`BitrateTarget` 接缝 + `RuntimeBitrateTarget`（全部判空：描述符可空、参数非空、更新参数可能抛 `IllegalStateException`）+ `BackpressureCoordinator`（单线程执行器、最新值胜出、`AtomicBoolean` 已排程、指标、限流日志、`close()` 有界关停）。
-6. handler：新构造重载（末尾协调器，可 null）；`onClientMessage` 在同步区内先判 `attached`，未 attach 直接忽略；已 attach 则解析成模型放局部变量，**退出同步块后** `offer`。
-7. 服务端装配：构造期创建协调器并注入开关 supplier（现读偏好）；`stream()` 注入 handler；`stop()` 关停协调器。
+5. 服务端：`BitrateTarget` 接缝 + `RuntimeBitrateTarget`（全部判空：描述符可空、参数非空、更新参数可能抛 `IllegalStateException`）+ `FeedbackSink` 窄接口 + `BackpressureCoordinator`（实现 `FeedbackSink`、非 `final`；生产工厂惰性建 `lss-backpressure` 单线程、测试构造注入执行器；最新值胜出 + `AtomicBoolean` 已排程；指标、限流日志、`close()` 有界关停；`NONE` 为空操作壳）。
+6. handler：新构造重载（末尾 `FeedbackSink`，可 null；null 视同 `NONE`）；`onClientMessage` 在同步区内先判 `attached`，未 attach 直接忽略；已 attach 则解析成模型放局部变量，**退出同步块后** `offer`。
+7. 服务端装配：把协调器创建挪进 `setMetrics()`，用传入的同一个 `PipelineMetrics` 实例（此调用在 `start()` 之前，与既有 `setMetrics` 装配顺序一致）；`stream()` 把同一实例交给 handler；`stop()` 关停协调器。协调器**不得**在 `ScreenShareServer` 构造期创建，否则捕获的是字段默认值 `PipelineMetrics.NONE`。
 8. 指标：三个服务端键、两个客户端键、`bp.bitrate`。
 
 - [ ] **Step 4：跑绿测（定向）**
@@ -907,7 +984,7 @@ git add app/src/main/proto/screen_stream.proto \
 git commit -m "feat(server): 单客户端码率背压与观看端积压反馈"
 ```
 
-**回退**：三条独立闸门——客户端不排程（删一处调用）、服务端不注入协调器（构造参数 null）、总闸 `backpressure` 置假。任一关闭即回旧行为；协议字段保留无害。
+**回退**：三条独立闸门——客户端不排程（删一处调用）、服务端不注入协调器（`stream()` 传 `BackpressureCoordinator.NONE` 或 null）、总闸 `backpressure` 置假。任一关闭即回旧行为；协议字段保留无害。
 
 ---
 
@@ -918,7 +995,7 @@ git commit -m "feat(server): 单客户端码率背压与观看端积压反馈"
 - Modify: `docs/superpowers/plans/2026-10-23-performance-candidates.md` — 回填各棒实测测试计数与提交哈希
 - Modify: `docs/decision-board.md` — `DB-CODEC-016`、`DB-POWER-003`、`DB-MULTI-007` 入总览与详情；`DV-011`、`DV-012` 补注
 - Modify: `docs/task-board.md` — `TB-MEDIA-006/007`、`TB-POWER-002`、`TB-CLIENT-007`、`TB-ENG-015` 的状态与证据；`TB-ENG-016` 写明五项进度；“当前焦点”加一行
-- Modify: `docs/performance-research.md` — §4.2 加“落地状态（2026-10-23）”列（第 1 条注明未含项及原因）；§6 标注代码状态与待校准参数；§7 保持“未实测”
+- Modify: `docs/performance-research.md` — §4.2 加“落地状态（2026-10-23）”列（第 1 条注明未含 `KEY_OPERATING_RATE` 及原因；第 5 条标“部分落地：仅 `Surface.setFrameRate`，未含 `Display.Mode`”）；§6 标注代码状态与待校准参数；§7 保持“未实测”
 - Modify: `docs/media-architecture.md` — §4.4 / §5.3.1 / §6.5 / §12 失败模式表各补一行
 - Modify: `docs/superpowers/specs/2026-10-23-performance-candidates-design.md` — 只回填“已落地/未落地”状态行，不改设计结论
 - Modify: `scripts/checks/test_baseline.json` — 定格为最终实测计数
@@ -990,7 +1067,7 @@ python scripts/checks/check_docs.py
 
 ## 交付判据
 
-五项都以“代码 + JVM 用例 + 指标键 + 文档条目”四件套落地；`./gradlew build :app:assembleDebugAndroidTest` 全绿；`lintDebug` 与 `lintRelease` 同时通过；`check_test_count.py` 显示 `tests` 只增不减且 0 失败；`dec.lowLat` 三态可区分、热余量采样随会话与开关正确上下线、背压空闲时零定时器；且**没有任何一处**改动 `CatchUpPolicy` 阈值、`SurfaceView` 结构、多档流或 `DV-012` / `DV-027` 的裁决状态。
+五项都以“代码 + JVM 用例 + 指标键 + 文档条目”四件套落地；`./gradlew build :app:assembleDebugAndroidTest` 全绿；`lintDebug` 与 `lintRelease` 同时通过；`check_test_count.py` 显示 `tests` 与 `classes` 都不减且 0 失败；`dec.lowLat` 三态可区分、热压力采样随会话与开关正确上下线（无会话时零 1 Hz 定时器）、背压空闲时零定时器；且**没有任何一处**改动 `CatchUpPolicy` 阈值、`SurfaceView` 结构、多档流或 `DV-012` / `DV-027` 的裁决状态。
 
 设备验证不在本计划内，检查点见设计文档 §8；阈值校准必须回填设计文档 §10 与对应策略类的 Javadoc。
 
@@ -1001,7 +1078,7 @@ python scripts/checks/check_docs.py
 | 修正 | 落实位置 |
 | --- | --- |
 | 三态指标（0 不打印、1 生效、2 回退） | B2 Step 1 的 `MetricsFormatterTest` 两条、B2 Step 3 的映射、设计文档 §4.1 与 §7.1 |
-| 热余量会话级 arm/disarm | B3 生命周期表、设计文档 §4.2 与 §6.4、B3 Step 3 |
+| 热余量会话级 arm/disarm（arm 入口含“会话运行中”） | B3 生命周期表、设计文档 §4.2 与 §6.4、B3 Step 3 |
 | 关闭开关立即 reset 且不 re-arm | B3 生命周期表与 `onThermalThrottleSettingChanged` |
 | 丢片追赶计指标但不占连续预算 | B1 Interfaces、Step 3 第 2 条与第 5 条、设计文档 §4.3 |
 | 采样器返回“结束 + 决策”两个字段 | B1 Interfaces 与 Step 3 第 1 条 |
@@ -1033,3 +1110,18 @@ python scripts/checks/check_docs.py
 | 每棒同提交更新测试基线 | 头部说明、每棒 Step 5、统一验证清单 |
 | 用例/类数清点修正 | 本文 §0 与“棒次总览” |
 | 看板登记措辞与裁决的三处对齐 | 本文 §0 |
+
+### 终审必改 8 项（2026-10-23 已落实）
+
+下表对应终审报告的 8 个必须修正项，逐条给出改动后的落位；正文与设计文档已同口径改写，本表用于复审时确认没有回退。
+
+| # | 终审项 | 落实位置 |
+| --- | --- | --- |
+| 1 | B5 协调器不得在构造期绑定 `PipelineMetrics.NONE` | B5 Files 的 `ScreenShareServer` 行、Step 3 第 7 条、Decision semantics 10；设计文档 §4.5 装配行与 §6.5 装配段。改法：在 `setMetrics()` 内创建，`stream()` 把同一实例交给 handler，构造期禁止创建 |
+| 2 | 协调器缺执行器接缝与观察接口 | B5 Interfaces 的 `FeedbackSink`、`create(...)`、四参构造（可注入 `Executor`）；Decision semantics 11–12；`BackpressureCoordinatorTest` 改为“手动 drain 队列执行器”，`StreamCallHandlerTest` 用记录式 `FeedbackSink`；设计文档 §4.5 执行器/关闭语义两行与 §6.5 |
+| 3 | B3 arm 条件必须含“会话运行中” | B3 Lifecycle rules 的 arm 与“设置打开”两行、不变式、Step 3 第 ② 条；设计文档 §4.2 生命周期/开关打开两行、§6.4 结尾段、§8 ②、§9 新增风险行。无会话时设置打开只立即采样一次，不 arm 1 Hz |
+| 4 | 浮点千分比统一 `Math.round` | B3 Interfaces 的 `onSample` Javadoc 与 `MAX_VALID_HEADROOM`、Step 1 两条阈值用例说明、Step 3 第 ① 条；设计文档 §4.2 千分比换算行。阈值仍按 0.70 / 0.85 边界（700 / 850），禁止 `(int)` 截断 |
+| 5 | `thermalHeadroom` 改述为热压力千分比 | 设计文档 §4.2 开头定义与阈值行、§7.1 键表与脚注、§8 ②、§10 四行、§6.4；B3 Interfaces 注释与 Step 3。1000 = 平台开始限流、允许 >1000 且不钳制，策略只忽略 `[0, 2]` 之外的样本 |
+| 6 | B2 补测试侧的桥状态入口 | B2 Files 新增 `FakeMediaCodecBridgeFactory`（`setNextDecoderLowLatencyState`）、Step 1 的 `H264DecoderTest`（+5）说明、Step 3 |
+| 7 | B4 只标“部分落地” | B4 Step 6 与 B6 Files 的 `docs/performance-research.md` 行；设计文档 §9 新增风险行。仅 `Surface.setFrameRate`，未含 `Display.Mode` |
+| 8 | G8 的 `tests` / `classes` 口径 | Global Constraints G8 与设计文档 §3 C8：两者都只能不减；合并测试类视为删测试，须确认零损失并在同一提交更新基线；双变体 `tests`/`classes` 必须一致 |
