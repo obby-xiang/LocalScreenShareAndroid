@@ -14,8 +14,9 @@ package com.obby.android.localscreenshare.core.metrics;
  * nothing rather than zeros, so a gRPC-only session and a UDP session never look comparable when
  * they are not. The keys below without a producer in this version are registered so the log
  * vocabulary is fixed before a producer exists - {@code tcp.frame}, {@code tcp.frameDrop},
- * {@code udp.late}, {@code udp.auDrop} and {@code udp.idrReq} have no counter yet, and a future
- * batch adds them without renaming anything.</p>
+ * {@code udp.late} and {@code udp.auDrop} have no counter yet, and a future batch adds them
+ * without renaming anything. {@link #UDP_IDR_REQUEST} has left that group: the join-point request
+ * counter feeds it, so it prints like the other datagram counters once a request has been made.</p>
  */
 public final class MediaMetricNames {
 

@@ -21,15 +21,17 @@
 
 ## 🎯 当前焦点
 
+- 2026-10-23 · 性能候选获用户批准：五项进入实施计划，`SurfaceView` 另立评估（[TB-ENG-016](#tb-eng-016)）
+- 2026-10-23 · TB-ENG-013 第 18 项 r3：JPEG+UDP 部分通过，重组窗口抖动下重启后 0fps，另立待办（[TB-ENG-013](#tb-eng-013)、[TB-MEDIA-008](#tb-media-008)）
 - 2026-10-23 · 回归 r2 两条观察修复：JPEG+UDP 重组窗口与音频水位闭锁，均已修复、待设备复验（[TB-NET-003](#tb-net-003)、[TB-AUDIO-003](#tb-audio-003)）
 - 2026-10-23 · TB-ENG-013 r2 补测：第 17 项两条修复设备验证通过，另立两条观察（[TB-ENG-013](#tb-eng-013)）
 - 2026-10-23 · TB-ENG-013 首轮统一回归：两条新缺陷（观看中关闭崩溃、窗口恒 SECURE）已定位（[TB-ENG-013](#tb-eng-013)）
 - 2026-10-23 · 首轮回归两条新缺陷修复：关闭移出主线程、画面私密标志独立传递，r2 设备验证通过（[TB-NET-003](#tb-net-003)、[TB-SEC-003](#tb-sec-003)、[TB-ENG-013](#tb-eng-013)）
+
+<details><summary>更早焦点（2026-10-20 ～ 2026-10-23，共 71 条）</summary>
+
 - 2026-10-23 · TB-NET-003 r5 §4 一次性异常定性：回退链候选窗口与客户端串行化不匹配，已修复（[TB-NET-003](#tb-net-003)）
 - 2026-10-23 · TB-NET-003 r5 终验：gRPC-only 强制基线通过，第 16 项转完成（[TB-NET-003](#tb-net-003)、[TB-ENG-013](#tb-eng-013)）
-
-<details><summary>更早焦点（2026-10-20 ～ 2026-10-23，共 69 条）</summary>
-
 - 2026-10-23 · TB-NET-003 r4 遗留定位：`media_transport` 字符串键"不生效"是**注入格式错误**——`SharedPreferences` 对 `<string>` 读元素文本、对 `<boolean>/<int>` 读 `value` 属性，脚本却统一写 `value=`，平台读回空串 ⇒ `auto`；注入脚本与 [§F](startup-checklist.md) 已更正，产品侧补 `mediaChannel: mode = …, stored = "…"` 一行日志（`getMediaTransport()` 语义不变），⑧ 修复后待 r5 复验（[TB-NET-003](#tb-net-003)、[TB-ENG-013](#tb-eng-013) 第 16 项）
 - 2026-10-23 · TB-NET-003 r4 设备复验：UDP 首包窗口放宽生效（高负载 5/5 建立、零超时），端口/偏好回写已消除；`media_transport=grpc` 仍不生效（布尔键有效、字符串键无效），第 16 项收窄到 ⑧ 与人为故障注入（[TB-NET-003](#tb-net-003)、[TB-ENG-013](#tb-eng-013) 第 16 项）
 - 2026-10-23 · TB-NET-003 r3 两条真 bug 修复：①端口滚轮按每个中间值落盘（一次 fling 就能把用户没选过的端口写进偏好，r3 观察到的随机 `server_port` 同源）改为**停稳才落盘**，并加契约用例钉住「偏好只存用户意图、运行时不回写」（`b5108ee`）；②UDP 首包窗口 300 ms 与 READY→swap 的真实延迟不匹配（高负载 3/4 次 `udp_bind_timeout`）改为 2 s 且只约束首包（`70a2eb8`）（[TB-NET-003](#tb-net-003)、[TB-ENG-013](#tb-eng-013) 第 16 项）
@@ -114,10 +116,12 @@
 
 | ID | 状态 | 优先级 | 标题 | 创建 | 完成 | 关联 |
 | --- | --- | --- | --- | --- | --- | --- |
+| TB-ENG-016 | 📋 待办 | 🟠 P1 | 性能候选实施批次（用户 2026-10-23 批准五项：解码低延迟参数、刷新率匹配、热余量预测降档、追赶阈值收紧、背压回传；`SurfaceView` 另立评估，不在本批） | 2026-10-23 | — | [性能优化调研](performance-research.md) |
+| TB-MEDIA-008 | 📋 待办 | 🟠 P1 | JPEG+UDP 重组窗口抖动容忍修复（大 AU 73–95 片下 10 ms 静默过窄，重启后 scale100 组合 5/5 次 0fps；判据沿用设备报告，阈值待设备校准） | 2026-10-23 | — | [TB-ENG-013](#tb-eng-013) |
 | TB-SEC-002 | 🔶 部分完成 | 🔴 P0 | 身份密钥瞬时故障静默删键与三份身份快照（N3；代码完成，设备复测待棒） | 2026-10-21 | — | [决策 DB-SEC-003](decision-board.md#db-sec-003) |
 | TB-DISC-013 | 🔶 部分完成 | 🟠 P1 | 发现行首连的证书指纹引导（N2；代码完成，设备复测待棒） | 2026-10-21 | — | [TB-DISC-012](#tb-disc-012) |
 | TB-POWER-001 | ✅ 完成 | 🟠 P1 | 无观看者懒停与热降档（设备已验证：懒停回落 / 注入降档 / 恢复；功耗 mAh 与净电流受机型限制记未测到） | 2026-10-21 | 2026-10-22 | [决策 DB-POWER-001](decision-board.md#db-power-001) |
-| TB-ENG-013 | 🔶 部分完成 | 🟡 P2 | 统一回归：稳定性/长时测试清单（r2 补测：**第 17 项两条修复设备验证通过**——12/12 次观看中关闭零崩溃、画面私密两态两宿主全对；⑬ JPEG 出画、⑭ 无绿屏、①③⑦⑩、⑨ release 运行期、⑥ 30 min 全部补上；r2 两条新观察（JPEG+UDP 不来帧、音频 ~506 ms 固定偏差）均已修复，点位为清单第 18/19 项，清单共 19 项） | 2026-10-21 | — | [TB-WIN-001](#tb-win-001) |
+| TB-ENG-013 | 🔶 部分完成 | 🟡 P2 | 统一回归：稳定性/长时测试清单（r2 补测：**第 17 项两条修复设备验证通过**——12/12 次观看中关闭零崩溃、画面私密两态两宿主全对；⑬ JPEG 出画、⑭ 无绿屏、①③⑦⑩、⑨ release 运行期、⑥ 30 min 全部补上；r2 两条新观察（JPEG+UDP 不来帧、音频 ~506 ms 固定偏差）均已修复；**r3 第 18 项：JPEG+UDP 部分通过**（出画恢复、速率同量级），但大帧组合重启后 5/5 次 0fps，重组窗口问题归 [TB-MEDIA-008](#tb-media-008)；清单共 19 项） | 2026-10-21 | — | [TB-WIN-001](#tb-win-001) |
 | TB-DISC-012 | 🔶 部分完成 | 🟡 P2 | 双真机联机验证（首测组播互见 + 1080×2340 出画通过；跨机 NSD、分级扫描/收藏/身份跨机、多轮稳定性与 TLS 剩余项待补） | 2026-10-20 | — | [发现调研](discovery-research.md) |
 | TB-MEDIA-005 | 📋 待办 | 🟢 P3 | 停止共享时编码器输入面 abandoned 噪声（良性） | 2026-10-20 | — | [媒体架构](media-architecture.md) |
 | TB-CORE-002 | 🔶 部分完成 | 🔴 P0 | 会话与渲染目标解耦（解耦已落地，关窗不停会话待 DV-008） | 2026-10-17 | — | [窗口与会话设计](windowing-session-design.md) |
@@ -138,11 +142,11 @@
 | TB-SEC-003 | ✅ 已完成 | 🟠 P1 | 公告传输安全字段与「画面私密」分离（2026-10-23 `540a2ce` 修好「观看端窗口跟随通道 TLS 而非画面私密」，r2 设备验证：`projection_secure=false` 两宿主可截图、`=true` 两宿主全黑且带 SECURE） | 2026-10-21 | 2026-10-23 | [决策 DB-SEC-002](decision-board.md#db-sec-002) |
 | TB-MEDIA-004 | ✅ 已完成 | 🟡 P3 | 首帧绿色花屏（首帧呈现门控修复；2026-10-23 r2：音频开/关各 3 次首连 6/6 在 3.3 s 内出帧，逐帧绿色像素峰值 0.7 bp = 主题色图标量级，**无绿色花屏**） | 2026-10-20 | 2026-10-23 | [媒体架构](media-architecture.md) |
 | TB-WIN-001 | ✅ 已完成 | 🟠 P1 | 窗口切换（方案 B；2026-10-23 两轮统一回归覆盖全部 10 点位：连切 20 次 19/20、双宿主菜单一致、Home 往返、通知栏停止可脚本化、圆角与 catchup 有读数） | 2026-10-17 | 2026-10-23 | [窗口与会话设计](windowing-session-design.md) |
-| TB-NET-003 | ✅ 已完成 | 🟠 P1 | 双媒体传输：裸 TCP 主力 + UDP 实验档（B1–B6 代码全落地；设备 r1 发现三档从未激活，`74257d1` 修复后 **r2 设备复验：`chan=tcp` 37/37、`chan=udp` 37/37、`udp.*` 与 `tx.frag` 有读数、UDP 高动态无花屏**；真实故障注入与 gRPC-only 基线归 TB-ENG-013 第 16 项；2026-10-23 修复 JPEG+UDP 不来帧（重组保持窗口改静默计时），设备复验归第 18 项） | 2026-10-22 | 2026-10-22 | [实施计划](superpowers/plans/2026-10-22-media-transports.md) |
+| TB-NET-003 | ✅ 已完成 | 🟠 P1 | 双媒体传输：裸 TCP 主力 + UDP 实验档（B1–B6 代码全落地；设备 r1 发现三档从未激活，`74257d1` 修复后 **r2 设备复验：`chan=tcp` 37/37、`chan=udp` 37/37、`udp.*` 与 `tx.frag` 有读数、UDP 高动态无花屏**；真实故障注入与 gRPC-only 基线归 TB-ENG-013 第 16 项；2026-10-23 修复 JPEG+UDP 不来帧（重组保持窗口改静默计时），第 18 项 r3 复验部分通过，大帧组合重启后不出帧归 [TB-MEDIA-008](#tb-media-008)） | 2026-10-22 | 2026-10-22 | [实施计划](superpowers/plans/2026-10-22-media-transports.md) |
 | TB-CLIENT-006 | ✅ 已完成 | ⚪ P3 | 小窗 HUD 折行与字号自适应（字号随窗口宽度在 11sp–9sp 间缩小、每行单行截断；**2026-10-23 设备点位通过**：四态 + 全屏竖横逐态像素测量，5 条单行文字带、11sp→9sp、无折行无重叠） | 2026-10-21 | 2026-10-22 | [TB-OBS-001](#tb-obs-001) |
 | TB-ENG-001 | ✅ 已完成 | 🟡 P2 | 测试与发布工程（B1 CI 独立测试 job、B2 R8/keep、B3 仪器测试链路、B4 签名分离全落地；设备点位归 TB-ENG-013） | 2026-10-17 | 2026-10-22 | [实施计划](superpowers/plans/2026-10-22-release-engineering.md) |
 | TB-ENG-002 | ✅ 已完成 | 🟡 P2 | 发布签名加固（签名材料条件化、示例材料移出仓库、发布流程断言；覆盖安装实测归 TB-ENG-013） | 2026-10-17 | 2026-10-22 | [启动与签名清单](startup-checklist.md) |
-| TB-ENG-006 | ✅ 已完成 | 🟡 P2 | JPEG 降级客户端查看器接回与死代码清理（2026-10-23 r2：**JPEG 出画通过**——悬浮窗 + 60/80/100% 三档 + 全屏全部有画面、宿主切换正常；TCP 档出画，UDP 档另立观察，已修复待 TB-ENG-013 第 18 项复验） | 2026-10-19 | 2026-10-23 | [实施计划](superpowers/plans/2026-10-22-jpeg-viewer-reconnect.md) |
+| TB-ENG-006 | ✅ 已完成 | 🟡 P2 | JPEG 降级客户端查看器接回与死代码清理（2026-10-23 r2：**JPEG 出画通过**——悬浮窗 + 60/80/100% 三档 + 全屏全部有画面、宿主切换正常；TCP 档出画，UDP 档经 TB-ENG-013 第 18 项 r3 复验部分通过——出画恢复、速率同量级，大帧组合重启后不出帧归 [TB-MEDIA-008](#tb-media-008)） | 2026-10-19 | 2026-10-23 | [实施计划](superpowers/plans/2026-10-22-jpeg-viewer-reconnect.md) |
 | TB-DISC-011 | ✅ 已完成 | 🟡 P3 | 手动添加条目跨重启持久化（`ManualDeviceStore` 落盘 + 启动播种 + 长按移除；**2026-10-23 设备点位通过**：重启仍在、移除后 `[]`、无指纹记录被拦） | 2026-10-20 | 2026-10-22 | [发现调研](discovery-research.md) |
 | TB-ENG-014 | ✅ 已完成 | ⚪ P3 | H.264 编码器启动失败自动回退 JPEG 兼容模式（单次回退、Toast + 通知副标题可见、不记忆偏好；**2026-10-23 设备验证通过**：注入构建 `97e27ff0…` 下 toast/通知副标题/重开仍先试 H.264/设置页不变全部命中） | 2026-10-22 | 2026-10-22 | [TB-ENG-006](#tb-eng-006) |
 | TB-CORE-001 | ✅ 已完成 | 🔴 P0 | 正确性与资源清理（B1–B6 全落地；设备点位归 TB-ENG-013） | 2026-10-17 | 2026-10-22 | [实施计划](superpowers/plans/2026-10-22-core-correctness-cleanup.md) |
@@ -220,7 +224,47 @@
 
 ### 📋 待办条目
 
+<a id="tb-eng-016"></a>
+<details><summary>TB-ENG-016 性能候选实施批次（📋 待办 · 五项已获用户批准，`SurfaceView` 不在本批）</summary>
 
+- **状态 / 优先级 / 创建 / 完成**：📋 待办（用户已批准实施范围，代码未开始）/ 🟠 P1 / 2026-10-23 / —
+- **来源**：[性能优化业界调研](performance-research.md) §4.2 的候选清单与交接 §2.2 的「性能调研候选棒」；2026-10-23 用户裁决：批准其中五项开工，`SurfaceView` 另立评估。
+- **已批准的五项**（各占独立分棒 ID，实施时合并跟踪进度，不重复计算完成率；分棒详情块在各自落棒时补）：
+  1. `TB-MEDIA-006` **客户端解码器低延迟参数**：`KEY_LOW_LATENCY`（先查 `FEATURE_LowLatency`）、`KEY_OPERATING_RATE`、`KEY_PRIORITY`；降低解码延迟与抖动、不增加功耗。依据 §4.2 #1 与 §5。
+  2. `TB-MEDIA-007` **显示刷新率/帧率匹配**：客户端呈现面 `Surface.setFrameRate(fps)`，刷新率非整数倍时再评估切 `Display.Mode`；消除 3:2 节奏抖动。依据 §4.2 #5、§6 触发条件 4。
+  3. `TB-POWER-002` **热余量预测降档**：`PowerManager.getThermalHeadroom(10)` ≥0.7 与 ≥0.85 两级，早于 `SEVERE` 的「撞墙式」掉帧。依据 §4.2 #6、§6 触发条件 3。
+  4. `TB-CLIENT-007` **收紧追赶阈值 + 自适应队列**：队列 2 帧或 100–150 ms 即丢最旧，持续 500 ms 超阈值才 drop-to-IDR。依据 §4.2 #3。
+  5. `TB-ENG-015` **背压回传编码端**：客户端上报队列深度与迟到帧比例 → 服务端降 fps 或 `PARAMETER_KEY_VIDEO_BITRATE`；在爬升前介入，比事后追赶平滑。依据 §4.2 #4。
+- **不实施 / 另行评估的边界**：`SurfaceView` 取代 `TextureView`（§4.2 #2）**不在本批**——它改双宿主视图结构与快照过渡，须单独评估后再定，也不得与上述五项合并成一次改动。§4.3 的八条「未做且不推荐」、§4.2 #7 之后的编码器运行时参数、指标补全、编码器异常恢复、UDP 上的 FEC/NACK 等项均不在本批范围。
+- **口径约束**：① 追赶阈值收紧会改 `rx.catchup*` / `rx.converge.fail` 的口径，落棒时必须写机制理由并同步决策板 `DV-021` 与 [DB-OBS-002](decision-board.md#db-obs-002)（判据改写先例见 N-r2-2）；② 热余量阈值、`setFrameRate` 参数与队列上限默认标 **待设备校准**，不得写成已验证；③ 背压回传只改服务端编码参数，不新建通道、不引入新依赖。
+- **完成判据**：五项各自落地并有 JVM 证据与设备点位，且分别写回自己的条目；五项全部写回后本批次总项转 ✅，在此之前保持 📋 待办。
+- **关联文档**：[性能优化调研](performance-research.md)、[TB-POWER-001](#tb-power-001)、[TB-CLIENT-005](#tb-client-005)、[TB-OBS-001](#tb-obs-001)
+
+</details>
+
+<a id="tb-media-008"></a>
+<details><summary>TB-MEDIA-008 JPEG+UDP 重组窗口抖动容忍修复（📋 待办 · 机制已定位，阈值待设备校准）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：📋 待办（机制依据来自 2026-10-23 的设备复验；**判据沿用设备报告，`HOLD_UP_MS` 取值待设备校准**）/ 🟠 P1 / 2026-10-23 / —
+- **来源**：交接 §2.2 与 [TB-ENG-013](#tb-eng-013) 第 18 项 r3——保持窗口改静默计时后 JPEG 大帧在窗口 A 能整帧送达，但同一构建在重启后的环境里 JPEG+UDP 完全不出帧。
+- **现场（报告 `handoff/device-test-2026-10-23-jpeg-udp-r3/report.md`）**：默认大帧组合（`projection_scale=100`、1080×2340、quality 85）每 AU **73–95 个分片**（1348 B 载荷），真实丢片 **1.16%**（`udp.lost` +866 / `udp.recv` +74 925）；窗口 A 出画，`rx.auRate`/`enc.auRate` = 2.2/3.2；20:35–20:53 六次连接 **5/5 次 0 fps**，分片几乎全到（`udp.lost` 0.5–1.1%）却每 AU 4–5 次 `udp.auIncomplete`；`projection_scale=30`（≈16 片/AU）恢复到 1.0–2.4 fps，同期 JPEG+TCP 3.2 fps、H.264+UDP 5.2 fps 正常。
+- **机制**（报告 §5，按送达率反推，**推断而非直接测量**）：`core/net/AccessUnitReassembler` 的保持窗口是「自最后一个分片起静默 10 ms」的硬上限；设 >10 ms 的片段到达间隔为 λ、AU 传输时长为 D，则单帧存活率 ≈ `exp(-λ·D)`。大 AU 的 D≈0.3 s，λ 从窗口 A 的 ≈1.1/s 升到 ≈10/s 时整帧必丢；超时后剩余分片重建 buffer 再次超时，于是同一 AU 被计 1.1–2.2 次。
+
+```mermaid
+flowchart LR
+    F["分片到达（73–95 片/AU）"] --> H{"静默超过 10 ms？"}
+    H -- "否" --> OK["收齐即整帧交付"]
+    H -- "是" --> DROP["整 AU 丢弃，udp.auIncomplete +1"]
+    DROP --> REB["剩余分片重建缓冲"]
+    REB --> H
+```
+
+- **不采用「只把窗口调大」的理由**：窗口同时约束迟到分片不拖住后续 AU 与在途 AU 上限（4 个在途、字节预算固定）；单纯放大到百毫秒量级会放大内存占用与端到端延迟，也会改变 `superseded` 判据的语义。候选方案是按「本 AU 已收分片比例 + 尾部宽限」判超时，或对大 AU 单独放宽，取值须由对照实验定。
+- **待定判据（与设备报告一致，待设备校准）**：① 同环境重启后 scale100 组合连续 5 次连接均出帧（`rx.auRate > 0`）；② `udp.auIncomplete` 增速回到「真实丢失 AU 数」量级——每个丢失 AU 最多计 1 次（r3 为 1.1–2.2 次）；③ 窗口 A 的 `rx.auRate`/`enc.auRate` 不劣于 0.69；④ 迟到分片仍计 `udp.late`，绝不交付半截帧。
+- **前置证据缺口**：报告 §8 已注明 λ 是反推值（模拟器无 root、无 tcpdump），修复前须补一条可量化的到达间隔读数，否则只能按出帧率判定，不得把推断写成测量。
+- **关联文档**：[TB-ENG-013](#tb-eng-013) 第 18 项、[TB-NET-003](#tb-net-003)「r2 观察修复」、[传输方式调研](transport-research.md)
+
+</details>
 
 <a id="tb-sec-002"></a>
 <details><summary>TB-SEC-002 身份密钥瞬时故障静默删键与三份身份快照（🔶 部分完成 · N3）</summary>
@@ -320,10 +364,6 @@
 - **任务**：停止共享瞬间，编码器输入面（`GraphicBufferSource`）出现 1–2 条 `BufferQueue has been abandoned` 日志；无崩溃、无后续异常，属良性噪声。N3 修复后查看器纹理侧 abandoned 已为 0，编码器输入面仍余少量。
 - **交付物 / 验证证据**：交付：无（良性观察，暂不实现）。验证：如后续出现停止瞬间偶发 Surface 异常可优先怀疑此段时序。
 - **关联文档**：[媒体架构](media-architecture.md)
-
-</details>
-
-- **关联文档**：[问题3接线计划](superpowers/plans/2026-10-19-media-path-wiring.md)
 
 </details>
 
@@ -611,12 +651,19 @@
   14. **首帧绿色花屏点位（TB-MEDIA-004）**（来源[TB-MEDIA-004](#tb-media-004)）：在服务端已开始共享的机器上，观看端**首次**连接并记录 ① 首帧出现时刻与首帧画面是否正常（录屏逐帧核对，不用主观描述）② 关掉声音开关后同样首连一次对照（无音频锚点时首帧映射不会被提前，两轮对比可区分"映射超前"与"编码端内容退化"）③ 日志与 HUD 里 `dec.lat`、`pres.interval`、重连后 `SWITCH_BLACKOUT` 窗口 ④ 播放中改变分辨率/旋转一轮，确认换宿主与重配后第一帧立即出现（不再等待映射时间）⑤ 重连（不重启共享）一次对照，确认"重连未复现"现象是否仍在。**阻塞：无**；判据为录屏 + 日志，且出现花屏时须同时给出②的对照结论（关音频仍花屏 ⇒ 指向编码端首个 IDR 内容，另立条目/移交服务端）。
 - **执行口径**：一次统一棒只装一个已推送 HEAD、仓库零改动；每项记录取数窗口、宿主负载与 guest `top`；不得把“没测到”写成“没问题”；运行前后偏好/输入法/方向逐字节还原；不得放宽判据，判据不可达时须写明机制理由。
   15. **手动条目重启后的安全能力（TB-DISC-011 回归修复）**（来源[TB-DISC-011](#tb-disc-011) 的 2026-10-22 回归与修复）：① 冷启动（杀进程重开）后，手动添加的行在**首次周期探测之前**即显示为加密（地址后无「· 未加密传输」），点按直接进入「正在连接」而不再弹 `tls_device_not_encrypted_message` ② 同一设备的收藏行（若有）冷启动后同样立即可连 ③ **反向判据**：本地构建写入一条**无指纹**的 `lss-manual` 记录（不提交）→ 行仍显示「未加密传输」、点按仍被拦截，证明安全判据未被放松 ④ 播种不是确认：设备离线时该行在下一次重探后转不可达（不因播种的 `secure=true` 而一直装成可连）。**阻塞：无**；判据为截图 + `logcat`（点按时无闸门弹框）+ `shared_prefs/lss-manual.xml` 内容。
-  16. **UDP 实验档点位（TB-NET-003 B5）**（来源 [TB-NET-003](#tb-net-003) 的 B5 文案与开关）：服务端视频设置里「UDP 实验档」默认关；开启后 ① 同网真机一对开始共享，服务端日志出现 `media channel: listening … secure=true` 且会话行 `chan=udp`（或先 `tcp` 再按握手结果回落，记录**实际最终** `chan`）② 观看端出画、`rx.auRate` 与 `rx.bitrate` 与 gRPC 档同量级，`udp.recv`/`udp.lost`/`udp.auIncomplete` 有读数 ③ 反向判据：开关关闭重启共享后会话行恒 `chan=grpc`（或 `tcp`，若 `media_transport` 显式设过），不出现 `udp.*` ④ 拔掉 AP / 让服务端离网，1 s 内观看端恢复出帧且控制面 RPC 未断（`pres` 恢复、无重连横幅）⑤ 弱网（`tc`/路由器限速到 1–2 Mbps 或灌丢包）下观察 `udp.auIncomplete` 与 `kf.request` 相关性，确认丢 AU → IDR 链路真的动作（HUD `kf` 增长）⑥ 高频片（1080p60）一轮，确认无花屏、无「半截帧」可辨现象。⑦ **UDP 丢片 → IDR 联动**（2026-10-23 修复 `0ee136e` 后新增）：在可控丢包或高动态窗口下同时看观看端 `udp.idrReq` 与服务端 `kf.request` —— 两者应同向增长（`udp.idrReq` ≈ 丢片触发次数，`kf.request` ≤ 它且受 1 s 节流），不再出现「`udp.auIncomplete` 上千而 `kf.request` 只有 3–4」的脱节；若 `udp.idrReq` 有值而 `kf.request` 恒 0，说明请求在出站侧又被吞了，需带日志回来。⑧ **gRPC-only 强制基线**（`media_transport=grpc`）：按[启动与签名检查清单](startup-checklist.md) §F 的时序写入（**先 `am force-stop` 再改 XML，启动后不要再动任何应用内设置**），判据是服务端**根本不出现** `mediaChannel: offer:` 行、会话行恒 `chan=grpc`；只把文件 `cat` 回来不算生效证据。**2026-10-23 起可重验**：端口滚轮不再按中间值落盘（`b5108ee`），一次会话后 `server_port`/`media_transport` 应保持注入值；若再变化，按 `Settings` 面板是否被打开、以及 `prefs.py` 的写入类型（字符串键必须带 `:string`）逐项排除。⑨ **UDP 高负载建立率**（`70a2eb8` 后）：在同一对设备上重复 r3 的高负载场景（相册滚动 + 软解满载），至少 4 次连接，统计 `udp_bind_timeout` 次数与 `offer → READY → 首包` 的时延；判据是 4/4 建立（或失败时日志显示首包 >2 s，证明是环境而非窗口），并确认 TCP 回落仍只在真的失败时发生。⑩ **回退链时序复验**（2026-10-23 `fix(transport): 回退链的候选窗口与客户端串行化` 后新增，**观察项、非阻塞**，任一轮设备验证顺带执行）：同一对设备、同一高负载场景（相册持续滚动 + 软解满载）连续断开重连 ≥ 4 次，判据三条——1) 出现 `udp_bind_timeout` 之后，服务端应在 TCP 票据到期前看到 hello 成功，日志表现为 `mediaChannel: offer: expired, transport = udp` 紧跟 `offer: sent, transport = tcp`，且**没有** `handshake_bad_channel`；2) 万一仍出现 `handshake_bad_channel`，必须能在同一 channel id 上找到 `offer: expired` 行（说明是窗口撤销票据，不是协议错误），否则重新打开本条排查；3) 最终会话行只能是 `chan=udp` 或 `chan=tcp`，不得因这条竞态落回 `grpc`。**阻塞：无**（需一对真机 + 可关的路由器）；判据为两端日志 + HUD 截图，读数与窗口一并与 [TB-OBS-001](#tb-obs-001) 的口径对齐。**✅ r5 终验通过（2026-10-23，HEAD `997dd67`，报告 `handoff/device-test-2026-10-22-transports/r5/report.md`）**：⑧ gRPC-only 两道判据全部命中——服务端打印 **`mediaChannel: mode = grpc, stored = "grpc"`**（`stored` 为真实读回值而非 `<empty>`），整轮 **`mediaChannel: offer:` 行数 = 0**，会话行 **`chan=grpc` 32/32**（130 s），媒体正常（`enc.auRate` 47.2 fps / 4.0 Mbps、`dec.lat.p50` 19.3 ms）；对照组 `auto` → `mode = auto, stored = "auto"` → 首条 offer `tcp` → `chan=tcp`；TCP 回归 `chan=tcp` 25/25、UDP 快检 `chan=udp` 24/24 且 `udp.idrReq` 112→116；两机 FATAL/ANR 0。根因确认：r2–r4 的「字符串键不生效」是**注入格式**问题（SharedPreferences 的 `<string>` 取元素文本，写 `value` 属性时平台读回空串 → `Mode.parse("")` 回落 auto），工具已修。**本项转 ✅ 已完成。** 剩余受限：人为单通道故障注入（无 root / shell 不能发信号 / 模拟器限速只作用于 radio），回退链的真实证据以 r3 的 UDP `udp_bind_timeout` → TCP 回落为准；另 r5 记录的一次「UDP 超时后紧跟的 TCP offer 被判 `handshake_bad_channel`」已在 2026-10-23 定性并修复（客户端单线程执行器 + 候选窗口过短 ⇒ 票据先被窗口撤销、hello 才到，见 [TB-NET-003](#tb-net-003)「r5 §4 一次性异常排查」；两侧时序已由 JVM 用例钉住），设备侧按本条 ⑩ 顺带复验。**r4 复测结果（2026-10-23，HEAD `189b088`）**：⑨ **通过（5/5）**——高负载（相册持续下滑 + 模拟器软解满载）下连续断开重连，5 次 UDP 全部建立、`udp_bind_timeout` **0 次**，`offer→READY` 14–279 ms（新 2 s 首包窗口余量充足）；⑧ **仍未达成**——`media_transport=grpc` 按 §F 写入（带 `:string`、工具内置 force-stop），`run-as cat` 读回 `<string name="media_transport" value="grpc" />`、App 冷启动后仍在位，服务端仍发出 `offer: sent, transport = tcp`；判别实验 `udp`+开关关→tcp、`auto`+开关开→udp、`auto`+开关关→tcp ⇒ **布尔键生效、字符串键不生效**，已排除「漏类型/时序/回写」三种解释；修复 1 侧证：多轮会话后读回 `media_transport`/`media_udp_enabled`/`server_port` **与写入值完全一致**，r3 的「端口随机化 / 键被清空」未复现。**本项保持待办并收窄到**：⑧ gRPC-only 基线（**2026-10-23 已修**：`media_transport` 此前"不生效"是注入脚本把字符串写成 `value=` 属性的格式错误，脚本与 [§F](startup-checklist.md) 已更正，产品侧补了 `mediaChannel: mode = … stored = "…"` 日志；**修复后待 r5 复验**——复验判据：先看到 `mode = grpc, stored = "grpc"` 这一行，再确认整轮**没有任何** `mediaChannel: offer:` 行、会话行恒 `chan=grpc`）、人为单通道故障注入与弱网（环境受限）。**r3 复测结果（2026-10-23，HEAD `a35d5f2`）**：① 通过——UDP 会话 195 s 内 `udp.idrReq` 167→217、`udp.auIncomplete` 4 076→5 367、服务端 `kf.request` 170→223（r2 为 3–4 次/窗口）；⑥ 通过（高动态截图无花屏）；新增两条环境/实现观察：UDP 在高负载下 `udp_bind_timeout`（客户端「READY 立即上报 + 300 ms 首包窗口」的竞态，3/4 失败、低负载成功），§F 的 `media_transport=grpc` 注入仍不生效（本构建会回写偏好）。**仍剩**：④ 拔 AP/离网、⑤ 弱网（另含 gRPC-only 强制基线），均缺可控注入手段。**本项保持待办并收窄到 ④⑤。****r2 复测结果（2026-10-22，HEAD `16a7ec6`）**：①②③⑥ 通过——TCP 档 `chan=tcp` 37/37、UDP 档 `chan=udp` 37/37（高动态 21/21），`udp.recv/lost/auIncomplete` 有读数（最高 123 668 / 4 594 / 8 230）、服务端 `tx.frag=72 756`，UDP 高动态画面无花屏；开关关时 `chan=tcp` 且**无 `udp.*` 键**（反向判据成立）；④⑤ **仍未测到**：拔 AP/离网与弱网注入（`kill -STOP` 被拒、`adb emu network speed` 只作用于 radio、模拟器无 root），因此「丢 AU → IDR」的相关性仍无设备读数（`udp.idrReq` 键也仍无生产者）。**本项保持待办**，仅剩 ④⑤ 与 gRPC-only 基线（隐藏键 `media_transport` 在设备上未生效，见 [TB-NET-003](#tb-net-003)「设备复验」⑤）。**r1 结果（HEAD `bec9cf6`）**：①❌ 三档一次也未激活——TCP 档（`auto`）38/38 行、UDP 档（开关开 + `auto`）39/39 行**均 `chan=grpc`**，`tx.chanSwitch` 从未出现，观看端对 8081 零 TCP 连接，而服务端每次都 `media channel: listening, port = 8081, secure = true`；根因是 offer 的 `host` 恒空串 vs 客户端 `isEndpointPresent()` 要求非空（详见 [TB-NET-003](#tb-net-003) 的「设备验证」条），**属产品缺陷，不是环境**。②③⑤⑥ 因此**全部未测到**（`udp.*` 一条未打印 = 未测量，不等于零丢包；无花屏现象不能读成丢片恢复正常）。④ 兜底成立（媒体 47 fps 未断、RPC 未断、无重连横幅）但**真实故障注入未做**：模拟器是 production build，`adb root` 被拒，无法只掐 UDP/TCP 媒体端口。gRPC 档回归 ✅（`chan=grpc` 36/36、`enc.auRate` 53.4 fps、`dec.lat.p50` 19.6 ms）。**本项保持待办**：待 §3 缺陷修复后，按 ①②⑤⑥ 与明文调试档重跑；「没测到」不得写成「没问题」。
+  16. **UDP 实验档点位（TB-NET-003 B5）**（来源 [TB-NET-003](#tb-net-003) 的 B5 文案与开关）：服务端视频设置里「UDP 实验档」默认关；开启后 ① 同网真机一对开始共享，服务端日志出现 `media channel: listening … secure=true` 且会话行 `chan=udp`（或先 `tcp` 再按握手结果回落，记录**实际最终** `chan`）② 观看端出画、`rx.auRate` 与 `rx.bitrate` 与 gRPC 档同量级，`udp.recv`/`udp.lost`/`udp.auIncomplete` 有读数 ③ 反向判据：开关关闭重启共享后会话行恒 `chan=grpc`（或 `tcp`，若 `media_transport` 显式设过），不出现 `udp.*` ④ 拔掉 AP / 让服务端离网，1 s 内观看端恢复出帧且控制面 RPC 未断（`pres` 恢复、无重连横幅）⑤ 弱网（`tc`/路由器限速到 1–2 Mbps 或灌丢包）下观察 `udp.auIncomplete` 与 `kf.request` 相关性，确认丢 AU → IDR 链路真的动作（HUD `kf` 增长）⑥ 高频片（1080p60）一轮，确认无花屏、无「半截帧」可辨现象。⑦ **UDP 丢片 → IDR 联动**（2026-10-23 修复 `0ee136e` 后新增）：在可控丢包或高动态窗口下同时看观看端 `udp.idrReq` 与服务端 `kf.request` —— 两者应同向增长（`udp.idrReq` ≈ 丢片触发次数，`kf.request` ≤ 它且受 1 s 节流），不再出现「`udp.auIncomplete` 上千而 `kf.request` 只有 3–4」的脱节；若 `udp.idrReq` 有值而 `kf.request` 恒 0，说明请求在出站侧又被吞了，需带日志回来。⑧ **gRPC-only 强制基线**（`media_transport=grpc`）：按[启动与签名检查清单](startup-checklist.md) §F 的时序写入（**先 `am force-stop` 再改 XML，启动后不要再动任何应用内设置**），判据是服务端**根本不出现** `mediaChannel: offer:` 行、会话行恒 `chan=grpc`；只把文件 `cat` 回来不算生效证据。**2026-10-23 起可重验**：端口滚轮不再按中间值落盘（`b5108ee`），一次会话后 `server_port`/`media_transport` 应保持注入值；若再变化，按 `Settings` 面板是否被打开、以及 `prefs.py` 的写入类型（字符串键必须带 `:string`）逐项排除。⑨ **UDP 高负载建立率**（`70a2eb8` 后）：在同一对设备上重复 r3 的高负载场景（相册滚动 + 软解满载），至少 4 次连接，统计 `udp_bind_timeout` 次数与 `offer → READY → 首包` 的时延；判据是 4/4 建立（或失败时日志显示首包 >2 s，证明是环境而非窗口），并确认 TCP 回落仍只在真的失败时发生。⑩ **回退链时序复验**（2026-10-23 `fix(transport): 回退链的候选窗口与客户端串行化` 后新增，**观察项、非阻塞**，任一轮设备验证顺带执行）：同一对设备、同一高负载场景（相册持续滚动 + 软解满载）连续断开重连 ≥ 4 次，判据三条——1) 出现 `udp_bind_timeout` 之后，服务端应在 TCP 票据到期前看到 hello 成功，日志表现为 `mediaChannel: offer: expired, transport = udp` 紧跟 `offer: sent, transport = tcp`，且**没有** `handshake_bad_channel`；2) 万一仍出现 `handshake_bad_channel`，必须能在同一 channel id 上找到 `offer: expired` 行（说明是窗口撤销票据，不是协议错误），否则重新打开本条排查；3) 最终会话行只能是 `chan=udp` 或 `chan=tcp`，不得因这条竞态落回 `grpc`。**阻塞：无**（需一对真机 + 可关的路由器）；判据为两端日志 + HUD 截图，读数与窗口一并与 [TB-OBS-001](#tb-obs-001) 的口径对齐。**2026-10-23 r3（JPEG+UDP）未覆盖本观察点**：该轮只跑单档复验，未制造 `udp_bind_timeout` 后的断开重连序列，本观察点仍待执行，不得记作通过。**✅ r5 终验通过（2026-10-23，HEAD `997dd67`，报告 `handoff/device-test-2026-10-22-transports/r5/report.md`）**：⑧ gRPC-only 两道判据全部命中——服务端打印 **`mediaChannel: mode = grpc, stored = "grpc"`**（`stored` 为真实读回值而非 `<empty>`），整轮 **`mediaChannel: offer:` 行数 = 0**，会话行 **`chan=grpc` 32/32**（130 s），媒体正常（`enc.auRate` 47.2 fps / 4.0 Mbps、`dec.lat.p50` 19.3 ms）；对照组 `auto` → `mode = auto, stored = "auto"` → 首条 offer `tcp` → `chan=tcp`；TCP 回归 `chan=tcp` 25/25、UDP 快检 `chan=udp` 24/24 且 `udp.idrReq` 112→116；两机 FATAL/ANR 0。根因确认：r2–r4 的「字符串键不生效」是**注入格式**问题（SharedPreferences 的 `<string>` 取元素文本，写 `value` 属性时平台读回空串 → `Mode.parse("")` 回落 auto），工具已修。**本项转 ✅ 已完成。** 剩余受限：人为单通道故障注入（无 root / shell 不能发信号 / 模拟器限速只作用于 radio），回退链的真实证据以 r3 的 UDP `udp_bind_timeout` → TCP 回落为准；另 r5 记录的一次「UDP 超时后紧跟的 TCP offer 被判 `handshake_bad_channel`」已在 2026-10-23 定性并修复（客户端单线程执行器 + 候选窗口过短 ⇒ 票据先被窗口撤销、hello 才到，见 [TB-NET-003](#tb-net-003)「r5 §4 一次性异常排查」；两侧时序已由 JVM 用例钉住），设备侧按本条 ⑩ 顺带复验。**r4 复测结果（2026-10-23，HEAD `189b088`）**：⑨ **通过（5/5）**——高负载（相册持续下滑 + 模拟器软解满载）下连续断开重连，5 次 UDP 全部建立、`udp_bind_timeout` **0 次**，`offer→READY` 14–279 ms（新 2 s 首包窗口余量充足）；⑧ **仍未达成**——`media_transport=grpc` 按 §F 写入（带 `:string`、工具内置 force-stop），`run-as cat` 读回 `<string name="media_transport" value="grpc" />`、App 冷启动后仍在位，服务端仍发出 `offer: sent, transport = tcp`；判别实验 `udp`+开关关→tcp、`auto`+开关开→udp、`auto`+开关关→tcp ⇒ **布尔键生效、字符串键不生效**，已排除「漏类型/时序/回写」三种解释；修复 1 侧证：多轮会话后读回 `media_transport`/`media_udp_enabled`/`server_port` **与写入值完全一致**，r3 的「端口随机化 / 键被清空」未复现。**本项保持待办并收窄到**：⑧ gRPC-only 基线（**2026-10-23 已修**：`media_transport` 此前"不生效"是注入脚本把字符串写成 `value=` 属性的格式错误，脚本与 [§F](startup-checklist.md) 已更正，产品侧补了 `mediaChannel: mode = … stored = "…"` 日志；**修复后待 r5 复验**——复验判据：先看到 `mode = grpc, stored = "grpc"` 这一行，再确认整轮**没有任何** `mediaChannel: offer:` 行、会话行恒 `chan=grpc`）、人为单通道故障注入与弱网（环境受限）。**r3 复测结果（2026-10-23，HEAD `a35d5f2`）**：① 通过——UDP 会话 195 s 内 `udp.idrReq` 167→217、`udp.auIncomplete` 4 076→5 367、服务端 `kf.request` 170→223（r2 为 3–4 次/窗口）；⑥ 通过（高动态截图无花屏）；新增两条环境/实现观察：UDP 在高负载下 `udp_bind_timeout`（客户端「READY 立即上报 + 300 ms 首包窗口」的竞态，3/4 失败、低负载成功），§F 的 `media_transport=grpc` 注入仍不生效（本构建会回写偏好）。**仍剩**：④ 拔 AP/离网、⑤ 弱网（另含 gRPC-only 强制基线），均缺可控注入手段。**本项保持待办并收窄到 ④⑤。****r2 复测结果（2026-10-22，HEAD `16a7ec6`）**：①②③⑥ 通过——TCP 档 `chan=tcp` 37/37、UDP 档 `chan=udp` 37/37（高动态 21/21），`udp.recv/lost/auIncomplete` 有读数（最高 123 668 / 4 594 / 8 230）、服务端 `tx.frag=72 756`，UDP 高动态画面无花屏；开关关时 `chan=tcp` 且**无 `udp.*` 键**（反向判据成立）；④⑤ **仍未测到**：拔 AP/离网与弱网注入（`kill -STOP` 被拒、`adb emu network speed` 只作用于 radio、模拟器无 root），因此「丢 AU → IDR」的相关性仍无设备读数（`udp.idrReq` 键也仍无生产者）。**本项保持待办**，仅剩 ④⑤ 与 gRPC-only 基线（隐藏键 `media_transport` 在设备上未生效，见 [TB-NET-003](#tb-net-003)「设备复验」⑤）。**r1 结果（HEAD `bec9cf6`）**：①❌ 三档一次也未激活——TCP 档（`auto`）38/38 行、UDP 档（开关开 + `auto`）39/39 行**均 `chan=grpc`**，`tx.chanSwitch` 从未出现，观看端对 8081 零 TCP 连接，而服务端每次都 `media channel: listening, port = 8081, secure = true`；根因是 offer 的 `host` 恒空串 vs 客户端 `isEndpointPresent()` 要求非空（详见 [TB-NET-003](#tb-net-003) 的「设备验证」条），**属产品缺陷，不是环境**。②③⑤⑥ 因此**全部未测到**（`udp.*` 一条未打印 = 未测量，不等于零丢包；无花屏现象不能读成丢片恢复正常）。④ 兜底成立（媒体 47 fps 未断、RPC 未断、无重连横幅）但**真实故障注入未做**：模拟器是 production build，`adb root` 被拒，无法只掐 UDP/TCP 媒体端口。gRPC 档回归 ✅（`chan=grpc` 36/36、`enc.auRate` 53.4 fps、`dec.lat.p50` 19.6 ms）。**本项保持待办**：待 §3 缺陷修复后，按 ①②⑤⑥ 与明文调试档重跑；「没测到」不得写成「没问题」。
   17. **媒体通道关闭与画面私密回归点位（2026-10-23 两条修复后新增，观察项、非阻塞）**：
       - **P1 关闭不崩**（`0e7ef3d`）：任一端「停止观看 / 停止共享」都不得出现 `NetworkOnMainThreadException`；判据是连看 3 次「服务端停止共享」与 3 次「观看端主动停止」后，两端 `logcat` 无该异常、`crash buffer` 无新增 FATAL，且服务端 `teardown` 不再出现 `step failed: stop-client`。
       - **P2 私密跟随**（`540a2ce`）：服务端「画面私密」关 ⇒ 观看端 `dumpsys window` 的 overlay/全屏窗口 flags **不含** `SECURE`、`adb exec-out screencap` 能拿到画面；开 ⇒ flags **含** `SECURE`、截图为黑且连接不受影响。两次都要在会话已切到 `chan=tcp` 之后看（媒体通道是这条 bug 的触发条件）。
       - **P2 已知限制**：开关在会话中途改变时，观看端要等下一个 descriptor（编码重建或下一次会话）才更新，本轮未做「即时推送」，若判据要求即时生效再单开条目。
   18. **JPEG + UDP 一轮（r2 观察 1 修复后，2026-10-23 新增）**（来源 [TB-NET-003](#tb-net-003) 的「r2 观察修复」）：`media_transport=udp` + JPEG 兼容档（或注入 H.264 失败的本地构建）共享一轮并制造画面变化，三条判据——1) 观看端 `rx.auRate` 与 `enc.auRate` **同量级**（r2 为 0.0 vs 3.6，整帧从未交付）；2) `udp.auIncomplete` **不再每帧多涨**（r2 42→659，同一帧被反复丢弃重建）；3) `udp.idrReq` **回落**（r2 2→31 且 `kf.sent` 持续增长，说明在反复请求关键帧）。旁证：`udp.recv` 正常增长、`udp.lost` 仍为小量（分片在到、真实序号缺口很小）。**阻塞：无**；判据为两端日志读数 + 出画截图。
+      - **r3 复验（2026-10-23，HEAD `f739405`，报告 `handoff/device-test-2026-10-23-jpeg-udp-r3/report.md`）——判据 1 通过、判据 2 部分满足、判据 3 画面通过但 `udp.idrReq` 未归零；本项不转完成，重组窗口问题另立 [TB-MEDIA-008](#tb-media-008)**：
+        - **取数**：窗口 A 20:21:43–20:24:58（195 s，`chan=udp` 39/39），对手机持续滑动使内容变化；12 张截图相邻差 5.9–9.5 灰度级（`shots/udp-jpeg-01..12.png`），原始行 `data/windowA-client-rows.txt` 与 `data/windowA-server-rows.txt`，汇总 `logs/analyze-udp-jpeg.txt`。每 AU 73–95 片（1348 B 载荷），实际编码 3.2 fps / 3.18 Mbps。
+        - **判据 1 ✅ 同量级**：`rx.auRate` 中位 2.2（0.6–8.0） vs `enc.auRate` 中位 3.2（2.2–9.2），比值 0.69；`rx.bitrate` 2.26 vs 3.18 Mbps。r2 的「整帧从未交付」不再复现。
+        - **判据 2 ⚠️ 部分满足**：`udp.auIncomplete` 61→592（+531，0.67 次/编码帧；r2 为 5.7 次/帧且 0 帧送达）。机制目标（不再整帧反复重建）达成，字面阈值（增长不随时长累积）未达成——真实丢片 1.16%（`udp.lost` +866 / `udp.recv` +74 925）经 ~77 片/AU 的几何放大，且同一丢失 AU 被计 1.1–2.2 次（超时一次 + 剩余分片重建后再超时）。
+        - **判据 3 ✅ 画面 / ⚠️ `idrReq`**：画面随滑动持续变化、HUD 2.0–15.0 fps；`udp.idrReq` 18→120（+102，0.57/s），低于 r2 的 ~1/s 但仍单调增长，与 `udp.auIncomplete` 同向。
+        - **新观察（需单列）**：20:35–20:53 六次连接 **5/5 次 0 fps**（`rx.auRate=0.0`、`udp.lost` 仅 0.5–1.1%、每 AU 4–5 次 incomplete），同构建同期 JPEG+TCP 3.2 fps、H.264+UDP 5.2 fps 正常，`projection_scale=30`（≈16 片/AU）恢复到 1.0–2.4 fps ⇒ 10 ms 保持窗口对片段到达间隔过敏感（报告 §5 按送达率反推 λ 升高约 10 倍，属推断）。修复归 [TB-MEDIA-008](#tb-media-008)，**`HOLD_UP_MS` 取值待设备校准**。
+        - **未展开**：服务端 `kf.request` 仅 +5，而观看端 `kf.sent` +188、`udp.idrReq` +102，三者数量级脱节（报告 §8-3）；本轮未排查，另立观察。
   19. **音频水位闭锁的真机观看端复验（2026-10-23 新增，观察项）**（来源 [TB-AUDIO-003](#tb-audio-003) 的「500 ms 固定偏差排查与修复」）：与第 ⑧ 项同口径（同一场景 30 min、单一会话）再跑一轮，但**观看端换成真机**——r2 的 ~506 ms 含模拟器成簇到达与 HAL `pcm_writei` 报错的放大。三条判据——1) `audio: dropping … depth =` 的读数稳定 **≤250 ms** 并能在成簇上冲后被排回（r2 为 401–463 ms 常驻）；2) `av.offset.p50` 较 506 ms **降约 150 ms**，落在重定标后的 ≤350 ms（见 [TB-AUDIO-003](#tb-audio-003)）；3) 水位丢帧归零（r2 `audio.dropped` 6→8 348、`audio.starved` 1→546）。**阻塞：需要第二台真机**；判据为 30 min 日志读数 + 人耳听感，且**不得**为凑 160–200 ms 把轨道改回 64 ms。
 - **完成判据**：以上 19 项均有可核对证据（截图/日志/读数）并按[维护方式](#-维护方式)写回各自条目；阻塞未解除的项保持 📋 待办并注明阻塞原因。
 - **关联文档**：[TB-WIN-001](#tb-win-001)、[TB-OBS-001](#tb-obs-001)、[TB-CLIENT-005](#tb-client-005)、[TB-DISC-010](#tb-disc-010)、[DV-001](decision-board.md)、[路线图](optimization-roadmap.md)
@@ -751,6 +798,8 @@
   - **修复**：`Pending` 记录 `lastArrivalNs`，每个抵达的分片都刷新它（`touch()`），`expire()` 改判「距**最后**一个分片的静默」。join point 校验语义一点没放宽；内存仍受 `MAX_IN_FLIGHT` 与 `MAX_IN_FLIGHT_BYTES` 双上限约束（只来分片、永不完成的对端也只能占住上限内的缓冲）。
   - **用例**（前两条修复前实测为红）：`AccessUnitReassemblerTest.fragmentsSpanningMoreThanTheHoldUp_areStillAssembled`（20 分片、间隔半个窗口、总时长十倍于窗口 ⇒ 必须整帧交付）、`AccessUnitReassemblerTest.silenceAfterProgress_isDroppedOnTheHoldUp`（有进展后静默一个窗口 ⇒ 仍按时丢弃，防语义被放宽）、`UdpMediaReceiverLoopbackTest.aJpegSizedUnit_isReassembledWhole`（真 socket 尺寸护栏：70 分片 ≈94 KB 的 JPEG 尺寸帧整帧交付、字节一致；修复前后皆绿，守住超过 64 分片的规模）。
   - **验证**：全量 **1729 tests / 177 classes / 0 failures**（基线 1726/177，`test_baseline.json` 同提交更新）；`./gradlew build :app:assembleDebugAndroidTest` 通过，lint 双变体 0 errors，三项 checks 全绿。**设备复验未执行**：[TB-ENG-013](#tb-eng-013) 第 18 项。
+  - **设备 r3 结果（2026-10-23，报告 `handoff/device-test-2026-10-23-jpeg-udp-r3/report.md`）**：修复在窗口 A 兑现——JPEG 大帧整帧送达、`rx.auRate` 与 `enc.auRate` 同量级（2.2 vs 3.2）、画面持续更新；但 10 ms 静默对 73–95 片/AU 仍过窄：同一构建重启后 scale100 组合 5/5 次 0 fps，而 JPEG+TCP、H.264+UDP 与 scale30 均正常。重组窗口的抖动容忍另立 [TB-MEDIA-008](#tb-media-008)。
+- **小遗留（2026-10-23 交接 §2.2 登记，不单独占 ID）**：① **未接线的指标键**——`MediaMetricNames` 现登记 13 个媒体通道键，其中 `tcp.frame`、`tcp.frameDrop`、`udp.late`、`udp.auDrop` 仍无生产者（`udp.idrReq` 已在 r2 遗留修复中接上，随数据报档一起打印），键名先固定、后续批次补打点不改名；② **UDP 档无专用保活看门狗**——TCP 档有 5 s 写停滞看门狗（`lss-media-watchdog`），UDP 档只靠首包窗口、10 ms 保持窗口与「丢 AU → catch-up + IDR」兜底，属已知取舍，未排期。
 - **关联文档**：[实施计划](superpowers/plans/2026-10-22-media-transports.md)、[传输方式调研](transport-research.md)、[决策 DB-NET-001](decision-board.md#db-net-001)、[媒体架构](media-architecture.md)、[启动与签名检查清单](startup-checklist.md)
 
 </details>
@@ -770,7 +819,7 @@
 - **验证**：新增 `ProjectionCodecStartupCoordinatorTest` 12 例（H.264 成功不动回退 / `CodecNotFoundException` 回退一次 / `EncoderException` 回退一次 / 包装后的编码失败同样回退 / 直接选 JPEG 不走回退 / JPEG 失败原样上抛且不重试 / 裸 `IllegalStateException` 不回退 / 其他 `RuntimeException` 不回退 / JPEG 重试失败原样上抛且已报过回退 / 只尝试两次 / 空回调拒绝 / 源码契约：协调器无 `Preferences`、服务端不写 `setProjectionCodec(`、启动确实经协调器）。全量 **1495 tests / 148 classes / 0 failures / 0 errors / 0 skipped**（基线 1483/147，`test_baseline.json` 同批更新为 1495/148）；`./gradlew build :app:assembleDebugAndroidTest` 成功；`:app:lintDebug` 0 errors / 145 warnings、`:app:lintRelease` 0 errors / 135 warnings（与上批持平，新文件零告警）；`check_strings`（179 键、双语一致）/`check_cjk`/`check_docs` 通过；`fe8ebe4` 的 Build run [39719557076](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39719557076) 与 Checks run [39719556909](https://github.com/obby-xiang/LocalScreenShareAndroid/actions/runs/39719556909) 双绿。
 - **完成判据核对（2026-10-22）**：① 只在启动时回退 → 逻辑全部在 `startStreamPipeline()`，运行期切换路径（`switchDescriptor`）未改；② 回退可见 → toast + 通知副标题 + `Log.w`；③ 不记忆偏好 → 源码契约用例 + 服务端无写入口；④ JPEG 也失败时如实报错 → 原样上抛到既有 `start_service_failed` 路径，只尝试两次。
 - **设备点位（归 [TB-ENG-013](#tb-eng-013)）**：① 注入 H.264 启动失败（本机硬编正常时可用**不提交的本地构建**把 H.264 注册替换为不存在的 codec id，或占用硬编实例复现）后开始共享 → 应用不退出、toast 明确提示、通知副标题出现「JPEG 兼容模式」、观看端出画（JPEG、首帧时延与帧率另记）② 同一次启动的日志含 `H.264 encoder failed to start, falling back to the JPEG compatibility mode` 及原因 ③ 停服再启动 → 仍先试 H.264，设置页编码格式仍为 H.264（偏好未被改写）④ 让 JPEG 也失败 → 只有「启动失败」toast 并停服，无第三次尝试 ⑤ 手动把设置改为 JPEG → 无回退提示、通知无「JPEG 兼容模式」行（那是用户选择而非降级）⑥ 释放编码器/重启设备后 → 下次启动回到 H.264，通知行消失。JVM 无法覆盖真实 `MediaCodec` 失败注入、Toast/通知渲染与 JPEG 出画，均未实测。
-- **与裁决口径的出入**：裁决允许「Toast 或状态文案」，本批两者都做（toast + 通知副标题），因为 toast 会消失而降级持续整个会话；不记忆偏好与「只启动时回退」按裁决执行。原条目的「在通知/悬浮条标注」按通知副标题落实，悬浮条（chip）未改文案。
+- **与裁决口径的出入**：裁决允许「Toast 或状态文案」，本批两者都做（toast + 通知副标题），因为 toast 会消失而降级持续整个会话；不记忆偏好与「只启动时回退」按裁决执行。原条目的「在通知/悬浮条标注」按通知副标题落实，悬浮条（chip）未改文案——交接 §2.2 列为**小遗留**（只落了通知副标题），未排期，需要与文案一致时再单开点位。
 - **来源**：2026-10-22 [JPEG 接回计划](superpowers/plans/2026-10-22-jpeg-viewer-reconnect.md) §7 产品口径与 §8 裁决 4（自动回退另立条目）。
 - **关联文档**：[TB-ENG-006](#tb-eng-006)、[JPEG 接回计划](superpowers/plans/2026-10-22-jpeg-viewer-reconnect.md)、[媒体架构 §12 失败模式](media-architecture.md)
 
@@ -1461,7 +1510,7 @@
 
 ## 🔧 维护方式
 
-- 新增条目：先在对应状态节加一行概览（7 列窄列），再在“条目详情”补 `<details>` 块；两处 ID 必须一致。
+- 新增条目：先在对应状态节加一行概览（7 列窄列），再在“条目详情”补一个 `details` 折叠块；两处 ID 必须一致。
 - 日期口径：创建=该 ID 首次出现在本文件的提交日期（`git log --reverse --format=%ad --date=short -S "<ID>" -- docs/task-board.md` 最早命中）；完成=状态变为“已完成”的提交日期或证据提交日期（以 git 证据为准），未完成留 `—`；无法考证时用首次出现日期。
 - 排序：每个状态节内按日期降序（有完成日期用完成日期，否则用创建日期；同日期按 P0→P1→P2→P3→—，再按 ID）。
 - 状态与优先级使用“图例”中的 emoji+文字；不使用纯文字或自造图标。
@@ -1471,6 +1520,6 @@
 - 未实测的收益、未执行的验证和产品推测不得写成已完成或已验证。
 - 问题讨论的“关闭”与代码任务的“完成”分开记录；裁决关闭不改变对应实现任务的状态。
 - 决策记录只在 [决策看板](decision-board.md) 维护；本页“当前焦点”只保留一行引用，不复制裁决正文。
-- 「当前焦点」最多保留 6 条一行式摘要（日期 + 主题 + 条目链接 + 结论词）；超出即移入本节 `<details>` 归档；禁止在本区写提交哈希、CI run 与测试数字（证据单源在条目详情）；无日期条目一律不得新增。
+- 「当前焦点」最多保留 6 条一行式摘要（日期 + 主题 + 条目链接 + 结论词）；超出即移入本节 `details` 归档块；禁止在本区写提交哈希、CI run 与测试数字（证据单源在条目详情）；无日期条目一律不得新增。
 - 新增或删除任务时同步检查 [决策看板](decision-board.md) 是否需要新增裁决或复审条件。
 - 任务状态或技术裁决变化时，同步更新本页、[决策看板](decision-board.md) 和 [文档索引](README.md)。
