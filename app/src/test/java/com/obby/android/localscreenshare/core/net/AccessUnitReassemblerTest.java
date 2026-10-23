@@ -254,6 +254,42 @@ public class AccessUnitReassemblerTest {
     }
 
     /**
+     * The tombstone ring covers the whole reorder window, not just a handful of units.
+     *
+     * <p>A residue can arrive long after its unit was abandoned: the reorder window still accepts
+     * a sequence number up to {@link DatagramReorderWindow#WINDOW_SIZE} datagrams old, so every
+     * unit inside that window may still deliver fragments. A smaller ring forgets the oldest of
+     * them, its residue rebuilds the buffer, allocates it again and counts a second drop for a
+     * loss that was already counted - exactly the defect the tombstone exists to prevent.</p>
+     */
+    @Test
+    public void residueAcrossTheReorderWindow_isStillLate() {
+        int size = 2 * UdpMediaPacketCodec.MAX_FRAGMENT_BYTES;
+        int count = DatagramReorderWindow.WINDOW_SIZE - 4;
+        for (int index = 0; index < count; index++) {
+            reassembler.onPacket(packet(60 + index, index, 0, size));
+            clock.advance(AccessUnitReassembler.HOLD_UP_WARMUP_NS);
+            reassembler.onTick();
+        }
+        assertEquals("every unit is abandoned once", count, listener.dropped.size());
+        assertEquals((long) count, reassembler.getDroppedCount());
+
+        // A later fragment of the oldest abandoned unit would rebuild its buffer.
+        reassembler.onPacket(packet(60, count, 1, size));
+
+        assertEquals("the residue must not rebuild a buffer", 0, reassembler.getInFlightCount());
+        assertEquals(1L, reassembler.getLateCount());
+        assertEquals(count, listener.dropped.size());
+        assertEquals(0, listener.frames.size());
+
+        clock.advance(AccessUnitReassembler.HOLD_UP_WARMUP_NS);
+        reassembler.onTick();
+
+        assertEquals("one loss stays one drop", count, listener.dropped.size());
+        assertEquals((long) count, reassembler.getDroppedCount());
+    }
+
+    /**
      * An oversized unit is unusable whatever fragment arrives, so it is counted once.
      */
     @Test
@@ -291,19 +327,33 @@ public class AccessUnitReassemblerTest {
     }
 
     /**
-     * Before any interval has been measured the window covers a stall of 20 ms.
+     * Before any interval has been measured the warm-up floor covers a stall of 20 ms.
+     *
+     * <p>The scan is driven by a fragment of another unit on purpose. A fragment of the stalled
+     * unit would first land an interval sample and raise the window to twice the stall it just
+     * measured, and the test would then pass even with the floor removed: cross-unit intervals
+     * land no sample, so only the warm-up value can keep the first unit alive.</p>
      */
     @Test
-    public void theWarmUpWindowCoversTheFragmentsOfTheFirstUnit() {
+    public void theWarmUpFloorCoversTheFirstStall() {
         int size = 3 * UdpMediaPacketCodec.MAX_FRAGMENT_BYTES;
         reassembler.onPacket(packet(42, 0, 0, size));
         clock.advance(20_000_000L);
-        reassembler.onPacket(packet(42, 1, 1, size));
-        clock.advance(20_000_000L);
-        reassembler.onPacket(packet(42, 2, 2, size));
+        // A fragment of another unit drives the scan without feeding the estimator.
+        reassembler.onPacket(packet(43, 1, 0, size));
 
-        assertEquals(1, listener.frames.size());
-        assertEquals(0L, reassembler.getDroppedCount());
+        assertEquals("the warm-up floor has to cover the 20 ms stall",
+                0, listener.dropped.size());
+        assertEquals(2, reassembler.getInFlightCount());
+
+        clock.advance(10_000_000L);
+        reassembler.onTick();
+
+        assertEquals("the floor is the bound, not a longer wait", 1, listener.dropped.size());
+        assertEquals(42, listener.dropped.get(0).auId);
+        assertEquals("timeout", listener.dropped.get(0).reason);
+        assertEquals(1, reassembler.getInFlightCount());
+        assertEquals(0, listener.frames.size());
     }
 
     /**

@@ -30,7 +30,8 @@ import java.util.Map;
  * <p><b>The hold-up is measured, not guessed.</b> A constant threshold has no physical meaning: the
  * device calibration of this bug measured fragment intervals of one unit with a median of 0.1 ms and
  * a p95 of 3.0 ms, but the longest interval of a five second window had a median of 12.6 ms and 76%
- * to 92% of the windows crossed 10 ms - and the control-plane round trip alone was 14.8 ms. A
+ * to 92% of the windows crossed 10 ms - and the control-plane round trip alone measured 12.2 ms in
+ * the calibration run and 14.8 ms in the r3 run. A
  * receiver cannot wait forever (memory is bounded, and a unit nobody completed delays nothing but
  * still occupies a slot), so the wait follows what this link actually produced: {@link #GAP_FACTOR}
  * times the longest of the last {@value #GAP_SAMPLES} intervals between two fragments of the same
@@ -144,11 +145,15 @@ public final class AccessUnitReassembler {
     /**
      * Number of abandoned unit identifiers the reassembler remembers.
      *
-     * <p>Sixteen covers the units that can be pending at once plus the tail of residue that keeps
-     * arriving after a drop; an identifier pushed out of the ring is old enough that its residue can
-     * no longer arrive, because the reorder window already refuses sequence numbers that far back.</p>
+     * <p>It matches the reorder window: a residue is only refused as stale once its sequence
+     * number is older than {@link DatagramReorderWindow#WINDOW_SIZE} datagrams, so a unit
+     * abandoned anywhere inside that window can still deliver fragments. Remembering fewer units
+     * than the window can carry would let the oldest residue rebuild its buffer, allocate it again
+     * and count a second drop for a loss that was already counted - exactly the defect the
+     * tombstone prevents. The ring stays fixed, so a sender that keeps reusing an identifier
+     * cannot grow the receiver, and the scan is over at most that many ints.</p>
      */
-    private static final int ABANDONED_SLOTS = 16;
+    private static final int ABANDONED_SLOTS = DatagramReorderWindow.WINDOW_SIZE;
 
     /**
      * Receiver of the reassembled units and of the drops.

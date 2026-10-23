@@ -181,10 +181,10 @@ message MediaOffer {
   bytes key_c2s = 8;
   bytes nonce_salt = 9;
   int32 mtu = 10;
-  // Advisory ceiling, in milliseconds, of the receiver's own bounded adaptive hold-up: how long it
-  // may keep an unfinished access unit while its fragments still arrive. It states a bound of the
-  // design rather than a value to apply, and the receiver keeps its window local - a sender must not
-  // force a tighter threshold onto a link it does not measure.
+  // Hint, in milliseconds, of the ceiling on the silence before the next fragment of an unfinished
+  // access unit is due - not a bound on the whole assembly, which may take much longer while its
+  // fragments keep arriving. The receiver measures the link itself and keeps the window local, so a
+  // sender must not force a tighter threshold onto a link it does not measure.
   int32 hold_ms = 11;
 }
 

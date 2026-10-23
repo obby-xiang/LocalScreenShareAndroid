@@ -149,7 +149,7 @@ TCP 媒体端口先试 `serverPort + 1`，失败 `bind(0)`，offer 永远带实�
 
 ### 4.3 重排窗与重装
 
-`core/net/DatagramReorderWindow`：定长环形窗（默认 64 槽），判重/判过期/统计乱序丢失，无缓冲延迟。`core/net/AccessUnitReassembler`：至多 4 个在途 AU（bitmap + 单一 byte[]），每 AU 一次分配。交付规则：单片立即交付；多片收齐立即交付；未收齐且在**更新的 AU 已交付**、静默超过保持窗口、被预算挤出或发送端违约（超尺寸 / 同 id 不同尺寸）时整 AU 丢弃（绝不喂半截），`udp.auIncomplete++` 并按原因分流（`timeout` / `superseded` / `evicted` / 其它）。保持窗口自**最后一个分片**起算静默，取值由**同一 AU 相邻分片到达间隔**驱动：`clamp(GAP_FACTOR × 最近 GAP_SAMPLES 个样本的最大值, HOLD_UP_MIN_MS, HOLD_UP_MAX_MS)`（10 / 100 ms，样本环未满时以 `HOLD_UP_WARMUP_MS = 30 ms` 为下限；注入 NanoClock 可测，包私有构造可钉上界）。已放弃的 auId 进 16 槽 tombstone 环，其后续残片只计 `udp.late`，不重建、不二次计数；重复记 `udp.dup`。**以上数值待设备校准**（[TB-MEDIA-008](../../task-board.md#tb-media-008)）；原计划的「更新的 auId 到达即丢弃」与「hold-up 固定 10 ms」两处口径已按设备读数修订。
+`core/net/DatagramReorderWindow`：定长环形窗（默认 64 槽），判重/判过期/统计乱序丢失，无缓冲延迟。`core/net/AccessUnitReassembler`：至多 4 个在途 AU（bitmap + 单一 byte[]），每 AU 一次分配。交付规则：单片立即交付；多片收齐立即交付；未收齐且在**更新的 AU 已交付**、静默超过保持窗口、被预算挤出或发送端违约（超尺寸 / 同 id 不同尺寸）时整 AU 丢弃（绝不喂半截），`udp.auIncomplete++` 并按原因分流（`timeout` / `superseded` / `evicted` / 其它）。保持窗口自**最后一个分片**起算静默，取值由**同一 AU 相邻分片到达间隔**驱动：`clamp(GAP_FACTOR × 最近 GAP_SAMPLES 个样本的最大值, HOLD_UP_MIN_MS, HOLD_UP_MAX_MS)`（10 / 100 ms，样本环未满时以 `HOLD_UP_WARMUP_MS = 30 ms` 为下限；注入 NanoClock 可测，包私有构造可钉上界）。已放弃的 auId 进 64 槽 tombstone 环（等于 `DatagramReorderWindow.WINDOW_SIZE`，覆盖重排窗内仍可能到达的全部残片），其后续残片只计 `udp.late`，不重建、不二次计数；重复记 `udp.dup`。**以上数值待设备校准**（[TB-MEDIA-008](../../task-board.md#tb-media-008)）；原计划的「更新的 auId 到达即丢弃」与「hold-up 固定 10 ms」两处口径已按设备读数修订。
 
 ### 4.4 丢包 → IDR（复用现有链路）
 

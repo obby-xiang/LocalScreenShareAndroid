@@ -416,9 +416,9 @@ public final class PipelineMetrics {
          *
          * <p>Written by the receiver when the reassembler's window changes - it starts at the
          * warm-up value and follows the measured fragment intervals of the units in flight - so a log
-         * capture records the threshold the gap readings next to it were taken under. Zero while no
-         * datagram channel is running. It is a bound of the window, not a promise about latency: a
-         * unit is still delivered the moment its last fragment lands.</p>
+         * capture records the threshold the gap readings next to it were taken under. It is a bound
+         * of the window, not a promise about latency: a unit is still delivered the moment its last
+         * fragment lands.</p>
          */
         MEDIA_HOLD_UP_MS
     }
