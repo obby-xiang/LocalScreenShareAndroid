@@ -120,6 +120,7 @@
 | TB-MEDIA-006 | 🔶 部分完成 | 🟠 P1 | 客户端解码器低延迟参数（`KEY_LOW_LATENCY` + `KEY_PRIORITY`，API 30+ 请求、三级回退、`dec.lowLat` 三态；**未含** `KEY_OPERATING_RATE`；代码完成，设备验证与收益实测未做） | 2026-10-23 | — | [TB-ENG-016](#tb-eng-016) |
 | TB-CLIENT-007 | 🔶 部分完成 | 🟠 P1 | 追赶采样覆盖修复（`CatchUpSampler` 统一 gRPC/媒体通道/丢片三条路径；丢片以外部追赶计入 `rx.catchup` 但不占连续预算；阈值未收紧、HOLD 语义未改；代码完成，设备复验未做） | 2026-10-23 | — | [TB-ENG-016](#tb-eng-016) |
 | TB-POWER-002 | 🔶 部分完成 | 🟠 P1 | 热余量预测降档（API 30 `getThermalHeadroom(10)`；预测与状态取严格档、≤1 Hz、会话级 arm/disarm、开关关闭立即恢复；`thermalHeadroom` / `thermalTier`；阈值待设备校准） | 2026-10-23 | — | [决策 DB-POWER-003](decision-board.md#db-power-003) |
+| TB-MEDIA-007 | 🔶 部分完成 | 🟠 P1 | 客户端内容帧率提示（描述符 `frame_rate` + `Surface.setFrameRate`，API 30 两参 / API 31+ seamless；不进配置哈希；`0`=清除且不重放；**未含** `Display.Mode`；代码完成，设备验证与收益实测未做） | 2026-10-23 | — | [TB-ENG-016](#tb-eng-016) |
 | TB-MEDIA-008 | 🔶 部分完成 | 🟠 P1 | JPEG+UDP 重组窗口抖动容忍修复（代码完成；r4 设备复验判据 1/2/3/5 通过、4 基本满足；待校准参数与残余项保留） | 2026-10-23 | — | [TB-ENG-013](#tb-eng-013) |
 | TB-SEC-002 | 🔶 部分完成 | 🔴 P0 | 身份密钥瞬时故障静默删键与三份身份快照（N3；代码完成，设备复测待棒） | 2026-10-21 | — | [决策 DB-SEC-003](decision-board.md#db-sec-003) |
 | TB-DISC-013 | 🔶 部分完成 | 🟠 P1 | 发现行首连的证书指纹引导（N2；代码完成，设备复测待棒） | 2026-10-21 | — | [TB-DISC-012](#tb-disc-012) |
@@ -234,7 +235,7 @@
 - **来源**：[性能优化业界调研](performance-research.md) §4.2 的候选清单与交接 §2.2 的「性能调研候选棒」；2026-10-23 用户裁决：批准其中五项开工，`SurfaceView` 另立评估。
 - **已批准的五项**（各占独立分棒 ID，实施时合并跟踪进度，不重复计算完成率；分棒详情块在各自落棒时补）：
   1. `TB-MEDIA-006` **客户端解码器低延迟参数**（2026-10-23 按范围裁决改写为“两键 + 未含项”）：`KEY_LOW_LATENCY`（API 30+）与 `KEY_PRIORITY`（实时优先级）；**未含** `KEY_OPERATING_RATE`——解码侧目标帧率需要新的描述符契约，会与 B4 的内容帧率提示重复定义。厂商拒绝时按“全键 → 去优先级 → 全去”三级回退，`dec.lowLat` 三态上报。依据 §4.2 #1 与 §5。
-  2. `TB-MEDIA-007` **显示刷新率/帧率匹配**：客户端呈现面 `Surface.setFrameRate(fps)`，刷新率非整数倍时再评估切 `Display.Mode`；消除 3:2 节奏抖动。依据 §4.2 #5、§6 触发条件 4。
+  2. `TB-MEDIA-007` **显示刷新率/帧率匹配**：客户端呈现面 `Surface.setFrameRate(fps)`，刷新率非整数倍时再评估切 `Display.Mode`；消除 3:2 节奏抖动。**2026-10-24 部分落地**：描述符下发 `frame_rate` + 客户端 `Surface.setFrameRate` 提示（见 [TB-MEDIA-007](#tb-media-007)）；`Display.Mode` 切换仍未做。依据 §4.2 #5、§6 触发条件 4。
   3. `TB-POWER-002` **热余量预测降档**：`PowerManager.getThermalHeadroom(10)` ≥0.7 与 ≥0.85 两级，早于 `SEVERE` 的「撞墙式」掉帧。依据 §4.2 #6、§6 触发条件 3。
   4. `TB-CLIENT-007` **追赶采样覆盖修复 + 丢片并轨**（原登记为「收紧追赶阈值 + 自适应队列」，2026-10-23 按主裁决改写）：`CatchUpSampler` 统一 gRPC、专用媒体通道与丢片三条路径，丢片以外部追赶计入 `rx.catchup`/`rx.catchup.lat`（reason=`ext`）但**不占**连续失败预算、不设冷却、不启动收敛计时；`CatchUpPolicy` 的阈值与判定顺序一律不收紧，HOLD 语义与 [DV-027](decision-board.md) 状态不变。依据 §4.2 #3。
   5. `TB-ENG-015` **背压回传编码端**：客户端上报队列深度与迟到帧比例 → 服务端降 fps 或 `PARAMETER_KEY_VIDEO_BITRATE`；在爬升前介入，比事后追赶平滑。依据 §4.2 #4。
@@ -296,6 +297,26 @@
 - **未完成**：设备项 ②（注入温升后 `thermalHeadroom` 单调上升、降档早于平台高热状态、回落不抖动、开关关闭后无 1 Hz 采样痕迹、未开始共享时切换开关只产生一次立即采样）；0.70 / 0.85 与 0.60 / 0.78 阈值按[性能候选设计 §10](superpowers/specs/2026-10-23-performance-candidates-design.md) 回填，**当前不得写成已验证**。
 - **回退**：恢复“只按平台状态取档”，删除 `startStreamPipeline()` 与开关打开分支的 arm 调用点；策略类与两个指标可保留（没有 arm 就不会采样）。代码与文档口径必须同一次回滚。
 - **关联文档**：[性能候选设计 §4.2/§6.4/§8/§10](superpowers/specs/2026-10-23-performance-candidates-design.md)、[性能优化调研 §4.2 #6/§6](performance-research.md)、[媒体架构 §4.4.1](media-architecture.md)、[DB-POWER-003](decision-board.md#db-power-003)、[DB-POWER-001](decision-board.md#db-power-001)、[DV-024](decision-board.md)
+
+</details>
+
+<a id="tb-media-007"></a>
+<details><summary>TB-MEDIA-007 客户端内容帧率提示（🔶 部分完成 · 代码完成，设备验证与收益实测未做）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：🔶 部分完成（代码与 JVM 用例已落地，设备验证与收益实测未执行）/ 🟠 P1 / 2026-10-23 / —
+- **来源**：[TB-ENG-016](#tb-eng-016) 第 2 项；[性能优化调研 §4.2 #5](performance-research.md) 与[性能候选设计 §4.4](superpowers/specs/2026-10-23-performance-candidates-design.md)。范围裁决：只做 `Surface.setFrameRate` **呈现提示**，不做 `Display.Mode` 切换；`frame_rate` **不进**配置哈希。
+- **交付物**：
+  - 协议：`screen_stream.proto` 新增 `Descriptor.frame_rate = 17`（`PROTOCOL_VERSION` 保持 1；`0`=未知或清除），`ScreenStreamProtoMapper` 双向复制。
+  - `core/model/StreamDescriptor`：新增 `frameRate`、`getFrameRate()` 与 `Builder.frameRate(int)`（负值归零）；`computeConfigHash` 字节流**零改动**，`withConfigEpoch` 保留帧率与哈希。
+  - 服务端：`ScreenShareService.buildRequestedDescriptor` 对 H.264 与 JPEG **都**填 `effectiveProjectionFrameRate()`；`StreamRuntime.buildPublishedDescriptor` 把请求值复制到发布描述符。
+  - 客户端呈现：`core/render/RenderTarget.setFrameRate(int)` 空默认实现；`render/FrameRatePolicy`（纯 JVM）按 API 选择两参（30）或 seamless 三参（31+），低于 30 与非正值不调用，异常冒泡给调用方；`SurfaceRenderTarget` 的 `surface` / `frameRate` 改 `volatile`，同值不重发、`getSurface()` 补发一次、`RuntimeException` 吞掉、`0` 清除且不重放；`HostRenderTarget` 只转 surface 半边；`SwitchableRenderTarget` 同值幂等、`setDelegate` 仅在值 > 0 时重放。
+  - `core/client/ClientMediaSession`：`applyDescriptor` 在 `setContentSize` 之后、创建解码器之前，仅 `isSurfaceOutputRequired()` 时下发；“同 epoch 同 hash 但帧率不同”的防御分支更新描述符并下发、返回 `false`、不重建解码器（当前端到端不可达，只由 JVM 用例覆盖）。
+  - `core/support/FakeRenderTarget` 记录 `setFrameRate` 调用序列，供 JPEG 负向用例断言 0 次。
+- **验证**：`StreamDescriptorTest`（+4）、`ScreenStreamProtoMapperTest`（+4）、`ClientMediaSessionSurfaceTest`（+2，正向）、`ClientMediaSessionTest`（+1，JPEG 负向）、`SwitchableRenderTargetTest`（+3）、`HostRenderTargetTest`（+1），新增 `FrameRatePolicyTest`（6 条）。TDD：先写用例，红测为编译失败（proto 字段、`getFrameRate`/`frameRate`、`setFrameRate` 默认方法、`FrameRatePolicy` 缺失，共 39 个错误）；实现后定向用例全绿。双变体全量 **1832 tests / 182 classes**，0 失败 / 0 错误 / 0 跳过（基线同提交更新为实测值）；`:app:lintDebug` / `:app:lintRelease`、`./gradlew build :app:assembleDebugAndroidTest`、`check_test_count` / `check_cjk` / `check_strings` / `check_docs` 全部通过。
+- **收益未实测**：本项只证明“提示按裁决下发与呈现、`0` 与同值边界正确”，非整数倍刷新率下的节奏抖动是否改善、面板功耗是否下降均未测量，不得据此宣称画面更平滑。
+- **未完成**：设备验证——API 30/31+ 机型上描述符帧率生效、`0` 不残留、宿主切换后重放一次、API < 30 无调用痕迹；以及收益实测与 `setFrameRate` 取值校准（待设备校准）。`Display.Mode` 切换与 `SurfaceView` 替换均不在本项。
+- **回退**：两处独立开关——客户端不下发（去掉 `applyDescriptor` 的 `setFrameRate`）或服务端不填（去掉 `buildRequestedDescriptor` 的 `frameRate`）；字段与映射保留无害，旧端读 0。
+- **关联文档**：[性能优化调研 §4.2 #5/§5](performance-research.md)、[性能候选设计 §4.4](superpowers/specs/2026-10-23-performance-candidates-design.md)、[媒体架构 §4.4.2](media-architecture.md)、[DV-011](decision-board.md)、[TB-ENG-016](#tb-eng-016)
 
 </details>
 

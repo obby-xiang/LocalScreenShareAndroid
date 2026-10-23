@@ -2744,7 +2744,9 @@ public class ScreenShareService extends Service {
      *
      * <p>The coded and visible size are both the capture size: the split exists only for codecs
      * that pad coded dimensions, and this build renders the aligned capture size one to one, so
-     * the viewer never has to crop or stretch it.</p>
+     * the viewer never has to crop or stretch it. The effective frame rate is attached as a
+     * display hint for both codecs: the hint is independent of which encoder produces the stream,
+     * and a viewer that does not render into a surface simply ignores it.</p>
      *
      * @param configEpoch configuration epoch the descriptor advances to
      * @param size        capture size in pixels, already aligned to the encoder
@@ -2754,17 +2756,20 @@ public class ScreenShareService extends Service {
                                                      @NonNull final Size size) {
         final int width = size.getWidth();
         final int height = size.getHeight();
+        final int frameRate = effectiveProjectionFrameRate();
         if (mIsH264) {
             return StreamDescriptor.builder(mStreamKey, configEpoch, CodecIds.H264,
                             H264Codec.MIME, BitstreamFormat.ANNEX_B)
                     .codedSize(width, height)
                     .visibleSize(width, height)
+                    .frameRate(frameRate)
                     .build();
         }
         return StreamDescriptor.builder(mStreamKey, configEpoch, CodecIds.JPEG, "image/jpeg",
                         BitstreamFormat.JPEG_FRAME)
                 .codedSize(width, height)
                 .visibleSize(width, height)
+                .frameRate(frameRate)
                 .build();
     }
 

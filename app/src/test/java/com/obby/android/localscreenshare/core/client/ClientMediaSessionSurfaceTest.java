@@ -21,6 +21,7 @@ import org.junit.Test;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.function.IntSupplier;
@@ -133,6 +134,37 @@ public class ClientMediaSessionSurfaceTest {
         assertSize(target.contentSizes.get(1), CODED_WIDTH, CODED_HEIGHT);
     }
 
+    @Test
+    public void onDescriptor_surfaceCodecAppliesFrameRate() {
+        FakeCodec codec = new FakeCodec(CODEC_ID, 0, false, true);
+        SwitchableSurfaceTarget target = new SwitchableSurfaceTarget(true);
+        ClientMediaSession session = newSession(codec, target);
+
+        assertTrue(session.onDescriptor(descriptor(1, CODED_WIDTH, CODED_HEIGHT, 30)));
+
+        assertEquals(Collections.singletonList(30), target.frameRates);
+        assertEquals(ClientState.WAIT_RANDOM_ACCESS, session.getState());
+        assertEquals(1, codec.getDecoderCreateCount());
+    }
+
+    @Test
+    public void onDescriptor_sameHashNewFrameRateAppliesWithoutReconfigure() {
+        FakeCodec codec = new FakeCodec(CODEC_ID, 0, false, true);
+        SwitchableSurfaceTarget target = new SwitchableSurfaceTarget(true);
+        ClientMediaSession session = newSession(codec, target);
+        assertTrue(session.onDescriptor(descriptor(1, CODED_WIDTH, CODED_HEIGHT, 30)));
+        int configureCount = codec.getLastDecoder().getConfigureCount();
+
+        // The defensive branch: the same decode configuration with a different display hint.
+        // It can only be reached by a server that changes the hint without advancing the epoch.
+        assertFalse(session.onDescriptor(descriptor(1, CODED_WIDTH, CODED_HEIGHT, 60)));
+
+        assertEquals(Arrays.asList(30, 60), target.frameRates);
+        assertEquals(1, codec.getDecoderCreateCount());
+        assertEquals(configureCount, codec.getLastDecoder().getConfigureCount());
+        assertEquals(60, session.getCurrentDescriptor().getFrameRate());
+    }
+
     private static void assertSize(int[] size, int width, int height) {
         assertEquals(width, size[0]);
         assertEquals(height, size[1]);
@@ -150,10 +182,16 @@ public class ClientMediaSessionSurfaceTest {
     }
 
     private static StreamDescriptor descriptor(int configEpoch, int width, int height) {
+        return descriptor(configEpoch, width, height, 0);
+    }
+
+    private static StreamDescriptor descriptor(int configEpoch, int width, int height,
+                                               int frameRate) {
         return StreamDescriptor.builder(STREAM_KEY, configEpoch, CODEC_ID, FakeCodec.DEFAULT_MIME,
                         BitstreamFormat.ANNEX_B)
                 .codedSize(width, height)
                 .visibleSize(width, height)
+                .frameRate(frameRate)
                 .build();
     }
 
@@ -193,6 +231,8 @@ public class ClientMediaSessionSurfaceTest {
 
         private final List<int[]> contentSizes = new ArrayList<>();
 
+        private final List<Integer> frameRates = new ArrayList<>();
+
         private final List<Integer> decoderCountsAtContentSize = new ArrayList<>();
 
         private final IntSupplier decoderCounter;
@@ -217,6 +257,11 @@ public class ClientMediaSessionSurfaceTest {
         public void setContentSize(int width, int height) {
             contentSizes.add(new int[]{width, height});
             decoderCountsAtContentSize.add(decoderCounter.getAsInt());
+        }
+
+        @Override
+        public void setFrameRate(int frameRate) {
+            frameRates.add(frameRate);
         }
 
         @Override

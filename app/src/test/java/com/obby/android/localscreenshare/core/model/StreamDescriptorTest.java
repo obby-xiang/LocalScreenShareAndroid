@@ -208,4 +208,56 @@ public class StreamDescriptorTest {
         assertArrayEquals(new byte[]{0x11, 0x22, 0x33},
                 descriptor.getConfigParts().get(0).getPayload());
     }
+
+    @Test
+    public void frameRate_doesNotChangeConfigHash() {
+        StreamDescriptor withoutHint = StreamDescriptor
+                .builder(streamKey(), 1, CODEC_ID, MIME, BitstreamFormat.ANNEX_B)
+                .codedSize(1280, 720)
+                .build();
+        StreamDescriptor withHint = StreamDescriptor
+                .builder(streamKey(), 1, CODEC_ID, MIME, BitstreamFormat.ANNEX_B)
+                .codedSize(1280, 720)
+                .frameRate(60)
+                .build();
+
+        assertEquals(withoutHint.getConfigHash(), withHint.getConfigHash());
+        assertEquals(60, withHint.getFrameRate());
+    }
+
+    @Test
+    public void withConfigEpoch_keepsFrameRateAndHash() {
+        StreamDescriptor descriptor = StreamDescriptor
+                .builder(streamKey(), 1, CODEC_ID, MIME, BitstreamFormat.ANNEX_B)
+                .codedSize(1280, 720)
+                .frameRate(24)
+                .build();
+
+        StreamDescriptor next = descriptor.withConfigEpoch(2);
+
+        assertEquals(2, next.getConfigEpoch());
+        assertEquals(24, next.getFrameRate());
+        assertEquals(descriptor.getConfigHash(), next.getConfigHash());
+    }
+
+    @Test
+    public void frameRate_negativeIsNormalisedToZero() {
+        StreamDescriptor descriptor = StreamDescriptor
+                .builder(streamKey(), 1, CODEC_ID, MIME, BitstreamFormat.ANNEX_B)
+                .codedSize(1280, 720)
+                .frameRate(-1)
+                .build();
+
+        assertEquals(0, descriptor.getFrameRate());
+    }
+
+    @Test
+    public void frameRate_defaultsToZero() {
+        StreamDescriptor descriptor = StreamDescriptor
+                .builder(streamKey(), 1, CODEC_ID, MIME, BitstreamFormat.ANNEX_B)
+                .codedSize(1280, 720)
+                .build();
+
+        assertEquals(0, descriptor.getFrameRate());
+    }
 }

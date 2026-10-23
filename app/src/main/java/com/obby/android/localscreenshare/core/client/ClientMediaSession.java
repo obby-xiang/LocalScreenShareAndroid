@@ -198,10 +198,15 @@ public final class ClientMediaSession {
      * check, then decoder creation and configuration. An unsupported codec closes the session
      * instead of leaving it waiting forever. An older epoch returns false with no side effect, a
      * same-epoch duplicate returns false, and a same-epoch descriptor with a different config hash
-     * throws because a decode configuration cannot change without a new epoch. A newer epoch is
-     * recorded and applied; if the codec requires an output surface that the render target does
-     * not provide, the session stays in {@code RESYNCING} without creating a decoder and the
-     * caller is expected to call {@link #retryConfigure()} once the surface exists.</p>
+     * throws because a decode configuration cannot change without a new epoch. A same-epoch
+     * descriptor with the same config hash but a different content frame rate only updates the
+     * display hint: it is recorded, forwarded to the render target when the codec renders into a
+     * surface, and reported as false without reconfiguring the decoder. That branch is defensive,
+     * because the server advances the epoch on every parameter change and cannot currently produce
+     * it. A newer epoch is recorded and applied; if the codec requires an output surface that the
+     * render target does not provide, the session stays in {@code RESYNCING} without creating a
+     * decoder and the caller is expected to call {@link #retryConfigure()} once the surface
+     * exists.</p>
      *
      * @return true when a decoder was configured for the descriptor
      * @throws IllegalArgumentException if {@code descriptor} is null or reuses the current epoch
@@ -234,6 +239,12 @@ public final class ClientMediaSession {
             int newEpoch = descriptor.getConfigEpoch();
             if (newEpoch == currentEpoch) {
                 if (descriptor.getConfigHash().equals(currentDescriptor.getConfigHash())) {
+                    if (descriptor.getFrameRate() != currentDescriptor.getFrameRate()) {
+                        currentDescriptor = descriptor;
+                        if (registration.getDescriptor().isSurfaceOutputRequired()) {
+                            renderTarget.setFrameRate(descriptor.getFrameRate());
+                        }
+                    }
                     return false;
                 }
                 throw new IllegalArgumentException("same epoch with a different decode config");
@@ -417,10 +428,12 @@ public final class ClientMediaSession {
      * <p>The state moves to {@code WAIT_CONFIG} first, so listeners see the reconfiguration before
      * the old decoder is closed. The render target is then told the new coded size, before any
      * decoder exists for it: a surface target keeps the buffer geometry of its texture, and the
-     * old decoder has to be gone before that geometry changes. Configuration failure closes the
-     * newly created decoder (if any), records the descriptor and policy, and leaves the session in
-     * {@code RESYNCING} so the caller can retry; success installs the decoder and waits for a
-     * random-access point.</p>
+     * old decoder has to be gone before that geometry changes. When the codec renders into a
+     * surface the descriptor's content frame rate is forwarded at the same point; codecs that
+     * deliver encoded images never consume the hint, because it describes how a surface is paced.
+     * Configuration failure closes the newly created decoder (if any), records the descriptor and
+     * policy, and leaves the session in {@code RESYNCING} so the caller can retry; success installs
+     * the decoder and waits for a random-access point.</p>
      */
     private boolean applyDescriptor(StreamDescriptor descriptor,
                                     CodecRegistration registration) {
@@ -430,6 +443,9 @@ public final class ClientMediaSession {
             decoder = null;
         }
         renderTarget.setContentSize(descriptor.getCodedWidth(), descriptor.getCodedHeight());
+        if (registration.getDescriptor().isSurfaceOutputRequired()) {
+            renderTarget.setFrameRate(descriptor.getFrameRate());
+        }
         Decoder newDecoder = null;
         try {
             newDecoder = registration.getDecoderFactory().create(

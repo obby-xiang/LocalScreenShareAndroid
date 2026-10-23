@@ -29,6 +29,12 @@ import java.util.List;
  * descriptors of the same decode configuration share one hash across epoch bumps and receivers are
  * not forced to reconfigure for an epoch-only change. Null strings are encoded distinctly from
  * empty strings.</p>
+ *
+ * <p><b>Content frame rate.</b> {@link #getFrameRate()} is a display hint, not part of the decode
+ * configuration: it changes how smoothly the display side paces the frames, never which decoder is
+ * configured. It is therefore excluded from the config hash as well, and a changed hint alone must
+ * not force a receiver to reconfigure. Zero means unknown or cleared; negative builder values are
+ * normalised to zero.</p>
  */
 public final class StreamDescriptor {
 
@@ -48,13 +54,14 @@ public final class StreamDescriptor {
     private final BitstreamFormat bitstreamFormat;
     private final List<CodecConfigPart> configParts;
     private final ColorInfo colorInfo;
+    private final int frameRate;
     private final String configHash;
 
     private StreamDescriptor(StreamKey streamKey, int configEpoch, String codecId, String mime,
                              String profile, String level, int codedWidth, int codedHeight,
                              int visibleWidth, int visibleHeight, int rotationDegrees,
                              BitstreamFormat bitstreamFormat, List<CodecConfigPart> configParts,
-                             ColorInfo colorInfo) {
+                             ColorInfo colorInfo, int frameRate) {
         if (streamKey == null) {
             throw new IllegalArgumentException("streamKey must not be null");
         }
@@ -97,6 +104,7 @@ public final class StreamDescriptor {
         this.bitstreamFormat = bitstreamFormat;
         this.configParts = Collections.unmodifiableList(new ArrayList<>(configParts));
         this.colorInfo = colorInfo;
+        this.frameRate = Math.max(0, frameRate);
         this.configHash = computeConfigHash();
     }
 
@@ -219,6 +227,17 @@ public final class StreamDescriptor {
     }
 
     /**
+     * Returns the content frame-rate hint for the display side, or zero when unknown or cleared.
+     *
+     * <p>This is a presentation hint only: it never changes the decoder configuration and never
+     * participates in {@link #getConfigHash()}. A receiver that renders into a surface may forward
+     * it to the platform, and zero means it must stop replaying a previous hint.</p>
+     */
+    public int getFrameRate() {
+        return frameRate;
+    }
+
+    /**
      * Returns the stable lowercase-hex SHA-256 digest of the decode configuration.
      */
     public String getConfigHash() {
@@ -245,7 +264,7 @@ public final class StreamDescriptor {
     public StreamDescriptor withConfigEpoch(int newConfigEpoch) {
         return new StreamDescriptor(streamKey, newConfigEpoch, codecId, mime, profile, level,
                 codedWidth, codedHeight, visibleWidth, visibleHeight, rotationDegrees,
-                bitstreamFormat, configParts, colorInfo);
+                bitstreamFormat, configParts, colorInfo, frameRate);
     }
 
     private String computeConfigHash() {
@@ -314,8 +333,9 @@ public final class StreamDescriptor {
      * Mutable builder for {@link StreamDescriptor}.
      *
      * <p>Defaults: profile and level are null, visible size equals the coded size, rotation is
-     * zero, configuration parts are empty and color is {@link ColorInfo#UNSPECIFIED}. The coded
-     * size has no default and must be positive. Validation happens once in {@link #build()}.</p>
+     * zero, configuration parts are empty, color is {@link ColorInfo#UNSPECIFIED} and the content
+     * frame rate is zero. The coded size has no default and must be positive. Validation happens
+     * once in {@link #build()}.</p>
      */
     public static final class Builder {
 
@@ -334,6 +354,7 @@ public final class StreamDescriptor {
         private int rotationDegrees;
         private List<CodecConfigPart> configParts;
         private ColorInfo colorInfo;
+        private int frameRate;
 
         private Builder(StreamKey streamKey, int configEpoch, String codecId, String mime,
                         BitstreamFormat bitstreamFormat) {
@@ -409,6 +430,16 @@ public final class StreamDescriptor {
         }
 
         /**
+         * Sets the content frame-rate hint for the display side. Optional: defaults to zero, which
+         * means unknown or cleared. Negative values are normalised to zero. The hint never enters
+         * the config hash, so changing it does not require a new config epoch by itself.
+         */
+        public Builder frameRate(int frameRate) {
+            this.frameRate = frameRate;
+            return this;
+        }
+
+        /**
          * Validates the accumulated values and creates the immutable descriptor.
          *
          * @throws IllegalArgumentException if a required value is missing, a size is
@@ -424,7 +455,7 @@ public final class StreamDescriptor {
             ColorInfo effectiveColor = colorInfo != null ? colorInfo : ColorInfo.UNSPECIFIED;
             return new StreamDescriptor(streamKey, configEpoch, codecId, mime, profile, level,
                     codedWidth, codedHeight, effectiveVisibleWidth, effectiveVisibleHeight,
-                    rotationDegrees, bitstreamFormat, effectiveParts, effectiveColor);
+                    rotationDegrees, bitstreamFormat, effectiveParts, effectiveColor, frameRate);
         }
     }
 }

@@ -65,6 +65,18 @@ public class HostRenderTargetTest {
     }
 
     @Test
+    public void setFrameRate_reachesSurfaceHalfOnly() {
+        RecordingTarget surface = new RecordingTarget();
+        RecordingTarget bitmap = new RecordingTarget();
+
+        new HostRenderTarget(surface, bitmap).setFrameRate(60);
+
+        assertEquals(1, surface.frameRateCalls);
+        assertEquals(60, surface.lastFrameRate);
+        assertEquals(0, bitmap.frameRateCalls);
+    }
+
+    @Test
     public void release_releasesBothHalves() throws ReflectiveOperationException {
         // The two real halves are the only implementations that own a resource: the surface half
         // caches a Surface and the bitmap half holds a pending bitmap and the frame layer. The
@@ -144,6 +156,10 @@ public class HostRenderTargetTest {
 
         private int lastContentHeight;
 
+        private int frameRateCalls;
+
+        private int lastFrameRate;
+
         private int renderedImages;
 
         private EncodedImageFrame lastFrame;
@@ -159,6 +175,12 @@ public class HostRenderTargetTest {
             contentSizeCalls++;
             lastContentWidth = width;
             lastContentHeight = height;
+        }
+
+        @Override
+        public void setFrameRate(int frameRate) {
+            frameRateCalls++;
+            lastFrameRate = frameRate;
         }
 
         @Override

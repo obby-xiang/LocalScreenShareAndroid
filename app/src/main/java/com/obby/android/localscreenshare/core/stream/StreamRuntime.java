@@ -943,9 +943,10 @@ public final class StreamRuntime {
      * Combines the requested descriptor with the configuration reported by a deferred codec.
      *
      * <p>Stream identity, epoch, codec id, MIME type, bitstream format, profile, level, visible
-     * size and rotation come from the request; the coded size and configuration parts come from
-     * the encoder; the color comes from the encoder unless it is unspecified. The resulting config
-     * hash therefore covers the actual configuration, while the epoch stays unchanged.</p>
+     * size, rotation and the content frame-rate hint come from the request; the coded size and
+     * configuration parts come from the encoder; the color comes from the encoder unless it is
+     * unspecified. The resulting config hash therefore covers the actual configuration, while the
+     * epoch stays unchanged; the frame-rate hint does not enter that hash.</p>
      */
     private StreamDescriptor buildPublishedDescriptor(EncoderConfig config) {
         StreamDescriptor.Builder builder = StreamDescriptor.builder(
@@ -956,7 +957,8 @@ public final class StreamRuntime {
                 .codedSize(config.getCodedWidth(), config.getCodedHeight())
                 .visibleSize(requested.getVisibleWidth(), requested.getVisibleHeight())
                 .rotationDegrees(requested.getRotationDegrees())
-                .configParts(config.getConfigParts());
+                .configParts(config.getConfigParts())
+                .frameRate(requested.getFrameRate());
         ColorInfo color = config.getColorInfo();
         if (color != ColorInfo.UNSPECIFIED) {
             builder.colorInfo(color);

@@ -15,13 +15,16 @@ import java.util.List;
  * <p>{@link #getSurface()} always returns {@code null}, so decoders must use the encoded-image
  * path. {@link #renderEncodedImage} rejects null frames. {@code close()} only counts
  * invocations, which lets tests assert that the runtime closed the target without any real
- * resource being involved. {@link #setContentSize(int, int)} only records the reported sizes.</p>
+ * resource being involved. {@link #setContentSize(int, int)} and {@link #setFrameRate(int)} only
+ * record the reported values.</p>
  */
 public final class FakeRenderTarget implements RenderTarget {
 
     private final List<EncodedImageFrame> images = new ArrayList<>();
 
     private final List<int[]> contentSizes = new ArrayList<>();
+
+    private final List<Integer> frameRates = new ArrayList<>();
 
     private int closeCount;
 
@@ -33,6 +36,11 @@ public final class FakeRenderTarget implements RenderTarget {
     @Override
     public void setContentSize(int width, int height) {
         contentSizes.add(new int[]{width, height});
+    }
+
+    @Override
+    public void setFrameRate(int frameRate) {
+        frameRates.add(frameRate);
     }
 
     @Override
@@ -53,6 +61,14 @@ public final class FakeRenderTarget implements RenderTarget {
      */
     public List<int[]> getContentSizes() {
         return Collections.unmodifiableList(contentSizes);
+    }
+
+    /**
+     * Returns the content frame-rate hints reported through
+     * {@link #setFrameRate(int)}, in call order.
+     */
+    public List<Integer> getFrameRates() {
+        return Collections.unmodifiableList(frameRates);
     }
 
     public void close() {

@@ -248,6 +248,10 @@ message Descriptor {
   ColorInfo color = 14;
   string config_hash = 15;
   bool secure = 16;
+  // Content frame-rate hint for the display side; 0 means unknown or cleared. It is deliberately
+  // outside config_hash, so changing it never forces a decoder reconfiguration. An old client
+  // reads 0 and simply keeps its current hint.
+  int32 frame_rate = 17;
 }
 
 message ConfigPart {

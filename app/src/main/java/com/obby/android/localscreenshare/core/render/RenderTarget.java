@@ -45,6 +45,19 @@ public interface RenderTarget {
     void setContentSize(int width, int height);
 
     /**
+     * Declares the content frame rate of the frames rendered into {@link #getSurface()}.
+     *
+     * <p>A hint only. Zero means "unknown or cleared": implementations must not assert anything on
+     * the platform and must stop replaying a previously asserted value. Interface default methods
+     * are supported natively at minSdk 25, so no desugaring is involved.</p>
+     *
+     * @param frameRate content frame rate in frames per second; non-positive means unknown or
+     *                  cleared
+     */
+    default void setFrameRate(int frameRate) {
+    }
+
+    /**
      * Renders one compressed image frame.
      *
      * <p>Used by codecs that deliver encoded images instead of a surface. The payload is

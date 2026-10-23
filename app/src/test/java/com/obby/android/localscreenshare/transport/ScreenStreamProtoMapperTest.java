@@ -256,6 +256,78 @@ public class ScreenStreamProtoMapperTest {
                         ClientMessage.getDefaultInstance(), new RecordingListener()));
     }
 
+    @Test
+    public void descriptorRoundTrip_keepsFrameRate() {
+        StreamDescriptor source = StreamDescriptor.builder(KEY, 1, "h264", "video/avc",
+                        BitstreamFormat.ANNEX_B)
+                .codedSize(1280, 720)
+                .frameRate(24)
+                .build();
+
+        com.obby.android.localscreenshare.grpc.screenstream.Descriptor wire =
+                ScreenStreamProtoMapper.toProtoDescriptor(source, false);
+        StreamDescriptor rebuilt = ScreenStreamProtoMapper.toStreamDescriptor(KEY, wire);
+
+        assertEquals(24, wire.getFrameRate());
+        assertEquals(24, rebuilt.getFrameRate());
+    }
+
+    @Test
+    public void descriptorWithoutFrameRate_readsZero() {
+        com.obby.android.localscreenshare.grpc.screenstream.Descriptor wire =
+                com.obby.android.localscreenshare.grpc.screenstream.Descriptor.newBuilder()
+                        .setProtocolVersion(ScreenStreamProtoMapper.PROTOCOL_VERSION)
+                        .setConfigEpoch(1)
+                        .setCodecId("jpeg")
+                        .setMime("image/jpeg")
+                        .setCodedWidth(640)
+                        .setCodedHeight(480)
+                        .setVisibleWidth(640)
+                        .setVisibleHeight(480)
+                        .setBitstreamFormat(BitstreamFormat.JPEG_FRAME.name())
+                        .build();
+
+        StreamDescriptor rebuilt = ScreenStreamProtoMapper.toStreamDescriptor(KEY, wire);
+
+        assertEquals(0, rebuilt.getFrameRate());
+    }
+
+    @Test
+    public void toProtoDescriptor_keepsConfigHash() {
+        StreamDescriptor source = StreamDescriptor.builder(KEY, 7, "h264", "video/avc",
+                        BitstreamFormat.ANNEX_B)
+                .codedSize(1280, 720)
+                .frameRate(30)
+                .build();
+
+        com.obby.android.localscreenshare.grpc.screenstream.Descriptor wire =
+                ScreenStreamProtoMapper.toProtoDescriptor(source, false);
+
+        assertEquals(source.getConfigHash(), wire.getConfigHash());
+    }
+
+    @Test
+    public void descriptorFrameRate_doesNotAffectHashOnRoundTrip() {
+        StreamDescriptor withoutHint = StreamDescriptor.builder(KEY, 1, "h264", "video/avc",
+                        BitstreamFormat.ANNEX_B)
+                .codedSize(1280, 720)
+                .build();
+        StreamDescriptor withHint = StreamDescriptor.builder(KEY, 1, "h264", "video/avc",
+                        BitstreamFormat.ANNEX_B)
+                .codedSize(1280, 720)
+                .frameRate(60)
+                .build();
+
+        StreamDescriptor hintedRebuilt = ScreenStreamProtoMapper.toStreamDescriptor(
+                KEY, ScreenStreamProtoMapper.toProtoDescriptor(withHint, false));
+        StreamDescriptor plainRebuilt = ScreenStreamProtoMapper.toStreamDescriptor(
+                KEY, ScreenStreamProtoMapper.toProtoDescriptor(withoutHint, false));
+
+        assertEquals(hintedRebuilt.getConfigHash(), plainRebuilt.getConfigHash());
+        assertEquals(60, hintedRebuilt.getFrameRate());
+        assertEquals(0, plainRebuilt.getFrameRate());
+    }
+
     private static final class RecordingListener implements ClientMessageListener {
         boolean helloSeen;
         boolean readySeen;

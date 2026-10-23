@@ -23,12 +23,20 @@ import com.obby.android.localscreenshare.core.render.RenderTarget;
  * while the main thread performs the switch; the session serializes decoder creation against
  * decoding, so a frame either goes to the previous target or the new one, never to a target that
  * was released in between.</p>
+ *
+ * <p><b>Content frame rate.</b> The hint is remembered here and forwarded only when the value
+ * changes, so a repeated descriptor does not assert it twice. After a switch the new delegate gets
+ * the remembered hint once, but only when it is positive: zero means "unknown or cleared" and must
+ * not be replayed onto a host that never heard of the previous value.</p>
  */
 public final class SwitchableRenderTarget implements RenderTarget {
 
     // Read on the decode thread for every rendered frame, written on the main thread when the
     // display host changes.
     private volatile RenderTarget delegate;
+
+    // Content frame-rate hint of the current stream; zero means unknown or cleared.
+    private volatile int frameRate;
 
     /**
      * Creates a target whose initial delegate is {@code initialDelegate}.
@@ -64,6 +72,9 @@ public final class SwitchableRenderTarget implements RenderTarget {
             throw new IllegalArgumentException("nextDelegate must not be null");
         }
         this.delegate = nextDelegate;
+        if (frameRate > 0) {
+            nextDelegate.setFrameRate(frameRate);
+        }
     }
 
     @Override
@@ -74,6 +85,16 @@ public final class SwitchableRenderTarget implements RenderTarget {
     @Override
     public void setContentSize(int width, int height) {
         delegate.setContentSize(width, height);
+    }
+
+    @Override
+    public void setFrameRate(int frameRate) {
+        int normalized = Math.max(0, frameRate);
+        if (normalized == this.frameRate) {
+            return;
+        }
+        this.frameRate = normalized;
+        delegate.setFrameRate(normalized);
     }
 
     @Override

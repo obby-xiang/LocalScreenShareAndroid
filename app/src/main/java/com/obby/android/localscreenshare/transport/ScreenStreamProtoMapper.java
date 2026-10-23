@@ -28,7 +28,8 @@ import java.util.Map;
  * argument to rebuild descriptors and access units. The {@code secure} flag is session-level
  * metadata, not part of a {@link StreamDescriptor}; it travels on the proto descriptor and is read
  * separately by the receiving side. The {@code config_hash} is sent for diagnostics only: the
- * client recomputes it from the rebuilt descriptor, so it is never trusted as input.</p>
+ * client recomputes it from the rebuilt descriptor, so it is never trusted as input. The content
+ * frame rate is a display hint and is copied in both directions, but it is not part of that hash.</p>
  *
  * <p>All methods are static and side-effect free; the proto byte payloads are copied by the proto
  * builders, so returned objects never alias the framework's byte arrays.</p>
@@ -68,7 +69,8 @@ public final class ScreenStreamProtoMapper {
                         .setRotationDegrees(descriptor.getRotationDegrees())
                         .setBitstreamFormat(descriptor.getBitstreamFormat().name())
                         .setConfigHash(descriptor.getConfigHash())
-                        .setSecure(secure);
+                        .setSecure(secure)
+                        .setFrameRate(descriptor.getFrameRate());
         if (descriptor.getProfile() != null) {
             builder.setProfile(descriptor.getProfile());
         }
@@ -107,6 +109,7 @@ public final class ScreenStreamProtoMapper {
                 .rotationDegrees(descriptor.getRotationDegrees())
                 .configParts(toConfigParts(descriptor.getConfigPartsList()))
                 .colorInfo(toColor(descriptor.getColor()))
+                .frameRate(descriptor.getFrameRate())
                 .build();
     }
 

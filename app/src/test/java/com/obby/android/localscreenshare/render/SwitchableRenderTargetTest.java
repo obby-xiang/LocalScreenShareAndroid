@@ -11,11 +11,14 @@ import org.junit.Test;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertTrue;
 
 /**
  * Behaviour of {@link SwitchableRenderTarget}: forwarding, re-pointing and the null contract.
@@ -80,6 +83,48 @@ public class SwitchableRenderTargetTest {
         assertSame(second, target.getDelegate());
     }
 
+    @Test
+    public void setFrameRate_forwardsToDelegate() {
+        RecordingTarget first = new RecordingTarget(emptySurface());
+        SwitchableRenderTarget target = new SwitchableRenderTarget(first);
+
+        target.setFrameRate(60);
+
+        assertEquals(Collections.singletonList(60), first.frameRates);
+    }
+
+    @Test
+    public void setFrameRate_sameValueIsNotForwardedTwice() {
+        RecordingTarget first = new RecordingTarget(emptySurface());
+        SwitchableRenderTarget target = new SwitchableRenderTarget(first);
+
+        target.setFrameRate(60);
+        target.setFrameRate(60);
+
+        assertEquals(Collections.singletonList(60), first.frameRates);
+
+        // Zero clears a previously asserted hint, so it is forwarded once.
+        target.setFrameRate(0);
+        target.setFrameRate(0);
+        assertEquals(Arrays.asList(60, 0), first.frameRates);
+    }
+
+    @Test
+    public void setDelegate_replaysOnlyPositiveFrameRate() {
+        RecordingTarget first = new RecordingTarget(emptySurface());
+        RecordingTarget second = new RecordingTarget(emptySurface());
+        RecordingTarget third = new RecordingTarget(emptySurface());
+        SwitchableRenderTarget target = new SwitchableRenderTarget(first);
+
+        target.setFrameRate(0);
+        target.setDelegate(second);
+        assertTrue(second.frameRates.isEmpty());
+
+        target.setFrameRate(60);
+        target.setDelegate(third);
+        assertEquals(Collections.singletonList(60), third.frameRates);
+    }
+
     @Test(expected = IllegalArgumentException.class)
     public void rejectsANullInitialDelegate() {
         new SwitchableRenderTarget(null);
@@ -119,6 +164,8 @@ public class SwitchableRenderTargetTest {
 
         private final List<EncodedImageFrame> images = new ArrayList<>();
 
+        private final List<Integer> frameRates = new ArrayList<>();
+
         RecordingTarget(Surface surface) {
             this.surface = surface;
         }
@@ -130,6 +177,11 @@ public class SwitchableRenderTargetTest {
 
         @Override
         public void setContentSize(int width, int height) {
+        }
+
+        @Override
+        public void setFrameRate(int frameRate) {
+            frameRates.add(frameRate);
         }
 
         @Override

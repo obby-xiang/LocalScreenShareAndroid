@@ -1,6 +1,7 @@
 package com.obby.android.localscreenshare.render;
 
 import android.graphics.SurfaceTexture;
+import android.os.Build;
 import android.view.Surface;
 import android.view.TextureView;
 
@@ -26,6 +27,14 @@ import com.obby.android.localscreenshare.core.render.RenderTarget;
  * buffers of the previous size and the decoder output is drawn into a fraction of the window until
  * the viewer reconnects. The requested size is remembered and re-applied whenever a new texture
  * appears, so a window that is re-attached after being torn down starts with the right geometry.</p>
+ *
+ * <p><b>Content frame rate.</b> The session reports the descriptor's content frame rate as a
+ * display hint. It is applied only while a surface exists and the platform has the API for it
+ * ({@link FrameRatePolicy} decides the variant); a hint that arrives before the surface is
+ * remembered and applied when {@link #getSurface()} creates it. The same value is never sent
+ * twice, and zero clears the local hint without touching the platform and without being replayed
+ * later. A platform or vendor rejection is swallowed: the hint is best effort and must not disturb
+ * playback.</p>
  */
 public final class SurfaceRenderTarget implements RenderTarget {
 
@@ -35,7 +44,14 @@ public final class SurfaceRenderTarget implements RenderTarget {
 
     private SurfaceTexture lastTexture;
 
-    private Surface surface;
+    // Written on the thread that drives decoding and released from the view's listener thread.
+    private volatile Surface surface;
+
+    // Content frame-rate hint requested by the session and the value last asserted on the current
+    // surface; the latter drops back to zero whenever the surface is released.
+    private volatile int frameRate;
+
+    private volatile int appliedFrameRate;
 
     // Frame size requested by the session and the size last pushed into the current texture; both
     // zero until a descriptor arrives or a new texture needs the size again.
@@ -98,8 +114,14 @@ public final class SurfaceRenderTarget implements RenderTarget {
             lastTexture = texture;
         }
         applyBufferSize(texture);
+        boolean created = false;
         if (surface == null) {
             surface = new Surface(texture);
+            created = true;
+        }
+        if (created) {
+            // Covers a hint that arrived before the surface existed, and a re-attached texture.
+            applyFrameRate();
         }
         return surface;
     }
@@ -126,6 +148,24 @@ public final class SurfaceRenderTarget implements RenderTarget {
             }
             applyBufferSize(texture);
         }
+    }
+
+    /**
+     * Stores the content frame-rate hint and asserts it on the current surface, if any.
+     *
+     * <p>Called by the client session before a decoder is configured. Zero clears the local hint
+     * and leaves the platform alone; a positive value is asserted at most once per surface and is
+     * asserted again when {@link #getSurface()} creates a new one.</p>
+     */
+    @Override
+    public void setFrameRate(int frameRate) {
+        int normalized = Math.max(0, frameRate);
+        this.frameRate = normalized;
+        if (normalized == 0) {
+            appliedFrameRate = 0;
+            return;
+        }
+        applyFrameRate();
     }
 
     @Override
@@ -156,10 +196,44 @@ public final class SurfaceRenderTarget implements RenderTarget {
         appliedHeight = contentHeight;
     }
 
+    /**
+     * Asserts the remembered hint on the current surface, swallowing platform rejections.
+     *
+     * <p>The API split lives in {@link FrameRatePolicy}; the explicit level checks here are what
+     * let the platform call sites be verified statically, and they repeat a decision the policy
+     * makes anyway. The applied value is recorded before the call so a failing surface is not
+     * retried on every frame; a new surface resets it through {@link #releaseSurface()}.</p>
+     */
+    private void applyFrameRate() {
+        final Surface current = surface;
+        final int rate = frameRate;
+        if (current == null || rate <= 0 || appliedFrameRate == rate) {
+            return;
+        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            return;
+        }
+        appliedFrameRate = rate;
+        try {
+            FrameRatePolicy.applyFrameRate(rate, Build.VERSION.SDK_INT, (fps, seamless) -> {
+                if (seamless && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    current.setFrameRate(fps, Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE,
+                            Surface.CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS);
+                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    current.setFrameRate(fps, Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE);
+                }
+            });
+        } catch (RuntimeException e) {
+            // The hint is best effort: a vendor surface that rejects it must not stop playback.
+        }
+    }
+
     private void releaseSurface() {
-        if (surface != null) {
-            surface.release();
+        Surface current = surface;
+        if (current != null) {
+            current.release();
             surface = null;
         }
+        appliedFrameRate = 0;
     }
 }

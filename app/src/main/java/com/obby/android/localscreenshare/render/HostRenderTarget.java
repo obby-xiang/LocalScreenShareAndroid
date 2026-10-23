@@ -17,10 +17,10 @@ import com.obby.android.localscreenshare.core.render.RenderTarget;
  * Composing both halves up front therefore removes the need to swap the target at runtime: the
  * session keeps one stable target, and the method a codec calls decides which half is used.</p>
  *
- * <p>Dispatch is by method, not by state: {@link #getSurface()} and
- * {@link #setContentSize(int, int)} go to the surface half, while {@link #renderEncodedImage} goes
- * to the bitmap half. The bitmap half is never touched by an H.264 session, and the surface half is
- * never touched by a JPEG session.</p>
+ * <p>Dispatch is by method, not by state: {@link #getSurface()},
+ * {@link #setContentSize(int, int)} and {@link #setFrameRate(int)} go to the surface half, while
+ * {@link #renderEncodedImage} goes to the bitmap half. The bitmap half is never touched by an
+ * H.264 session, and the surface half is never touched by a JPEG session.</p>
  *
  * <p><b>Release.</b> Both halves belong to the host and are released together when the host is torn
  * down or the session ends. Only the concrete implementations own a resource that has to be released
@@ -63,6 +63,11 @@ public final class HostRenderTarget implements RenderTarget {
     @Override
     public void setContentSize(final int width, final int height) {
         surfaceTarget.setContentSize(width, height);
+    }
+
+    @Override
+    public void setFrameRate(final int frameRate) {
+        surfaceTarget.setFrameRate(frameRate);
     }
 
     @Override

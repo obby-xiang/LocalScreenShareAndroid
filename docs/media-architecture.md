@@ -221,6 +221,18 @@ HEVC 与 AV1 的边界：
 - **指标**：服务端行打印 `thermalHeadroom`（千分比，0 不打印）与 `thermalTier`（`1`=NONE / `2`=REDUCED / `3`=MINIMAL，`0`=未采样、不打印）。开关关闭会清空两者。判据见[性能优化调研](performance-research.md) §6 与[性能候选设计](superpowers/specs/2026-10-23-performance-candidates-design.md) §8 设备项 ②。
 - **边界**：只改当前生效值、不写偏好；协议与描述符不变；不新增依赖、不新增锁，采样路径零分配。
 
+#### 4.4.2 客户端内容帧率提示（2026-10-24 落地）
+
+服务端在描述符里下发内容帧率，观看端把它作为呈现提示交给平台；它是本节「`KEY_FRAME_RATE` 是目标提示，不是严格上限」在客户端显示侧的对应物，不改变编码输出帧率。
+
+- **承载**：proto `Descriptor.frame_rate = 17`（`int32`，`PROTOCOL_VERSION` 保持 1）。`0` = 未知或清除；旧服务端不填时旧客户端读 0，等于没有提示。三档媒体面共用同一个 mapper，双向复制该字段。
+- **不入配置哈希**：`frame_rate` 描述的是内容节奏提示，不改变解码配置，因此**不进入** `configHash`，帧率单独变化不推进 `configEpoch`、不重建解码器。代价是同一 `configHash` 下帧率可能变化，`ClientMediaSession` 因此在“同 epoch 同 hash”比较之外单独比较该字段：仅帧率不同时更新描述符并把提示转发给渲染目标，返回 `false` 而不重配解码器。这是防御分支——服务端每次参数变化都推进 epoch，当前端到端不可达，只由 JVM 用例覆盖。
+- **下发口径**：服务端对 H.264 与 JPEG **都填**同一个 `effectiveProjectionFrameRate()`；客户端只按 `isSurfaceOutputRequired()` 消费，JPEG 路径不触碰提示。只有这一条口径。
+- **平台门控**：`render/FrameRatePolicy`（纯 JVM）按 API 选择调用——低于 30 不调用（避免 `NoSuchMethodError`）；API 30 用 `Surface.setFrameRate(fps, FRAME_RATE_COMPATIBILITY_FIXED_SOURCE)`；API 31+ 追加 `CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS`。策略不吞异常，吞异常是渲染目标的职责。
+- **渲染目标语义**：`RenderTarget.setFrameRate(int)` 有空的默认实现，非 surface 目标无需改动。`SurfaceRenderTarget` 的 `surface` 与 `frameRate` 为 `volatile`，正值在 surface 存在时下发、异常吞掉，同值不重复调用；提示先于 surface 到达时，`getSurface()` 创建 surface 后补发一次。`HostRenderTarget` 只转发给 surface 半边；`SwitchableRenderTarget` 对同值幂等，切换宿主时仅在值大于 0 时重放给新宿主。
+- **`0` 语义**：清除本地提示、不调用平台、不再重放旧值。重放路径（`getSurface()` 与 `setDelegate`）只在值大于 0 时生效。
+- **边界**：不做 `Display.Mode` 切换，也不改屏幕刷新率本身；不新增依赖。设备验证与收益实测未做，`setFrameRate` 的取值效果**待设备校准**。
+
 ### 4.5 编码器输出与时间戳
 
 - 使用编码器输出的 PTS 作为视频时间轴；单位统一为微秒或纳秒，并在会话内固定。

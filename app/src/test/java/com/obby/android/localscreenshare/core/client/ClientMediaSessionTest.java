@@ -150,6 +150,8 @@ public class ClientMediaSessionTest {
         assertFalse(session.isClosed());
         assertEquals(0, surfaceCodec.getDecoderCreateCount());
         assertNull(surfaceCodec.getLastDecoder());
+        // Blocked before applyDescriptor, so the display hint is not dispatched either.
+        assertTrue(renderTarget.getFrameRates().isEmpty());
     }
 
     @Test
@@ -233,6 +235,24 @@ public class ClientMediaSessionTest {
         assertEquals(transitionCount, transitions.size());
         assertEquals(1, codec.getDecoderCreateCount());
         assertSame(decoder, codec.getLastDecoder());
+    }
+
+    @Test
+    public void onDescriptor_jpegDoesNotSetFrameRate() {
+        ClientMediaSession session = newSession(
+                CodecRegistry.withDefaults(),
+                new ClientCapabilities(Collections.singleton(CodecIds.JPEG)));
+        StreamDescriptor descriptor = StreamDescriptor.builder(STREAM_KEY, 1, CodecIds.JPEG,
+                        JpegCodec.MIME, BitstreamFormat.JPEG_FRAME)
+                .codedSize(CODED_WIDTH, CODED_HEIGHT)
+                .visibleSize(48, 36)
+                .frameRate(60)
+                .build();
+
+        assertTrue(session.onDescriptor(descriptor));
+
+        assertEquals(ClientState.WAIT_RANDOM_ACCESS, session.getState());
+        assertTrue(renderTarget.getFrameRates().isEmpty());
     }
 
     @Test
