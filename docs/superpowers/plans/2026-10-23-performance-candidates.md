@@ -25,7 +25,7 @@
 | 第 4 项为“收紧追赶阈值 + 自适应队列” | **阈值不收紧**；B1 改为“追赶采样覆盖修复 + 丢片并轨” | B1 落地时按看板自己的“口径约束 ①”改写条目：写机制理由、同步 [DB-OBS-002](../../decision-board.md#db-obs-002) 与 [DV-021](../../decision-board.md) 的指针 |
 | 五项各“占独立分棒 ID” | `TB-MEDIA-006/007`、`TB-POWER-002`、`TB-CLIENT-007`、`TB-ENG-015` 五个 ID 已预留；本批总项为 `TB-ENG-016` | 各棒落地时补自己的详情块；总项在五项全部写回后才转完成 |
 
-用例与测试类按各棒**实测**清点：25 + 16 + 20 + 22 + 54 = **137 条新用例**，即 1750 + 137 = **1887 tests**；新测试类 11 个（B1 两个、B2 一个、B3 一个、B4 两个、B5 五个），即 **188 classes**。各棒实测数与最初清单的差异来自审查修正追加的用例：B1 追加 `ExternalCatchUpRecorderTest` 4 条与 `CatchUpPolicyTest` +1；B2 追加 `close` 清零 3 条；B3 追加 `isValid` 1 条与 `ThermalThrottlePolicyTest` +1；B4 追加 `SurfaceRenderTargetTest` 1 条；B5 的清单本身是 54 条（早期总览的 42 是旧估算）。任何与此不符的合计都以本段与各棒“落地记录”为准。**这些数字只是实测回填，不得再手改 `test_baseline.json`**；最终值以 `check_test_count.py` 的输出为准。
+用例与测试类按各棒**实测**清点：25 + 16 + 20 + 22 + 54 = **137 条新用例**，即 1750 + 137 = **1887 tests**；新测试类 11 个（B1 两个、B2 一个、B3 一个、B4 两个、B5 五个），即 **188 classes**。各棒实测数与最初清单的差异来自审查修正追加的用例：B1 追加 6 条 = `CatchUpSamplerTest` +1、`CatchUpPolicyTest` +1、新增 `ExternalCatchUpRecorderTest` 4 条；B2 追加 `close` 清零 3 条；B3 追加 `isValid` 1 条与 `ThermalThrottlePolicyTest` +1；B4 追加 `SurfaceRenderTargetTest` 1 条；B5 的清单本身是 54 条（早期总览的 42 是旧估算）。任何与此不符的合计都以本段与各棒“落地记录”为准。**这些数字只是实测回填，不得再手改 `test_baseline.json`**；最终值以 `check_test_count.py` 的输出为准。
 
 ## Global Constraints
 
@@ -80,7 +80,7 @@
 
 **目标**：gRPC 路径、媒体通道路径与丢片追赶共用同一个采样入口；丢片 episode 计入 `rx.catchup` 与 `rx.catchup.lat`，但**不占**连续失败预算；`CatchUpPolicy` 阈值一字不改。
 
-> **落地记录（2026-10-24 回填）**：✅ 代码与 JVM 用例完成；**设备复验未做**。提交 `9e0f911`（统一媒体通道追赶采样入口）、`babfff7`（外部追赶计量边界）、`2a932a6`（看板口径与 Recorder 命名）。实测 **+25 tests / +2 classes**（1750/177 → 1775/179）：`CatchUpSamplerTest` 15、`CatchUpPolicyTest` +5、`ExternalCatchUpRecorderTest` 4、`MetricsFormatterTest` +1。原清单 19 条 / 1 类，落地时按独立审查追加 6 条与 `ExternalCatchUpRecorderTest`。
+> **落地记录（2026-10-24 回填）**：✅ 代码与 JVM 用例完成；**设备复验未做**。提交 `9e0f911`（统一媒体通道追赶采样入口）、`babfff7`（外部追赶计量边界）、`2a932a6`（看板口径与 Recorder 命名）。实测 **+25 tests / +2 classes**（1750/177 → 1775/179）：`CatchUpSamplerTest` 15、`CatchUpPolicyTest` +5、`ExternalCatchUpRecorderTest` 4、`MetricsFormatterTest` +1。原清单 19 条 / 1 类，落地时按独立审查追加 6 条（`CatchUpSamplerTest` +1、`CatchUpPolicyTest` +1、新增 `ExternalCatchUpRecorderTest` 4 条）。
 
 **Files:**
 
@@ -1165,7 +1165,7 @@ python scripts/checks/check_docs.py
 | 用例/类数清点修正 | 本文 §0 与“棒次总览” |
 | 看板登记措辞与裁决的三处对齐 | 本文 §0 |
 | B3 热降档事件词表含 `forecast` / `session-end` | 设计 §4.2、媒体架构 §4.4.1、任务看板 TB-POWER-002 |
-| B3 设备判据补“结束共享后 `session-end` 且下一会话前不带上一会话预测档” | 设计 §8 ②、决策 DB-POWER-003、任务看板 TB-POWER-002 |
+| B3 设备判据补“仅在预测档收紧时结束共享才出现 `session-end`，且下一会话前不带上一会话预测档” | 设计 §8 ②、决策 DB-POWER-003、任务看板 TB-POWER-002 |
 | B4 旧因果句限定“哈希语义失真而非省掉 epoch 重建” | 设计 §2.3 与 §4.4 结尾段 |
 | B5 `bp.skip` Javadoc 补 external-write / at-floor / coordinator | `ServerMetricNames.BP_SKIP` Javadoc |
 | B5 `close()` 不恢复码率 | 本文 B5 Decision semantics 6、设计 §4.5、决策 DB-MULTI-007 |

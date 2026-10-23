@@ -219,7 +219,7 @@ HEVC 与 AV1 的边界：
 - **合并**：预测档与状态档经 `ThermalThrottlePolicy.stricter` 合并，结果恒不弱于任一入参；状态已要求的档位不会被预测回落放宽。既有状态阶梯（`SEVERE` → 帧率 30；`CRITICAL` 及以上 → 帧率 30 + 采集 50%）不改变。
 - **生命周期**：`ThermalMonitor` 仍只在 `onCreate`/`onDestroy` 注册与注销平台监听；1 Hz 轮询是**会话级**——`startStreamPipeline()` 成功后 arm，每次 teardown 与 `onDestroy` disarm、`reset` 预测档并把已生效档位回落为只由当前状态决定的档位（无状态档则 `NONE`），上一会话的预测档不会被下一会话继承。开关关闭时立即把档位回 `NONE`（恢复用户设置），随后 `removeCallbacks` + `reset`；开关打开时立即采样一次，只有会话运行中才重新 arm，**没有会话就只留这一次采样、不产生定时器**。
 - **指标**：服务端行打印 `thermalHeadroom`（千分比，0 不打印）与 `thermalTier`（`1`=NONE / `2`=REDUCED / `3`=MINIMAL，`0`=未采样、不打印）。开关关闭会清空两者。判据见[性能优化调研](performance-research.md) §6 与[性能候选设计](superpowers/specs/2026-10-23-performance-candidates-design.md) §8 设备项 ②。
-- **事件词表**：`thermal: event=throttle|recover|disabled|forecast|status|session-end`——状态降档、状态回落、开关关闭、预测样本生效、无效样本按状态、会话 teardown 各对应一个词；`session-end` 表示轮询下线且档位回落为状态档，下一会话不得继承上一会话的预测档。
+- **事件词表**：`thermal: event=throttle|recover|disabled|forecast|status|session-end`——状态降档、状态回落、开关关闭、预测样本生效、无效样本按状态、会话 teardown 且档位确因丢弃预测档而变化，各对应一个词；`session-end` 表示轮询下线且档位回落为状态档，下一会话不得继承上一会话的预测档。它**不是每次 teardown 的固定行**：只有预测档此前确实收紧了生效档位、teardown 回落使档位发生变化时才打印一行，档位不变则不打印（`setThermalTier` 档位相同即早退）。
 - **边界**：只改当前生效值、不写偏好；**本项（B3）不改协议与描述符**——内容帧率字段 `frame_rate` 是 B4 新增，见 §4.4.2；不新增依赖、不新增锁，采样路径零分配。
 
 #### 4.4.2 客户端内容帧率提示（2026-10-24 落地）

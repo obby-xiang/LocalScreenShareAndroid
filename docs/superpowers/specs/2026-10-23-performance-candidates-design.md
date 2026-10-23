@@ -166,7 +166,7 @@ flowchart LR
 | 开关关闭 | 立即 `Tier.NONE`（恢复用户设置）+ `removeCallbacks` + `reset()`，不等下一次 tick；之后不再 re-arm | 建议 |
 | 开关打开 | 立即采样一次；**只有会话运行中才 arm 1 Hz 轮询，没有会话就只采样这一次** | 建议 |
 | 异常样本 | `NaN` 与越界值忽略，档位不变 | 建议 |
-| 事件词表 | `thermal: event=throttle\|recover\|disabled\|forecast\|status\|session-end`：状态降档 `throttle`、状态回落 `recover`、开关关闭 `disabled`、预测样本生效 `forecast`、无效样本按状态 `status`、会话 teardown `session-end`。`session-end` 只表示轮询下线与档位回落为状态档，不代表设备已验证 | 当前实现 |
+| 事件词表 | `thermal: event=throttle\|recover\|disabled\|forecast\|status\|session-end`：状态降档 `throttle`、状态回落 `recover`、开关关闭 `disabled`、预测样本生效 `forecast`、无效样本按状态 `status`、会话 teardown 且档位确因丢弃预测档而变化 `session-end`。`session-end` **不是每次 teardown 都打印**：只有预测档此前确实收紧了生效档位、teardown 回落时档位因此发生变化，才打一行（`setThermalTier` 在档位不变时直接返回、不打印）；预测档未收紧时 teardown 不产生事件。`session-end` 只表示轮询下线与档位回落为状态档，不代表设备已验证 | 当前实现 |
 
 “设置打开但没有会话”这一行是本节第二个关键修正。`MainActivity` 用 `BIND_AUTO_CREATE` 绑定服务，所以“打开 App、还没开始共享、切一下热降档开关”也会走到采样入口；若此时无条件 arm，空闲期就会有 1 Hz 定时器，直接违反 §2.3 的反目标与 §8 ⑨ 的功耗口径。因此 arm 与“会话运行中”绑定，而“开关打开”只允许一次立即采样。
 
@@ -451,7 +451,7 @@ flowchart LR
 | # | 点位 | 判据 | 观察键 |
 | --- | --- | --- | --- |
 | ① | 解码低延迟 | 支持机型 `dec.lowLat=1` 且延迟有改善；拒绝机型 `dec.lowLat=2` 且仍正常出画、无配置失败 | `dec.lowLat`、`dec.lat.p50/p95` |
-| ② | 热压力 | 注入温升时 `thermalHeadroom` 单调上升（越大越热）、降档早于平台高热状态；回落不抖动；开关关闭后无 1 Hz 采样痕迹；**未开始共享时切换开关只允许一次立即采样、不得起 1 Hz 采样**；结束共享后出现 `event=session-end`，且下一会话开始前不再带上一会话的预测档 | `thermalHeadroom`、`thermalTier`、`thermal`、生效帧率与采集比例 |
+| ② | 热压力 | 注入温升时 `thermalHeadroom` 单调上升（越大越热）、降档早于平台高热状态；回落不抖动；开关关闭后无 1 Hz 采样痕迹；**未开始共享时切换开关只允许一次立即采样、不得起 1 Hz 采样**；结束共享时**仅在预测档曾收紧生效档位、teardown 回落使档位发生变化**的情况下出现一行 `event=session-end`（未收紧则不打印），且下一会话开始前不再带上一会话的预测档 | `thermalHeadroom`、`thermalTier`、`thermal`、生效帧率与采集比例 |
 | ③ | 追赶覆盖 | 同一低负载场景对照历史 `rx.catchup` 计数；TCP/UDP 两档都能出现 `rx.catchup` 与延迟；丢片 reason 记为 `ext`；`rx.converge.fail` 后冻结时长与丢帧在可接受范围 | `rx.catchup*`、`rx.converge.fail`、`freeze`、`pres.drop` |
 | ④ | 内容帧率 | 全屏/悬浮窗切换后仍生效；帧率从 60 改 30 后提示更新；非整数倍刷新率设备对照 | 系统帧率转储、jank 计数 |
 | ⑤ | 单客户端背压 | 弱化网络后出现 `bp.apply`，积压回落；两次动作间隔 ≥5 s、无升降振荡；回升一步回用户值 | `bp.*`、`rx.qDepth`、`rx.qWait` |
