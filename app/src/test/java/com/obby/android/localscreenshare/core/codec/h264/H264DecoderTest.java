@@ -510,13 +510,17 @@ public class H264DecoderTest {
     public void close_notRequestedLowLatencyLeavesGaugeUnwritten() {
         MutableNanoClock clock = new MutableNanoClock();
         PipelineMetrics metrics = PipelineMetrics.create(clock, 8);
+        // Another decoder, or an earlier session, can leave its reading in the shared metric
+        // scope. Closing a NOT_REQUESTED decoder must leave that reading alone: it never wrote the
+        // gauge, so it has nothing to clear.
+        metrics.setGauge(PipelineMetrics.Gauge.DECODER_LOW_LATENCY, 1L);
         H264Decoder measured = newPresetLowLatencyDecoder(
                 LowLatencyState.NOT_REQUESTED, metrics, clock);
         measured.configure(descriptor(CONFIG_EPOCH, CodecIds.H264, validConfigParts()));
 
         measured.close();
 
-        assertEquals(0L, metrics.getGauge(PipelineMetrics.Gauge.DECODER_LOW_LATENCY));
+        assertEquals(1L, metrics.getGauge(PipelineMetrics.Gauge.DECODER_LOW_LATENCY));
     }
 
     @Test

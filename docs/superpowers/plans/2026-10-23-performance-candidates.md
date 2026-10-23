@@ -321,7 +321,7 @@ static LowLatencyState configureWithFallback(boolean requestLowLatency, FormatAp
 2. 回退顺序固定：`false` → 调一次 `(false,false)` 返回 `NOT_REQUESTED`（不 reset）；`(true,true)` 失败 → `reset()` → `(true,false)`；仍失败 → `reset()` → `(false,false)` 且状态 `REJECTED`；最后一步也失败则原样抛出。
 3. 捕获类型与编码侧一致：`IllegalArgumentException` 与 `IllegalStateException`；其余异常原样冒泡，不改类型。
 4. gauge 映射：`NOT_REQUESTED` 不写（保持 0，不打印）；`APPLIED` 与 `APPLIED_WITHOUT_PRIORITY` 写 1；`REJECTED` 写 2。
-5. 写入点：`H264Decoder.configure` 中 `configure` 与 `start` **都成功之后**（与 `configuredAtNs` 同处）；任一步失败都不写。
+5. 写入点：`H264Decoder.configure` 中 `configure` 与 `start` **都成功之后**（与 `configuredAtNs` 同处）；任一步失败都不写。`close` 时把本解码器写过的值清 0（同一指标作用域跨解码器复用，H.264 → JPEG 后不得继续打印上一解码器的值）；`NOT_REQUESTED` 从未写过，`close` 不清。
 
 **Steps:**
 
