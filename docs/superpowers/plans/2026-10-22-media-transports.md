@@ -149,7 +149,7 @@ TCP 媒体端口先试 `serverPort + 1`，失败 `bind(0)`，offer 永远带实�
 
 ### 4.3 重排窗与重装
 
-`core/net/DatagramReorderWindow`：定长环形窗（默认 64 槽），判重/判过期/统计乱序丢失，无缓冲延迟。`core/net/AccessUnitReassembler`：至多 4 个在途 AU（bitmap + 单一 byte[]），每 AU 一次分配。交付规则：单片立即交付；多片收齐立即交付；未收齐且更新 auId 到达或超 hold-up ⇒ 整 AU 丢弃（绝不喂半截），`udp.auIncomplete++`。hold-up 固定 10 ms（常量 `UDP_HOLD_UP_MS`，注入 NanoClock 可测）。乱序/迟到记 `udp.late`；重复记 `udp.dup`。
+`core/net/DatagramReorderWindow`：定长环形窗（默认 64 槽），判重/判过期/统计乱序丢失，无缓冲延迟。`core/net/AccessUnitReassembler`：至多 4 个在途 AU（bitmap + 单一 byte[]），每 AU 一次分配。交付规则：单片立即交付；多片收齐立即交付；未收齐且在**更新的 AU 已交付**、静默超过保持窗口、被预算挤出或发送端违约（超尺寸 / 同 id 不同尺寸）时整 AU 丢弃（绝不喂半截），`udp.auIncomplete++` 并按原因分流（`timeout` / `superseded` / `evicted` / 其它）。保持窗口自**最后一个分片**起算静默，取值由**同一 AU 相邻分片到达间隔**驱动：`clamp(GAP_FACTOR × 最近 GAP_SAMPLES 个样本的最大值, HOLD_UP_MIN_MS, HOLD_UP_MAX_MS)`（10 / 100 ms，样本环未满时以 `HOLD_UP_WARMUP_MS = 30 ms` 为下限；注入 NanoClock 可测，包私有构造可钉上界）。已放弃的 auId 进 16 槽 tombstone 环，其后续残片只计 `udp.late`，不重建、不二次计数；重复记 `udp.dup`。**以上数值待设备校准**（[TB-MEDIA-008](../../task-board.md#tb-media-008)）；原计划的「更新的 auId 到达即丢弃」与「hold-up 固定 10 ms」两处口径已按设备读数修订。
 
 ### 4.4 丢包 → IDR（复用现有链路）
 
@@ -165,7 +165,7 @@ XOR 奇偶（每 8 片 1 校验片）：约 240 LOC + 15 例，+12.5% 带宽，�
 
 ## 5. 协商与回退（B2 范围）
 
-proto 增量（全部向后兼容）：`Hello.media_transports = 7`（repeated string，空=gRPC only=旧客户端）；`ClientMessage` 增 `MediaChannelEvent media_channel_event = 5`（channel_id/type[READY/FAILED/CLOSED]/reason）；`ServerMessage` 增 `MediaOffer media_offer = 7`（channel_id/transport/host/port/secure/token/keys/nonce_salt/mtu/hold_ms）与 `MediaClose media_close = 8`。PROTOCOL_VERSION 保持 1。
+proto 增量（全部向后兼容）：`Hello.media_transports = 7`（repeated string，空=gRPC only=旧客户端）；`ClientMessage` 增 `MediaChannelEvent media_channel_event = 5`（channel_id/type[READY/FAILED/CLOSED]/reason）；`ServerMessage` 增 `MediaOffer media_offer = 7`（channel_id/transport/host/port/secure/token/keys/nonce_salt/mtu/hold_ms）与 `MediaClose media_close = 8`。PROTOCOL_VERSION 保持 1。**`hold_ms` 的口径（2026-10-23 修订）**：它是接收端本地有界自适应保持窗口的**提示上限**，不是要施加给对端的阈值——接收端只用自己的窗口，旧服务端报的 10 不会把新客户端压回 10 ms；服务端现在报 `HOLD_UP_MAX_MS = 100`。
 
 `core/net/MediaTransportPolicy`（纯决策）：`first(clientOffered, serverAvailable, udpEnabled)` 与 `next(failed, ...)`；规则：客户端没声明 ⇒ GRPC；服务端隐藏键 `media_transport="grpc"`（默认 auto）⇒ GRPC（A/B 基线）；UDP 开关关闭 ⇒ 不出现 UDP 档；同档失败一次进 `alreadyFailed` 不回头。**服务端做主**，客户端只声明能力与回报状态；UDP 开关落在服务端视频设置面板（已裁决）。
 
@@ -173,7 +173,7 @@ proto 增量（全部向后兼容）：`Hello.media_transports = 7`（repeated s
 
 ## 6. 指标与测试
 
-新增键 13 个（单域 ≤20）：`chan`（会话行字符串字段，不进 PipelineMetrics）、`tx.frag`、`tx.chanSwitch`、`tcp.frame`/`tcp.frameDrop`、`udp.recv`/`udp.lost`/`udp.dup`/`udp.reorder`/`udp.late`、`udp.auIncomplete`/`udp.auDrop`、`udp.authFail`、`udp.idrReq`。`PipelineMetrics.Counter` 末尾追加 8 个：`DATAGRAMS_RECEIVED / DATAGRAMS_LOST / DATAGRAMS_DUPLICATE / DATAGRAMS_REORDERED / ACCESS_UNITS_INCOMPLETE / MEDIA_CHANNEL_SWITCHES / FRAGMENTS_SENT / MEDIA_AUTH_FAILURES`。零分配纪律：热路径只有 LongAdder；传输维度用每会话一个常量字符串字段表达（`chan=tcp`）。
+新增键 13 个（单域 ≤20）：`chan`（会话行字符串字段，不进 PipelineMetrics）、`tx.frag`、`tx.chanSwitch`、`tcp.frame`/`tcp.frameDrop`、`udp.recv`/`udp.lost`/`udp.dup`/`udp.reorder`/`udp.late`、`udp.auIncomplete`/`udp.auDrop`、`udp.authFail`、`udp.idrReq`。`PipelineMetrics.Counter` 末尾追加 8 个：`DATAGRAMS_RECEIVED / DATAGRAMS_LOST / DATAGRAMS_DUPLICATE / DATAGRAMS_REORDERED / ACCESS_UNITS_INCOMPLETE / MEDIA_CHANNEL_SWITCHES / FRAGMENTS_SENT / MEDIA_AUTH_FAILURES`。零分配纪律：热路径只有 LongAdder；传输维度用每会话一个常量字符串字段表达（`chan=tcp`）。**2026-10-23 增补（键名不改，只在同域追加）**：观测棒加 `udp.gap.p50/p95/max`（同 AU 分片到达间隔）、`udp.hold`（当前保持窗口）、`udp.auTimeout`（超时原因子集），并把 `udp.late` 接到 `DATAGRAMS_LATE`；修复棒把 `udp.auDrop` 接到 `ACCESS_UNITS_SUPERSEDED`，`udp.late` 语义扩展为「交付后或放弃后到达」。
 
 全部可 JVM 测：`MediaFrameCodec`、`MediaChannelHandshake`、`UdpMediaPacketCodec`、`DatagramCipher`、`DatagramReorderWindow`、`AccessUnitReassembler`、`DatagramLossTracker`、`MediaTransportPolicy`、`ClientSendSession`（swap/recovery）、`MediaChannelCoordinator`、`MetricsFormatter`（`chan=`、UDP 键省略未测量项）、`TcpMediaReceiver` 回环真 TLS（先例 `TlsHandshakeEndToEndTest`）、`UdpMediaReceiver` 回环真 socket（注入 NanoClock）。
 

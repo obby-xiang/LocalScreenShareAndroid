@@ -322,9 +322,9 @@ H.264 的 P 帧依赖前面的参考帧。丢弃一个中间 P 帧后，后续 P
 | --- | --- | --- | --- |
 | gRPC 双向流 | `transport/GrpcMediaTransport` | 复用控制面 mTLS 与连接 | 载体与回退终点；老客户端、未协商或全部失败时继续用它，媒体不断流 |
 | 裸 TCP 媒体通道 | `transport/TcpMediaTransport` | 同一套 mTLS 材料与 pin 校验，外加每 RPC 一次性 32 B token 绑定 socket | 协商成功即用（`auto` 档默认）；16 字节帧头（pts + flags/size + epoch + type/version），DESCRIPTOR 载荷为 proto 描述符、AU 载荷原样 |
-| UDP 实验档 | `transport/UdpMediaTransport` | AES-256-GCM 逐数据报（nonce = salt‖wireSeq、AAD 绑序号），密钥控制面下发 | 默认关闭，服务端视频设置里开启；弱网优先尝试，失败自动回落 |
+| UDP 实验档 | `transport/UdpMediaTransport` | AES-256-GCM 逐数据报（nonce = salt‖wireSeq、AAD 绑序号），密钥控制面下发 | 默认关闭，服务端视频设置里开启；弱网优先尝试，失败自动回落。接收侧按 AU 重组：收齐即交付、绝不交付半截，保持窗口自最后一个分片起算、由同一 AU 的实测分片间隔驱动且有界（10–100 ms） |
 
-协商时序（v1）：客户端 `HELLO` 声明 `media_transports` → 服务端按选路策略（`core/net/MediaTransportPolicy`）在 `ServerMessage.media_offer` 里给出一档（带 channel id、token、端口；UDP 另带 keys/盐/mtu/hold）→ 客户端建通道（TCP：TLS + 56 B hello；UDP：bind 包）→ 通道建立后客户端回 `READY` → 服务端在 join point 原子换 transport、重发 descriptor、请求关键帧 → 失败/超时/看门狗则退化下一档，UDP → TCP → gRPC。控制面与 RPC 全程不断，切换点在 join point，不会重复出帧。
+协商时序（v1）：客户端 `HELLO` 声明 `media_transports` → 服务端按选路策略（`core/net/MediaTransportPolicy`）在 `ServerMessage.media_offer` 里给出一档（带 channel id、token、端口；UDP 另带 keys/盐/mtu 与 `hold_ms`——**接收端本地有界自适应保持窗口的提示上限，不强制压低客户端的窗口**）→ 客户端建通道（TCP：TLS + 56 B hello；UDP：bind 包）→ 通道建立后客户端回 `READY` → 服务端在 join point 原子换 transport、重发 descriptor、请求关键帧 → 失败/超时/看门狗则退化下一档，UDP → TCP → gRPC。控制面与 RPC 全程不断，切换点在 join point，不会重复出帧。
 
 **v1 明确不做**：FEC/RS（只保留 PARITY 位与保留字段）、NACK 与任何客户端→服务端 UDP 反馈、拥塞控制/码率自适应、DTLS、音频随新媒体面（音频仍走 gRPC）、`MediaTransport` 接口改造。取舍与重开条件见 [DB-NET-003](decision-board.md#db-net-003)，实现证据与设备点位见 [TB-NET-003](task-board.md#tb-net-003)。
 

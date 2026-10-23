@@ -117,7 +117,7 @@
 | ID | 状态 | 优先级 | 标题 | 创建 | 完成 | 关联 |
 | --- | --- | --- | --- | --- | --- | --- |
 | TB-ENG-016 | 📋 待办 | 🟠 P1 | 性能候选实施批次（用户 2026-10-23 批准五项：解码低延迟参数、刷新率匹配、热余量预测降档、追赶阈值收紧、背压回传；`SurfaceView` 另立评估，不在本批） | 2026-10-23 | — | [性能优化调研](performance-research.md) |
-| TB-MEDIA-008 | 📋 待办 | 🟠 P1 | JPEG+UDP 重组窗口抖动容忍修复（大 AU 73–95 片下 10 ms 静默过窄，重启后 scale100 组合 5/5 次 0fps；判据沿用设备报告，阈值待设备校准） | 2026-10-23 | — | [TB-ENG-013](#tb-eng-013) |
+| TB-MEDIA-008 | 📋 待办 | 🟠 P1 | JPEG+UDP 重组窗口抖动容忍修复（tombstone + 同 AU 间隔驱动的有界自适应窗口已落地，JVM 全绿；判据重定标为「每个真实丢失 AU 至多计 1 次」，待设备复验） | 2026-10-23 | — | [TB-ENG-013](#tb-eng-013) |
 | TB-SEC-002 | 🔶 部分完成 | 🔴 P0 | 身份密钥瞬时故障静默删键与三份身份快照（N3；代码完成，设备复测待棒） | 2026-10-21 | — | [决策 DB-SEC-003](decision-board.md#db-sec-003) |
 | TB-DISC-013 | 🔶 部分完成 | 🟠 P1 | 发现行首连的证书指纹引导（N2；代码完成，设备复测待棒） | 2026-10-21 | — | [TB-DISC-012](#tb-disc-012) |
 | TB-POWER-001 | ✅ 完成 | 🟠 P1 | 无观看者懒停与热降档（设备已验证：懒停回落 / 注入降档 / 恢复；功耗 mAh 与净电流受机型限制记未测到） | 2026-10-21 | 2026-10-22 | [决策 DB-POWER-001](decision-board.md#db-power-001) |
@@ -243,33 +243,45 @@
 </details>
 
 <a id="tb-media-008"></a>
-<details><summary>TB-MEDIA-008 JPEG+UDP 重组窗口抖动容忍修复（📋 待办 · 机制已定位，阈值待设备校准）</summary>
+<details><summary>TB-MEDIA-008 JPEG+UDP 重组窗口抖动容忍修复（📋 待办 · 两个修复提交已落地，判据已重定标，待设备复验）</summary>
 
-- **状态 / 优先级 / 创建 / 完成**：📋 待办（机制依据来自 2026-10-23 的设备复验；2026-10-23 观测读数已落地、**行为未改**；**判据沿用设备报告，`HOLD_UP_MS` 取值待设备校准**）/ 🟠 P1 / 2026-10-23 / —
+- **状态 / 优先级 / 创建 / 完成**：📋 待办（机制已由设备校准证实；`d2b4c26` tombstone 与原因指标、`e22dbb2` 自适应有界窗口两个提交已落地，JVM 证据齐全；**判据已按校准数据重定标，设备复验未执行**——本棒不执行 adb，不得把 JVM 绿读成已修复）/ 🟠 P1 / 2026-10-23 / —
 - **来源**：交接 §2.2 与 [TB-ENG-013](#tb-eng-013) 第 18 项 r3——保持窗口改静默计时后 JPEG 大帧在窗口 A 能整帧送达，但同一构建在重启后的环境里 JPEG+UDP 完全不出帧。
 - **现场（报告 `handoff/device-test-2026-10-23-jpeg-udp-r3/report.md`）**：默认大帧组合（`projection_scale=100`、1080×2340、quality 85）每 AU **73–95 个分片**（1348 B 载荷），真实丢片 **1.16%**（`udp.lost` +866 / `udp.recv` +74 925）；窗口 A 出画，`rx.auRate`/`enc.auRate` = 2.2/3.2；20:35–20:53 六次连接 **5/5 次 0 fps**，分片几乎全到（`udp.lost` 0.5–1.1%）却每 AU 4–5 次 `udp.auIncomplete`；`projection_scale=30`（≈16 片/AU）恢复到 1.0–2.4 fps，同期 JPEG+TCP 3.2 fps、H.264+UDP 5.2 fps 正常。
-- **机制**（报告 §5，按送达率反推，**推断而非直接测量**）：`core/net/AccessUnitReassembler` 的保持窗口是「自最后一个分片起静默 10 ms」的硬上限；设 >10 ms 的片段到达间隔为 λ、AU 传输时长为 D，则单帧存活率 ≈ `exp(-λ·D)`。大 AU 的 D≈0.3 s，λ 从窗口 A 的 ≈1.1/s 升到 ≈10/s 时整帧必丢；超时后剩余分片重建 buffer 再次超时，于是同一 AU 被计 1.1–2.2 次。
+- **校准读数（报告 `handoff/device-test-2026-10-23-udp-gap-calibration/report.md`，只观测、行为未改）**：同一 AU 的分片到达间隔主体很短——JPEG 三个窗口 `udp.gap.p50` 中位 **0.1 ms**、`p95` 中位 **2.6–3.0 ms**；但每个 5 s 窗口的 `udp.gap.max` 中位 **12.6–14.3 ms**，全窗最大 **27.9 / 46.2 / 84.4 ms**，**76%（A2）/ 84%（A1）/ 92%（B）** 的窗口越过 10 ms。同期控制面 `rtt.p50` 中位 **12.2 ms**（A2 行 12.0–12.7），重排窗容忍 64 个序号（A2 实测 ≈346 包/s ⇒ ≈185 ms），而重组器 10 ms 就判死。丢弃归因单一：A1/A2/B 的 `udp.auIncomplete` 与 `udp.auTimeout` **逐行相等**（+378/+378、+512/+512、+412/+412），没有 superseded/evicted 读数；按送达率折算（`rx/enc` 中位 0.67–0.73），**每个真实丢失 AU 被计 2.43 / 2.69 / 2.66 次**。H.264 对照（3.6 片/AU）`rx/enc=0.96`、`auIncomplete` +31 而 `auTimeout` +20，出现了 11 次非超时分支。冷启动窗口（129 s）**未复现** r3 的 0 fps 形态。
+- **机制（r3 的推断已被校准读数证实一半、推翻一半）**：两个独立缺陷。①**阈值没有物理依据**：10 ms 硬上限落在链路自身抖动分布内部（p95 只有 3 ms、尾部中位已 12.6–14.3 ms、RTT 已有 12.2 ms），所以主体读数很低而每个 5 s 窗口必有若干次越界，大 AU（73–95 片）连续多次采样，撞上一次尾部就整帧报废；这不再是「λ 升高」的整体性推断——r3 §5 的 `exp(-λ·D)` 命门解释**不成立**（主体间隔远小于 10 ms），致死的是尾部。②**丢弃后没有记忆**：`Pending` 被丢弃后同一 `auId` 的残片重建 buffer、再超时、再计数、再 `onCatchUp`、再进 `DatagramLossTracker`，这正是 2.4–2.7 次/真实丢失 AU 的来源，也让单个 AU 就能连续满足「2 连败 / 500 ms 内 3 次」。
 
 ```mermaid
 flowchart LR
-    F["分片到达（73–95 片/AU）"] --> H{"静默超过 10 ms？"}
+    F["分片到达（73–95 片/AU）"] --> G["记录同 AU 相邻间隔<br/>窗口 = clamp(2×最近 16 个最大值, 10, 100) ms"]
+    G --> H{"静默超过当前窗口？"}
     H -- "否" --> OK["收齐即整帧交付"]
-    H -- "是" --> DROP["整 AU 丢弃，udp.auIncomplete +1"]
-    DROP --> REB["剩余分片重建缓冲"]
-    REB --> H
+    H -- "是" --> DROP["整 AU 丢弃 + 登记 tombstone"]
+    DROP --> LATE["同 auId 的后续残片只计 udp.late，不重建"]
+    OK --> SUP["更旧的未完成 AU → superseded（udp.auDrop）"]
 ```
 
-- **不采用「只把窗口调大」的理由**：窗口同时约束迟到分片不拖住后续 AU 与在途 AU 上限（4 个在途、字节预算固定）；单纯放大到百毫秒量级会放大内存占用与端到端延迟，也会改变 `superseded` 判据的语义。候选方案是按「本 AU 已收分片比例 + 尾部宽限」判超时，或对大 AU 单独放宽，取值须由对照实验定。
-- **待定判据（与设备报告一致，待设备校准）**：① 同环境重启后 scale100 组合连续 5 次连接均出帧（`rx.auRate > 0`）；② `udp.auIncomplete` 增速回到「真实丢失 AU 数」量级——每个丢失 AU 最多计 1 次（r3 为 1.1–2.2 次）；③ 窗口 A 的 `rx.auRate`/`enc.auRate` 不劣于 0.69；④ 迟到分片仍计 `udp.late`，绝不交付半截帧。
-- **前置证据缺口**：报告 §8 已注明 λ 是反推值（模拟器无 root、无 tcpdump），修复前须补一条可量化的到达间隔读数，否则只能按出帧率判定，不得把推断写成测量。
-- **2026-10-23 观测棒（只观测、不改行为）**：读数通道已落地，`HOLD_UP_MS` 仍为 10，丢弃/重建/`onCatchUp`/IDR 链路与 `superseded`、`evicted` 判据全部未改；本棒**不把本条登记为已修复**。新增读数：
+- **修复棒（两个代码提交，只改这两条，其余行为不动）**：
+  - `d2b4c26` **tombstone 与原因指标**：16 槽环形 `abandonedAuIds`，`timeout`/`superseded`/`size_mismatch`（走 `drop()`）、`evicted`（走 `evictForRoom()`）、`oversized` 三条丢弃路径全部登记；`onPacket` 对已放弃 auId 的后续分片只计 `late` 并直接返回，不分配 `Pending`、不回调 drop。「绝不交付半截帧」、在途 4 AU / 8 MiB 预算、`superseded` 语义不变。`udp.auDrop` 接上 `superseded`（`ACCESS_UNITS_SUPERSEDED`），`udp.auIncomplete` 仍是每 AU 一次的总量。**为什么这是正确性修复而不是调参**：被放弃的 AU 已永久丢失至少一个分片，残片在定义上不可能再构成完整帧，重建只产生重复计数、重复分配与重复 flush。
+  - `e22dbb2` **自适应有界窗口**：`HOLD_UP_MIN_MS=10`、`HOLD_UP_WARMUP_MS=30`、`HOLD_UP_MAX_MS=100`、`GAP_SAMPLES=16`、`GAP_FACTOR=2`（全部标注待设备校准）。估计器只看**同一 auId** 的相邻分片间隔（跨 AU 的间隔含帧间隔，不计入），且只由仍属于在途 AU 的分片喂入；窗口 = `clamp(GAP_FACTOR × 最近 GAP_SAMPLES 个样本的最大值, MIN, MAX)`，样本环未满时以 WARMUP 为下限。间隔在**判定之前**记录，因此刚刚撞上的停顿会立刻抬高判它的窗口（只从已容忍的间隔学习会让窗口只能单向收窄）。`expire` 用当前窗口，`UdpMediaReceiver` 仅在窗口变化时写 `udp.hold`。热路径为定长 `long[]` 环 + 一次比较，零分配、无新增锁。协商端 `hold_ms` 由 10 改为 100，proto 注释与 `MediaChannelOffer` 明确其为**接收端本地有界自适应窗口的提示上限，不强制压低**；接收端不读该字段，旧服务端的 10 不会把新客户端压回 10 ms。
+- **不采用「只把窗口调大」的理由**：单一常数无论取多少都仍是一个与链路无关的固定阈值——取 10 落在分布内部，取 100 则把真丢片的判定与恢复推迟到百毫秒量级且对 H.264 小 AU 毫无收益。本棒取的是「由测量驱动 + 上界固定」：正常路径零代价（最后一片到达即交付），只有真丢片时判定最多推迟到 `HOLD_UP_MAX_MS`，且 `superseded` 与字节预算仍封住内存与恢复延迟。原「放大窗口会放大端到端延迟」的说法据此修订：它只在丢片路径成立，且被上界与 superseded 双重封顶。
+- **判据（2026-10-23 重定标；每条都写明机制理由）**：
+  1. 同环境重启后 scale100 组合连续 5 次连接均出帧（`rx.auRate > 0`，首帧时限待校准，建议 ≤10 s）。
+  2. `udp.auIncomplete` **不再按「不再每帧多涨」的字面口径判定**，改为「**每个真实丢失 AU 最多计 1 次**」。机制理由：实测真实丢片 0.16%–2.20%，按 72–95 片/AU 折算约 11%–88% 的 AU 必然缺片，任何窗口都无法让该计数不随时长增长；可核对读数是 `auIncomplete ÷ 估算真实丢失 AU`（丢弃≈AUs×(1−rx/enc)）从 2.4–2.7 回落到 ≈1。
+  3. 窗口 A 的 `rx.auRate`/`enc.auRate` 不劣于 0.69。
+  4. `udp.late` 仍增长（残片/迟到证据），且绝不出现半截帧。
+  5. `udp.auTimeout` 在无真实丢片的连接中 ≈0。
+  6. `udp.idrReq` **不要求归零**，只要求不高于 1 s 冷却上限（≈1/s）且与真实丢失 AU 同向。机制理由：真实丢 AU 必然触发一次请求，要求归零等于要求不丢包。
+  7. 回归：H.264+UDP（5.2 fps 基线）、JPEG+TCP（3.2 fps）、JPEG+UDP scale30（1.0–2.4 fps）不劣化。
+- **待设备校准的量（不得当作已验证）**：`HOLD_UP_MIN/WARMUP/MAX`、`GAP_FACTOR`、`GAP_SAMPLES`、首帧时限；**若停顿超过 `HOLD_UP_MAX_MS` 仍 0 fps，结论应是传输容量或发送节奏（pacing/背压）问题，不得再调大窗口掩盖**；尾部间隔是否随分片数增长（决定是否补「按分片数放宽」的方案）。
+- **2026-10-23 观测棒（只观测、不改行为，已被上面的修复棒接续）**：读数通道落地时 `HOLD_UP_MS` 仍为 10，丢弃/重建/`onCatchUp`/IDR 链路与 `superseded`、`evicted` 判据全部未改，本棒当时**不把本条登记为已修复**。新增读数：
   - `udp.gap.p50/p95/max`（`Window.FRAGMENT_GAP`）：`UdpMediaReceiver` 取**同一 AU 相邻分片**的到达间隔写环形窗；跨 AU 的间隔含帧间隔，不计入。探针在过期扫描之前执行，因此超时丢弃前的最后一个间隔同样会被记录。
-  - `udp.late`（`Counter.DATAGRAMS_LATE`）：在 `reassembler.onPacket` 前后比较 `getLateCount()` 的差值。**当前语义是「已交付之后到达」**——被放弃的 AU 尚无墓碑，其残片暂不计入，留待下一棒。
-  - `udp.hold`（`Gauge.MEDIA_HOLD_UP_MS`）：接收器创建重组器后写入 `AccessUnitReassembler.getHoldUpMs()`，本棒恒为 10。只记录当时生效的阈值，**不是**动态窗口估计。
+  - `udp.late`（`Counter.DATAGRAMS_LATE`）：在 `reassembler.onPacket` 前后比较 `getLateCount()` 的差值。当时语义只覆盖「已交付之后到达」；`d2b4c26` 起扩展为「交付后或放弃后到达」。
+  - `udp.hold`（`Gauge.MEDIA_HOLD_UP_MS`）：当时是创建重组器后写入一次的常量 10；`e22dbb2` 起随窗口变化重写。
   - `udp.auTimeout`（`Counter.ACCESS_UNITS_TIMED_OUT`）：`FrameSink.onAccessUnitDropped` 按 reason 分流，仅 `timeout` 递增；`udp.auIncomplete` 仍是总量，口径不变。
   - 热路径纪律：窗口为定长环形数组、计数器为 `LongAdder`、gauge 为定长数组，无新增锁、无字符串拼接；格式化只在聚合线程执行。
-- **设备校准点（下一设备棒必须先于行为修改取数）**：① 68% 与 76–77% 宿主负载下 `udp.gap.p50/p95/max` 的实际值，并与 `udp.hold=10` 对照；② 重启后 0 fps 的连接里 `udp.auTimeout` 与 `udp.auIncomplete` 的比值（若接近 1，说明 4–5 次/AU 的重复计数已被本读数覆盖）；③ 窗口 A 中 `udp.auTimeout` 是否只随真实丢片增长，以及 `udp.late` 是否增长；④ 上述取值只用于校准 `HOLD_UP_MIN/MAX` 与系数，**不得把观测数当作修复已验证**。
-- **关联文档**：[TB-ENG-013](#tb-eng-013) 第 18 项、[TB-NET-003](#tb-net-003)「r2 观察修复」、[传输方式调研](transport-research.md)
+- **JVM 证据（本棒）**：1749 tests / 177 classes 双变体全绿，`test_baseline.json` 随提交更新；`./gradlew build :app:assembleDebugAndroidTest` 通过。新增用例覆盖：超时后残片只计一次且不重建、evicted/oversized 残片不再增计、交付后 late 行为保持、77 片每 5 片 15 ms 间隔整帧交付、40 ms 尾部间隔抬窗到 [40,100] 且不丢帧、16 个小间隔后回落到 10、上界 100 夹紧、warmup 30 覆盖首个 AU、`udp.auDrop`/`udp.hold` 打印与窗口跟随。
+- **关联文档**：[TB-ENG-013](#tb-eng-013) 第 18 项（**仍需复验**）、[TB-NET-003](#tb-net-003)「r2 观察修复」、[传输方式调研](transport-research.md)、[媒体传输计划](superpowers/plans/2026-10-22-media-transports.md)
 
 </details>
 
@@ -671,6 +683,7 @@ flowchart LR
         - **判据 3 ✅ 画面 / ⚠️ `idrReq`**：画面随滑动持续变化、HUD 2.0–15.0 fps；`udp.idrReq` 18→120（+102，0.57/s），低于 r2 的 ~1/s 但仍单调增长，与 `udp.auIncomplete` 同向。
         - **新观察（需单列）**：20:35–20:53 六次连接 **5/5 次 0 fps**（`rx.auRate=0.0`、`udp.lost` 仅 0.5–1.1%、每 AU 4–5 次 incomplete），同构建同期 JPEG+TCP 3.2 fps、H.264+UDP 5.2 fps 正常，`projection_scale=30`（≈16 片/AU）恢复到 1.0–2.4 fps ⇒ 10 ms 保持窗口对片段到达间隔过敏感（报告 §5 按送达率反推 λ 升高约 10 倍，属推断）。修复归 [TB-MEDIA-008](#tb-media-008)，**`HOLD_UP_MS` 取值待设备校准**。
         - **未展开**：服务端 `kf.request` 仅 +5，而观看端 `kf.sent` +188、`udp.idrReq` +102，三者数量级脱节（报告 §8-3）；本轮未排查，另立观察。
+        - **判据重定标（2026-10-23，校准棒 `handoff/device-test-2026-10-23-udp-gap-calibration` 之后）**：判据 2 的「`udp.auIncomplete` 不再每帧多涨」字面口径**不可达**——实测真实丢片 0.16%–2.20%，按 72–95 片/AU 折算约 11%–88% 的 AU 必然缺片，计数必然随窗口长度增长。改为「**每个真实丢失 AU 至多计 1 次**」（`auIncomplete ÷ 估算真实丢失 AU` 从 2.4–2.7 回落到 ≈1）。判据 3 的「`udp.idrReq` 回落」改为「**不高于 1 s 冷却上限且与真实丢失 AU 同向**」，不要求归零：真实丢 AU 必然触发一次请求。机制理由与全部校准读数见 [TB-MEDIA-008](#tb-media-008)。**本项仍需设备复验**：两个修复提交（`d2b4c26`、`e22dbb2`）只有 JVM 证据，判据 1–3 的新口径均未取数。
   19. **音频水位闭锁的真机观看端复验（2026-10-23 新增，观察项）**（来源 [TB-AUDIO-003](#tb-audio-003) 的「500 ms 固定偏差排查与修复」）：与第 ⑧ 项同口径（同一场景 30 min、单一会话）再跑一轮，但**观看端换成真机**——r2 的 ~506 ms 含模拟器成簇到达与 HAL `pcm_writei` 报错的放大。三条判据——1) `audio: dropping … depth =` 的读数稳定 **≤250 ms** 并能在成簇上冲后被排回（r2 为 401–463 ms 常驻）；2) `av.offset.p50` 较 506 ms **降约 150 ms**，落在重定标后的 ≤350 ms（见 [TB-AUDIO-003](#tb-audio-003)）；3) 水位丢帧归零（r2 `audio.dropped` 6→8 348、`audio.starved` 1→546）。**阻塞：需要第二台真机**；判据为 30 min 日志读数 + 人耳听感，且**不得**为凑 160–200 ms 把轨道改回 64 ms。
 - **完成判据**：以上 19 项均有可核对证据（截图/日志/读数）并按[维护方式](#-维护方式)写回各自条目；阻塞未解除的项保持 📋 待办并注明阻塞原因。
 - **关联文档**：[TB-WIN-001](#tb-win-001)、[TB-OBS-001](#tb-obs-001)、[TB-CLIENT-005](#tb-client-005)、[TB-DISC-010](#tb-disc-010)、[DV-001](decision-board.md)、[路线图](optimization-roadmap.md)
@@ -726,7 +739,7 @@ flowchart LR
   - 数据报格式：`core/net/UdpMediaPacketCodec.java:136` 编解码与 `:198` 解析——明文前缀 `wireSeq(8)`；密封体（AES-256-GCM，AAD = wireSeq 8 字节）`v/flags(1)[bits7..6 version=1|bit5 CONFIG|bit4 SYNC|bit3 JOIN|bit2 PARITY|bit1 HAS_JOIN|bit0 reserved]`、`fragmentIndex(1)`、`fragmentCount(2)`、`auId(4)`、`ptsUs(8)`、`auSize(4)`、`configEpoch(2)`、`reserved(2)`（FEC 预留）、`fragmentOffset(4)`、分片数据；尾随 16 B tag。单包 ≤1400 B ⇒ 分片数据 1348 B；`auSize ≤ 4 MiB` ⇒ `fragmentCount ≤ 3112`（`:117`）。分片固定长度、偏移由 index 推导，接收侧逐项校验（版本/计数/偏移/长度/大小一致），任何不符或认证失败都抛 `IOException`；`UdpMediaPacket` 为解析后的分片值对象。
   - 加密：`core/net/DatagramCipher.java:93`/`:118`，nonce = `salt(4) || wireSeq(8)`，密钥每方向 32 B，AAD 绑定序号；认证失败抛 `DatagramCipher.AuthenticationException`（与结构错误分开计数）。GCM 在非重放 nonce 下才安全，故序号唯一性是调用方义务，已写进类契约。
   - 重排窗：`core/net/DatagramReorderWindow.java:73` 的 `isStale`（解密前廉价判定）与 `:83` 的 `accept`（认证后再记录，避免伪造包抢占序号）；64 槽位图 + 高水位，统计重复/过期/乱序/丢失（丢失 = 高水位推进时跳过的序号数）。
-  - 重装：`core/net/AccessUnitReassembler.java:126` 的 `onPacket` 与 `:168` 的 `onTick`——至多 4 个在途 AU（每 AU 一次 `auSize` 分配 + 位图），单片立即交付、多片收齐立即交付；未收齐则在 hold-up（`UDP_HOLD_UP_MS = 10`）超时、被更新的 AU 交付取代、或内存/在途上限挤出时整 AU 丢弃并回调原因（`timeout`/`superseded`/`evicted`/`oversized`/`size_mismatch`），绝不交付半截；已交付 AU 的迟到分片计 `late`；parity 分片在 v1 被忽略。
+  - 重装：`core/net/AccessUnitReassembler.java:126` 的 `onPacket` 与 `:168` 的 `onTick`——至多 4 个在途 AU（每 AU 一次 `auSize` 分配 + 位图），单片立即交付、多片收齐立即交付；未收齐则在 hold-up（**2026-10-23 起为由同 AU 分片间隔驱动的有界窗口 10–100 ms，见 [TB-MEDIA-008](#tb-media-008)；本批交付时为常量 `UDP_HOLD_UP_MS = 10`**）超时、被更新的 AU 交付取代、或内存/在途上限挤出时整 AU 丢弃并回调原因（`timeout`/`superseded`/`evicted`/`oversized`/`size_mismatch`），绝不交付半截；已交付或已放弃 AU 的迟到分片计 `late`（放弃侧为 2026-10-23 增补）；parity 分片在 v1 被忽略。
   - 丢包决策：`core/net/DatagramLossTracker.java:102` —— 连续不完整 AU ≥2 或 500 ms 内 ≥3 触发请求（1 s 冷却），授予后清空证据；完整 AU 只清连续计数、不清时间窗。
 - **B4 的 JVM 证据**：新增 5 个测试类 45 例——`UdpMediaPacketCodecTest` 11（分片数边界、单/多片往返、1400 B 上限、`HAS_JOIN` 在 v1 被拒、篡改/截断、只允许 AU、序号越界、与 `MediaFrameCodec` 的 join 判定契约）、`DatagramCipherTest` 9（往返、改体/改 tag/改序号/错密钥/错盐、nonce 构造与唯一性、长度校验）、`DatagramReorderWindowTest` 8（顺序/重复/窗内乱序/窗边过期/空洞计数/跨窗跳变/未播种）、`AccessUnitReassemblerTest` 10（单片即时、多片收齐、重复片不提前、超时丢弃、新 AU 取代旧 AU、在途上限与字节预算挤出、迟到分片、join 标志透传、parity 忽略）、`DatagramLossTrackerTest` 7（连续 2、窗口 3、窗口过期、冷却、完成复位、授予后清空）。全量 **1626 tests / 167 classes → 1671 / 172**（基线同批更新），`./gradlew build :app:assembleDebugAndroidTest` 通过；`:app:lintDebug` 0 errors / 145 warnings、`:app:lintRelease` 0 errors / 135 warnings（与上批持平）；三项 checks 通过。
 - **B4 与计划的出入**：① 计划 §4.1 的头里有 `HAS_JOIN` 位但没有 joinParts 承载区，而固定长度分片放不下变长 section（要么超 1400 B、要么让后续偏移依赖接收端可能还没收到的数据），故 v1 不传 join 配置：JOIN 标志照传，接收侧以空 parts 的 `JoinInfo` 重建 join 判定（退化时描述符里已有 csd，H.264 的 IDR 也自带参数集），`HAS_JOIN` 保留位在 v1 一律拒绝（**2026-10-23 补注：r2 的 JPEG+UDP 不出画与这条无关**——join 信息缺失只会让 join 判定退化，不会让整帧消失；`rx.auRate=0` 证明断点在重组窗口，见本节「r2 观察修复」）；② 计划要求"更新的 auId 到达即丢弃未收齐的旧 AU"，本批改为"更新的 AU **已交付**时丢弃旧 AU"，其余靠 10 ms hold-up 兜底——不同 AU 的分片是独立数据报，相邻乱序会误杀接近收齐的 AU；③ `DatagramLossTracker.shouldRequestJoinPoint()` 读注入时钟、不带 `nowMs` 参数（计划示意 `shouldRequestJoinPoint(nowMs)`），避免调用方传错单位。
@@ -734,7 +747,7 @@ flowchart LR
   - 服务端发送：`transport/UdpMediaTransport.java`——AU 经 `UdpMediaPacketCodec` 分片后用会话级的 `DatagramSocket` 逐片发送，`auId` 单调递增（int 回绕）、`wireSeq` 每通道单调、密钥来自 offer；`sendDescriptor` 为空操作（描述符只走控制面，换通道后会话重发的那个 epoch 客户端早已知晓）；写失败抛 `IOException` 走 B1 恢复链；`FRAGMENTS_SENT` 计数进会话 metrics（`ScreenShareServer.setMetrics` 由 `ScreenShareService` 注入）。
   - bind 流程：`transport/MediaChannelServer.java` 随 `start(streamPort, datagramPort)` 绑定 UDP 监听（先试 `serverPort`，失败 `bind(0)`，再失败只标不可用、不影响共享）；`lss-media-udp` 线程只处理 bind 包——`UdpBindPacket`（16 B channelId + 8 B wireSeq 明文，AES-256-GCM 密封的 28 B 头（`fragmentCount=0` 哨兵）+ 32 B token，密文 76 B）→ 未知 channel id / 无密钥 / 已绑定的通道在**解密前**丢弃 → 用 `key_c2s` 解密 → ticket 一次性 `consume`（过期/已用即拒）→ 记录源地址 → 建 `UdpMediaTransport` 交给 `MediaChannelRegistry`。伪造者没有 token 与密钥，绑不走通道。
   - 客户端接收：`transport/UdpMediaReceiver.java`——`DatagramSocket` 连接服务端地址 → 发 bind → 300 ms 内无首个数据报即 `FAILED(udp_bind_timeout)`（`UdpMediaConstants.BIND_TIMEOUT_MS`）→ 首个数据报即 READY；每包顺序为 **`isStale` → 解密 → `accept`**（先记录会让伪造包抢占序号），`udp.authFail` 计数且不判通道失效；`reassembler.onPacket` + `onTick` 每包驱动；丢 AU ⇒ `ACCESS_UNITS_INCOMPLETE` + `listener.onCatchUp()`（解码线程上先 bump generation 再 `ClientMediaSession.onCatchUp()`，排在后续 AU 之前）+ `DatagramLossTracker.onAccessUnitIncomplete()`，后者在**丢弃回调内**立即判 `shouldRequestJoinPoint()`（放到下一包之后会被已完成单元清掉连续证据）→ `statusListener.onJoinPointNeeded()` → `ScreenShareClient::requestKeyFrameThrottledFromMediaPath`；完整交付 ⇒ `onAccessUnitComplete()`。帧经 `mDecodeExecutor` + `mCatchUpGeneration` 投递，与 gRPC/TCP 路径同构。
-  - 协商与开关：offer 现在带 `key_s2c`/`key_c2s`/`nonce_salt`/`mtu=1400`/`hold_ms=10` 与 UDP 端口（`MediaChannelEndpoint` 分 tcp/udp 两端口）；`MediaTransportPolicy.allowsUdp(mode, switch)`——显式 `udp` 恒开、显式 `tcp`/`grpc` 恒关、`auto` 跟随开关；开关落 `Preferences.KEY_MEDIA_UDP_ENABLED`（默认 **false**），UI 为视频设置面板里热降档开关之上的一行（`media_udp_setting` + 双语 `media_udp_setting_label`/`media_udp_setting_note`，note 写明「弱网实验档，默认关闭；开启后优先尝试 UDP 媒体通道，失败会自动回落」）；READY ⇒ 服务端 `swapTransportIfCurrent` 装入通道、`SESSION chan=` 由 `MediaChannelAware` 取自 transport（不再写死 TCP）、`requestJoinPoint()`；失败/超时/看门狗 ⇒ 回退 TCP → gRPC（链在 B2/B3）。
+  - 协商与开关：offer 现在带 `key_s2c`/`key_c2s`/`nonce_salt`/`mtu=1400`/`hold_ms` 与 UDP 端口（`MediaChannelEndpoint` 分 tcp/udp 两端口；`hold_ms` 当时为 10，**2026-10-23 起改为 100 并明确为接收端窗口的提示上限，语义见 [TB-MEDIA-008](#tb-media-008)**）；`MediaTransportPolicy.allowsUdp(mode, switch)`——显式 `udp` 恒开、显式 `tcp`/`grpc` 恒关、`auto` 跟随开关；开关落 `Preferences.KEY_MEDIA_UDP_ENABLED`（默认 **false**），UI 为视频设置面板里热降档开关之上的一行（`media_udp_setting` + 双语 `media_udp_setting_label`/`media_udp_setting_note`，note 写明「弱网实验档，默认关闭；开启后优先尝试 UDP 媒体通道，失败会自动回落」）；READY ⇒ 服务端 `swapTransportIfCurrent` 装入通道、`SESSION chan=` 由 `MediaChannelAware` 取自 transport（不再写死 TCP）、`requestJoinPoint()`；失败/超时/看门狗 ⇒ 回退 TCP → gRPC（链在 B2/B3）。
   - 指标：`PipelineMetrics.Counter` 末尾追加计划 §6 的 8 个（`DATAGRAMS_RECEIVED/LOST/DUPLICATE/REORDERED/ACCESS_UNITS_INCOMPLETE/MEDIA_CHANNEL_SWITCHES/FRAGMENTS_SENT/MEDIA_AUTH_FAILURES`），本批接上其中的 `DATAGRAMS_*`、`ACCESS_UNITS_INCOMPLETE`、`FRAGMENTS_SENT`、`MEDIA_AUTH_FAILURES`；`udp.*` 日志键与 `chan=` 的 UDP 分支格式化仍归 B6（`MEDIA_CHANNEL_SWITCHES` 已有计数器、待 B6 在 handler 里打点并格式化）。
 - **B5 的回环证据**：`UdpMediaReceiverLoopbackTest` 5 例（真 socket：bind+首包 READY、乱序分片重装、两片丢失 → 连续 catch-up + 一次 join point 请求、静默服务端 → `udp_bind_timeout`、伪造数据报计入 `MEDIA_AUTH_FAILURES` 且通道继续可用）；`UdpMediaTransportTest` 4 例（描述符空操作、分片数与序号/auId 递增、关闭后发送抛 `IOException`）；`UdpBindPacketTest` 7 例；`MediaChannelNegotiationEndToEndTest` 增 2 例（`auto`+开关开 ⇒ 先提 UDP、会话行 `chan=udp`、杀监听后 1 s 内回退到 gRPC 且 RPC 未断、载体上继续出帧；开关关时 UDP 档不入候选）；`MediaChannelRegistryTest`/`MediaChannelNegotiatorTest`/`MediaTransportPolicyTest` 各增专测。全量 **1671 tests / 172 classes → 1694 / 175**（+23/+3，基线同批更新），`./gradlew build :app:assembleDebugAndroidTest` 通过；`:app:lintDebug` 0 errors / 145 warnings、`:app:lintRelease` 0 errors / 135 warnings（与上批持平）；三项 checks 通过（字符串 181 键双语一致）。
 - **B5 与计划的出入**：① bind 包比计划多一个 16 B 明文 channelId 前缀——服务器必须先知道用哪把 key 才能解密，而计划只写了"`fragmentCount=0` 哨兵 + key_c2s"；② 计划 §4.5 的"300 ms 无首包 ⇒ FAILED"落在客户端 `SO_TIMEOUT`，服务端不另发 ack（第一个数据报即 ack 语义）；③ 丢包 → IDR 的判定放在**丢弃回调内**立即判（见上），而不是下一包之后批量判；④ UDP 档的 `chan=`/`udp.*` 日志格式化与 `MEDIA_CHANNEL_SWITCHES` 打点留给 B6，本批只保证计数器存在并有值。
@@ -806,7 +819,7 @@ flowchart LR
   - **用例**（前两条修复前实测为红）：`AccessUnitReassemblerTest.fragmentsSpanningMoreThanTheHoldUp_areStillAssembled`（20 分片、间隔半个窗口、总时长十倍于窗口 ⇒ 必须整帧交付）、`AccessUnitReassemblerTest.silenceAfterProgress_isDroppedOnTheHoldUp`（有进展后静默一个窗口 ⇒ 仍按时丢弃，防语义被放宽）、`UdpMediaReceiverLoopbackTest.aJpegSizedUnit_isReassembledWhole`（真 socket 尺寸护栏：70 分片 ≈94 KB 的 JPEG 尺寸帧整帧交付、字节一致；修复前后皆绿，守住超过 64 分片的规模）。
   - **验证**：全量 **1729 tests / 177 classes / 0 failures**（基线 1726/177，`test_baseline.json` 同提交更新）；`./gradlew build :app:assembleDebugAndroidTest` 通过，lint 双变体 0 errors，三项 checks 全绿。**设备复验未执行**：[TB-ENG-013](#tb-eng-013) 第 18 项。
   - **设备 r3 结果（2026-10-23，报告 `handoff/device-test-2026-10-23-jpeg-udp-r3/report.md`）**：修复在窗口 A 兑现——JPEG 大帧整帧送达、`rx.auRate` 与 `enc.auRate` 同量级（2.2 vs 3.2）、画面持续更新；但 10 ms 静默对 73–95 片/AU 仍过窄：同一构建重启后 scale100 组合 5/5 次 0 fps，而 JPEG+TCP、H.264+UDP 与 scale30 均正常。重组窗口的抖动容忍另立 [TB-MEDIA-008](#tb-media-008)。
-- **小遗留（2026-10-23 交接 §2.2 登记，不单独占 ID）**：① **未接线的指标键**——`MediaMetricNames` 现登记 13 个媒体通道键，其中 `tcp.frame`、`tcp.frameDrop`、`udp.late`、`udp.auDrop` 仍无生产者（`udp.idrReq` 已在 r2 遗留修复中接上，随数据报档一起打印），键名先固定、后续批次补打点不改名；② **UDP 档无专用保活看门狗**——TCP 档有 5 s 写停滞看门狗（`lss-media-watchdog`），UDP 档只靠首包窗口、10 ms 保持窗口与「丢 AU → catch-up + IDR」兜底，属已知取舍，未排期。
+- **小遗留（2026-10-23 交接 §2.2 登记，不单独占 ID）**：① **未接线的指标键**——`MediaMetricNames` 现登记 16 个媒体通道键，其中 `tcp.frame`、`tcp.frameDrop` 仍无生产者（`udp.idrReq` 在 r2 遗留修复中接上，`udp.late` 在 2026-10-23 观测棒接上，`udp.auDrop` 在 `d2b4c26` 接上，均随数据报档一起打印），键名先固定、后续批次补打点不改名；② **UDP 档无专用保活看门狗**——TCP 档有 5 s 写停滞看门狗（`lss-media-watchdog`），UDP 档只靠首包窗口、有界自适应保持窗口（10–100 ms，见 [TB-MEDIA-008](#tb-media-008)）与「丢 AU → catch-up + IDR」兜底，属已知取舍，未排期。
 - **关联文档**：[实施计划](superpowers/plans/2026-10-22-media-transports.md)、[传输方式调研](transport-research.md)、[决策 DB-NET-001](decision-board.md#db-net-001)、[媒体架构](media-architecture.md)、[启动与签名检查清单](startup-checklist.md)
 
 </details>
