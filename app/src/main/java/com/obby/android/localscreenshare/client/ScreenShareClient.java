@@ -152,6 +152,11 @@ public final class ScreenShareClient {
     @NonNull
     private final AtomicInteger mCatchUpGeneration = new AtomicInteger();
 
+    // Accounts a whole-unit loss as an external episode on the decode thread. The loss moment is
+    // captured at submission, and the session gate decides whether any accounting happens at all.
+    @NonNull
+    private final ExternalCatchUpRecorder mExternalCatchUpRecorder;
+
     // Lifecycle flag, written on the main thread and read by the transport and decode threads;
     // once set, callbacks become no-ops. Volatile because a stop tears the channel down from the
     // main thread and the transport then reports the cancellation on its own thread: without the
@@ -444,6 +449,8 @@ public final class ScreenShareClient {
         }
         mAdvertisedCapabilities = advertised;
         mMetrics = metrics;
+        mExternalCatchUpRecorder =
+            new ExternalCatchUpRecorder(mCatchUpSampler, metrics, mCatchUpGeneration);
         mHost = host;
         mExpectedDeviceId = expectedDeviceId;
         mRttEstimator = new RttEstimator(metrics, metrics.getClock());
@@ -871,20 +878,12 @@ public final class ScreenShareClient {
                 // the next one is applied, and the session waits for the join point the loss
                 // tracker asked for. The loss is also merged into the shared sampler as an external
                 // episode, which counts it in rx.catchup without spending the decode-deficit
-                // budget. The loss tracker already asked for the key frame.
+                // budget. The loss tracker already asked for the key frame. The recorder captures
+                // the loss moment here, before the task is queued, and skips all accounting when
+                // the session has no decoder to resynchronize.
                 try {
-                    mDecodeExecutor.execute(() -> {
-                        if (mIsStopped) {
-                            return;
-                        }
-                        if (mCatchUpSampler.onExternalCatchUp(mMetrics.nowNs())) {
-                            mMetrics.increment(PipelineMetrics.Counter.CATCH_UP_EPISODES);
-                            mMetrics.setGauge(PipelineMetrics.Gauge.CATCH_UP_REASON,
-                                PipelineMetrics.CATCH_UP_REASON_EXTERNAL);
-                        }
-                        mCatchUpGeneration.incrementAndGet();
-                        receiver.getSession().onCatchUp();
-                    });
+                    mExternalCatchUpRecorder.submit(mDecodeExecutor, receiver.getSession(),
+                        () -> mIsStopped);
                 } catch (RejectedExecutionException e) {
                     Log.w(mTag, "media channel: decode queue full, dropping the catch-up");
                 }
@@ -1023,8 +1022,9 @@ public final class ScreenShareClient {
             return;
         }
         mMetrics.record(PipelineMetrics.Window.CATCH_UP_LATENCY, nowNs - episodeStartedNs);
-        Log.i(mTag, String.format("finishCatchUp: recovered in %d ms",
-            (nowNs - episodeStartedNs) / 1_000_000L));
+        // The latency metric is the whole record here. This path also closes external (loss)
+        // episodes, which a lossy link can produce repeatedly; formatting a log line per episode
+        // allocated a string on the decode thread for a value no decision reads.
     }
 
     /**
@@ -1051,6 +1051,12 @@ public final class ScreenShareClient {
 
     /**
      * Maps a sampler reason to the gauge value; external loss has its own value.
+     *
+     * <p>The external branch is defensive: only a backlog sample can return
+     * {@link CatchUpPolicy.Decision#START_CATCH_UP}, and a backlog sample never sets
+     * {@link CatchUpPolicy.Reason#EXTERNAL}; the loss path writes the external gauge value
+     * directly. Keeping the mapping total stops a future caller from reporting a loss episode as
+     * a queue wait.</p>
      */
     private static long catchUpReason(@NonNull CatchUpPolicy.Reason reason) {
         if (reason == CatchUpPolicy.Reason.QUEUE_DEPTH) {

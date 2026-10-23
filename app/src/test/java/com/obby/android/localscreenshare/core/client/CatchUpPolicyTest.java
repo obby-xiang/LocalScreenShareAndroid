@@ -285,6 +285,39 @@ public class CatchUpPolicyTest {
     }
 
     @Test
+    public void onExternalCatchUp_duringHoldKeepsStateAndReason() {
+        CatchUpPolicy policy = new CatchUpPolicy();
+        long failureAtNs = -1L;
+        for (long nowNs = 0L; nowNs <= 60_000_000_000L; nowNs += STEP_NS) {
+            Decision decision = policy.onSample(nowNs, CLEAR_DEPTH, BACKLOG_WAIT_NS);
+            if (decision == Decision.START_CATCH_UP) {
+                policy.onJoinPoint(nowNs);
+            } else if (decision == Decision.CONVERGENCE_FAILED) {
+                failureAtNs = nowNs;
+                break;
+            }
+        }
+        assertTrue(failureAtNs > 0L);
+        assertEquals(Reason.QUEUE_WAIT, policy.getLastReason());
+        Reason reasonBefore = policy.getLastReason();
+        int consecutiveBefore = policy.getConsecutiveCatchUps();
+
+        policy.onExternalCatchUp(failureAtNs + STEP_NS);
+
+        // The loss is ignored by the sampler: no episode, no reason change, no budget.
+        assertFalse(policy.isCatchingUp());
+        assertEquals(reasonBefore, policy.getLastReason());
+        assertEquals(consecutiveBefore, policy.getConsecutiveCatchUps());
+
+        // The hold is not shortened either: the same backlog starts nothing until it expires.
+        assertEquals(Decision.NONE,
+                feedBacklog(policy, failureAtNs + 2L * STEP_NS,
+                        failureAtNs + CatchUpPolicy.HOLD_NANOS - STEP_NS,
+                        CLEAR_DEPTH, BACKLOG_WAIT_NS));
+        assertFalse(policy.isCatchingUp());
+    }
+
+    @Test
     public void isSuperseded_dropsMediaButKeepsDescriptors() {
         assertFalse(CatchUpPolicy.isSuperseded(7, 7, false));
         assertTrue(CatchUpPolicy.isSuperseded(6, 7, false));

@@ -8,6 +8,7 @@ import org.junit.Test;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 public class CatchUpSamplerTest {
@@ -45,6 +46,19 @@ public class CatchUpSamplerTest {
                 BACKLOG_DEPTH, CLEAR_WAIT_NS);
         assertEquals(Decision.START_CATCH_UP, result.decision);
         return result;
+    }
+
+    @Test
+    public void onDecoded_ordinaryPathReusesTheSharedResult() {
+        CatchUpSampler sampler = new CatchUpSampler();
+
+        CatchUpSampler.Result first =
+                sampler.onDecoded(0L, CLEAR_DEPTH, CLEAR_WAIT_NS, true);
+        CatchUpSampler.Result second =
+                sampler.onDecoded(STEP_NS, CLEAR_DEPTH, CLEAR_WAIT_NS, true);
+
+        // Both samples are ordinary NONE samples, so the sampler allocates no result object.
+        assertSame(first, second);
     }
 
     @Test
