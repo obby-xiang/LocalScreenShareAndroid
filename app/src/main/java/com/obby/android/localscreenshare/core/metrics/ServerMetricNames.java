@@ -114,9 +114,16 @@ public final class ServerMetricNames {
     /**
      * Backlog reports the coordinator did not act on.
      *
-     * <p>The reasons are multiple clients, another codec, the master switch, an unknown descriptor
-     * and an encoder failure. A report that only waits for the five-second interval or for a second
-     * clear report is not a skip, because no decision was overridden.</p>
+     * <p>The reasons are multiple clients, another codec, the master switch, an unknown descriptor,
+     * an external write of the bitrate, a lower target that is already at the floor, and an encoder
+     * failure. An external write is counted when the bitrate read back differs from the last value
+     * this coordinator applied, so the override is dropped instead of overwriting the user setting,
+     * a thermal tier or a size change. A target already at the floor is counted even though the
+     * encoder is not called. A failure outside the encoder call - the master switch or a target
+     * getter - is counted as a coordinator skip under the same log throttle.</p>
+     *
+     * <p>A report that only waits for the five-second interval or for a second clear report is not
+     * a skip, because no decision was overridden.</p>
      */
     public static final String BP_SKIP = "bp.skip";
 

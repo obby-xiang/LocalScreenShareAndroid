@@ -2,8 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> 状态：规划稿。**未执行、未改代码、未跑构建、未做设备操作。** 六个棒次全部待实施。
-> 基线：`scripts/checks/test_baseline.json` = **1732 tests / 177 classes**（HEAD 为性能候选登记提交）。每棒必须在**同一个提交**内把该文件更新为当次实测值——`check_test_count.py` 的文档字符串明写 baseline 必须同提交更新，仓库近 30 次测试提交中绝大多数如此。
+> 状态：B1–B5 **代码与 JVM 用例已完成**，B6 文档/看板收口完成（2026-10-24）。**未做设备验证、未做阈值校准、未做收益实测**；设备检查点仍见设计文档 §8，不得把 JVM 证据写成设备结论。
+> 基线：开工前 `scripts/checks/test_baseline.json` = **1750 tests / 177 classes**；最终定格 **1887 tests / 188 classes**（B1–B5 净增 137 条 / 11 类）。每棒在**同一个提交**内把该文件更新为当次实测值——`check_test_count.py` 的文档字符串明写 baseline 必须同提交更新，仓库近 30 次测试提交中绝大多数如此。
 > 路径简写：`$MAIN` = `app/src/main/java/com/obby/android/localscreenshare`，`$TEST` = `app/src/test/java/com/obby/android/localscreenshare`。所有测试替身一律写全 `$TEST/...` 路径；**禁止在 `$MAIN` 下新建与测试替身同名的类**。
 > 上游文档：[设计文档](../specs/2026-10-23-performance-candidates-design.md)（意图、边界、协议、指标与判据的唯一来源）。
 
@@ -25,7 +25,7 @@
 | 第 4 项为“收紧追赶阈值 + 自适应队列” | **阈值不收紧**；B1 改为“追赶采样覆盖修复 + 丢片并轨” | B1 落地时按看板自己的“口径约束 ①”改写条目：写机制理由、同步 [DB-OBS-002](../../decision-board.md#db-obs-002) 与 [DV-021](../../decision-board.md) 的指针 |
 | 五项各“占独立分棒 ID” | `TB-MEDIA-006/007`、`TB-POWER-002`、`TB-CLIENT-007`、`TB-ENG-015` 五个 ID 已预留；本批总项为 `TB-ENG-016` | 各棒落地时补自己的详情块；总项在五项全部写回后才转完成 |
 
-用例与测试类只能按各棒清单逐条清点：19 + 13 + 18 + 21 + 42 = **113 条新用例**，即 1732 + 113 = **1845 tests**；新测试类 9 个（B1 一个、B2 一个、B3 一个、B4 一个、B5 五个），即 **186 classes**。任何与此不符的合计（例如把 B5 记成 4 个新类、或按旧的 36 条估算）都以本文件各棒清单为准。**这些数字只是清单下限，不得写进 `test_baseline.json`**；每个提交以 `check_test_count.py` 的实测输出为准。
+用例与测试类按各棒**实测**清点：25 + 16 + 20 + 22 + 54 = **137 条新用例**，即 1750 + 137 = **1887 tests**；新测试类 11 个（B1 两个、B2 一个、B3 一个、B4 两个、B5 五个），即 **188 classes**。各棒实测数与最初清单的差异来自审查修正追加的用例：B1 追加 `ExternalCatchUpRecorderTest` 4 条与 `CatchUpPolicyTest` +1；B2 追加 `close` 清零 3 条；B3 追加 `isValid` 1 条与 `ThermalThrottlePolicyTest` +1；B4 追加 `SurfaceRenderTargetTest` 1 条；B5 的清单本身是 54 条（早期总览的 42 是旧估算）。任何与此不符的合计都以本段与各棒“落地记录”为准。**这些数字只是实测回填，不得再手改 `test_baseline.json`**；最终值以 `check_test_count.py` 的输出为准。
 
 ## Global Constraints
 
@@ -61,14 +61,16 @@
 
 ## 棒次总览
 
-| 棒 | 主题 | 主要新增类 | 用例（按清单清点） | 新测试类 | 风险 |
+| 棒 | 主题 | 主要新增类 | 用例（实测） | 新测试类 | 风险 |
 | --- | --- | --- | --- | --- | --- |
-| B1 | 追赶采样修复（单一入口 + 丢片并轨） | `CatchUpSampler` | 19 | 1 | 中：把 HOLD 路径推到默认传输 |
-| B2 | 解码低延迟（三级回退 + 三态） | `LowLatencyState` | 13 | 1 | 中：厂商拒绝、三个实现 |
-| B3 | 热余量预测降档（会话级 arm/disarm） | `ThermalHeadroomPolicy` | 18 | 1 | 中：生命周期与开关冲突 |
-| B4 | 内容帧率（描述符 + `setFrameRate`） | `FrameRatePolicy` | 21 | 1 | 中：API 30/31 分支、0 语义 |
-| B5 | 单客户端码率背压 | `StreamFeedback`、`BacklogFeedback`、`BackpressurePolicy`、`BitrateTarget`、`RuntimeBitrateTarget`、`BackpressureCoordinator` | 42 | 5 | 高：控制面 + 线程边界 + 功耗口径 |
+| B1 | 追赶采样修复（单一入口 + 丢片并轨） | `CatchUpSampler` | 25 | 2 | 中：把 HOLD 路径推到默认传输 |
+| B2 | 解码低延迟（三级回退 + 三态） | `LowLatencyState` | 16 | 1 | 中：厂商拒绝、三个实现 |
+| B3 | 热余量预测降档（会话级 arm/disarm） | `ThermalHeadroomPolicy` | 20 | 1 | 中：生命周期与开关冲突 |
+| B4 | 内容帧率（描述符 + `setFrameRate`） | `FrameRatePolicy` | 22 | 2 | 中：API 30/31 分支、0 语义 |
+| B5 | 单客户端码率背压 | `StreamFeedback`、`BacklogFeedback`、`BackpressurePolicy`、`BitrateTarget`、`RuntimeBitrateTarget`、`BackpressureCoordinator` | 54 | 5 | 高：控制面 + 线程边界 + 功耗口径 |
 | B6 | 文档/看板收口与基线定格 | 无 | 0 | 0 | 低 |
+
+> 上表是**落地后实测**：B1 新增 `CatchUpSamplerTest` 与 `ExternalCatchUpRecorderTest` 两个类；B4 新增 `FrameRatePolicyTest` 与 `SurfaceRenderTargetTest`。B2 的 16 条含复核追加的 `close` 清零 3 条，B3 的 20 条是 `ThermalHeadroomPolicyTest` 13 + `ThermalThrottlePolicyTest` +5 + `MetricsFormatterTest` +2。
 
 > 顺序 B1 → B2 → B3 → B4 → B5 → B6。B1 先做，因为它给 B5 提供“追赶事件”的可靠计数；B5 最后做，因为它跨控制面与执行器，失败面最大。
 
@@ -78,15 +80,19 @@
 
 **目标**：gRPC 路径、媒体通道路径与丢片追赶共用同一个采样入口；丢片 episode 计入 `rx.catchup` 与 `rx.catchup.lat`，但**不占**连续失败预算；`CatchUpPolicy` 阈值一字不改。
 
+> **落地记录（2026-10-24 回填）**：✅ 代码与 JVM 用例完成；**设备复验未做**。提交 `9e0f911`（统一媒体通道追赶采样入口）、`babfff7`（外部追赶计量边界）、`2a932a6`（看板口径与 Recorder 命名）。实测 **+25 tests / +2 classes**（1750/177 → 1775/179）：`CatchUpSamplerTest` 15、`CatchUpPolicyTest` +5、`ExternalCatchUpRecorderTest` 4、`MetricsFormatterTest` +1。原清单 19 条 / 1 类，落地时按独立审查追加 6 条与 `ExternalCatchUpRecorderTest`。
+
 **Files:**
 
 - Create: `$MAIN/core/client/CatchUpSampler.java`
+- Create: `$MAIN/client/ExternalCatchUpRecorder.java`（落地时审查追加；丢片记账的会话 gate 与检出时刻都封在这里）
 - Modify: `$MAIN/core/client/CatchUpPolicy.java` — 新增 `Reason.EXTERNAL` 与 `onExternalCatchUp(long nowNs)`；不改任何阈值、不改 `onSample`/`onJoinPoint` 既有判定顺序
 - Modify: `$MAIN/client/ScreenShareClient.java` — `onDecodeTask`、`newMediaChannelListener().onAccessUnit`、`onCatchUp`、`startCatchUp`、`finishCatchUp`、`reportConvergenceFailure`、字段 `mCatchUpPolicy` → `mCatchUpSampler`、reason 映射补外部追赶
 - Modify: `$MAIN/core/metrics/PipelineMetrics.java` — `CATCH_UP_REASON_EXTERNAL = 3L`
 - Modify: `$MAIN/core/metrics/CatchUpMetricNames.java` — `REASON_EXTERNAL = "ext"`
 - Modify: `$MAIN/core/metrics/MetricsFormatter.java` — reason=3 打印 `ext`
 - Create: `$TEST/core/client/CatchUpSamplerTest.java`
+- Create: `$TEST/client/ExternalCatchUpRecorderTest.java`（落地时审查追加）
 - Modify: `$TEST/core/client/CatchUpPolicyTest.java`
 - Modify: `$TEST/core/metrics/MetricsFormatterTest.java`
 - Modify: `scripts/checks/test_baseline.json`
@@ -159,12 +165,13 @@ public void onExternalCatchUp(long nowNs);
 
 **Steps:**
 
-- [ ] **Step 1：先写失败用例（19 条）**
+- [x] **Step 1：先写失败用例（实测 25 条）**
 
-`$TEST/core/client/CatchUpSamplerTest.java`（14 条）：
+`$TEST/core/client/CatchUpSamplerTest.java`（15 条；比原清单多 `onDecoded_ordinaryPathReusesTheSharedResult`）：
 
 | 用例 | 断言 |
 | --- | --- |
+| `onDecoded_ordinaryPathReusesTheSharedResult` | 普通 NONE 路径复用同一个 `Result` 实例（`assertSame`），证明两条接收路径没有各自造对象 |
 | `onDecoded_singleSlowFrameDoesNotStart` | 1 帧轻微抖动 → `finishedEpisode=false`、`decision=NONE` |
 | `onDecoded_sustainedQueueWaitStarts` | 持续 2 s、等待 1 s → `START_CATCH_UP` 且 reason 为队列等待 |
 | `onDecoded_sustainedQueueDepthStarts` | 深度 64 持续 2 s → `START_CATCH_UP` 且 reason 为队列深度 |
@@ -180,19 +187,21 @@ public void onExternalCatchUp(long nowNs);
 | `episodeStartedNs_isSentinelWhenIdle` | 空闲时返回哨兵值 |
 | `sampleCount_countsEveryOnDecoded` | N 次采样 → 计数为 N |
 
-`$TEST/core/client/CatchUpPolicyTest.java`（+4）：`onExternalCatchUp_startsEpisode`、`onExternalCatchUp_mergesWithoutDoubleCount`、`onExternalCatchUp_doesNotIncrementConsecutive`、`onExternalCatchUp_doesNotTriggerConvergenceHold`。
+`$TEST/core/client/CatchUpPolicyTest.java`（+5）：`onExternalCatchUp_startsEpisode`、`onExternalCatchUp_mergesWithoutDoubleCount`、`onExternalCatchUp_doesNotIncrementConsecutive`、`onExternalCatchUp_doesNotTriggerConvergenceHold`、`onExternalCatchUp_duringHoldKeepsStateAndReason`（30 s HOLD 内不新增 episode、不改 `lastReason`）。
+
+`$TEST/client/ExternalCatchUpRecorderTest.java`（4 条，独立审查追加）：`submit_beforeTheFirstDescriptor_recordsNothing`、`submit_afterClose_recordsNothing`、`submit_afterStop_recordsNothing`、`submit_startsTheEpisodeAtDetectionTimeNotAtTaskRunTime`（排队延迟不得缩短 episode）。
 
 `$TEST/core/metrics/MetricsFormatterTest.java`（+1）：`catchUpReason_externalIsPrintedAsExt` — reason 为 3 时输出 `rx.catchup.why=ext`。
 
-- [ ] **Step 2：跑红测并记录失败形态**
+- [x] **Step 2：跑红测并记录失败形态**
 
 ```bash
 ./gradlew :app:testDebugUnitTest --tests '*CatchUpSamplerTest*' --tests '*CatchUpPolicyTest*' --tests '*MetricsFormatterTest*'
 ```
 
-Expected: `CatchUpSamplerTest` 编译失败（类不存在），`CatchUpPolicyTest` 编译失败（方法不存在），`MetricsFormatterTest` 断言失败（3 被打印成 `qWait`）。把输出摘要贴进提交说明前的自检记录，不写进仓库文件。
+Expected: `CatchUpSamplerTest` 编译失败（类不存在），`CatchUpPolicyTest` 编译失败（方法不存在），`MetricsFormatterTest` 断言失败（3 被打印成 `qWait`）。独立审查追加的 `ExternalCatchUpRecorderTest` 在修正轮先红 3 条（configure 前、关闭后、检出时刻）。把输出摘要贴进提交说明前的自检记录，不写进仓库文件。
 
-- [ ] **Step 3：实现**
+- [x] **Step 3：实现**
 
 1. `CatchUpSampler.onDecoded`：先 `if (isCatchingUp() && streaming) { policy.onJoinPoint(nowNs); finished = true; }`，再 `policy.onSample(...)`，两者一起返回。**不要**在结束时跳过采样。
 2. `CatchUpSampler.onExternalCatchUp`：若已 `isCatchingUp()` → 返回假且**不刷新任何时间**（合并语义）；否则调 `policy.onExternalCatchUp(nowNs)`、记录 episode 起点、返回真。
@@ -201,10 +210,11 @@ Expected: `CatchUpSamplerTest` 编译失败（类不存在），`CatchUpPolicyTe
 5. 丢片路径（`onCatchUp`）：先 `if (mCatchUpSampler.onExternalCatchUp(nowNs)) { mMetrics.increment(CATCH_UP_EPISODES); mMetrics.setGauge(CATCH_UP_REASON, CATCH_UP_REASON_EXTERNAL); mCatchUpStartedNs = nowNs; }`，再 `mCatchUpGeneration.incrementAndGet()` 与 `receiver.getSession().onCatchUp()`。丢片路径**不发** `kf.request`（既有丢包跟踪器负责）。
 6. `startCatchUp` 的 reason 映射：队列深度 → 2、外部 → 3、其余 → 1。
 7. `MetricsFormatter.appendCatchUpReason` 增加 3 → `ext` 分支；未知值仍落到默认分支。
+8. 独立审查追加 `ExternalCatchUpRecorder`：把丢片的会话 `onCatchUp()` gate 与检出时刻封装在一处；configure 前、关闭后、停止后不记账；episode 起点取检出时刻而非任务执行时刻，避免排队延迟把 `rx.catchup.lat` 量小。
 
 实现边界：不改 `CatchUpPolicy` 的任何常量与 `onSample` 判定顺序；不改 HOLD 时长；不改 `isSuperseded`。
 
-- [ ] **Step 4：跑绿测（定向）**
+- [x] **Step 4：跑绿测（定向）**
 
 ```bash
 ./gradlew :app:testDebugUnitTest --tests '*CatchUpSamplerTest*' --tests '*CatchUpPolicyTest*' --tests '*MetricsFormatterTest*' --tests '*ClientMediaSession*Test*' --tests '*ClientMediaReceiver*Test*'
@@ -212,7 +222,7 @@ Expected: `CatchUpSamplerTest` 编译失败（类不存在），`CatchUpPolicyTe
 
 Expected: `BUILD SUCCESSFUL`，上述类全绿。说明：`ScreenShareClient` **没有独立的 JVM 测试类**，它的接线由编译器与上述会话/接收类用例覆盖；不要为它临时新建只做冒烟的空测试类。
 
-- [ ] **Step 5：全量 + 基线与卫生**
+- [x] **Step 5：全量 + 基线与卫生**
 
 ```bash
 ./gradlew :app:testDebugUnitTest :app:testReleaseUnitTest
@@ -224,13 +234,13 @@ python scripts/checks/check_strings.py
 
 Expected: 双变体全绿、0 失败；`check_test_count.py` 显示 `tests` 增加且未低于基线。把实测输出写进 `test_baseline.json`。
 
-- [ ] **Step 6：文档**
+- [x] **Step 6：文档**
 
 - `docs/media-architecture.md` §5.3.1：两条接收路径 + 丢片路径共用采样入口；外部追赶计入 `rx.catchup` 与延迟，但**不消费**连续预算（理由：丢片是网络类故障，不该被“解码赤字”的 HOLD 惩罚）；写明 episode 合并不刷新时间。
 - `docs/task-board.md`：新增 `TB-CLIENT-007` 行与详情块。**必须改写**登记文本里的“收紧追赶阈值 + 自适应队列”：本轮范围是采样覆盖修复，阈值不收紧；写机制理由并指向 [DV-027](../../decision-board.md)（B1 之前 TCP/UDP 档几乎不进入收敛失败，B1 之后默认档会走到该路径；HOLD 滞后无界仍按未裁决处理；设备复验记录 `rx.converge.fail` 后的 `freeze` 与 `pres.drop`）。
 - `docs/decision-board.md`：`DB-OBS-002` 补注“`rx.catchup*` 的口径自本批起覆盖三条路径，跨构建日志不可横比”；`DV-021` 补注指针。
 
-- [ ] **Step 7：提交**
+- [x] **Step 7：提交**
 
 ```bash
 git add app/src/main/java/com/obby/android/localscreenshare/core/client/CatchUpSampler.java \
@@ -250,6 +260,8 @@ git commit -m "feat(client): 统一追赶采样入口并接入丢片追赶"
 ## B2 解码低延迟（三级回退 + 三态指标）
 
 **目标**：解码器在 API 30+ 请求低延迟与实时优先级，厂商拒绝时逐级退化；新增三态指标区分“生效 / 部分生效 / 回退 / 未请求”。
+
+> **落地记录（2026-10-24 回填）**：✅ 代码与 JVM 用例完成；**设备验证与收益实测未做**。提交 `56ffb75`（低延迟配置与回退）、`65287c4`（清除指标残留）、`8c4a694`（钉住关闭边界）。实测 **+16 tests / +1 class**（1775/179 → 1791/180）：`AndroidMediaCodecDecoderBridgeTest` 6、`H264DecoderTest` +8（原清单 +5，复核追加 `close` 清零 3）、`MetricsFormatterTest` +2。
 
 **Files:**
 
@@ -325,7 +337,7 @@ static LowLatencyState configureWithFallback(boolean requestLowLatency, FormatAp
 
 **Steps:**
 
-- [ ] **Step 1：先写失败用例（13 条）**
+- [x] **Step 1：先写失败用例（实测 16 条）**
 
 `AndroidMediaCodecDecoderBridgeTest`（6 条）：
 
@@ -338,7 +350,7 @@ static LowLatencyState configureWithFallback(boolean requestLowLatency, FormatAp
 | `configure_unrelatedFailureKeepsOriginalType` | 不请求可选键且抛 `IllegalStateException` → 原样抛出、applier 1 次、reset 0 次 |
 | `configure_notRequestedNeverSendsOptionalKeys` | 不请求 → 入参恒 `(false,false)`、返回 `NOT_REQUESTED` |
 
-`H264DecoderTest`（+5，经 `FakeMediaCodecBridgeFactory.setNextDecoderLowLatencyState(...)` 预设桥状态）：
+`H264DecoderTest`（+8＝原 5 条 + `close` 清零 3 条，经 `FakeMediaCodecBridgeFactory.setNextDecoderLowLatencyState(...)` 预设桥状态）：
 
 | 用例 | 断言 |
 | --- | --- |
@@ -347,10 +359,13 @@ static LowLatencyState configureWithFallback(boolean requestLowLatency, FormatAp
 | `configure_recordsLowLatencyFallback` | 桥报 `REJECTED` → gauge 为 2 |
 | `configure_startFailureLeavesGaugeUnwritten` | `start()` 抛 → 抛解码失败、gauge 仍 0 |
 | `configure_notRequestedLeavesGaugeUnwritten` | 桥报 `NOT_REQUESTED` → gauge 0 |
+| `close_clearsAppliedLowLatencyGauge` | `APPLIED` 后 `close()` → gauge 回 0（同一指标作用域跨解码器复用） |
+| `close_clearsRejectedLowLatencyGauge` | `REJECTED` 后 `close()` → gauge 回 0 |
+| `close_notRequestedLowLatencyLeavesGaugeUnwritten` | `NOT_REQUESTED` 从未写过，`close()` 不触碰 gauge |
 
 `MetricsFormatterTest`（+2）：`decLowLat_printsWhenOneOrTwo`、`decLowLat_isOmittedForZero`。
 
-- [ ] **Step 2：跑红测**
+- [x] **Step 2：跑红测**
 
 ```bash
 ./gradlew :app:testDebugUnitTest --tests '*AndroidMediaCodecDecoderBridgeTest*' --tests '*H264DecoderTest*' --tests '*MetricsFormatterTest*'
@@ -358,17 +373,17 @@ static LowLatencyState configureWithFallback(boolean requestLowLatency, FormatAp
 
 Expected: 编译失败（枚举、方法、常量、两个桥实现缺失），`MetricsFormatterTest` 断言失败。**注意**：漏改 `H264DecoderTest.BudgetDecoderBridge` 会在这里表现为编译失败，这是预期信号，不要用反射绕过。
 
-- [ ] **Step 3：实现**
+- [x] **Step 3：实现**
 
 按 Interfaces 与 Write-down rules 实现；`FakeMediaCodecDecoderBridge` 默认返回 `NOT_REQUESTED`，并提供 `setLowLatencyState(...)`。`FakeMediaCodecBridgeFactory` 增加 `setNextDecoderLowLatencyState(...)`（一次性，套用到下一次 `createDecoder` 新建的桥并随后清空），因为 `H264DecoderTest.newMeasuredDecoder` 复用的是共享工厂，桥是在 `H264Decoder.configure` 内部才被创建的——没有这个入口，三条 `configure_records*` 用例无法在 configure 之前把状态塞进去。若不想改工厂，替代方案是在 `H264DecoderTest` 内按 `BudgetBridgeFactory` 的既有范式新增一个带 metrics 的私有工厂，但**不要**同时保留两种写法。`BudgetDecoderBridge` 同样返回 `NOT_REQUESTED`（它只测预算，不关心低延迟）。`H264Decoder` 读桥的返回值并映射写 gauge；`MetricsFormatter` 在客户端行追加一个非 0 才打印的 gauge 字段，键取自新常量类。
 
-- [ ] **Step 4：跑绿测（定向）**
+- [x] **Step 4：跑绿测（定向）**
 
 ```bash
 ./gradlew :app:testDebugUnitTest --tests '*AndroidMediaCodecDecoderBridgeTest*' --tests '*H264DecoderTest*' --tests '*MetricsFormatterTest*' --tests '*MediaCodecBridgeContractTest*'
 ```
 
-- [ ] **Step 5：全量 + 双变体 lint + 基线**
+- [x] **Step 5：全量 + 双变体 lint + 基线**
 
 ```bash
 ./gradlew :app:testDebugUnitTest :app:testReleaseUnitTest
@@ -377,12 +392,12 @@ python scripts/checks/check_test_count.py --results app/build/test-results/testD
 python scripts/checks/check_cjk.py
 ```
 
-- [ ] **Step 6：文档**
+- [x] **Step 6：文档**
 
 - `docs/performance-research.md` §4.2 第 1 条标“**部分落地**（2026-10-23）”，明写**未含 `KEY_OPERATING_RATE`** 及原因（解码侧目标帧率需要新的描述符契约，避免与 B4 的提示重复定义）；§6 补 `dec.lowLat` 三态口径。
 - `docs/task-board.md`：新增 `TB-MEDIA-006` 行与详情块；把 [TB-ENG-016](../../task-board.md#tb-eng-016) 第 1 项的措辞改为“两键 + 未含项”。
 
-- [ ] **Step 7：提交**
+- [x] **Step 7：提交**
 
 ```bash
 git add app/src/main/java/com/obby/android/localscreenshare/core/codec/mediacodec \
@@ -402,6 +417,8 @@ git commit -m "feat(codec): 解码器请求低延迟参数并按三态上报"
 ## B3 热余量预测降档（会话级 arm / disarm）
 
 **目标**：用 `getThermalHeadroom(10)` 预测温升，提前进入 REDUCED / MINIMAL；预测与现状只允许“取严格档”；采样随会话与开关正确上下线。
+
+> **落地记录（2026-10-24 回填）**：✅ 代码与 JVM 用例完成；**设备验证与阈值校准未做**。提交 `14860de`（预测热余量并提前降档）、`c6b775c`（修正会话边界与口径）。实测 **+20 tests / +1 class**（1791/180 → 1811/181）：`ThermalHeadroomPolicyTest` 13、`ThermalThrottlePolicyTest` +5、`MetricsFormatterTest` +2。原清单 18 条，复核追加 `isValid_acceptsOnlyTheDocumentedDomain` 与 `stricter_keepsEqualTiers`。
 
 平台返回值是**热压力比值**（`1.0` = 平台开始限流，`>1.0` = 已限流，越大越热），指标按千分比打印且**不钳制**上界；阈值仍按 0.70 / 0.85 的千分比 700 / 850。开关的打开/关闭与 arm 的分离见下方 Lifecycle rules：**没有会话时只允许一次立即采样，不得 arm 1 Hz**。
 
@@ -486,11 +503,11 @@ float getThermalHeadroom(int forecastSeconds);
 
 **Steps:**
 
-- [ ] **Step 1：先写失败用例（18 条）**
+- [x] **Step 1：先写失败用例（实测 20 条）**
 
-18 条全部是纯 JVM 用例。arm 的“会话运行中”条件属于服务生命周期，JVM 侧无法覆盖，改由 Step 3 的实现约束 + 设备项 ② 核对；不要为它新增冒烟测试类，也不要因此改动 18 这个数字。
+20 条全部是纯 JVM 用例。arm 的“会话运行中”条件属于服务生命周期，JVM 侧无法覆盖，改由 Step 3 的实现约束 + 设备项 ② 核对；不要为它新增冒烟测试类。
 
-`ThermalHeadroomPolicyTest`（12 条）：
+`ThermalHeadroomPolicyTest`（13 条）：
 
 | 用例 | 断言 |
 | --- | --- |
@@ -502,16 +519,17 @@ float getThermalHeadroom(int forecastSeconds);
 | `onSample_keepsMinimalAboveExit` | MINIMAL 下 0.79 → MINIMAL |
 | `onSample_downgradesMinimalBelowExit` | MINIMAL 下 0.77 → REDUCED |
 | `onSample_ignoresOutOfRangeValues` | -0.1 与 2.5 不改变档位；`1.5` 是有效样本、应得 MINIMAL，只能 reset 后作正向对照，不能用来证明忽略 |
+| `isValid_acceptsOnlyTheDocumentedDomain` | `[0, 2]` 接受、NaN 与两侧越界拒绝；服务直接复用该方法，不重复维护有效域 |
 | `onSample_bandFlappingDoesNotOscillate` | 0.60–0.70 交替 10 次 → 档位变化不超过 1 次 |
 | `reset_returnsToNone` | 任意档位后 reset → NONE |
 | `pollIntervalRespectsOneHertz` | `POLL_INTERVAL_MS >= 1000L` |
 | `forecastSecondsMatchesTheDocumentedTen` | `FORECAST_SECONDS == 10` |
 
-`ThermalThrottlePolicyTest`（+4）：`stricter` 的 3×3 组合逐项断言（例：`stricter(MINIMAL, REDUCED) == MINIMAL`），并断言结果 ordinal 恒不小于两个入参。
+`ThermalThrottlePolicyTest`（+5）：`stricter_picksTheHigherTier`（3×3 组合逐项断言，例：`stricter(MINIMAL, REDUCED) == MINIMAL`）、`stricter_isCommutative`、`stricter_neverRelaxesEitherInput`（结果 ordinal 恒不小于两个入参）、`stricter_keepsEqualTiers`、`tierAtSessionEnd_forgetsTheForecastAndKeepsOnlyTheStatus`（会话边界只由开关与当前状态取档）。
 
 `MetricsFormatterTest`（+2）：`thermalHeadroomAndTier_printWhenSampled`、`thermalGauges_areOmittedWhenZero`。
 
-- [ ] **Step 2：跑红测**
+- [x] **Step 2：跑红测**
 
 ```bash
 ./gradlew :app:testDebugUnitTest --tests '*ThermalHeadroomPolicyTest*' --tests '*ThermalThrottlePolicyTest*' --tests '*MetricsFormatterTest*'
@@ -519,19 +537,19 @@ float getThermalHeadroom(int forecastSeconds);
 
 Expected: 编译失败（策略类、`stricter`、两个 gauge 常量与键缺失）。
 
-- [ ] **Step 3：实现**
+- [x] **Step 3：实现**
 
 先实现纯策略与 `stricter`，再改服务生命周期，最后接指标。`ThermalMonitor.getThermalHeadroom` 用方法级 `@RequiresApi(R)`，调用点显式版本判断——两个变体的 lint 才能一致。`ServerMetricNames` 追加后检查常量数量恰为 20。
 
 实现时按三条写死的口径落地：① 千分比一律 `Math.round(headroom * 1000f)`，**不写 `(int)` 强制转换**；`onSample` 只接受 `[0, 2]`，NaN 与区间外样本原样忽略。② `armThermalHeadroomPolling()` 的入口条件补 `mStreamRuntime != null`；`onThermalThrottleSettingChanged()` 打开分支先 `sampleThermalHeadroomOnce()`，再**仅在有会话时** arm。③ 服务生命周期没有 JVM 用例（该服务依赖 Android 框架），这两条由代码评审与设备项 ② 核对，不要为它造只做冒烟的空测试类，也不要改动用例数。
 
-- [ ] **Step 4：跑绿测（定向）**
+- [x] **Step 4：跑绿测（定向）**
 
 ```bash
 ./gradlew :app:testDebugUnitTest --tests '*ThermalHeadroomPolicyTest*' --tests '*ThermalThrottlePolicyTest*' --tests '*MetricsFormatterTest*'
 ```
 
-- [ ] **Step 5：全量 + 双变体 lint + 基线**
+- [x] **Step 5：全量 + 双变体 lint + 基线**
 
 ```bash
 ./gradlew :app:testDebugUnitTest :app:testReleaseUnitTest
@@ -540,13 +558,13 @@ python scripts/checks/check_test_count.py --results app/build/test-results/testD
 python scripts/checks/check_cjk.py
 ```
 
-- [ ] **Step 6：文档**
+- [x] **Step 6：文档**
 
 - `docs/decision-board.md`：新增 `DB-POWER-003`（只收紧、1 Hz 上限、阈值待校准、开关关闭立即恢复、会话级 arm/disarm）。
 - `docs/task-board.md`：新增 `TB-POWER-002` 行与详情块。
 - `docs/performance-research.md` §6 触发条件 3：标“代码已落地、0.70/0.85 待设备校准”。
 
-- [ ] **Step 7：提交**
+- [x] **Step 7：提交**
 
 ```bash
 git add app/src/main/java/com/obby/android/localscreenshare/core/stream \
@@ -566,6 +584,8 @@ git commit -m "feat(power): 热余量预测降档并随会话上下线"
 ## B4 内容帧率提示（描述符 `frame_rate` + `Surface.setFrameRate`）
 
 **目标**：服务端在描述符里下发内容帧率，观看端在 surface 路径把它作为提示交给平台；`0` 表示清除且不重放；不改 `configHash`。
+
+> **落地记录（2026-10-24 回填）**：✅ 代码与 JVM 用例完成；**设备验证与收益实测未做**。提交 `4aa762e`（下发内容帧率呈现提示）、`bf93d03`（修正重放与兼容口径）。实测 **+22 tests / +2 classes**（1811/181 → 1833/183）：`FrameRatePolicyTest` 6、`SurfaceRenderTargetTest` 1、`StreamDescriptorTest` +4、`ScreenStreamProtoMapperTest` +4、`ClientMediaSessionSurfaceTest` +2、`ClientMediaSessionTest` +1、`SwitchableRenderTargetTest` +3、`HostRenderTargetTest` +1。
 
 **Files:**
 
@@ -588,6 +608,7 @@ git commit -m "feat(power): 热余量预测降档并随会话上下线"
 - Modify: `$TEST/render/SwitchableRenderTargetTest.java`（+3）
 - Modify: `$TEST/render/HostRenderTargetTest.java`（+1）
 - Create: `$TEST/render/FrameRatePolicyTest.java`（+6）
+- Create: `$TEST/render/SurfaceRenderTargetTest.java`（+1，落地时审查追加：新 surface 不继承上一面的 `appliedFrameRate`）
 - Modify: `scripts/checks/test_baseline.json`
 - Modify: `docs/media-architecture.md`、`docs/task-board.md`、`docs/performance-research.md`、`docs/decision-board.md`
 
@@ -634,7 +655,7 @@ static void applyFrameRate(int frameRate, int sdkInt, FrameRateApplier applier);
 
 **Steps:**
 
-- [ ] **Step 1：先写失败用例（21 条）**
+- [x] **Step 1：先写失败用例（实测 22 条）**
 
 `StreamDescriptorTest`（+4）：`frameRate_doesNotChangeConfigHash`、`withConfigEpoch_keepsFrameRateAndHash`、`frameRate_negativeIsNormalisedToZero`、`frameRate_defaultsToZero`。
 
@@ -664,7 +685,9 @@ static void applyFrameRate(int frameRate, int sdkInt, FrameRateApplier applier);
 | `applyFrameRate_nonPositiveIsIgnored` | 0 与 -1 → 0 次 |
 | `applyFrameRate_doesNotSwallowApplierFailures` | applier 抛 → 原样冒泡（吞异常是渲染目标的职责） |
 
-- [ ] **Step 2：跑红测**
+`SurfaceRenderTargetTest`（1 条，落地时审查追加）：`getSurface_newSurfaceDoesNotInheritTheAppliedFrameRate` — 新 surface 创建后先把 `appliedFrameRate` 清 0，再补发一次，同值早退不会漏到重建的 surface；真实平台调用仍需设备验证。
+
+- [x] **Step 2：跑红测**
 
 ```bash
 ./gradlew :app:testDebugUnitTest --tests '*StreamDescriptorTest*' --tests '*ScreenStreamProtoMapperTest*' \
@@ -672,13 +695,13 @@ static void applyFrameRate(int frameRate, int sdkInt, FrameRateApplier applier);
   --tests '*SwitchableRenderTargetTest*' --tests '*HostRenderTargetTest*' --tests '*FrameRatePolicyTest*'
 ```
 
-Expected: 编译失败（新接口方法、枚举/策略类、proto 字段缺失），既有用例全绿——**正向用例必须放在 surface 测试类**，放在普通会话测试类里会因为 fixture 不需要 surface 而拿不到调用，导致“测试永远绿得没有意义”。
+Expected: 编译失败（新接口方法、枚举/策略类、proto 字段缺失），既有用例全绿——**正向用例必须放在 surface 测试类**，放在普通会话测试类里会因为 fixture 不需要 surface 而拿不到调用，导致“测试永远绿得没有意义”。审查追加的 `SurfaceRenderTargetTest` 在补 `appliedFrameRate = 0` 之前为红（期望 0、实测 60）。
 
-- [ ] **Step 3：实现**
+- [x] **Step 3：实现**
 
 顺序：proto → 模型与哈希（确认 `computeConfigHash` 字节流零改动）→ mapper → 服务端两处填值 → `RenderTarget` 默认方法 → 策略 → 三处实现（surface / host / switchable）→ 会话下发 → 指标无关（本棒不新增键）。
 
-- [ ] **Step 4：跑绿测（定向）**
+- [x] **Step 4：跑绿测（定向）**
 
 ```bash
 ./gradlew :app:testDebugUnitTest --tests '*StreamDescriptorTest*' --tests '*ScreenStreamProtoMapperTest*' \
@@ -686,7 +709,7 @@ Expected: 编译失败（新接口方法、枚举/策略类、proto 字段缺失
   --tests '*FrameRatePolicyTest*'
 ```
 
-- [ ] **Step 5：全量 + 双变体 lint + 基线**
+- [x] **Step 5：全量 + 双变体 lint + 基线**
 
 ```bash
 ./gradlew :app:testDebugUnitTest :app:testReleaseUnitTest
@@ -695,14 +718,14 @@ python scripts/checks/check_test_count.py --results app/build/test-results/testD
 python scripts/checks/check_cjk.py
 ```
 
-- [ ] **Step 6：文档**
+- [x] **Step 6：文档**
 
 - `docs/media-architecture.md` §4.4 增“客户端内容帧率提示”：不入配置哈希、API 30 门控、服务端两种编解码都填、客户端按 surface 输出消费、0 表示清除且不重放。
 - `docs/task-board.md`：新增 `TB-MEDIA-007` 行与详情块。
 - `docs/performance-research.md` §4.2 第 5 条标“**部分落地**（2026-10-23）：仅 `Surface.setFrameRate` 提示，**未含 `Display.Mode` 切换**”；该行原文把两者写在一起，不得整条标已落地。
 - `docs/decision-board.md`：`DV-011` 补注“内容帧率提示不等于严格限帧”。
 
-- [ ] **Step 7：提交**
+- [x] **Step 7：提交**
 
 ```bash
 git add app/src/main/proto/screen_stream.proto \
@@ -730,6 +753,8 @@ git commit -m "feat(render): 下发内容帧率提示到呈现面"
 ## B5 单客户端码率背压（控制面反馈 + 专用执行器）
 
 **目标**：观看端在**有积压时**上报队列深度/等待/追赶事件；服务端只在**单客户端、H.264**时自动调码率，多客户端只观测；空闲观看端零定时器。
+
+> **落地记录（2026-10-24 回填）**：✅ 代码与 JVM 用例完成；**设备验证与阈值校准未做**。提交 `4325c0a`（单客户端观看积压回传码率背压）、`f74bb7c`（修正拥塞分级与恢复边界）。实测 **+54 tests / +5 classes**（1833/183 → 1887/188）：`BackpressurePolicyTest` 17、`BackpressureCoordinatorTest` 16、`BacklogFeedbackTest` 6、`StreamFeedbackTest` 4、`RuntimeBitrateTargetTest` 3、`ScreenStreamProtoMapperTest` +3、`StreamCallHandlerTest` +3、`MetricsFormatterTest` +2。早期总览的 42 是旧估算，以 Step 1 清单与实测为准。
 
 **Files:**
 
@@ -873,7 +898,7 @@ public class BackpressureCoordinator implements FeedbackSink {
 3. 首次 `LOWER` 前记 `ceilingBps = target.getTargetBitrateBps()`；读回的当前值不等于上次应用值 ⇒ 外部写入，清空覆盖、不 RESTORE、不重试，并记 `bp.skip`（external-write）；RESTORE 前也要做同一检测，避免覆盖用户/热降档刚写的码率（用户改设置、热降档、旋转/尺寸变化都会写回用户码率）。此行为写进 Javadoc。
 4. `LOWER`：一步 ×75%，钳到 `ceiling × 40%`；目标等于当前码率（已在下限）时不调用 `applyTargetBitrate`、不记 `bp.apply`、不写动作日志，只记 `bp.skip`（at-floor）。`RAISE`：一步回到 `ceiling` 并立即结束覆盖。
 5. 回升需连续 2 份 CLEAR 且距上次动作 ≥5 s；HOLD 不降档且把连续 CLEAR 计数归零。
-6. `RESTORE`：多客户端、非 H.264、总闸关闭、`close()` 前置检查时，若已有覆盖且读回值仍等于上次应用值，则回 `ceiling` 并结束覆盖，同样受 5 s 间隔约束；读回值不同则按第 3 条放弃恢复。
+6. `RESTORE`：多客户端、非 H.264、总闸关闭时，**下一次报告的处理里**若已有覆盖且读回值仍等于上次应用值，则回 `ceiling` 并结束覆盖，同样受 5 s 间隔约束；读回值不同则按第 3 条放弃恢复。**`close()` 不恢复**：服务随会话关闭，编码器生命周期与会话相同，关闭时不需要也不应该再写一次码率；`close()` 只做幂等有界关停，关闭后 `offer` 为空操作。
 7. `enabled.getAsBoolean()` 每次 apply 现读；false → `NONE` + `bp.skip`。
 8. `applyTargetBitrate` 抛 `RuntimeException`：吞掉、状态不变、`bp.skip` 增加、失败日志最多每 60 s 一条（`WARN_INTERVAL_MS = 60_000`）。`runPass` 外层再兜底 `RuntimeException`（含总闸 supplier 与 target getter）：记 `bp.skip`（coordinator）、日志同样限流、不冒泡。
 9. 每次真正执行的动作打一行日志（动作、来源值、目标值、深度、等待、追赶、客户端数），**同一动作只一行**。
@@ -891,7 +916,7 @@ public class BackpressureCoordinator implements FeedbackSink {
 
 **Steps:**
 
-- [ ] **Step 1：先写失败用例（54 条）**
+- [x] **Step 1：先写失败用例（54 条）**
 
 `StreamFeedbackTest`（4）：构造拒绝负值、`EMPTY` 全零、getter 回读、不可变。
 `BacklogFeedbackTest`（6）：峰值深度、峰值等待换算毫秒、追赶计数、读取后重置、空快照全零、`hasActivity` 仅在有深度或追赶时为真。
@@ -943,7 +968,7 @@ public class BackpressureCoordinator implements FeedbackSink {
 `StreamCallHandlerTest`（+3，用测试文件内的记录式 `FeedbackSink` 观察；不需要子类化协调器）：未 attach 时反馈被忽略（sink 收到 0 次、无异常、attach 键为 null）、attach 后反馈到达（1 份、未关闭、attach 状态不变）、`close()` 后反馈被丢弃。
 `MetricsFormatterTest`（+2）：`bpKeys_printWhenMeasured`、`fbKeys_omittedWhenZero`。
 
-- [ ] **Step 2：跑红测**
+- [x] **Step 2：跑红测**
 
 ```bash
 ./gradlew :app:testDebugUnitTest --tests '*BackpressurePolicyTest*' --tests '*BackpressureCoordinatorTest*' \
@@ -953,7 +978,7 @@ public class BackpressureCoordinator implements FeedbackSink {
 
 Expected: 编译失败（新增类与 proto 字段缺失）；`ScreenStreamProtoMapperTest` 的“未知载荷”既有用例会因新增分支而变化，按 `feedbackIsDispatchedToListener` 的预期调整，**不得**放宽“无已知载荷仍抛异常”。
 
-- [ ] **Step 3：实现（按依赖顺序）**
+- [x] **Step 3：实现（按依赖顺序）**
 
 1. proto 与模型：`StreamFeedback`（负值拒绝、不可变）。
 2. mapper：两个方向的映射 + `dispatchClientMessage` 的 FEEDBACK 分支；监听器加 `default` 空实现（不加抽象方法，避免所有实现被迫修改）。
@@ -964,7 +989,7 @@ Expected: 编译失败（新增类与 proto 字段缺失）；`ScreenStreamProto
 7. 服务端装配：把协调器创建挪进 `setMetrics()`，用传入的同一个 `PipelineMetrics` 实例（此调用在 `start()` 之前，与既有 `setMetrics` 装配顺序一致）；`stream()` 把同一实例交给 handler；`stop()` 关停协调器。协调器**不得**在 `ScreenShareServer` 构造期创建，否则捕获的是字段默认值 `PipelineMetrics.NONE`。
 8. 指标：三个服务端键、两个客户端键、`bp.bitrate`。
 
-- [ ] **Step 4：跑绿测（定向）**
+- [x] **Step 4：跑绿测（定向）**
 
 ```bash
 ./gradlew :app:testDebugUnitTest --tests '*Backpressure*' --tests '*BacklogFeedbackTest*' \
@@ -972,7 +997,7 @@ Expected: 编译失败（新增类与 proto 字段缺失）；`ScreenStreamProto
   --tests '*StreamCallHandlerTest*' --tests '*MetricsFormatterTest*'
 ```
 
-- [ ] **Step 5：全量 + 仪器编译 + 双变体 lint + 基线**
+- [x] **Step 5：全量 + 仪器编译 + 双变体 lint + 基线**
 
 ```bash
 ./gradlew :app:testDebugUnitTest :app:testReleaseUnitTest
@@ -982,13 +1007,13 @@ python scripts/checks/check_test_count.py --results app/build/test-results/testD
 python scripts/checks/check_cjk.py
 ```
 
-- [ ] **Step 6：文档**
+- [x] **Step 6：文档**
 
 - `docs/media-architecture.md` 新增 §6.5“控制面背压反馈（客户端到服务端）”：字段语义、事件驱动上报（不是恒定 3 s）、5 s 最小间隔、单客户端约束、8 与 64 的分工、外部写入清空覆盖、多客户端只观测。
 - `docs/decision-board.md`：新增 `DB-MULTI-007`；`DV-012` 行补“背压首版仅单客户端，不构成重开理由”。
 - `docs/task-board.md`：新增 `TB-ENG-015` 行与详情块。
 
-- [ ] **Step 7：提交**
+- [x] **Step 7：提交**
 
 ```bash
 git add app/src/main/proto/screen_stream.proto \
@@ -1015,38 +1040,42 @@ git commit -m "feat(server): 单客户端码率背压与观看端积压反馈"
 
 ## B6 文档与看板收口（无行为改动）
 
+> **落地记录（2026-10-24）**：✅ 文档与看板收口完成；本棒同时吸收了 B1–B5 审查遗留的非阻断文档项（B3 事件词表与设备判据、B4 旧因果句、B5 `bp.skip` Javadoc 口径、B1–B5 计划计数回填）。**无产品行为改动**，提交为 `docs(plan): 收口性能候选实施与校准边界`。
+
 **Files:**
 
 - Modify: `docs/superpowers/plans/2026-10-23-performance-candidates.md` — 回填各棒实测测试计数与提交哈希
 - Modify: `docs/decision-board.md` — `DB-CODEC-016`、`DB-POWER-003`、`DB-MULTI-007` 入总览与详情；`DV-011`、`DV-012` 补注
 - Modify: `docs/task-board.md` — `TB-MEDIA-006/007`、`TB-POWER-002`、`TB-CLIENT-007`、`TB-ENG-015` 的状态与证据；`TB-ENG-016` 写明五项进度；“当前焦点”加一行
-- Modify: `docs/performance-research.md` — §4.2 加“落地状态（2026-10-23）”列（第 1 条注明未含 `KEY_OPERATING_RATE` 及原因；第 5 条标“部分落地：仅 `Surface.setFrameRate`，未含 `Display.Mode`”）；§6 标注代码状态与待校准参数；§7 保持“未实测”
-- Modify: `docs/media-architecture.md` — §4.4 / §5.3.1 / §6.5 / §12 失败模式表各补一行
+- Modify: `docs/performance-research.md` — §4.2 加“落地状态（2026-10-23）”列（第 1 条注明未含 `KEY_OPERATING_RATE` 及原因；第 3 条注明阈值未收紧；第 5 条标“部分落地：仅 `Surface.setFrameRate`，未含 `Display.Mode`”）；§6 标注代码状态与待校准参数；§7 保持“未实测”
+- Modify: `docs/media-architecture.md` — §4.4 / §5.3.1 / §6.5 / §12 失败模式表各补一行；§4.4.1 注明“协议与描述符不变”仅指 B3
 - Modify: `docs/superpowers/specs/2026-10-23-performance-candidates-design.md` — 只回填“已落地/未落地”状态行，不改设计结论
-- Modify: `scripts/checks/test_baseline.json` — 定格为最终实测计数
+- Modify: `$MAIN/core/metrics/ServerMetricNames.java` — 仅 Javadoc 补 `bp.skip` 的 external-write / at-floor / coordinator 来源，无行为改动
+- `scripts/checks/test_baseline.json` — **无需修改**：最终实测值 1887/188 已在 B5 提交定格；本棒不增删测试。
 
 **Steps:**
 
-- [ ] **Step 1：核对每棒证据**
+- [x] **Step 1：核对每棒证据**
 
-逐棒检查提交哈希、测试计数、lint 双变体结果、文档条目是否齐全；任何一棒缺证据就保持“待办/部分完成”，**不得**写成已完成。
+逐棒检查提交哈希、测试计数、lint 双变体结果、文档条目是否齐全；任何一棒缺证据就保持“待办/部分完成”，**不得**写成已完成。核对结果：B1–B5 均为代码 + JVM 证据完成、设备验证未做，因此五个分棒统一 🔶 部分完成，`TB-ENG-016` 不再是 📋 待办。交叉核对决策口径：[DB-POWER-003](../../decision-board.md#db-power-003)（只收紧、会话级采样）、[DB-MULTI-007](../../decision-board.md#db-multi-007)（仅单客户端 H.264）、[DV-011](../../decision-board.md)（提示不等于严格限帧）、[DV-021](../../decision-board.md)（三条路径口径、阈值未调）、[DB-OBS-002](../../decision-board.md#db-obs-002)（`rx.catchup*` 覆盖三条路径）均已随对应棒落地，新增 `DB-CODEC-016` 只固化 B2 范围，不改变上述任何一条。
 
-- [ ] **Step 2：写看板**
+- [x] **Step 2：写看板**
 
 每个 ID 一个详情块：交付物、验证命令、实测计数、提交哈希、未完成项（尤其设备验证）。批次总项 `TB-ENG-016` 在五项全部写回代码与 JVM 证据后转 **🔶 部分完成**（设备验证未做，不能转 ✅）；只有五项设备证据都到位才转完成。
 
-- [ ] **Step 3：跑文档与卫生检查**
+- [x] **Step 3：跑文档与卫生检查**
 
 ```bash
 python scripts/checks/check_docs.py
 python scripts/checks/check_strings.py
 python scripts/checks/check_cjk.py
+git diff --check
 git status --short
 ```
 
-Expected: 三个脚本全绿；`git status` 只剩本次要提交的文档与基线。
+Expected: 三个脚本与 `git diff --check` 全绿；`git status` 只剩本次要提交的文档与 `ServerMetricNames.java` 的 Javadoc。
 
-- [ ] **Step 4：提交**
+- [x] **Step 4：提交**
 
 先看清单，再逐文件添加：
 
@@ -1055,12 +1084,12 @@ git status --short
 git add docs/decision-board.md docs/task-board.md docs/performance-research.md \
         docs/media-architecture.md docs/superpowers/plans/2026-10-23-performance-candidates.md \
         docs/superpowers/specs/2026-10-23-performance-candidates-design.md \
-        scripts/checks/test_baseline.json
+        app/src/main/java/com/obby/android/localscreenshare/core/metrics/ServerMetricNames.java
 git diff --cached --stat
-git commit -m "docs(board): 性能候选批次收口与基线定格"
+git commit -m "docs(plan): 收口性能候选实施与校准边界"
 ```
 
-> 本棒只允许文档与 `scripts/checks/test_baseline.json` 变化。若 `git status` 出现任何 `.java`，说明前五棒漏提交，先回到对应棒补提交，不在本棒夹带。
+> 本棒只允许文档与 `ServerMetricNames.java` 的 Javadoc 变化；`test_baseline.json` 在测试数不变时**不动**。若 `git status` 出现其他 `.java` 或 proto，说明前五棒漏提交或本棒越界，先回到对应位置处理。
 
 **回退**：纯文档；未落地的棒必须写成“未实施”，不得删除条目。
 
@@ -1094,7 +1123,7 @@ python scripts/checks/check_docs.py
 
 五项都以“代码 + JVM 用例 + 指标键 + 文档条目”四件套落地；`./gradlew build :app:assembleDebugAndroidTest` 全绿；`lintDebug` 与 `lintRelease` 同时通过；`check_test_count.py` 显示 `tests` 与 `classes` 都不减且 0 失败；`dec.lowLat` 三态可区分、热压力采样随会话与开关正确上下线（无会话时零 1 Hz 定时器）、背压空闲时零定时器；且**没有任何一处**改动 `CatchUpPolicy` 阈值、`SurfaceView` 结构、多档流或 `DV-012` / `DV-027` 的裁决状态。
 
-设备验证不在本计划内，检查点见设计文档 §8；阈值校准必须回填设计文档 §10 与对应策略类的 Javadoc。
+设备验证不在本计划内，检查点见设计文档 §8；阈值校准必须回填设计文档 §10 与对应策略类的 Javadoc。**本次收口只证明代码、JVM 用例、指标键与文档四件套齐全，不证明设备行为、收益或阈值有效。**
 
 ## 附：审查修正落实对照
 
@@ -1135,6 +1164,11 @@ python scripts/checks/check_docs.py
 | 每棒同提交更新测试基线 | 头部说明、每棒 Step 5、统一验证清单 |
 | 用例/类数清点修正 | 本文 §0 与“棒次总览” |
 | 看板登记措辞与裁决的三处对齐 | 本文 §0 |
+| B3 热降档事件词表含 `forecast` / `session-end` | 设计 §4.2、媒体架构 §4.4.1、任务看板 TB-POWER-002 |
+| B3 设备判据补“结束共享后 `session-end` 且下一会话前不带上一会话预测档” | 设计 §8 ②、决策 DB-POWER-003、任务看板 TB-POWER-002 |
+| B4 旧因果句限定“哈希语义失真而非省掉 epoch 重建” | 设计 §2.3 与 §4.4 结尾段 |
+| B5 `bp.skip` Javadoc 补 external-write / at-floor / coordinator | `ServerMetricNames.BP_SKIP` Javadoc |
+| B5 `close()` 不恢复码率 | 本文 B5 Decision semantics 6、设计 §4.5、决策 DB-MULTI-007 |
 
 ### 终审必改 8 项（2026-10-23 已落实）
 

@@ -21,14 +21,16 @@
 
 ## 🎯 当前焦点
 
+- 2026-10-24 · 性能候选 B1–B5 代码完成，待设备校准（[TB-ENG-016](#tb-eng-016)）
 - 2026-10-23 · 性能候选获用户批准：五项进入实施计划，`SurfaceView` 另立评估（[TB-ENG-016](#tb-eng-016)）
 - 2026-10-23 · TB-ENG-013 第 18 项 r4 设备复验：JPEG+UDP 出帧与速率恢复，冷启动及连续短连接无 0fps；r3 零帧未复现但不等同消失（[TB-ENG-013](#tb-eng-013)、[TB-MEDIA-008](#tb-media-008)）
 - 2026-10-23 · 回归 r2 两条观察修复：JPEG+UDP 重组窗口已在 r4 复验通过/基本通过，音频水位闭锁仍待设备复验（[TB-NET-003](#tb-net-003)、[TB-AUDIO-003](#tb-audio-003)、[TB-MEDIA-008](#tb-media-008)）
 - 2026-10-23 · TB-ENG-013 r2 补测：第 17 项两条修复设备验证通过，另立两条观察（[TB-ENG-013](#tb-eng-013)）
 - 2026-10-23 · TB-ENG-013 首轮统一回归：两条新缺陷（观看中关闭崩溃、窗口恒 SECURE）已定位（[TB-ENG-013](#tb-eng-013)）
-- 2026-10-23 · 首轮回归两条新缺陷修复：关闭移出主线程、画面私密标志独立传递，r2 设备验证通过（[TB-NET-003](#tb-net-003)、[TB-SEC-003](#tb-sec-003)、[TB-ENG-013](#tb-eng-013)）
 
-<details><summary>更早焦点（2026-10-20 ～ 2026-10-23，共 71 条）</summary>
+<details><summary>更早焦点（2026-10-20 ～ 2026-10-23，共 72 条）</summary>
+
+- 2026-10-23 · 首轮回归两条新缺陷修复：关闭移出主线程、画面私密标志独立传递，r2 设备验证通过（[TB-NET-003](#tb-net-003)、[TB-SEC-003](#tb-sec-003)、[TB-ENG-013](#tb-eng-013)）
 
 - 2026-10-23 · TB-NET-003 r5 §4 一次性异常定性：回退链候选窗口与客户端串行化不匹配，已修复（[TB-NET-003](#tb-net-003)）
 - 2026-10-23 · TB-NET-003 r5 终验：gRPC-only 强制基线通过，第 16 项转完成（[TB-NET-003](#tb-net-003)、[TB-ENG-013](#tb-eng-013)）
@@ -116,11 +118,11 @@
 
 | ID | 状态 | 优先级 | 标题 | 创建 | 完成 | 关联 |
 | --- | --- | --- | --- | --- | --- | --- |
-| TB-ENG-016 | 📋 待办 | 🟠 P1 | 性能候选实施批次（用户 2026-10-23 批准五项：解码低延迟参数、刷新率匹配、热余量预测降档、追赶采样覆盖修复（原「阈值收紧」已改写，阈值不动）、背压回传；`SurfaceView` 另立评估，不在本批） | 2026-10-23 | — | [性能优化调研](performance-research.md) |
-| TB-ENG-015 | 🔶 部分完成 | 🟠 P1 | 单客户端观看积压回传码率背压（`StreamFeedback` 事件驱动上报；仅单客户端 + H.264 降/升码率；多客户端与非 H.264 只观测；阈值待设备校准） | 2026-10-24 | — | [决策 DB-MULTI-007](decision-board.md#db-multi-007) |
+| TB-ENG-016 | 🔶 部分完成 | 🟠 P1 | 性能候选实施批次（五项 B1–B5 代码与 JVM 验证完成，**设备验证与阈值校准未做**：解码低延迟参数、内容帧率提示、热余量预测降档、追赶采样覆盖修复、背压回传；`SurfaceView` 另立评估，不在本批） | 2026-10-23 | — | [性能优化调研](performance-research.md) |
+| TB-ENG-015 | 🔶 部分完成 | 🟠 P1 | 单客户端观看积压回传码率背压（`StreamFeedback` 事件驱动上报；仅单客户端 + H.264 降/升码率；多客户端与非 H.264 只观测；代码完成，设备与阈值校准未做） | 2026-10-24 | — | [决策 DB-MULTI-007](decision-board.md#db-multi-007) |
 | TB-MEDIA-006 | 🔶 部分完成 | 🟠 P1 | 客户端解码器低延迟参数（`KEY_LOW_LATENCY` + `KEY_PRIORITY`，API 30+ 请求、三级回退、`dec.lowLat` 三态；**未含** `KEY_OPERATING_RATE`；代码完成，设备验证与收益实测未做） | 2026-10-23 | — | [TB-ENG-016](#tb-eng-016) |
 | TB-CLIENT-007 | 🔶 部分完成 | 🟠 P1 | 追赶采样覆盖修复（`CatchUpSampler` 统一 gRPC/媒体通道/丢片三条路径；丢片以外部追赶计入 `rx.catchup` 但不占连续预算；阈值未收紧、HOLD 语义未改；代码完成，设备复验未做） | 2026-10-23 | — | [TB-ENG-016](#tb-eng-016) |
-| TB-POWER-002 | 🔶 部分完成 | 🟠 P1 | 热余量预测降档（API 30 `getThermalHeadroom(10)`；预测与状态取严格档、≤1 Hz、会话级 arm/disarm、开关关闭立即恢复；`thermalHeadroom` / `thermalTier`；阈值待设备校准） | 2026-10-23 | — | [决策 DB-POWER-003](decision-board.md#db-power-003) |
+| TB-POWER-002 | 🔶 部分完成 | 🟠 P1 | 热余量预测降档（API 30 `getThermalHeadroom(10)`；预测与状态取严格档、≤1 Hz、会话级 arm/disarm、开关关闭立即恢复；`thermalHeadroom` / `thermalTier`；代码完成，设备与阈值校准未做） | 2026-10-23 | — | [决策 DB-POWER-003](decision-board.md#db-power-003) |
 | TB-MEDIA-007 | 🔶 部分完成 | 🟠 P1 | 客户端内容帧率提示（描述符 `frame_rate` + `Surface.setFrameRate`，API 30 两参 / API 31+ seamless；不进配置哈希；`0`=清除且不重放；**未含** `Display.Mode`；代码完成，设备验证与收益实测未做） | 2026-10-23 | — | [TB-ENG-016](#tb-eng-016) |
 | TB-MEDIA-008 | 🔶 部分完成 | 🟠 P1 | JPEG+UDP 重组窗口抖动容忍修复（代码完成；r4 设备复验判据 1/2/3/5 通过、4 基本满足；待校准参数与残余项保留） | 2026-10-23 | — | [TB-ENG-013](#tb-eng-013) |
 | TB-SEC-002 | 🔶 部分完成 | 🔴 P0 | 身份密钥瞬时故障静默删键与三份身份快照（N3；代码完成，设备复测待棒） | 2026-10-21 | — | [决策 DB-SEC-003](decision-board.md#db-sec-003) |
@@ -230,19 +232,20 @@
 ### 📋 待办条目
 
 <a id="tb-eng-016"></a>
-<details><summary>TB-ENG-016 性能候选实施批次（📋 待办 · 五项已获用户批准，`SurfaceView` 不在本批）</summary>
+<details><summary>TB-ENG-016 性能候选实施批次（🔶 部分完成 · B1–B5 代码与 JVM 验证完成，设备验证与阈值校准未做）</summary>
 
-- **状态 / 优先级 / 创建 / 完成**：📋 待办（用户已批准实施范围，代码未开始）/ 🟠 P1 / 2026-10-23 / —
+- **状态 / 优先级 / 创建 / 完成**：🔶 部分完成（五项代码与 JVM 证据已落地；设备验证、阈值校准与收益实测未做）/ 🟠 P1 / 2026-10-23 / —
 - **来源**：[性能优化业界调研](performance-research.md) §4.2 的候选清单与交接 §2.2 的「性能调研候选棒」；2026-10-23 用户裁决：批准其中五项开工，`SurfaceView` 另立评估。
-- **已批准的五项**（各占独立分棒 ID，实施时合并跟踪进度，不重复计算完成率；分棒详情块在各自落棒时补）：
+- **已批准的五项**（各占独立分棒 ID，实施时合并跟踪进度，不重复计算完成率；分棒详情块均已补齐）：
   1. `TB-MEDIA-006` **客户端解码器低延迟参数**（2026-10-23 按范围裁决改写为“两键 + 未含项”）：`KEY_LOW_LATENCY`（API 30+）与 `KEY_PRIORITY`（实时优先级）；**未含** `KEY_OPERATING_RATE`——解码侧目标帧率需要新的描述符契约，会与 B4 的内容帧率提示重复定义。厂商拒绝时按“全键 → 去优先级 → 全去”三级回退，`dec.lowLat` 三态上报。依据 §4.2 #1 与 §5。
   2. `TB-MEDIA-007` **显示刷新率/帧率匹配**：客户端呈现面 `Surface.setFrameRate(fps)`，刷新率非整数倍时再评估切 `Display.Mode`；消除 3:2 节奏抖动。**2026-10-24 部分落地**：描述符下发 `frame_rate` + 客户端 `Surface.setFrameRate` 提示（见 [TB-MEDIA-007](#tb-media-007)）；`Display.Mode` 切换仍未做。依据 §4.2 #5、§6 触发条件 4。
   3. `TB-POWER-002` **热余量预测降档**：`PowerManager.getThermalHeadroom(10)` ≥0.7 与 ≥0.85 两级，早于 `SEVERE` 的「撞墙式」掉帧。依据 §4.2 #6、§6 触发条件 3。
   4. `TB-CLIENT-007` **追赶采样覆盖修复 + 丢片并轨**（原登记为「收紧追赶阈值 + 自适应队列」，2026-10-23 按主裁决改写）：`CatchUpSampler` 统一 gRPC、专用媒体通道与丢片三条路径，丢片以外部追赶计入 `rx.catchup`/`rx.catchup.lat`（reason=`ext`）但**不占**连续失败预算、不设冷却、不启动收敛计时；`CatchUpPolicy` 的阈值与判定顺序一律不收紧，HOLD 语义与 [DV-027](decision-board.md) 状态不变。依据 §4.2 #3。
   5. `TB-ENG-015` **背压回传编码端**：客户端上报队列深度与迟到帧比例 → 服务端降 fps 或 `PARAMETER_KEY_VIDEO_BITRATE`；在爬升前介入，比事后追赶平滑。依据 §4.2 #4。**2026-10-24 部分落地**：走控制面 `StreamFeedback` + 单客户端 H.264 运行时码率（见 [TB-ENG-015](#tb-eng-015)、[DB-MULTI-007](decision-board.md#db-multi-007)）；多客户端只观测，阈值待设备校准。
+- **进度（2026-10-24）**：五项均已完成代码与 JVM 用例，状态统一 🔶 部分完成——[TB-MEDIA-006](#tb-media-006)、[TB-CLIENT-007](#tb-client-007)、[TB-POWER-002](#tb-power-002)、[TB-MEDIA-007](#tb-media-007)、[TB-ENG-015](#tb-eng-015)。**没有任何一项做了设备验证或阈值校准**，因此本批次不能转 ✅。
 - **不实施 / 另行评估的边界**：`SurfaceView` 取代 `TextureView`（§4.2 #2）**不在本批**——它改双宿主视图结构与快照过渡，须单独评估后再定，也不得与上述五项合并成一次改动。§4.3 的八条「未做且不推荐」、§4.2 #7 之后的编码器运行时参数、指标补全、编码器异常恢复、UDP 上的 FEC/NACK 等项均不在本批范围。
 - **口径约束**：① 追赶采样口径变化（本轮为**采样覆盖修复 + 丢片并轨**，不是阈值收紧）会改 `rx.catchup*` / `rx.converge.fail` 的观察口径，落棒时必须写机制理由并同步决策板 `DV-021` 与 [DB-OBS-002](decision-board.md#db-obs-002)（判据改写先例见 N-r2-2）；② 热余量阈值、`setFrameRate` 参数与队列上限默认标 **待设备校准**，不得写成已验证；③ 背压回传只改服务端编码参数，不新建通道、不引入新依赖。
-- **完成判据**：五项各自落地并有 JVM 证据与设备点位，且分别写回自己的条目；五项全部写回后本批次总项转 ✅，在此之前保持 📋 待办。
+- **完成判据**：五项各自落地并有 JVM 证据与设备点位，且分别写回自己的条目；代码与 JVM 证据齐全只能转 🔶 部分完成，只有五项设备证据都到位才转 ✅。
 - **关联文档**：[性能优化调研](performance-research.md)、[TB-POWER-001](#tb-power-001)、[TB-CLIENT-005](#tb-client-005)、[TB-OBS-001](#tb-obs-001)
 
 </details>
@@ -259,8 +262,8 @@
   - 服务端执行：`BitrateTarget` / `RuntimeBitrateTarget` / `FeedbackSink` / `BackpressureCoordinator`；生产惰性单线程 `lss-backpressure`、测试注入 Executor、最新值胜出、`AtomicBoolean` 排程、编码器异常与协调器自身 RuntimeException 均吞掉且失败日志每 60 s 一条、RESTORE 前也检测外部写入、降档目标等于当前码率时不调用编码器、`close()` 幂等有界；`NONE` 与关闭后 offer 空操作。
   - 装配：`ScreenShareServer.setMetrics()` 内用同一个 `PipelineMetrics` 创建协调器，`stream()` 交给 handler，`stop()` 关停；handler 同步区内只做 attach 门控与 proto→模型拷贝，同步区外 offer。
   - 指标与开关：`bp.apply` / `bp.skip` / `bp.bitrate`（服务端恰 20 键）、`fb.sent` / `fb.skip`（客户端域）、隐藏键 `backpressure`（默认开、`BooleanSupplier` 现读）。
-- **语义要点**：多客户端、非 H.264、总闸关闭只观测并记 `bp.skip`；已有覆盖时回上限并结束覆盖。外部写入（读回值 ≠ 上次应用值）清空覆盖、不回升、不重试，RESTORE 前同样检测。HOLD 报告不降档、不累计 CLEAR。回升一步回上限。未 attach 的反馈不解析、不 offer。
-- **验证证据**：定向用例 `BackpressurePolicyTest`（17）、`BackpressureCoordinatorTest`（16）、`BacklogFeedbackTest`（6）、`StreamFeedbackTest`（4）、`RuntimeBitrateTargetTest`（3），以及 mapper +3、handler +3、formatter +2，共 **54 条**；TDD：H1 先红（缺失 `HOLD` 与 `decide` 新签名，20 个编译错误），M1/M2/L3 再红（6 条断言失败），修正后定向全绿；双变体全量 **1887 tests / 188 classes、0 失败 / 0 错误 / 0 跳过**；`lintDebug` 与 `lintRelease` 通过；`check_cjk` / `check_strings` / `check_docs` 通过；`./gradlew build :app:assembleDebugAndroidTest` 通过。
+- **语义要点**：多客户端、非 H.264、总闸关闭只观测并记 `bp.skip`；已有覆盖时回上限并结束覆盖。外部写入（读回值 ≠ 上次应用值）清空覆盖、不回升、不重试，RESTORE 前同样检测。`close()` **不恢复码率**——服务随会话关闭，编码器生命周期与会话相同，关闭只做幂等有界关停。HOLD 报告不降档、不累计 CLEAR。回升一步回上限。未 attach 的反馈不解析、不 offer。
+- **验证证据**：提交 `4325c0a`、`f74bb7c`。定向用例 `BackpressurePolicyTest`（17）、`BackpressureCoordinatorTest`（16）、`BacklogFeedbackTest`（6）、`StreamFeedbackTest`（4）、`RuntimeBitrateTargetTest`（3），以及 mapper +3、handler +3、formatter +2，共 **54 条 / 5 个新类**；TDD：H1 先红（缺失 `HOLD` 与 `decide` 新签名，20 个编译错误），M1/M2/L3 再红（6 条断言失败），修正后定向全绿；双变体全量 **1887 tests / 188 classes、0 失败 / 0 错误 / 0 跳过**；`lintDebug` 与 `lintRelease` 通过；`check_cjk` / `check_strings` / `check_docs` 通过；`./gradlew build :app:assembleDebugAndroidTest` 通过。
 - **未完成项**：阈值与步进全部**待设备校准**（`8 / 400 ms / 2 / 100 ms / 75% / 40% / 5 s`）；真实弱网收益与功耗影响未实测；多客户端只观测，不做任何多客户端动作。
 - **关联文档**：[媒体架构 §6.5](media-architecture.md)、[性能候选设计 §4.5 / §6.5](superpowers/specs/2026-10-23-performance-candidates-design.md)、[DB-MULTI-007](decision-board.md#db-multi-007)、[TB-ENG-016](#tb-eng-016)
 
@@ -277,7 +280,7 @@
   - `H264Decoder.configure`：`configure` 与 `start` **整体成功之后**一次性写 `dec.lowLat`；`APPLIED` / `APPLIED_WITHOUT_PRIORITY` → 1，`REJECTED` → 2，`NOT_REQUESTED` 不写。失败路径不写，热路径无探针。
   - `H264Decoder.close`：把本解码器写过的 `dec.lowLat` 清零（`NOT_REQUESTED` 未写过，`close` 不触碰），避免同一指标作用域在 `H.264 → JPEG` 之后继续打印上一解码器的值；`LowLatencyState` 与 `PipelineMetrics.Gauge.DECODER_LOW_LATENCY` 的 Javadoc 同步改为“枚举四态、上报值三态”。
   - `PipelineMetrics.Gauge.DECODER_LOW_LATENCY`、`DecoderMetricNames.DEC_LOW_LATENCY = "dec.lowLat"`、格式化器客户端行（0 不打印、1/2 打印）。`ClientMetricNames` 未追加。
-- **验证**：`AndroidMediaCodecDecoderBridgeTest`（6 条）、`H264DecoderTest`（+5）、`MetricsFormatterTest`（+2）。TDD：先写用例，红测为编译失败（`LowLatencyState`、`configureWithFallback`、`Gauge.DECODER_LOW_LATENCY`、`setNextDecoderLowLatencyState` 缺失，共 43 个错误）；实现后定向用例全绿。双变体全量 **1788 tests / 180 classes，0 失败 / 0 错误 / 0 跳过**（基线同提交更新为实测值）。B2 复核补 `close` 清零 3 条用例（先红 2 条失败、后绿，`H264DecoderTest` 36 条），双变体全量 **1791 tests / 180 classes，0 失败 / 0 错误 / 0 跳过**（基线同提交更新）。
+- **验证**：提交 `56ffb75`、`65287c4`、`8c4a694`。`AndroidMediaCodecDecoderBridgeTest`（6 条）、`H264DecoderTest`（+8，含 `close` 清零 3 条）、`MetricsFormatterTest`（+2），共 **16 条**。TDD：先写用例，红测为编译失败（`LowLatencyState`、`configureWithFallback`、`Gauge.DECODER_LOW_LATENCY`、`setNextDecoderLowLatencyState` 缺失，共 43 个错误）；实现后定向用例全绿。双变体全量 **1788 tests / 180 classes，0 失败 / 0 错误 / 0 跳过**（基线同提交更新为实测值）。B2 复核补 `close` 清零 3 条用例（先红 2 条失败、后绿，`H264DecoderTest` 36 条），双变体全量 **1791 tests / 180 classes，0 失败 / 0 错误 / 0 跳过**（基线同提交更新）。
 - **收益未实测**：本项只证明“请求与回退按预期执行、三态可区分”，`dec.lat` 的改善幅度、功耗与温升影响均未测量，不得据此宣称延迟改善。
 - **未完成**：设备验证——API 30+ 机型出现 `dec.lowLat=1`（含只保留低延迟的情形）、厂商拒绝时出现 `2`、API < 30 机型不打印；以及收益实测（`dec.lat.p50/p95` 前后对照）。
 - **关联文档**：[性能优化调研 §4.2 #1、§6](performance-research.md)、[性能候选设计 §4.1](superpowers/specs/2026-10-23-performance-candidates-design.md)、[TB-ENG-016](#tb-eng-016)
@@ -295,7 +298,7 @@
   - `ScreenShareClient` 的 gRPC 路径与专用媒体通道 `onAccessUnit` 共用 `sampleCatchUp` / `handleCatchUpResult`；丢片 `onCatchUp` 经 `onExternalCatchUp` 并轨并计 `rx.catchup` 与 `rx.catchup.why=ext`；丢片路径仍不自行请求关键帧。
   - 丢片记账边界（2026-10-23 独立审查修正）：丢片先以会话 `onCatchUp()` 的返回值 gate——configure 前或关闭后返回 false，此时不增 `rx.catchup`、不写 `why=ext`、不递增追赶代数、不打开采样器 episode；`lossNs` 在投递 decode executor 之前取定并在任务内复用；外部 episode 结束只记 `rx.catchup.lat`，不再用 `String.format` 拼日志。30 s HOLD 内丢片仍触发会话重同步，但采样器不新增 episode、不改 `rx.catchup` / `rx.catchup.lat` / `why`；这是有意边界，依据 [DV-027](decision-board.md)，本轮不改 HOLD 状态机。
   - `PipelineMetrics.CATCH_UP_REASON_EXTERNAL = 3`、`CatchUpMetricNames.REASON_EXTERNAL = "ext"`、格式化器 `ext` 分支。
-- **验证**：`CatchUpSamplerTest`（15 条，含普通 NONE 路径复用同一 `Result` 的 `assertSame`）、`CatchUpPolicyTest`（17 条，含 HOLD 期 `onExternalCatchUp` 不改状态与原因）、`ExternalCatchUpRecorderTest`（4 条，覆盖 configure 前 / 关闭后 / 停止后不记账与排队延迟不缩短 episode）、`MetricsFormatterTest`（+1）。TDD：`ExternalCatchUpRecorderTest` 在修正前 3 条失败（configure 前、关闭后、检出时刻），修正后全绿。双变体全量 **1775 tests / 179 classes，0 失败 / 0 错误 / 0 跳过**（基线同提交更新为实测值）；`./gradlew build :app:assembleDebugAndroidTest` 全绿。
+- **验证**：提交 `9e0f911`、`babfff7`、`2a932a6`。`CatchUpSamplerTest`（15 条，含普通 NONE 路径复用同一 `Result` 的 `assertSame`）、`CatchUpPolicyTest`（+5，含 HOLD 期 `onExternalCatchUp` 不改状态与原因）、`ExternalCatchUpRecorderTest`（4 条，覆盖 configure 前 / 关闭后 / 停止后不记账与排队延迟不缩短 episode）、`MetricsFormatterTest`（+1），共 **25 条 / 2 个新类**。TDD：`ExternalCatchUpRecorderTest` 在修正前 3 条失败（configure 前、关闭后、检出时刻），修正后全绿。双变体全量 **1775 tests / 179 classes，0 失败 / 0 错误 / 0 跳过**（基线同提交更新为实测值）；`./gradlew build :app:assembleDebugAndroidTest` 全绿。
 - **DV-027 风险（未裁决，必须登记）**：B1 之前 TCP/UDP 档几乎不会进入收敛失败路径；B1 之后默认档的负载追赶会正常走到 `rx.converge.fail` → 30 s HOLD，HOLD 期滞后无界增长与约 12 s 同一帧的取舍仍按 [DV-027](decision-board.md) 未裁决处理。**本轮不收紧任何阈值，也不改变 HOLD 语义**。设备复验须在 `rx.converge.fail` 后同时记录 `freeze` 与 `pres.drop`，并观察 `rx.catchup.why=ext` 的占比是否掩盖解码赤字（设备项 ③）。
 - **未完成**：设备验证——TCP/UDP 两档出现 `rx.catchup`/`rx.catchup.lat`、丢片 reason=`ext`、HOLD 期表现与回滚判据。
 - **关联文档**：[媒体架构 §5.3.1](media-architecture.md)、[性能候选设计 §4.3](superpowers/specs/2026-10-23-performance-candidates-design.md)、[DB-OBS-002](decision-board.md#db-obs-002)、[DV-027](decision-board.md)、[TB-CLIENT-005](#tb-client-005)
@@ -313,8 +316,9 @@
   - `service/ThermalMonitor.getThermalHeadroom(int)`：方法级 `@RequiresApi(30)`，调用点显式 `Build.VERSION.SDK_INT >= 30`；平台异常与缺失服务返回 NaN。
   - `service/ScreenShareService`：`armThermalHeadroomPolling()` 入口同时要求 API 30+、开关打开、monitor 非空、`mStreamRuntime` 非空，先 `removeCallbacks` 再 `postDelayed`（幂等）；`startStreamPipeline()` 成功路径 arm，每次 teardown 的 `cancelScheduledWork()` 与 `onDestroy` 的 `stopThermalMonitor()` disarm 并 `reset`；tick 先重读开关，关闭时回 `NONE` + disarm 且不 re-arm；开关关闭立即回 `NONE` + disarm，开关打开立即采样一次、仅在会话运行中重新 arm；disarm 在 reset 预测档后把已生效档位回落为 `tierAtSessionEnd(开关, 当前状态)`（无状态档与开关关闭均为 `NONE`），且只改档位与快照、不触碰正在拆除的管线；`sampler` 用 `ThermalHeadroomPolicy.isValid` 判定有效域，写千分比与档位 gauge，有效样本才写 `thermalTier`。
   - 指标：`PipelineMetrics.Gauge.THERMAL_HEADROOM_PERMILLE` / `THERMAL_TIER`、`ServerMetricNames.THERMAL_HEADROOM="thermalHeadroom"` / `THERMAL_TIER="thermalTier"`、服务端行格式化（0 不打印）。`ServerMetricNames` 的 Javadoc 记下本批 20 键上限与拆域规则；未改 `ClientMetricNames`。
-- **验证**：`ThermalHeadroomPolicyTest`（13 条，含 reset 后用 `1.5f` 的正向对照与 `isValid` 域断言）、`ThermalThrottlePolicyTest`（+5，含 3×3 组合、交换律、“不减档”与会话边界 `tierAtSessionEnd`）、`MetricsFormatterTest`（+2）。TDD：先写用例，红测为编译失败（`ThermalHeadroomPolicy.isValid`、`ThermalThrottlePolicy.tierAtSessionEnd` 缺失，共 10 个错误）；实现后定向用例全绿。双变体全量 **1811 tests / 181 classes**，0 失败 / 0 错误 / 0 跳过（基线同提交更新为实测值）；`:app:lintDebug` 0 errors / 145 warnings、`:app:lintRelease` 0 errors / 135 warnings 均通过；`./gradlew build :app:assembleDebugAndroidTest` 通过；`check_test_count` / `check_cjk` / `check_strings` / `check_docs` 通过。
-- **未完成**：设备项 ②（注入温升后 `thermalHeadroom` 单调上升、降档早于平台高热状态、回落不抖动、开关关闭后无 1 Hz 采样痕迹、未开始共享时切换开关只产生一次立即采样）；0.70 / 0.85 与 0.60 / 0.78 阈值按[性能候选设计 §10](superpowers/specs/2026-10-23-performance-candidates-design.md) 回填，**当前不得写成已验证**。
+  - 事件词表：`thermal: event=throttle|recover|disabled|forecast|status|session-end`——状态降档 / 状态回落 / 开关关闭 / 预测样本生效 / 无效样本按状态 / 会话 teardown；`session-end` 表示轮询下线且生效档回落为状态档，下一会话不继承上一会话的预测档。设备判据中该词与“下一会话前不带上一会话预测档”成对出现。
+- **验证**：提交 `14860de`、`c6b775c`。`ThermalHeadroomPolicyTest`（13 条，含 reset 后用 `1.5f` 的正向对照与 `isValid` 域断言）、`ThermalThrottlePolicyTest`（+5，含 3×3 组合、交换律、“不减档”与会话边界 `tierAtSessionEnd`）、`MetricsFormatterTest`（+2），共 **20 条**。TDD：先写用例，红测为编译失败（`ThermalHeadroomPolicy.isValid`、`ThermalThrottlePolicy.tierAtSessionEnd` 缺失，共 10 个错误）；实现后定向用例全绿。双变体全量 **1811 tests / 181 classes**，0 失败 / 0 错误 / 0 跳过（基线同提交更新为实测值）；`:app:lintDebug` 0 errors / 145 warnings、`:app:lintRelease` 0 errors / 135 warnings 均通过；`./gradlew build :app:assembleDebugAndroidTest` 通过；`check_test_count` / `check_cjk` / `check_strings` / `check_docs` 通过。
+- **未完成**：设备项 ②（注入温升后 `thermalHeadroom` 单调上升、降档早于平台高热状态、回落不抖动、开关关闭后无 1 Hz 采样痕迹、未开始共享时切换开关只产生一次立即采样、**结束共享后出现 `event=session-end` 且下一会话开始前不带上一会话预测档**）；0.70 / 0.85 与 0.60 / 0.78 阈值按[性能候选设计 §10](superpowers/specs/2026-10-23-performance-candidates-design.md) 回填，**当前不得写成已验证**。
 - **回退**：恢复“只按平台状态取档”，删除 `startStreamPipeline()` 与开关打开分支的 arm 调用点；策略类与两个指标可保留（没有 arm 就不会采样）。代码与文档口径必须同一次回滚。
 - **关联文档**：[性能候选设计 §4.2/§6.4/§8/§10](superpowers/specs/2026-10-23-performance-candidates-design.md)、[性能优化调研 §4.2 #6/§6](performance-research.md)、[媒体架构 §4.4.1](media-architecture.md)、[DB-POWER-003](decision-board.md#db-power-003)、[DB-POWER-001](decision-board.md#db-power-001)、[DV-024](decision-board.md)
 
@@ -332,7 +336,7 @@
   - 客户端呈现：`core/render/RenderTarget.setFrameRate(int)` 空默认实现；`render/FrameRatePolicy`（纯 JVM）按 API 选择两参（30）或 seamless 三参（31+），低于 30 与非正值不调用，异常冒泡给调用方，`applyFrameRate` 与 `FrameRateApplier` 均为包私有；`SurfaceRenderTarget` 的 `surface` / `frameRate` 改 `volatile`，同一 surface 同值不重发、`getSurface()` 新建 surface 后先把 `appliedFrameRate` 清 0 再补发一次（同值早退不会漏到新 surface）、`RuntimeException` 吞掉、`0` 清除且不重放；`HostRenderTarget` 只转 surface 半边；`SwitchableRenderTarget` 同值幂等、`setDelegate` 仅在值 > 0 时重放。
   - `core/client/ClientMediaSession`：`applyDescriptor` 在 `setContentSize` 之后、创建解码器之前，仅 `isSurfaceOutputRequired()` 时下发；“同 epoch 同 hash 但帧率不同”的防御分支更新描述符并下发、返回 `false`、不重建解码器（当前端到端不可达，只由 JVM 用例覆盖）。
   - `core/support/FakeRenderTarget` 记录 `setFrameRate` 调用序列，供 JPEG 负向用例断言 0 次。
-- **验证**：`StreamDescriptorTest`（+4）、`ScreenStreamProtoMapperTest`（+4）、`ClientMediaSessionSurfaceTest`（+2，正向）、`ClientMediaSessionTest`（+1，JPEG 负向）、`SwitchableRenderTargetTest`（+3）、`HostRenderTargetTest`（+1），新增 `FrameRatePolicyTest`（6 条）与 `SurfaceRenderTargetTest`（1 条：新 surface 不继承上一面的 `appliedFrameRate`，因此同值早退不会漏到新 surface；真实平台调用仍需设备验证）。TDD：先写用例，红测为编译失败（proto 字段、`getFrameRate`/`frameRate`、`setFrameRate` 默认方法、`FrameRatePolicy` 缺失，共 39 个错误）；审查修正的新 surface 用例先红（`appliedFrameRate` 断言期望 0、实测 60），加上 `appliedFrameRate = 0` 后转绿；实现后定向用例全绿。双变体全量 **1833 tests / 183 classes**，0 失败 / 0 错误 / 0 跳过（基线同提交更新为实测值）；`:app:lintDebug` / `:app:lintRelease`、`./gradlew build :app:assembleDebugAndroidTest`、`check_test_count` / `check_cjk` / `check_strings` / `check_docs` 全部通过。
+- **验证**：提交 `4aa762e`、`bf93d03`。`StreamDescriptorTest`（+4）、`ScreenStreamProtoMapperTest`（+4）、`ClientMediaSessionSurfaceTest`（+2，正向）、`ClientMediaSessionTest`（+1，JPEG 负向）、`SwitchableRenderTargetTest`（+3）、`HostRenderTargetTest`（+1），新增 `FrameRatePolicyTest`（6 条）与 `SurfaceRenderTargetTest`（1 条：新 surface 不继承上一面的 `appliedFrameRate`，因此同值早退不会漏到新 surface；真实平台调用仍需设备验证），共 **22 条 / 2 个新类**。TDD：先写用例，红测为编译失败（proto 字段、`getFrameRate`/`frameRate`、`setFrameRate` 默认方法、`FrameRatePolicy` 缺失，共 39 个错误）；审查修正的新 surface 用例先红（`appliedFrameRate` 断言期望 0、实测 60），加上 `appliedFrameRate = 0` 后转绿；实现后定向用例全绿。双变体全量 **1833 tests / 183 classes**，0 失败 / 0 错误 / 0 跳过（基线同提交更新为实测值）；`:app:lintDebug` / `:app:lintRelease`、`./gradlew build :app:assembleDebugAndroidTest`、`check_test_count` / `check_cjk` / `check_strings` / `check_docs` 全部通过。
 - **收益未实测**：本项只证明“提示按裁决下发与呈现、`0` 与同值边界正确”，非整数倍刷新率下的节奏抖动是否改善、面板功耗是否下降均未测量，不得据此宣称画面更平滑。
 - **未完成**：设备验证——API 30/31+ 机型上描述符帧率生效、`0` 不残留、宿主切换后重放一次、API < 30 无调用痕迹；以及收益实测与 `setFrameRate` 取值校准（待设备校准）。`Display.Mode` 切换与 `SurfaceView` 替换均不在本项。
 - **回退**：两处独立开关——客户端不下发（去掉 `applyDescriptor` 的 `setFrameRate`）或服务端不填（去掉 `buildRequestedDescriptor` 的 `frameRate`）；字段与映射保留无害：旧服务端不填时新客户端读 0，旧客户端对新增字段按 proto3 未知字段忽略。

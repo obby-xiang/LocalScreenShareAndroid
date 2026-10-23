@@ -82,6 +82,7 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | DB-CODEC-015 | ❌ 已否决 | 采集编码 | 不引入 HEVC（H.264 保底已覆盖目标场景；编解码扩展点保留） | 2026-10-22 | — | [任务看板](task-board.md#tb-fw-007) |
 | DB-MULTI-007 | 🔶 已裁决·代码已实施 | 传输会话 | 单客户端观看积压回传码率背压（多客户端与非 H.264 只观测；阈值待设备校准） | 2026-10-24 | — | [任务看板](task-board.md#tb-eng-015) |
+| DB-CODEC-016 | 🔶 已裁决·代码已实施 | 采集编码 | 解码低延迟只请求两键、三级回退、三态上报（未含 `KEY_OPERATING_RATE`；设备未验证） | 2026-10-23 | — | [任务看板](task-board.md#tb-media-006) |
 | DB-MULTI-006 | ❌ 已否决 | 传输会话 | 不做多档流，保持单流 | 2026-10-22 | — | [任务看板](task-board.md#tb-client-002) |
 | DB-NET-003 | 🔶 已裁决·代码已实施 | 传输会话 | 三档媒体面：控制面 gRPC / 裸 TCP 主力 / UDP 弱网实验档（默认关） | 2026-10-22 | — | [任务看板](task-board.md#tb-net-003) |
 | DB-SEC-005 | ✔️ 已裁决·当前实现符合 | 平台安全 | 接受「仅可信局域网」现状安全边界（PIN/扫码配对与会话令牌不做） | 2026-10-22 | — | [任务看板](task-board.md#tb-sec-001) |
@@ -211,7 +212,7 @@
 - **备注**：代码与 JVM 用例已落地（实施证据见任务看板 [TB-POWER-002](task-board.md#tb-power-002)）；设备侧的阈值触发点、降档时刻与功耗口径未验证
 - **当前裁决**：在既有热状态阶梯之上增加 `PowerManager.getThermalHeadroom(10)`（API 30+）预测，但只允许**收紧**档位。平台返回值是热压力比值——`1.0` 表示平台开始限流、`>1.0` 表示已经限流、越大越热——所以指标 `thermalHeadroom` 按千分比记录热压力：`Math.round(headroom * 1000f)`，值域 0–2000，`>1000` **不钳制**；有效样本域是 `[0, 2]`，NaN 与越界值忽略、档位不变。阈值：进入 `REDUCED` 700‰、进入 `MINIMAL` 850‰、退出 `MINIMAL` 780‰、退出 `REDUCED` 600‰，**全部待设备校准**。预测档与状态档经 `ThermalThrottlePolicy.stricter` 合并，结果恒不弱于任一入参：状态已要求的档位不会被预测回落放宽；样本有效性只在 `ThermalHeadroomPolicy.isValid` 判定一次，服务复用它写指标，不重复维护有效域。采样至多 1 次/秒；`ThermalMonitor` 仍只在 `onCreate`/`onDestroy` 注册与注销，1 Hz 轮询随**会话启动成功** arm、随每次 teardown 与 `onDestroy` disarm，disarm 时除 reset 预测档外还把已生效档位回落为只由当前状态决定的档位（`tierAtSessionEnd`，无状态档则 `NONE`），上一会话的预测档不会带入下一会话配置。开关关闭时立即把档位回 `NONE`（恢复用户设置），随后 `removeCallbacks` + 策略 `reset`，不等下一次 tick；开关打开时立即采样一次，**只有会话运行中才重新 arm**，没有会话就只留这一次采样、不产生定时器。
 - **理由**：`getCurrentThermalStatus` 是滞后指标，平台进入 `SEVERE` 时已经撞墙；预测值把降档提前一个预测窗，代价只是提前把帧率/采集比例降到用户设置允许的更低值。把 arm 绑定到会话而不是服务生命周期，是因为「服务存在」与「正在共享」不是同一件事：绑在 `onCreate` 会让第一个会话结束后轮询永久停摆，绑在服务而不管会话又会让空闲期出现 1 Hz 采样，两者都违反功耗口径。合并只取严格档，是因为状态是事实、预测是趋势；让预测去放宽事实等于用噪声覆盖确定信号。千分比统一四舍五入而不是截断，是因为 `0.70f` 的实际值是 `0.69999998…`，截断会得到 699，阈值用例会自己假失败。
-- **重新评估条件 / 验证证据**：需要设备项 ②（设计文档 §8）：注入温升后 `thermalHeadroom` 单调上升（越大越热）、降档早于平台高热状态、回落不抖动、开关关闭后无 1 Hz 采样痕迹、未开始共享时切换开关只允许一次立即采样。阈值按 [性能候选设计 §10](superpowers/specs/2026-10-23-performance-candidates-design.md) 回填。若预测噪声导致误降档或长期 NaN，回退为「只按平台状态取档」：删除 `startStreamPipeline` 与开关打开分支的 arm 调用即可，策略类与两个指标可保留（没有 arm 就不会采样）。代码证据：`core/stream/ThermalHeadroomPolicy`（纯 JVM 用例，含 `isValid`）、`core/stream/ThermalThrottlePolicy.stricter` 与 `tierAtSessionEnd`、`service/ThermalMonitor.getThermalHeadroom`（方法级 `@RequiresApi(30)`）、`ScreenShareService` 的 arm/disarm/sample 生命周期、`thermalHeadroom` / `thermalTier` 两个服务端键。边界：**未做设备验证，阈值未校准；协议与偏好格式未变**。
+- **重新评估条件 / 验证证据**：需要设备项 ②（设计文档 §8）：注入温升后 `thermalHeadroom` 单调上升（越大越热）、降档早于平台高热状态、回落不抖动、开关关闭后无 1 Hz 采样痕迹、未开始共享时切换开关只允许一次立即采样；**结束共享后出现 `event=session-end`，且下一会话开始前不再带上一会话的预测档**。阈值按 [性能候选设计 §10](superpowers/specs/2026-10-23-performance-candidates-design.md) 回填。若预测噪声导致误降档或长期 NaN，回退为「只按平台状态取档」：删除 `startStreamPipeline` 与开关打开分支的 arm 调用即可，策略类与两个指标可保留（没有 arm 就不会采样）。代码证据：`core/stream/ThermalHeadroomPolicy`（纯 JVM 用例，含 `isValid`）、`core/stream/ThermalThrottlePolicy.stricter` 与 `tierAtSessionEnd`、`service/ThermalMonitor.getThermalHeadroom`（方法级 `@RequiresApi(30)`）、`ScreenShareService` 的 arm/disarm/sample 生命周期、`thermalHeadroom` / `thermalTier` 两个服务端键。边界：**未做设备验证，阈值未校准；协议与偏好格式未变**。
 - **关联文档**：[性能候选设计](superpowers/specs/2026-10-23-performance-candidates-design.md) §4.2/§6.4/§8/§10、[性能优化调研](performance-research.md) §6 触发条件 3、[任务看板](task-board.md#tb-power-002)、[DB-POWER-001](#db-power-001)、[DV-024](#待决策--待验证)
 
 </details>
@@ -356,6 +357,18 @@
 - **理由（机制）**：① H.264 保底已覆盖全部目标场景——服务端硬编失败能在启动时回退 JPEG（TB-ENG-014），客户端恒声明 JPEG 解码能力（TB-ENG-006 B1），因此不存在「某类目标设备完全无法出画」的空白需要 HEVC 来补；② HEVC 的收益（同画质更低码率、同码率更高画质）在目标机型与目标网络组合上**从未实测**，没有数据支撑把它写进默认档；③ 引入成本是确定的：新增编解实现、能力协商与 profile/level 矩阵、CRA/RASL 等前导图像的接入点策略（DV-017）、专利与分发评估——成本确定、收益不确定时不引入。
 - **重新评估条件 / 验证证据**：出现 H.264 兼容性事故（目标机型硬编不可用且 JPEG 回退在带宽/质量上不可接受），或明确的高端需求（目标机型 HEVC 硬编与硬解覆盖充分、同场景实测收益明确）；届时重开本条并重启 [TB-FW-007](task-board.md#tb-fw-007)，DV-017 一并重开。
 - **关联文档**：[编码框架设计](codec-framework.md)、[媒体架构编码格式](media-architecture.md)、DB-CODEC-001、DB-CODEC-007、[任务看板 TB-FW-007](task-board.md#tb-fw-007)
+
+</details>
+
+<a id="db-codec-016"></a>
+<details><summary>DB-CODEC-016 解码低延迟只请求两键、三级回退、三态上报（🔶 已裁决·代码已实施 · 2026-10-23）</summary>
+
+- **状态 / 主题 / 裁决日期 / 验证日期**：🔶 已裁决·代码已实施（JVM 验证完成，设备验证与收益实测未做）/ 采集编码 / 2026-10-23 / —
+- **备注**：本条固化 B2 的范围与回退口径；`dec.lowLat` 的三态是外部契约，`0` 永远不打印，不能当“回退”判据。
+- **当前裁决**：客户端解码器只在 API 30+ 请求 `KEY_LOW_LATENCY=1` 与 `KEY_PRIORITY=0`（实时优先级）；**不请求 `KEY_OPERATING_RATE`**——解码侧目标帧率需要新的描述符契约，会与 B4 的内容帧率提示重复定义。回退顺序固定为“全键 → 去优先级 → 全去”：每次被可选键拒绝先 `reset()` 再重配；与可选键无关的失败按原类型抛出。`LowLatencyState` 有四个枚举值（`NOT_REQUESTED` / `APPLIED` / `APPLIED_WITHOUT_PRIORITY` / `REJECTED`），指标只上报三态：`APPLIED` 与 `APPLIED_WITHOUT_PRIORITY` 写 `1`、`REJECTED` 写 `2`、`NOT_REQUESTED` 不写（保持 0 且不打印）。gauge 只在 `configure` 与 `start` **整体成功之后**写一次；任一步失败都不写；解码器 `close` 时把本解码器写过的值清零，避免 H.264 → JPEG 后继续打印上一解码器的值。API 25–29 不请求可选键，状态恒为 `NOT_REQUESTED`。
+- **理由（机制）**：① 低延迟键能减少厂商解码器的出帧缓冲，但不同 OEM 对 `low-latency` 与实时优先级的接受度不同，单次配置失败不应让整个解码器不可用，因此必须逐级退化而不是二选一；② 把优先级单独降级、保留低延迟，能在“只拒绝优先级”的机型上仍拿到主要收益；③ `KEY_OPERATING_RATE` 在解码侧表达目标帧率，与本轮内容帧率提示的语义重叠，两个契约同时存在会让“谁决定帧率”无法判读，故本轮明确不含；④ 三态而非四态上报，是因为“未请求”和“未采样”在日志里同为 0 且不打印，把它写成判据会导致设备端永远不通过。
+- **重新评估条件 / 验证证据**：设备项 ①（设计文档 §8）：支持机型 `dec.lowLat=1`（含只保留低延迟的情形）、拒绝机型 `dec.lowLat=2` 且仍正常出画、API < 30 机型不打印；收益需 `dec.lat.p50/p95` 前后对照。若某机型在三级回退后仍无法初始化，按回退闸门把“是否请求”恒置否，保留枚举与指标。代码证据：`core/codec/mediacodec/LowLatencyState`、`AndroidMediaCodecDecoderBridge.configureWithFallback`、`H264Decoder.configure` / `close`、`DecoderMetricNames.DEC_LOW_LATENCY`；实施证据见任务看板 [TB-MEDIA-006](task-board.md#tb-media-006)。边界：**未做设备验证，延迟与功耗收益未实测**。
+- **关联文档**：[性能候选设计 §4.1 / §7.1 / §8](superpowers/specs/2026-10-23-performance-candidates-design.md)、[性能优化调研 §4.2 #1 / §6](performance-research.md)、[任务看板 TB-MEDIA-006](task-board.md#tb-media-006)、[DV-011](#待决策--待验证)
 
 </details>
 
@@ -517,7 +530,7 @@
 
 - **状态 / 主题 / 裁决日期 / 验证日期**：🔶 已裁决·代码已实施（JVM 验证完成，设备与阈值校准未做）/ 传输会话 / 2026-10-24 / —
 - **备注**：本条只给**同一路单流**增加观看端积压回传与运行时码率动作，不产生第二路编码，**不重开** [DB-MULTI-006](#db-multi-006) / DV-012，也不改 UDP 媒体协议。
-- **当前裁决**：观看端仅在出现积压或追赶时通过控制面 `ClientMessage.feedback` 上报 `StreamFeedback`（深度峰值、等待峰值、追赶次数、客户端 uptime），事件驱动、窗口 3 s、空闲零定时器。服务端 `BackpressurePolicy` 只在 `sessionCount == 1` 且 codec 为 H.264 时动作：深度 ≥8 或等待 ≥400 ms 或任意追赶判 `CONGESTED`，三项同时 ≤2 / 100 ms / 0 判 `CLEAR`，两者之间为 `HOLD`（不降档、不累计 CLEAR），一步降 25% 且不低于覆盖前码率的 40%（已在下限时不调用编码器）；连续 2 份 CLEAR 且距上次动作 ≥5 s 才回升，回升一步回上限并结束覆盖。多客户端、非 H.264、总闸关闭只观测并记 `bp.skip`；已有覆盖时回上限。外部写入（用户设置、热降档、旋转/尺寸变化）清空覆盖且不重试，RESTORE 前同样检测并记 `bp.skip`；协调器自身异常（含总闸 supplier 与目标 getter）吞掉并记 `bp.skip`。未 attach 的反馈在 handler 内直接丢弃，不解析、不 offer。
+- **当前裁决**：观看端仅在出现积压或追赶时通过控制面 `ClientMessage.feedback` 上报 `StreamFeedback`（深度峰值、等待峰值、追赶次数、客户端 uptime），事件驱动、窗口 3 s、空闲零定时器。服务端 `BackpressurePolicy` 只在 `sessionCount == 1` 且 codec 为 H.264 时动作：深度 ≥8 或等待 ≥400 ms 或任意追赶判 `CONGESTED`，三项同时 ≤2 / 100 ms / 0 判 `CLEAR`，两者之间为 `HOLD`（不降档、不累计 CLEAR），一步降 25% 且不低于覆盖前码率的 40%（已在下限时不调用编码器）；连续 2 份 CLEAR 且距上次动作 ≥5 s 才回升，回升一步回上限并结束覆盖。多客户端、非 H.264、总闸关闭只观测并记 `bp.skip`；已有覆盖时回上限。外部写入（用户设置、热降档、旋转/尺寸变化）清空覆盖且不重试，RESTORE 前同样检测并记 `bp.skip`；协调器自身异常（含总闸 supplier 与目标 getter）吞掉并记 `bp.skip`。未 attach 的反馈在 handler 内直接丢弃，不解析、不 offer。`close()` **不恢复码率**：服务随会话关闭，编码器生命周期与会话相同，关停时只做幂等有界关停。
 - **理由（机制）**：① 端到端延迟爬升的根因是观看端积压，服务端固定码率只能等客户端的 2 s 追赶兜底；提前削峰比事后丢队列平滑。② 多客户端时降码率会同时影响所有人，首版只允许单客户端自动动作，多客户端留作观测，避免把背压变成隐式的多档流。③ 只有 H.264 支持运行时 `PARAMETER_KEY_VIDEO_BITRATE`，JPEG 无码率可调，动作边界与编码能力一致。④ 8 是早期预警，追赶策略的 64 是不可恢复阈值，两者分工不同。
 - **指标与证据**：`bp.apply` / `bp.skip` / `bp.bitrate`（服务端）、`fb.sent` / `fb.skip`（客户端）；JVM 用例覆盖纯策略、协调器（最新值胜出、失败吞掉与 60 s 日志限流、关闭幂等、外部写入、多客户端恢复）、handler 的 attach 门控、mapper 与 formatter。定向与双变体全量、`lintDebug` / `lintRelease` 通过。
 - **未完成项**：真实弱网下的阈值（8 / 400 ms / 2 / 100 ms / 75% / 40% / 5 s）待设备校准；`SurfaceView`、多档流、UDP 反馈均不在本条范围。
