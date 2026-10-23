@@ -23,7 +23,9 @@ import java.util.concurrent.RejectedExecutionException;
  * <p>An offer arrives on the control stream and is answered exactly once: {@code READY} when the
  * channel is bound, {@code FAILED} when it cannot be opened, {@code CLOSED} when it was up and then
  * ended. The server decides what to do with the answer; this class only owns the facts of one
- * channel, so a repeated offer, a late answer and a second failure are all no-ops.</p>
+ * channel, so a repeated offer, a late answer and a second failure are all no-ops. A different
+ * channel does replace the open one, because the server only offers again after it dropped the
+ * previous channel.</p>
  *
  * <p><b>Threading.</b> {@link #onOffer} and {@link #onMediaClose} run on the gRPC callback thread,
  * the channel's own outcome arrives on the configured executor, and the answer leaves through the
@@ -176,11 +178,18 @@ public final class MediaChannelCoordinator {
     /**
      * Handles one offer; the answer is sent once the outcome is known.
      *
+     * <p>A new offer abandons the attempt it supersedes: the server only offers again after it
+     * dropped the previous channel, so that attempt can never be used, and leaving it running
+     * would hold this single-threaded executor for the rest of its own window - the new channel
+     * would be dialled after its ticket was already gone. Its outcome is then dropped like a stale
+     * answer, because its id is no longer the open one.</p>
+     *
      * @param offer offer received on the control stream; may be null
      */
     public void onOffer(MediaOffer offer) {
         final String channelIdHex;
         final MediaChannelOffer parsed;
+        final MediaChannelLink superseded;
         synchronized (this) {
             if (offer == null || offer.getChannelId().isEmpty()) {
                 return;
@@ -191,11 +200,15 @@ public final class MediaChannelCoordinator {
                 return;
             }
             parsed = MediaChannelOfferMapper.toOffer(offer);
+            superseded = openChannelId == null ? null : links.get(openChannelId);
             openChannelId = channelIdHex;
             readySent = false;
             failedSent = false;
             closedSent = false;
             lastFailureReason = null;
+        }
+        if (superseded != null) {
+            superseded.close();
         }
         if (parsed == null || !isChannelSupported(parsed.getTransport())) {
             answerFailed(channelIdHex, REASON_UNSUPPORTED);

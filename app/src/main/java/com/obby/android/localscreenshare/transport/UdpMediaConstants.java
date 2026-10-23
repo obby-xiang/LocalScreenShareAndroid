@@ -12,10 +12,18 @@ public final class UdpMediaConstants {
     /**
      * How long the server waits for the client's answer before it offers the next candidate.
      *
-     * <p>Shorter than the stream channel's window on purpose: binding datagrams fails fast when the
-     * peer is not reachable, and a slow answer costs a visible pause in the negotiation.</p>
+     * <p>Every answer travels on the control plane, so the window can never be shorter than one
+     * round trip of that stream plus the work the client does before answering: a datagram offer is
+     * answered right after the bind write, but a loaded device has been measured at 949 ms from the
+     * offer to the {@code READY} answer, and the control plane of that same pair reported a 0.93 s
+     * round-trip p95. The former 1 s window could therefore not tell a slow answer from a missing
+     * one: on the r5 device run it expired an offer whose {@code READY} was already on its way, and
+     * the fallback that followed was rejected as {@code handshake_bad_channel} because its own
+     * ticket was revoked under the client. Two seconds match the stream channel's window, so both
+     * candidates get the same allowance; a call that must fall back waits one second longer, and it
+     * keeps streaming on the control plane while it waits.</p>
      */
-    public static final long OFFER_TIMEOUT_MS = 1_000L;
+    public static final long OFFER_TIMEOUT_MS = 2_000L;
 
     /**
      * How long the client waits for the first datagram after it reported the channel ready, in

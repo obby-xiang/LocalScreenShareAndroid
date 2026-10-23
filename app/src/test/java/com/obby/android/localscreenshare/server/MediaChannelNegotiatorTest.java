@@ -6,6 +6,7 @@ import com.obby.android.localscreenshare.core.net.MediaTransportKind;
 import com.obby.android.localscreenshare.core.net.MediaTransportPolicy;
 import com.obby.android.localscreenshare.core.support.MutableClock;
 import com.obby.android.localscreenshare.transport.TcpMediaConstants;
+import com.obby.android.localscreenshare.transport.UdpMediaConstants;
 
 import org.junit.Test;
 
@@ -125,6 +126,30 @@ public class MediaChannelNegotiatorTest {
 
         clock.advance(1L);
         assertTrue(negotiator.isOfferExpired());
+    }
+
+    /**
+     * The datagram window has to outlast the answer it waits for, and that answer crosses the
+     * control plane: the r5 device run measured 949 ms from the offer to the {@code READY} of a
+     * loaded client and a 0.93 s round-trip p95 on the same pair, so the former 1 s window expired
+     * an answer that was already on its way. Both candidates now get the same allowance.
+     */
+    @Test
+    public void offer_windowOfDatagramsCoversAControlPlaneAnswer() {
+        MutableClock clock = new MutableClock(1_000L);
+        List<MediaChannelOffer> offers = new ArrayList<>();
+        MediaChannelNegotiator negotiator = new MediaChannelNegotiator(
+                MediaTransportPolicy.Mode.UDP, true, offers::add, clock,
+                new MediaChannelEndpoint("10.0.0.5", 9100, 9200, true));
+        assertTrue(negotiator.offer(MediaTransportKind.UDP, null));
+
+        clock.advance(1_000L);
+        assertFalse("the answer of the r5 run arrived at 949 ms; a one-second window lost it",
+                negotiator.isOfferExpired());
+
+        clock.advance(UdpMediaConstants.OFFER_TIMEOUT_MS - 1_000L);
+        assertTrue(negotiator.isOfferExpired());
+        assertEquals(TcpMediaConstants.OFFER_TIMEOUT_MS, UdpMediaConstants.OFFER_TIMEOUT_MS);
     }
 
     @Test

@@ -39,6 +39,8 @@ public class MediaChannelCoordinatorTest {
 
     private static final byte[] CHANNEL_ID = bytes(16, 0x11);
 
+    private static final byte[] SECOND_CHANNEL_ID = bytes(16, 0x22);
+
     @Test
     public void offer_opensTheChannelAndAnswersReady() throws Exception {
         RecordingSink sink = new RecordingSink();
@@ -164,6 +166,50 @@ public class MediaChannelCoordinatorTest {
 
         assertEquals(1, sink.events.size());
         assertNull(coordinator.getOpenChannelIdHex());
+    }
+
+    /**
+     * A new offer abandons the attempt it supersedes, because the server only offers again after it
+     * dropped the previous channel.
+     *
+     * <p>The production media executor is a single thread ({@code ScreenShareClient}), so an
+     * attempt that keeps waiting holds the next channel back: on the r5 device run the datagram
+     * attempt stayed in its first-frame window, the stream offer behind it was dialled after its
+     * ticket had been revoked, and the server answered {@code handshake_bad_channel}. Closing the
+     * superseded link here is what keeps the fallback chain working when an answer crosses the
+     * control plane slowly.</p>
+     */
+    @Test
+    public void aNewOfferAbandonsTheAttemptItSupersedes() throws Exception {
+        RecordingSink sink = new RecordingSink();
+        FakeLink datagrams = new FakeLink(false, null);
+        datagrams.block();
+        FakeLink stream = new FakeLink(true, null);
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            MediaChannelCoordinator coordinator = new MediaChannelCoordinator(sink, executor,
+                    (offer, status) -> {
+                        if (offer.getTransport() == MediaTransportKind.UDP) {
+                            datagrams.attach(status);
+                            return datagrams;
+                        }
+                        stream.attach(status);
+                        return stream;
+                    });
+            coordinator.onOffer(offer(CHANNEL_ID, "udp"));
+            assertTrue(datagrams.awaitStarted());
+
+            coordinator.onOffer(offer(SECOND_CHANNEL_ID, "tcp"));
+
+            assertTrue("the superseded attempt must stop at once", datagrams.awaitClosed());
+            assertTrue("the new channel must start without waiting out the old window",
+                    stream.awaitStarted());
+            // The answer of the new channel is asserted by the other cases; here only the handover
+            // matters, and the open id is the coordinator's own state, so this stays race free.
+            assertEquals(hexOf(SECOND_CHANNEL_ID), coordinator.getOpenChannelIdHex());
+        } finally {
+            executor.shutdownNow();
+        }
     }
 
     @Test

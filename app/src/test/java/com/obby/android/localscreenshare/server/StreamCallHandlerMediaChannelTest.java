@@ -5,6 +5,7 @@ import com.obby.android.localscreenshare.core.model.BitstreamFormat;
 import com.obby.android.localscreenshare.core.model.StreamDescriptor;
 import com.obby.android.localscreenshare.core.model.StreamKey;
 import com.obby.android.localscreenshare.core.model.StreamParameters;
+import com.obby.android.localscreenshare.core.net.MediaChannelLog;
 import com.obby.android.localscreenshare.core.net.MediaChannelOffer;
 import com.obby.android.localscreenshare.core.net.MediaTransportKind;
 import com.obby.android.localscreenshare.core.net.MediaTransportPolicy;
@@ -20,6 +21,7 @@ import com.obby.android.localscreenshare.grpc.screenstream.Hello;
 import com.obby.android.localscreenshare.grpc.screenstream.MediaChannelEvent;
 import com.obby.android.localscreenshare.grpc.screenstream.MediaChannelEventType;
 import com.obby.android.localscreenshare.transport.TcpMediaConstants;
+import com.obby.android.localscreenshare.transport.UdpMediaConstants;
 
 import org.junit.Test;
 
@@ -135,6 +137,38 @@ public class StreamCallHandlerMediaChannelTest {
         assertEquals("offer_timeout", handler.getMediaChannelFailureReason());
         assertNull(handler.getMediaChannelKind());
         assertEquals(0, fixture.registry.size());
+    }
+
+    @Test
+    public void anExpiredOfferIsLoggedWithItsTransportAndChannel() throws Exception {
+        Fixture fixture = fixture();
+        List<MediaChannelOffer> offers = new ArrayList<>();
+        List<String> warnings = new ArrayList<>();
+        MutableClock clock = new MutableClock(1_000L);
+        MediaChannelNegotiator negotiator = new MediaChannelNegotiator(
+                MediaTransportPolicy.Mode.UDP, true, offers::add, clock,
+                new MediaChannelEndpoint("", 9100, 9200, true), new MediaChannelLog() {
+                    @Override
+                    public void info(final String message) {
+                    }
+
+                    @Override
+                    public void warn(final String message) {
+                        warnings.add(message);
+                    }
+                });
+        StreamCallHandler handler = handler(fixture, new FakeTransport(), negotiator);
+
+        handler.onClientMessage(hello("tcp", "udp"));
+        final String channelIdHex = offers.get(0).getChannelIdHex();
+        clock.advance(UdpMediaConstants.OFFER_TIMEOUT_MS);
+        handler.drainOnce();
+
+        // Without this line an expiry is invisible on the server, which is why the r5 run could
+        // only infer it from the client's rejection of the *next* channel.
+        assertTrue(warnings.toString(), warnings.stream().anyMatch(line ->
+                line.startsWith("offer: expired, transport = udp")
+                        && line.contains(channelIdHex)));
     }
 
     @Test

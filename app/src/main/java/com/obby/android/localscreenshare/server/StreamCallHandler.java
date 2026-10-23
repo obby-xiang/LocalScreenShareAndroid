@@ -510,6 +510,13 @@ public final class StreamCallHandler {
             // needs no timer and cannot keep a call waiting on a channel that will never come.
             if (mediaPhase == MediaChannelPhase.OFFERED && mediaNegotiator != null
                     && mediaNegotiator.isOfferExpired()) {
+                // Logged because nothing else on this end says an offer was dropped: without this
+                // line an expiry is invisible, and a client whose answer was still crossing the
+                // control plane then looks like it opened a channel the server never offered (r5
+                // device run: the next offer's hello was rejected as handshake_bad_channel).
+                log.warn("offer: expired, transport = "
+                        + (mediaKind == null ? "unknown" : mediaKind.getLabel()) + ", channel = "
+                        + mediaNegotiator.getChannelIdHex());
                 failMediaChannel("offer_timeout");
             }
             if (pendingApproval) {

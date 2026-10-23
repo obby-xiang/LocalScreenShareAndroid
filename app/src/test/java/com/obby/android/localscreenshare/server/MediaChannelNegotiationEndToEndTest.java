@@ -12,6 +12,7 @@ import com.obby.android.localscreenshare.core.model.StreamParameters;
 import com.obby.android.localscreenshare.core.net.MediaChannelListener;
 import com.obby.android.localscreenshare.core.net.MediaChannelOffer;
 import com.obby.android.localscreenshare.core.net.MediaChannelStatusListener;
+import com.obby.android.localscreenshare.core.net.MediaChannelTicket;
 import com.obby.android.localscreenshare.core.net.MediaTransportKind;
 import com.obby.android.localscreenshare.core.net.MediaTransportPolicy;
 import com.obby.android.localscreenshare.core.stream.StreamHub;
@@ -29,6 +30,8 @@ import com.obby.android.localscreenshare.grpc.screenstream.MediaChannelEventType
 import com.obby.android.localscreenshare.identity.tls.TlsMaterial;
 import com.obby.android.localscreenshare.transport.MediaChannelServer;
 import com.obby.android.localscreenshare.transport.MediaTlsFactory;
+import com.obby.android.localscreenshare.transport.TcpMediaConstants;
+import com.obby.android.localscreenshare.transport.UdpMediaConstants;
 import com.obby.android.localscreenshare.transport.UdpMediaReceiver;
 import com.obby.android.localscreenshare.transport.TcpMediaReceiver;
 import com.obby.android.localscreenshare.trust.TlsPin;
@@ -250,6 +253,107 @@ public class MediaChannelNegotiationEndToEndTest {
     }
 
     /**
+     * The candidate that follows an expired one is dialable for as long as its own window lasts.
+     *
+     * <p>The clock moves exactly as the r5 device run did: the datagram answer arrives too late for
+     * the datagram window, the server moves on to the stream channel, and that channel still opens.
+     * The window of each candidate is independent, so one late answer costs one candidate only.</p>
+     */
+    @Test
+    public void fallbackOfferIsDialableInsideItsWindow() throws Exception {
+        Fixture fixture = fixture(MediaTransportPolicy.Mode.AUTO);
+        fixture.handler.onClientMessage(hello("tcp", "udp"));
+        assertEquals(MediaTransportKind.UDP, fixture.offers.get(0).getTransport());
+
+        fixture.negotiationClock.advance(UdpMediaConstants.OFFER_TIMEOUT_MS);
+        fixture.handler.drainOnce();
+
+        assertEquals(2, fixture.offers.size());
+        assertEquals(MediaTransportKind.TCP, fixture.offers.get(1).getTransport());
+        assertNotNull("the fallback offer must be registered before it is dialled",
+                fixture.registry.ticketFor(fixture.offers.get(1).getChannelIdHex()));
+
+        ClientChannel channel = new ClientChannel(fixture, fixture.offers.get(1));
+        channel.start();
+
+        assertTrue("the fallback offer must still accept the hello",
+                awaitChannelKind(fixture, MediaTransportKind.TCP));
+        assertEquals("tcp", fixture.hub.getSession(CLIENT).snapshot().getChannel());
+        channel.close();
+    }
+
+    /**
+     * Dialling an offer the server already dropped is refused as {@code handshake_bad_channel}.
+     *
+     * <p>This is the second half of the r5 sequence and the reason the device report could not tell
+     * what happened: the client was still inside its datagram attempt when the stream offer came,
+     * the stream window closed meanwhile, and the hello then looked like a protocol violation
+     * instead of a missing ticket. The ticket itself has not expired, so the refusal is the window
+     * revoking the registry entry - which the server now logs as {@code offer: expired}.</p>
+     */
+    @Test
+    public void helloForAnOfferTheServerDroppedIsRejected() throws Exception {
+        Fixture fixture = fixture(MediaTransportPolicy.Mode.AUTO);
+        fixture.handler.onClientMessage(hello("tcp", "udp"));
+
+        fixture.negotiationClock.advance(UdpMediaConstants.OFFER_TIMEOUT_MS);
+        fixture.handler.drainOnce();
+        MediaChannelOffer streamOffer = fixture.offers.get(1);
+        MediaChannelTicket ticket = fixture.registry.ticketFor(streamOffer.getChannelIdHex());
+        assertNotNull(ticket);
+
+        fixture.negotiationClock.advance(TcpMediaConstants.OFFER_TIMEOUT_MS);
+        fixture.handler.drainOnce();
+
+        assertEquals(StreamCallHandler.MediaChannelPhase.GRPC,
+                fixture.handler.getMediaChannelPhase());
+        assertNull("the dropped ticket must be gone from the registry",
+                fixture.registry.ticketFor(streamOffer.getChannelIdHex()));
+        assertFalse("the refusal must come from the window, not from the ticket lifetime",
+                ticket.isExpired(TimeSource.MONOTONIC.nowMs()));
+        assertEquals("handshake_bad_channel", dialAndAwaitFailure(fixture, streamOffer));
+    }
+
+    private String dialAndAwaitFailure(Fixture fixture, MediaChannelOffer offer) throws Exception {
+        CountDownLatch failed = new CountDownLatch(1);
+        AtomicReference<String> reason = new AtomicReference<>();
+        TcpMediaReceiver receiver = new TcpMediaReceiver(STREAM_KEY, "127.0.0.1", offer,
+                new MediaChannelListener() {
+                    @Override
+                    public void onDescriptor(StreamDescriptor descriptor, boolean secure) {
+                        // The channel never comes up in this test.
+                    }
+
+                    @Override
+                    public void onAccessUnit(EncodedAccessUnit accessUnit, long arrivalNs) {
+                        // The channel never comes up in this test.
+                    }
+
+                    @Override
+                    public void onChannelFailed(String why) {
+                        // Reported through the status listener, where the latch lives.
+                    }
+                }, new MediaChannelStatusListener() {
+                    @Override
+                    public void onChannelReady() {
+                        // The server has no ticket for this offer.
+                    }
+
+                    @Override
+                    public void onChannelFailed(String why) {
+                        reason.compareAndSet(null, why);
+                        failed.countDown();
+                    }
+                }, fixture.clientContext);
+        Thread thread = new Thread(receiver::start, "negotiation-dropped-offer");
+        thread.setDaemon(true);
+        thread.start();
+        assertTrue("the receiver never reported the rejection",
+                failed.await(TIMEOUT_MS, TimeUnit.MILLISECONDS));
+        return reason.get();
+    }
+
+    /**
      * The {@code udp} mode of the hidden setting opens the call on datagrams even with the
      * user-facing tier switch off, which is the device check of the r4 round reproduced here: with
      * the switch off, {@code auto} offers the stream and only the explicit mode offers datagrams.
@@ -385,6 +489,12 @@ public class MediaChannelNegotiationEndToEndTest {
         private final com.obby.android.localscreenshare.core.support.MutableNanoClock clock =
                 new com.obby.android.localscreenshare.core.support.MutableNanoClock();
 
+        // Clock of the negotiation only, so a test can expire an offer window exactly. It starts at
+        // the monotonic time so the tickets it issues are not already expired for the listener,
+        // which checks them against the real clock of the process.
+        private final MutableClock negotiationClock =
+                new MutableClock(TimeSource.MONOTONIC.nowMs());
+
         private final StreamCallHandler handler;
 
         private Fixture(MediaTransportPolicy.Mode mode, String endpointHost) throws Exception {
@@ -415,7 +525,7 @@ public class MediaChannelNegotiationEndToEndTest {
                     serverMaterial.getDeviceId(), pins);
 
             MediaChannelNegotiator negotiator = new MediaChannelNegotiator(mode,
-                    MediaTransportPolicy.allowsUdp(mode, true), offers::add, TimeSource.MONOTONIC,
+                    MediaTransportPolicy.allowsUdp(mode, true), offers::add, negotiationClock,
                     new MediaChannelEndpoint(endpointHost, port, mediaServer.getUdpPort(), true));
             handler = new StreamCallHandler(hub, runtime, transport, StreamCallListener.NO_OP,
                     null, PongTarget.NO_OP, null, null, null, null, null, negotiator, registry);
