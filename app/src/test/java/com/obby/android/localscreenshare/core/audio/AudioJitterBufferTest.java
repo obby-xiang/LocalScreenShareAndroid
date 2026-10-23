@@ -104,6 +104,65 @@ public class AudioJitterBufferTest {
     }
 
     @Test
+    public void aBacklogThatPassedTheBoundIsDrainedBackToTheRecoverDepth() {
+        AudioJitterBuffer buffer = new AudioJitterBuffer();
+        buffer.plan(0L, FRAME_US, AudioJitterBuffer.TARGET_DEPTH_MS * 1_000L, 0L);
+
+        // What a device reported: one burst leaves 426 ms buffered, a few frames above the bound.
+        // The drain has to continue below the bound; stopping there parks the stream at the bound
+        // for the rest of the session, because the sink consumes media at exactly the rate it
+        // arrives and nothing else takes the excess out.
+        long bufferedUs = 19 * FRAME_US;
+        int plans = 0;
+        int dropped = 0;
+        while (plans < 100) {
+            final AudioJitterBuffer.Plan plan =
+                    buffer.plan((plans + 1L) * FRAME_US, FRAME_US, bufferedUs, plans * FRAME_MS);
+            final int drop = plan.getDropOldestFrames();
+            if (drop == 0) {
+                break;
+            }
+            bufferedUs -= drop * FRAME_US;
+            dropped += drop;
+            plans++;
+        }
+
+        assertTrue(dropped > 0);
+        assertTrue((bufferedUs + FRAME_US) / 1_000L <= AudioJitterBuffer.RECOVER_DEPTH_MS);
+        assertEquals(0, buffer.plan(200L * FRAME_US, FRAME_US, bufferedUs, 10_000L)
+                .getDropOldestFrames());
+    }
+
+    @Test
+    public void aDepthBetweenTheRecoverDepthAndTheBoundIsNotDrained() {
+        AudioJitterBuffer buffer = new AudioJitterBuffer();
+        buffer.plan(0L, FRAME_US, AudioJitterBuffer.TARGET_DEPTH_MS * 1_000L, 0L);
+
+        // 298 ms sits above the recover depth but below the bound. A stream that never overflowed
+        // keeps its reservoir: the drain is a latch opened by the bound, not a second bound.
+        for (int index = 1; index < 200; index++) {
+            assertEquals(0, buffer.plan(index * FRAME_US, FRAME_US, 13 * FRAME_US,
+                    index * FRAME_MS).getDropOldestFrames());
+        }
+    }
+
+    @Test
+    public void aResetForgetsAnOpenDrain() {
+        AudioJitterBuffer buffer = new AudioJitterBuffer();
+        buffer.plan(0L, FRAME_US, AudioJitterBuffer.TARGET_DEPTH_MS * 1_000L, 0L);
+        // 874 ms opens the drain latch.
+        buffer.plan(FRAME_US, FRAME_US, 40 * FRAME_US, 0L);
+
+        buffer.reset();
+        buffer.plan(2 * FRAME_US, FRAME_US, AudioJitterBuffer.TARGET_DEPTH_MS * 1_000L, 10L);
+
+        // A restarted playback prefills from scratch; a latch left over from the previous one would
+        // shed frames of a stream that never overflowed.
+        assertEquals(0, buffer.plan(3 * FRAME_US, FRAME_US, 13 * FRAME_US, 20L)
+                .getDropOldestFrames());
+    }
+
+    @Test
     public void theSteadyStateDepthOfAHealthySessionNeverDrops() {
         AudioJitterBuffer buffer = new AudioJitterBuffer();
         buffer.plan(0L, FRAME_US, AudioJitterBuffer.TARGET_DEPTH_MS * 1_000L, 0L);

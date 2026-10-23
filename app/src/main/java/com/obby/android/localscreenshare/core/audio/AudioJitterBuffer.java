@@ -60,6 +60,13 @@ public final class AudioJitterBuffer {
      *
      * <p>It is just above the steady state, so the drain stops where the stream normally lives instead
      * of cutting into the reservoir the sink needs.</p>
+     *
+     * <p>The drain is a latch rather than a per-frame comparison: once the depth has passed
+     * {@link #MAX_DEPTH_MS} the buffer keeps shedding until it is back at this value, not only until
+     * it is a few frames below the bound. Stopping at the bound leaves the stream parked just above
+     * it, because the sink plays at exactly the rate the frames arrive and nothing else removes the
+     * media: one burst then costs the rest of the session a fixed offset of the bound's size, which
+     * is what a device reported as a stable half-second lag.</p>
      */
     public static final long RECOVER_DEPTH_MS = 250L;
 
@@ -200,6 +207,8 @@ public final class AudioJitterBuffer {
 
     private boolean started;
 
+    private boolean draining;
+
     private long firstPlanMs = UNSET;
 
     private long lastDriftCorrectionMs = UNSET;
@@ -245,8 +254,14 @@ public final class AudioJitterBuffer {
         final long frameMs = Math.max(1L, (frameUs + 500L) / 1_000L);
         final long depthMs = (Math.max(0L, bufferedUs) + frameUs) / 1_000L;
 
-        int dropOldest = 0;
         if (started && depthMs > MAX_DEPTH_MS) {
+            draining = true;
+        } else if (draining && depthMs <= RECOVER_DEPTH_MS) {
+            draining = false;
+        }
+
+        int dropOldest = 0;
+        if (draining) {
             final long excessFrames = Math.max(1L,
                     (depthMs - RECOVER_DEPTH_MS + frameMs - 1) / frameMs);
             dropOldest = (int) Math.min(MAX_DROP_FRAMES_PER_PLAN, excessFrames);
@@ -352,6 +367,7 @@ public final class AudioJitterBuffer {
     public void reset() {
         lastPtsUs = UNSET;
         started = false;
+        draining = false;
         firstPlanMs = UNSET;
         lastDriftCorrectionMs = UNSET;
     }
