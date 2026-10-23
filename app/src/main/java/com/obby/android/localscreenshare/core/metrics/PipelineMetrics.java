@@ -144,7 +144,16 @@ public final class PipelineMetrics {
         /**
          * Absolute audio/video offset observed by the audio drift guard, in nanoseconds.
          */
-        AV_OFFSET
+        AV_OFFSET,
+
+        /**
+         * Interval between two consecutive fragments of the same access unit, in nanoseconds.
+         *
+         * <p>Only fragments of one unit are compared: the interval across two units contains the
+         * frame interval and says nothing about how long a fragment of one unit may be held back.
+         * This distribution is the calibration input for the hold-up of the reassembler.</p>
+         */
+        FRAGMENT_GAP
     }
 
     /**
@@ -336,7 +345,29 @@ public final class PipelineMetrics {
          * the throttle drops is still visible as "loss wanted a key frame" - which is what tells a
          * field capture whether the loss-to-IDR chain fired at all.</p>
          */
-        UDP_JOIN_POINT_REQUESTS
+        UDP_JOIN_POINT_REQUESTS,
+
+        /**
+         * Fragments that arrived after their access unit was already delivered.
+         *
+         * <p>The receiver compares the reassembler's late count around each datagram, so the counter
+         * measures fragments the reassembler itself refused - it does not re-parse the datagram. In
+         * this version only a delivered unit is remembered, so a fragment of an abandoned unit is
+         * not counted here yet: it starts a new pending unit, and its second timeout appears in
+         * {@link #ACCESS_UNITS_TIMED_OUT} until the tombstone batch stops the rebuild.</p>
+         */
+        DATAGRAMS_LATE,
+
+        /**
+         * Access units abandoned because no fragment arrived within the hold-up.
+         *
+         * <p>One count per abandoned unit, a subset of {@link #ACCESS_UNITS_INCOMPLETE}: the total
+         * stays the loss reading that the device report compares against, while this counter tells
+         * a timeout from an eviction or a protocol violation. On a connection that loses no
+         * fragment this counter staying at zero is the direct evidence that the hold-up no longer
+         * kills paced units.</p>
+         */
+        ACCESS_UNITS_TIMED_OUT
     }
 
     /**
@@ -369,7 +400,16 @@ public final class PipelineMetrics {
          * Signal that started the latest catch-up; see {@link #CATCH_UP_REASON_QUEUE_WAIT} and
          * {@link #CATCH_UP_REASON_QUEUE_DEPTH}. Zero before the first episode.
          */
-        CATCH_UP_REASON
+        CATCH_UP_REASON,
+
+        /**
+         * Hold-up the reassembler currently applies to an unfinished access unit, in milliseconds.
+         *
+         * <p>Written by the receiver once, when it creates its reassembler, so a log capture records
+         * the threshold the readings were taken under. Zero while no datagram channel is running;
+         * the value is not a dynamic window estimate and must not be read as one.</p>
+         */
+        MEDIA_HOLD_UP_MS
     }
 
     /**

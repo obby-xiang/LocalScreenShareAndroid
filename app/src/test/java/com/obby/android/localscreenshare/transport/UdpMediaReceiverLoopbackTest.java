@@ -4,6 +4,7 @@ import com.obby.android.localscreenshare.core.metrics.PipelineMetrics;
 import com.obby.android.localscreenshare.core.model.AccessUnitFlags;
 import com.obby.android.localscreenshare.core.model.EncodedAccessUnit;
 import com.obby.android.localscreenshare.core.model.StreamKey;
+import com.obby.android.localscreenshare.core.net.AccessUnitReassembler;
 import com.obby.android.localscreenshare.core.net.DatagramCipher;
 import com.obby.android.localscreenshare.core.net.DatagramKeys;
 import com.obby.android.localscreenshare.core.net.MediaChannelListener;
@@ -217,6 +218,122 @@ public class UdpMediaReceiverLoopbackTest {
         assertEquals(2L, recorder.metrics.count(PipelineMetrics.Counter.UDP_JOIN_POINT_REQUESTS));
     }
 
+    /**
+     * Fragments of one unit yield the interval between their arrivals, and only those.
+     *
+     * <p>The gap distribution is the evidence TB-MEDIA-008 needs before its hold-up can be
+     * calibrated: the r3 device report could only infer it from the delivery rate because the
+     * receiver measured no arrival intervals at all. An interval across two different units is not
+     * a fragment gap - it contains the frame interval - so it must not enter the window.</p>
+     */
+    @Test
+    public void fragmentGapsOfTheSameUnit_areRecorded() throws Exception {
+        Recorder recorder = new Recorder();
+        mPeer = new Peer();
+        start(recorder);
+        assertTrue(recorder.awaitReady());
+        mPeer.awaitBind();
+
+        int size = 2 * UdpMediaPacketCodec.MAX_FRAGMENT_BYTES;
+        MediaFrame first = MediaFrame.accessUnit(0L, MediaFrame.DTS_UNSET, 1, false, true, true,
+                null, payload(size));
+        mPeer.sendFragment(first, 0, 0);
+        assertTrue(recorder.awaitDatagrams(1));
+
+        clock.advance(4_000_000L);
+        mPeer.sendFragment(first, 0, 1);
+        assertTrue(recorder.awaitUnits(1));
+        assertTrue(recorder.awaitGapSamples(1));
+        assertEquals(4_000_000L, recorder.metrics.stats(PipelineMetrics.Window.FRAGMENT_GAP)
+                .getP50());
+
+        // A gap wider than the hold-up is recorded as well, because the probe runs before the
+        // expiry pass: that is what makes the window a calibration input for the threshold instead
+        // of a replay of the healthy path. The unit itself is still abandoned - this batch only
+        // observes the behaviour of TB-MEDIA-008, it does not widen the window.
+        MediaFrame second = MediaFrame.accessUnit(33_000L, MediaFrame.DTS_UNSET, 1, false, true,
+                true, null, payload(size));
+        mPeer.sendFragment(second, 1, 0);
+        assertTrue(recorder.awaitDatagrams(3));
+        clock.advance(25_000_000L);
+        mPeer.sendFragment(second, 1, 1);
+        assertTrue(recorder.awaitDatagrams(4));
+        assertTrue(recorder.awaitGapSamples(2));
+        assertEquals(25_000_000L, recorder.metrics.stats(PipelineMetrics.Window.FRAGMENT_GAP)
+                .getMax());
+
+        // A datagram of another unit carries the frame interval, not a fragment gap.
+        clock.advance(40_000_000L);
+        mPeer.sendUnit(2, 10);
+        assertTrue(recorder.awaitDatagrams(5));
+        assertEquals(2, recorder.metrics.stats(PipelineMetrics.Window.FRAGMENT_GAP).getCount());
+    }
+
+    /**
+     * A unit abandoned for silence is counted by its reason as well as in the total.
+     *
+     * <p>The total cannot tell the two defects of TB-MEDIA-008 apart: a widened window is judged by
+     * {@code udp.auTimeout} going to zero on connections that lose no fragment, while a
+     * {@code superseded} drop is the healthy path and must keep its own meaning.</p>
+     */
+    @Test
+    public void aTimedOutUnit_isCountedByReason() throws Exception {
+        Recorder recorder = new Recorder();
+        mPeer = new Peer();
+        start(recorder);
+        assertTrue(recorder.awaitReady());
+        mPeer.awaitBind();
+
+        int size = 2 * UdpMediaPacketCodec.MAX_FRAGMENT_BYTES;
+        MediaFrame incomplete = MediaFrame.accessUnit(0L, MediaFrame.DTS_UNSET, 1, false, true,
+                true, null, payload(size));
+        mPeer.sendFragment(incomplete, 0, 0);
+        assertTrue(recorder.awaitDatagrams(1));
+
+        clock.advance(AccessUnitReassembler.HOLD_UP_NS);
+        mPeer.sendUnit(1, 10);
+        assertTrue(recorder.awaitUnits(1));
+
+        // A second advance covers the case where the receiver processed the incomplete fragment
+        // after the first one: its pending unit is then created at the later time and expires on
+        // this pass instead. Either way the unit is abandoned exactly once.
+        clock.advance(AccessUnitReassembler.HOLD_UP_NS);
+        mPeer.sendUnit(2, 10);
+        assertTrue(recorder.awaitUnits(2));
+
+        assertEquals(1L, recorder.metrics.count(PipelineMetrics.Counter.ACCESS_UNITS_TIMED_OUT));
+        assertEquals(1L, recorder.metrics.count(PipelineMetrics.Counter.ACCESS_UNITS_INCOMPLETE));
+    }
+
+    /**
+     * A fragment that lands after its unit was delivered is counted as a late datagram.
+     *
+     * <p>{@code udp.late} was registered by the datagram tier with no producer. In this build the
+     * reassembler only recognises an already delivered unit, so the field means "arrived after
+     * delivery" - not yet "after delivery or abandonment", which needs the tombstone of the next
+     * batch.</p>
+     */
+    @Test
+    public void aFragmentAfterDelivery_isCountedLate() throws Exception {
+        Recorder recorder = new Recorder();
+        mPeer = new Peer();
+        start(recorder);
+        assertTrue(recorder.awaitReady());
+        mPeer.awaitBind();
+
+        mPeer.sendUnit(0, 10);
+        assertTrue(recorder.awaitUnits(1));
+
+        // Same identifier and a fresh wire sequence: the reorder window accepts it, the reassembler
+        // rejects it as a fragment of a unit that is already gone.
+        mPeer.sendUnit(0, 10);
+        assertTrue(recorder.awaitCounter(PipelineMetrics.Counter.DATAGRAMS_LATE, 1L));
+
+        assertEquals(1L, recorder.metrics.count(PipelineMetrics.Counter.DATAGRAMS_LATE));
+        assertEquals(0L, recorder.metrics.count(PipelineMetrics.Counter.ACCESS_UNITS_INCOMPLETE));
+        assertEquals(1, recorder.units.size());
+    }
+
     @Test
     public void silentServer_isABindTimeout() throws Exception {
         Recorder recorder = new Recorder();
@@ -425,6 +542,28 @@ public class UdpMediaReceiverLoopbackTest {
                 Thread.sleep(10L);
             }
             return metrics.count(PipelineMetrics.Counter.MEDIA_AUTH_FAILURES) >= count;
+        }
+
+        private boolean awaitDatagrams(long count) throws InterruptedException {
+            return awaitCounter(PipelineMetrics.Counter.DATAGRAMS_RECEIVED, count);
+        }
+
+        private boolean awaitGapSamples(int count) throws InterruptedException {
+            long deadline = System.currentTimeMillis() + TIMEOUT_MS;
+            while (metrics.stats(PipelineMetrics.Window.FRAGMENT_GAP).getCount() < count
+                    && System.currentTimeMillis() < deadline) {
+                Thread.sleep(10L);
+            }
+            return metrics.stats(PipelineMetrics.Window.FRAGMENT_GAP).getCount() >= count;
+        }
+
+        private boolean awaitCounter(PipelineMetrics.Counter counter, long count)
+                throws InterruptedException {
+            long deadline = System.currentTimeMillis() + TIMEOUT_MS;
+            while (metrics.count(counter) < count && System.currentTimeMillis() < deadline) {
+                Thread.sleep(10L);
+            }
+            return metrics.count(counter) >= count;
         }
     }
 }

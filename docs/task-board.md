@@ -245,7 +245,7 @@
 <a id="tb-media-008"></a>
 <details><summary>TB-MEDIA-008 JPEG+UDP 重组窗口抖动容忍修复（📋 待办 · 机制已定位，阈值待设备校准）</summary>
 
-- **状态 / 优先级 / 创建 / 完成**：📋 待办（机制依据来自 2026-10-23 的设备复验；**判据沿用设备报告，`HOLD_UP_MS` 取值待设备校准**）/ 🟠 P1 / 2026-10-23 / —
+- **状态 / 优先级 / 创建 / 完成**：📋 待办（机制依据来自 2026-10-23 的设备复验；2026-10-23 观测读数已落地、**行为未改**；**判据沿用设备报告，`HOLD_UP_MS` 取值待设备校准**）/ 🟠 P1 / 2026-10-23 / —
 - **来源**：交接 §2.2 与 [TB-ENG-013](#tb-eng-013) 第 18 项 r3——保持窗口改静默计时后 JPEG 大帧在窗口 A 能整帧送达，但同一构建在重启后的环境里 JPEG+UDP 完全不出帧。
 - **现场（报告 `handoff/device-test-2026-10-23-jpeg-udp-r3/report.md`）**：默认大帧组合（`projection_scale=100`、1080×2340、quality 85）每 AU **73–95 个分片**（1348 B 载荷），真实丢片 **1.16%**（`udp.lost` +866 / `udp.recv` +74 925）；窗口 A 出画，`rx.auRate`/`enc.auRate` = 2.2/3.2；20:35–20:53 六次连接 **5/5 次 0 fps**，分片几乎全到（`udp.lost` 0.5–1.1%）却每 AU 4–5 次 `udp.auIncomplete`；`projection_scale=30`（≈16 片/AU）恢复到 1.0–2.4 fps，同期 JPEG+TCP 3.2 fps、H.264+UDP 5.2 fps 正常。
 - **机制**（报告 §5，按送达率反推，**推断而非直接测量**）：`core/net/AccessUnitReassembler` 的保持窗口是「自最后一个分片起静默 10 ms」的硬上限；设 >10 ms 的片段到达间隔为 λ、AU 传输时长为 D，则单帧存活率 ≈ `exp(-λ·D)`。大 AU 的 D≈0.3 s，λ 从窗口 A 的 ≈1.1/s 升到 ≈10/s 时整帧必丢；超时后剩余分片重建 buffer 再次超时，于是同一 AU 被计 1.1–2.2 次。
@@ -262,6 +262,13 @@ flowchart LR
 - **不采用「只把窗口调大」的理由**：窗口同时约束迟到分片不拖住后续 AU 与在途 AU 上限（4 个在途、字节预算固定）；单纯放大到百毫秒量级会放大内存占用与端到端延迟，也会改变 `superseded` 判据的语义。候选方案是按「本 AU 已收分片比例 + 尾部宽限」判超时，或对大 AU 单独放宽，取值须由对照实验定。
 - **待定判据（与设备报告一致，待设备校准）**：① 同环境重启后 scale100 组合连续 5 次连接均出帧（`rx.auRate > 0`）；② `udp.auIncomplete` 增速回到「真实丢失 AU 数」量级——每个丢失 AU 最多计 1 次（r3 为 1.1–2.2 次）；③ 窗口 A 的 `rx.auRate`/`enc.auRate` 不劣于 0.69；④ 迟到分片仍计 `udp.late`，绝不交付半截帧。
 - **前置证据缺口**：报告 §8 已注明 λ 是反推值（模拟器无 root、无 tcpdump），修复前须补一条可量化的到达间隔读数，否则只能按出帧率判定，不得把推断写成测量。
+- **2026-10-23 观测棒（只观测、不改行为）**：读数通道已落地，`HOLD_UP_MS` 仍为 10，丢弃/重建/`onCatchUp`/IDR 链路与 `superseded`、`evicted` 判据全部未改；本棒**不把本条登记为已修复**。新增读数：
+  - `udp.gap.p50/p95/max`（`Window.FRAGMENT_GAP`）：`UdpMediaReceiver` 取**同一 AU 相邻分片**的到达间隔写环形窗；跨 AU 的间隔含帧间隔，不计入。探针在过期扫描之前执行，因此超时丢弃前的最后一个间隔同样会被记录。
+  - `udp.late`（`Counter.DATAGRAMS_LATE`）：在 `reassembler.onPacket` 前后比较 `getLateCount()` 的差值。**当前语义是「已交付之后到达」**——被放弃的 AU 尚无墓碑，其残片暂不计入，留待下一棒。
+  - `udp.hold`（`Gauge.MEDIA_HOLD_UP_MS`）：接收器创建重组器后写入 `AccessUnitReassembler.getHoldUpMs()`，本棒恒为 10。只记录当时生效的阈值，**不是**动态窗口估计。
+  - `udp.auTimeout`（`Counter.ACCESS_UNITS_TIMED_OUT`）：`FrameSink.onAccessUnitDropped` 按 reason 分流，仅 `timeout` 递增；`udp.auIncomplete` 仍是总量，口径不变。
+  - 热路径纪律：窗口为定长环形数组、计数器为 `LongAdder`、gauge 为定长数组，无新增锁、无字符串拼接；格式化只在聚合线程执行。
+- **设备校准点（下一设备棒必须先于行为修改取数）**：① 68% 与 76–77% 宿主负载下 `udp.gap.p50/p95/max` 的实际值，并与 `udp.hold=10` 对照；② 重启后 0 fps 的连接里 `udp.auTimeout` 与 `udp.auIncomplete` 的比值（若接近 1，说明 4–5 次/AU 的重复计数已被本读数覆盖）；③ 窗口 A 中 `udp.auTimeout` 是否只随真实丢片增长，以及 `udp.late` 是否增长；④ 上述取值只用于校准 `HOLD_UP_MIN/MAX` 与系数，**不得把观测数当作修复已验证**。
 - **关联文档**：[TB-ENG-013](#tb-eng-013) 第 18 项、[TB-NET-003](#tb-net-003)「r2 观察修复」、[传输方式调研](transport-research.md)
 
 </details>

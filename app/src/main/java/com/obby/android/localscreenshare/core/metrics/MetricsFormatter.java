@@ -173,6 +173,13 @@ public final class MetricsFormatter {
                     Unit.NANOS, Stat.P50, Stat.P95),
     };
 
+    // Fragment gaps exist only on the datagram tier, so the row is emitted from the media-channel
+    // block instead of the fixed client rows; a viewer on the control-plane carrier has none.
+    private static final WindowRow[] UDP_ROWS = {
+            new WindowRow(MediaMetricNames.UDP_GAP, PipelineMetrics.Window.FRAGMENT_GAP,
+                    Unit.NANOS, Stat.P50, Stat.P95, Stat.MAX),
+    };
+
     private MetricsFormatter() {
     }
 
@@ -544,6 +551,12 @@ public final class MetricsFormatter {
      * that lost nothing - the two are not comparable, which is exactly what the omission avoids.
      * The loss numbers are the ones the plan asks the weak-network tier to be judged by, so they
      * stay on the same line as the arrival and decode health they explain.</p>
+     *
+     * <p>The fragment-gap distribution answers "how long may a fragment of one unit be held back",
+     * which is the quantity the hold-up has to cover; {@code udp.hold} records the threshold those
+     * readings were taken under, and {@code udp.auTimeout} separates a silent unit from the
+     * {@code udp.auIncomplete} total that also counts evictions. A window without samples and a
+     * zero counter are omitted, like every other field on the line.</p>
      */
     private static void appendMediaChannelFields(StringBuilder out, MetricsSnapshot snapshot) {
         final long received = snapshot.getCounter(PipelineMetrics.Counter.DATAGRAMS_RECEIVED);
@@ -563,6 +576,13 @@ public final class MetricsFormatter {
                 PipelineMetrics.Counter.MEDIA_AUTH_FAILURES, null);
         appendCounters(out, snapshot, MediaMetricNames.UDP_IDR_REQUEST,
                 PipelineMetrics.Counter.UDP_JOIN_POINT_REQUESTS, null);
+        appendRows(out, snapshot, UDP_ROWS);
+        appendCounters(out, snapshot, MediaMetricNames.UDP_LATE,
+                PipelineMetrics.Counter.DATAGRAMS_LATE, null);
+        appendCounters(out, snapshot, MediaMetricNames.UDP_HOLD,
+                null, PipelineMetrics.Gauge.MEDIA_HOLD_UP_MS);
+        appendCounters(out, snapshot, MediaMetricNames.UDP_AU_TIMEOUT,
+                PipelineMetrics.Counter.ACCESS_UNITS_TIMED_OUT, null);
     }
 
     /**

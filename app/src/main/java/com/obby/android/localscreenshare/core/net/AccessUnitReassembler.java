@@ -203,6 +203,18 @@ public final class AccessUnitReassembler {
     }
 
     /**
+     * Returns the silence after which an unfinished unit is abandoned, in milliseconds.
+     *
+     * <p>The receiver publishes it as the hold-up gauge, so a capture records the threshold its
+     * readings were taken under. In this version the value is the constant {@link #HOLD_UP_MS}; a
+     * later batch replaces the constant with a window calibrated from measured fragment gaps, and
+     * this accessor is what keeps the gauge honest across that change.</p>
+     */
+    public long getHoldUpMs() {
+        return HOLD_UP_MS;
+    }
+
+    /**
      * Returns how many fragments belonged to an already delivered unit.
      */
     public long getLateCount() {

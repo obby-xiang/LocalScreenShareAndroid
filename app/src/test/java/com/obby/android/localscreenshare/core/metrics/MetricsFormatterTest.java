@@ -208,6 +208,27 @@ public class MetricsFormatterTest {
     }
 
     @Test
+    public void clientLine_printsTheDatagramGapAndTheDropReasons() {
+        PipelineMetrics metrics = PipelineMetrics.create(new MutableNanoClock(), 16);
+        metrics.add(PipelineMetrics.Counter.DATAGRAMS_RECEIVED, 240L);
+        metrics.record(PipelineMetrics.Window.FRAGMENT_GAP, 3_000_000L);
+        metrics.record(PipelineMetrics.Window.FRAGMENT_GAP, 7_000_000L);
+        metrics.record(PipelineMetrics.Window.FRAGMENT_GAP, 25_000_000L);
+        metrics.add(PipelineMetrics.Counter.DATAGRAMS_LATE, 2L);
+        metrics.add(PipelineMetrics.Counter.ACCESS_UNITS_TIMED_OUT, 3L);
+        metrics.setGauge(PipelineMetrics.Gauge.MEDIA_HOLD_UP_MS, 10L);
+
+        String line = MetricsFormatter.toLogLine(Role.CLIENT, metrics.snapshot(5000L));
+
+        assertTrue(line.contains(" udp.gap.p50=7.0"));
+        assertTrue(line.contains(" udp.gap.p95=25.0"));
+        assertTrue(line.contains(" udp.gap.max=25.0"));
+        assertTrue(line.contains(" udp.late=2"));
+        assertTrue(line.contains(" udp.hold=10"));
+        assertTrue(line.contains(" udp.auTimeout=3"));
+    }
+
+    @Test
     public void clientLine_omitsTheDatagramBlockWhenNothingArrived() {
         PipelineMetrics metrics = PipelineMetrics.create(new MutableNanoClock(), 16);
         metrics.add(PipelineMetrics.Counter.ACCESS_UNITS, 10L);
@@ -227,6 +248,10 @@ public class MetricsFormatterTest {
         assertTrue(line.contains(" udp.recv=3"));
         assertFalse(line.contains("udp.lost"));
         assertFalse(line.contains("udp.authFail"));
+        assertFalse(line.contains("udp.gap"));
+        assertFalse(line.contains("udp.late"));
+        assertFalse(line.contains("udp.hold"));
+        assertFalse(line.contains("udp.auTimeout"));
     }
 
     @Test

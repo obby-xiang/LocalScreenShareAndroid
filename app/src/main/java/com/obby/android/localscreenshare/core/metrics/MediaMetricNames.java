@@ -13,10 +13,12 @@ package com.obby.android.localscreenshare.core.metrics;
  * <p><b>Omission.</b> A key is printed only when something measured it: an unmeasured tier prints
  * nothing rather than zeros, so a gRPC-only session and a UDP session never look comparable when
  * they are not. The keys below without a producer in this version are registered so the log
- * vocabulary is fixed before a producer exists - {@code tcp.frame}, {@code tcp.frameDrop},
- * {@code udp.late} and {@code udp.auDrop} have no counter yet, and a future batch adds them
- * without renaming anything. {@link #UDP_IDR_REQUEST} has left that group: the join-point request
- * counter feeds it, so it prints like the other datagram counters once a request has been made.</p>
+ * vocabulary is fixed before a producer exists - {@code tcp.frame}, {@code tcp.frameDrop} and
+ * {@code udp.auDrop} have no counter yet, and a future batch adds them without renaming anything.
+ * {@link #UDP_LATE} has left that group: the reassembler counts the fragments it refuses, and the
+ * receiver reports the delta around each datagram. {@link #UDP_IDR_REQUEST} left it earlier with
+ * the join-point counter, and {@link #UDP_GAP}, {@link #UDP_HOLD} and {@link #UDP_AU_TIMEOUT} join
+ * the printed block with their own producers in the receiver.</p>
  */
 public final class MediaMetricNames {
 
@@ -61,9 +63,28 @@ public final class MediaMetricNames {
     public static final String UDP_REORDERED = "udp.reorder";
 
     /**
-     * Fragments that arrived after their access unit was already delivered.
+     * Fragments that arrived after their access unit was delivered or abandoned.
+     *
+     * <p>The intended meaning covers both endings, because neither can still produce a frame. This
+     * version detects only the delivered case: an abandoned unit leaves no tombstone, so its
+     * residue is not counted here yet - that arrives with the tombstone batch.</p>
      */
     public static final String UDP_LATE = "udp.late";
+
+    /**
+     * Interval between two consecutive fragments of one access unit.
+     */
+    public static final String UDP_GAP = "udp.gap";
+
+    /**
+     * Hold-up currently applied to an unfinished access unit, in milliseconds.
+     */
+    public static final String UDP_HOLD = "udp.hold";
+
+    /**
+     * Access units abandoned because their last fragment fell silent for the hold-up.
+     */
+    public static final String UDP_AU_TIMEOUT = "udp.auTimeout";
 
     /**
      * Access units abandoned because at least one fragment never arrived.

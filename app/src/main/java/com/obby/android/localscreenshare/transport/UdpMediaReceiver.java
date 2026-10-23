@@ -45,6 +45,13 @@ import java.net.SocketTimeoutException;
  * point when the loss turns into a trend. Units are delivered on the thread that reads the socket,
  * so the listener must marshal them the way it marshals stream messages.</p>
  *
+ * <p><b>Readings.</b> Three probes on the receive path feed the metrics scope, none of them
+ * allocating or locking: the interval between two fragments of the same unit, the fragments the
+ * reassembler refused after delivery (the delta of its late count around each datagram), and the
+ * reason of every abandoned unit. The hold-up itself is published once, when the reassembler is
+ * created, so a capture states the threshold its gap readings were taken under rather than leaving
+ * it implicit in the build.</p>
+ *
  * <p>Every abnormal end is reported once through the status listener and through
  * {@link MediaChannelListener#onChannelFailed(String)}; a close from the outside reports nothing.</p>
  */
@@ -82,6 +89,14 @@ public final class UdpMediaReceiver implements MediaChannelLink {
 
     // Arrival time of the datagram being processed, handed to the unit it completes.
     private long lastArrivalNs;
+
+    // Previous usable datagram. A fragment gap is only the interval between two fragments of one
+    // access unit; across units the interval is the frame interval and says nothing about jitter.
+    private boolean hasLastDatagram;
+
+    private int lastDatagramAuId;
+
+    private long lastDatagramArrivalNs;
 
     /**
      * Creates a receiver for one datagram offer.
@@ -129,6 +144,8 @@ public final class UdpMediaReceiver implements MediaChannelLink {
         this.metrics = metrics;
         this.lossTracker = new DatagramLossTracker(clock);
         this.reassembler = new AccessUnitReassembler(new FrameSink(), clock);
+        // Published once: the threshold a gap reading was taken under has to be in the same line.
+        metrics.setGauge(PipelineMetrics.Gauge.MEDIA_HOLD_UP_MS, reassembler.getHoldUpMs());
     }
 
     /**
@@ -258,8 +275,34 @@ public final class UdpMediaReceiver implements MediaChannelLink {
             metrics.increment(PipelineMetrics.Counter.DATAGRAMS_REORDERED);
         }
         lastArrivalNs = arrivalNs;
+        recordFragmentGap(packet.getAuId(), arrivalNs);
+        long lateBefore = reassembler.getLateCount();
         reassembler.onPacket(packet);
+        long lateAfter = reassembler.getLateCount();
+        if (lateAfter > lateBefore) {
+            metrics.add(PipelineMetrics.Counter.DATAGRAMS_LATE, lateAfter - lateBefore);
+        }
         reassembler.onTick();
+    }
+
+    /**
+     * Records the interval since the previous usable datagram when both belong to one unit.
+     *
+     * <p>Only the reassembler's decision about which fragments are usable matters here: a datagram
+     * the reorder window already discarded, or one that failed authentication, never reaches this
+     * method. The interval is recorded before reassembly so a fragment that completes the unit is
+     * measured like any other.</p>
+     *
+     * @param auId      unit the fragment belongs to
+     * @param arrivalNs arrival time of the fragment on this receiver's clock
+     */
+    private void recordFragmentGap(int auId, long arrivalNs) {
+        if (hasLastDatagram && auId == lastDatagramAuId) {
+            metrics.record(PipelineMetrics.Window.FRAGMENT_GAP, arrivalNs - lastDatagramArrivalNs);
+        }
+        hasLastDatagram = true;
+        lastDatagramAuId = auId;
+        lastDatagramArrivalNs = arrivalNs;
     }
 
     private void fail(String reason) {
@@ -321,6 +364,12 @@ public final class UdpMediaReceiver implements MediaChannelLink {
         @Override
         public void onAccessUnitDropped(int auId, String reason) {
             metrics.increment(PipelineMetrics.Counter.ACCESS_UNITS_INCOMPLETE);
+            // The total says how much was lost; the reason says which defect produced it. A unit
+            // that was superseded proves the pipeline moved on, a silent one proves the hold-up
+            // expired - the two lead to opposite conclusions about a widened window.
+            if ("timeout".equals(reason)) {
+                metrics.increment(PipelineMetrics.Counter.ACCESS_UNITS_TIMED_OUT);
+            }
             lossTracker.onAccessUnitIncomplete();
             listener.onCatchUp();
             // The decision belongs to the drop itself: by the time the next complete unit is
