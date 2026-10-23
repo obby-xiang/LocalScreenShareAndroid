@@ -116,7 +116,8 @@
 
 | ID | 状态 | 优先级 | 标题 | 创建 | 完成 | 关联 |
 | --- | --- | --- | --- | --- | --- | --- |
-| TB-ENG-016 | 📋 待办 | 🟠 P1 | 性能候选实施批次（用户 2026-10-23 批准五项：解码低延迟参数、刷新率匹配、热余量预测降档、追赶阈值收紧、背压回传；`SurfaceView` 另立评估，不在本批） | 2026-10-23 | — | [性能优化调研](performance-research.md) |
+| TB-ENG-016 | 📋 待办 | 🟠 P1 | 性能候选实施批次（用户 2026-10-23 批准五项：解码低延迟参数、刷新率匹配、热余量预测降档、追赶采样覆盖修复（原「阈值收紧」已改写，阈值不动）、背压回传；`SurfaceView` 另立评估，不在本批） | 2026-10-23 | — | [性能优化调研](performance-research.md) |
+| TB-CLIENT-007 | 🔶 部分完成 | 🟠 P1 | 追赶采样覆盖修复（`CatchUpSampler` 统一 gRPC/媒体通道/丢片三条路径；丢片以外部追赶计入 `rx.catchup` 但不占连续预算；阈值未收紧、HOLD 语义未改；代码完成，设备复验未做） | 2026-10-23 | — | [TB-ENG-016](#tb-eng-016) |
 | TB-MEDIA-008 | 🔶 部分完成 | 🟠 P1 | JPEG+UDP 重组窗口抖动容忍修复（代码完成；r4 设备复验判据 1/2/3/5 通过、4 基本满足；待校准参数与残余项保留） | 2026-10-23 | — | [TB-ENG-013](#tb-eng-013) |
 | TB-SEC-002 | 🔶 部分完成 | 🔴 P0 | 身份密钥瞬时故障静默删键与三份身份快照（N3；代码完成，设备复测待棒） | 2026-10-21 | — | [决策 DB-SEC-003](decision-board.md#db-sec-003) |
 | TB-DISC-013 | 🔶 部分完成 | 🟠 P1 | 发现行首连的证书指纹引导（N2；代码完成，设备复测待棒） | 2026-10-21 | — | [TB-DISC-012](#tb-disc-012) |
@@ -233,12 +234,29 @@
   1. `TB-MEDIA-006` **客户端解码器低延迟参数**：`KEY_LOW_LATENCY`（先查 `FEATURE_LowLatency`）、`KEY_OPERATING_RATE`、`KEY_PRIORITY`；降低解码延迟与抖动、不增加功耗。依据 §4.2 #1 与 §5。
   2. `TB-MEDIA-007` **显示刷新率/帧率匹配**：客户端呈现面 `Surface.setFrameRate(fps)`，刷新率非整数倍时再评估切 `Display.Mode`；消除 3:2 节奏抖动。依据 §4.2 #5、§6 触发条件 4。
   3. `TB-POWER-002` **热余量预测降档**：`PowerManager.getThermalHeadroom(10)` ≥0.7 与 ≥0.85 两级，早于 `SEVERE` 的「撞墙式」掉帧。依据 §4.2 #6、§6 触发条件 3。
-  4. `TB-CLIENT-007` **收紧追赶阈值 + 自适应队列**：队列 2 帧或 100–150 ms 即丢最旧，持续 500 ms 超阈值才 drop-to-IDR。依据 §4.2 #3。
+  4. `TB-CLIENT-007` **追赶采样覆盖修复 + 丢片并轨**（原登记为「收紧追赶阈值 + 自适应队列」，2026-10-23 按主裁决改写）：`CatchUpSampler` 统一 gRPC、专用媒体通道与丢片三条路径，丢片以外部追赶计入 `rx.catchup`/`rx.catchup.lat`（reason=`ext`）但**不占**连续失败预算、不设冷却、不启动收敛计时；`CatchUpPolicy` 的阈值与判定顺序一律不收紧，HOLD 语义与 [DV-027](decision-board.md) 状态不变。依据 §4.2 #3。
   5. `TB-ENG-015` **背压回传编码端**：客户端上报队列深度与迟到帧比例 → 服务端降 fps 或 `PARAMETER_KEY_VIDEO_BITRATE`；在爬升前介入，比事后追赶平滑。依据 §4.2 #4。
 - **不实施 / 另行评估的边界**：`SurfaceView` 取代 `TextureView`（§4.2 #2）**不在本批**——它改双宿主视图结构与快照过渡，须单独评估后再定，也不得与上述五项合并成一次改动。§4.3 的八条「未做且不推荐」、§4.2 #7 之后的编码器运行时参数、指标补全、编码器异常恢复、UDP 上的 FEC/NACK 等项均不在本批范围。
-- **口径约束**：① 追赶阈值收紧会改 `rx.catchup*` / `rx.converge.fail` 的口径，落棒时必须写机制理由并同步决策板 `DV-021` 与 [DB-OBS-002](decision-board.md#db-obs-002)（判据改写先例见 N-r2-2）；② 热余量阈值、`setFrameRate` 参数与队列上限默认标 **待设备校准**，不得写成已验证；③ 背压回传只改服务端编码参数，不新建通道、不引入新依赖。
+- **口径约束**：① 追赶采样口径变化（本轮为**采样覆盖修复 + 丢片并轨**，不是阈值收紧）会改 `rx.catchup*` / `rx.converge.fail` 的观察口径，落棒时必须写机制理由并同步决策板 `DV-021` 与 [DB-OBS-002](decision-board.md#db-obs-002)（判据改写先例见 N-r2-2）；② 热余量阈值、`setFrameRate` 参数与队列上限默认标 **待设备校准**，不得写成已验证；③ 背压回传只改服务端编码参数，不新建通道、不引入新依赖。
 - **完成判据**：五项各自落地并有 JVM 证据与设备点位，且分别写回自己的条目；五项全部写回后本批次总项转 ✅，在此之前保持 📋 待办。
 - **关联文档**：[性能优化调研](performance-research.md)、[TB-POWER-001](#tb-power-001)、[TB-CLIENT-005](#tb-client-005)、[TB-OBS-001](#tb-obs-001)
+
+</details>
+
+<a id="tb-client-007"></a>
+<details><summary>TB-CLIENT-007 追赶采样覆盖修复（🔶 部分完成 · 代码完成，设备复验未做）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：🔶 部分完成（代码与 JVM 用例已落地，设备验证未执行）/ 🟠 P1 / 2026-10-23 / —
+- **来源**：[TB-ENG-016](#tb-eng-016) 第 4 项。原登记措辞「收紧追赶阈值 + 自适应队列」已按主裁决改写：本轮做**采样覆盖修复 + 丢片并轨**，`CatchUpPolicy` 的 1 s / 64 / 2 s / 5 s / 3 次 / 30 s 与判定顺序**一字不改**。
+- **交付物**：
+  - `core/client/CatchUpSampler` 单一采样入口；每帧固定「先结束 episode、再采样」，`Result` 同时表达 `finishedEpisode` 与 `decision`；`getEpisodeStartedNs()` 仅在 `isCatchingUp()` 时有值，否则为 `Long.MIN_VALUE`。
+  - `CatchUpPolicy` 新增 `Reason.EXTERNAL` 与 `onExternalCatchUp(long)`：合并已打开的 episode 且不刷新起点，不占连续预算、不设冷却、不启动收敛计时，HOLD 期内忽略。
+  - `ScreenShareClient` 的 gRPC 路径与专用媒体通道 `onAccessUnit` 共用 `sampleCatchUp` / `handleCatchUpResult`；丢片 `onCatchUp` 经 `onExternalCatchUp` 并轨并计 `rx.catchup` 与 `rx.catchup.why=ext`；丢片路径仍不自行请求关键帧。
+  - `PipelineMetrics.CATCH_UP_REASON_EXTERNAL = 3`、`CatchUpMetricNames.REASON_EXTERNAL = "ext"`、格式化器 `ext` 分支。
+- **验证**：`CatchUpSamplerTest`（14 条）、`CatchUpPolicyTest`（+4）、`MetricsFormatterTest`（+1）；双变体全量 **1769 tests / 178 classes，0 失败 / 0 错误 / 0 跳过**（基线同提交更新为实测值）；`./gradlew build :app:assembleDebugAndroidTest` 全绿。
+- **DV-027 风险（未裁决，必须登记）**：B1 之前 TCP/UDP 档几乎不会进入收敛失败路径；B1 之后默认档的负载追赶会正常走到 `rx.converge.fail` → 30 s HOLD，HOLD 期滞后无界增长与约 12 s 同一帧的取舍仍按 [DV-027](decision-board.md) 未裁决处理。**本轮不收紧任何阈值，也不改变 HOLD 语义**。设备复验须在 `rx.converge.fail` 后同时记录 `freeze` 与 `pres.drop`，并观察 `rx.catchup.why=ext` 的占比是否掩盖解码赤字（设备项 ③）。
+- **未完成**：设备验证——TCP/UDP 两档出现 `rx.catchup`/`rx.catchup.lat`、丢片 reason=`ext`、HOLD 期表现与回滚判据。
+- **关联文档**：[媒体架构 §5.3.1](media-architecture.md)、[性能候选设计 §4.3](superpowers/specs/2026-10-23-performance-candidates-design.md)、[DB-OBS-002](decision-board.md#db-obs-002)、[DV-027](decision-board.md)、[TB-CLIENT-005](#tb-client-005)
 
 </details>
 

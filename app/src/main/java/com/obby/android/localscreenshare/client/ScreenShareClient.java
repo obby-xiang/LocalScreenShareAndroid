@@ -10,6 +10,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import com.obby.android.localscreenshare.core.client.CatchUpPolicy;
+import com.obby.android.localscreenshare.core.client.CatchUpSampler;
 import com.obby.android.localscreenshare.core.metrics.PipelineMetrics;
 import com.obby.android.localscreenshare.core.metrics.RttEstimator;
 import com.obby.android.localscreenshare.core.model.ClientSessionKey;
@@ -88,9 +89,9 @@ import lombok.experimental.Accessors;
  * Decoding therefore never runs on the gRPC executor. {@link #requestKeyframe()} asks the server for
  * a random-access point. A decode backlog that persists makes the client <i>catch up</i>: it
  * discards what is queued, flushes the decoder and resumes on a fresh join point, because H.264
- * cannot resume on a P frame whose references were dropped; {@link CatchUpPolicy} owns when that
- * happens. {@link #stop()} shuts the channel and both executors down permanently, so an instance is
- * single-use.</p>
+ * cannot resume on a P frame whose references were dropped; {@link CatchUpSampler} owns when that
+ * happens and is shared with the dedicated media channel paths. {@link #stop()} shuts the channel
+ * and both executors down permanently, so an instance is single-use.</p>
  *
  * <p><b>Threading.</b> {@link #start} and {@link #stop} are expected on the main thread. gRPC
  * transport invokes the response observer on threads of the private {@code lss-grpc-client-*}
@@ -140,19 +141,16 @@ public final class ScreenShareClient {
     private final KeyFrameRequestThrottle mKeyFrameRequestThrottle = new KeyFrameRequestThrottle();
 
     // Decides when the decode backlog is given up; sampled on the decode thread, one call per
-    // decoded message.
+    // decoded message. Shared by the gRPC stream and the dedicated media channel, and by the
+    // datagram loss path, so every transport reports through the same episode state.
     @NonNull
-    private final CatchUpPolicy mCatchUpPolicy = new CatchUpPolicy();
+    private final CatchUpSampler mCatchUpSampler = new CatchUpSampler();
 
     // Orders decode-queue submissions against catch-up episodes. A task records the value it was
     // submitted under; when an episode bumps it, the tasks already queued are discarded instead of
     // decoded. Written on the decode thread, read on the transport thread.
     @NonNull
     private final AtomicInteger mCatchUpGeneration = new AtomicInteger();
-
-    // Moment the current catch-up started, in the metric scope's clock; only valid while
-    // mCatchUpPolicy reports an episode.
-    private long mCatchUpStartedNs;
 
     // Lifecycle flag, written on the main thread and read by the transport and decode threads;
     // once set, callbacks become no-ops. Volatile because a stop tears the channel down from the
@@ -848,9 +846,11 @@ public final class ScreenShareClient {
                             mMetrics.increment(PipelineMetrics.Counter.CATCH_UP_SHEDS);
                             return;
                         }
-                        mMetrics.record(PipelineMetrics.Window.QUEUE_WAIT,
-                            mMetrics.nowNs() - arrivalNs);
+                        final long nowNs = mMetrics.nowNs();
+                        final long queueWaitNs = nowNs - arrivalNs;
+                        mMetrics.record(PipelineMetrics.Window.QUEUE_WAIT, queueWaitNs);
                         receiver.onAccessUnit(accessUnit, arrivalNs);
+                        sampleCatchUp(receiver, nowNs, queueWaitNs);
                     });
                 } catch (RejectedExecutionException e) {
                     // The unit was dropped after it arrived, so the reference chain has a gap.
@@ -869,11 +869,18 @@ public final class ScreenShareClient {
                 // A datagram channel lost a whole unit: the units queued behind it reference a
                 // picture that will never arrive, so they are discarded on the decode thread before
                 // the next one is applied, and the session waits for the join point the loss
-                // tracker asked for.
+                // tracker asked for. The loss is also merged into the shared sampler as an external
+                // episode, which counts it in rx.catchup without spending the decode-deficit
+                // budget. The loss tracker already asked for the key frame.
                 try {
                     mDecodeExecutor.execute(() -> {
                         if (mIsStopped) {
                             return;
+                        }
+                        if (mCatchUpSampler.onExternalCatchUp(mMetrics.nowNs())) {
+                            mMetrics.increment(PipelineMetrics.Counter.CATCH_UP_EPISODES);
+                            mMetrics.setGauge(PipelineMetrics.Gauge.CATCH_UP_REASON,
+                                PipelineMetrics.CATCH_UP_REASON_EXTERNAL);
                         }
                         mCatchUpGeneration.incrementAndGet();
                         receiver.getSession().onCatchUp();
@@ -945,9 +952,9 @@ public final class ScreenShareClient {
      * deserializing a payload or touching the decoder. Descriptors are exempt, because dropping one
      * would leave the session waiting for an epoch it can no longer learn.</p>
      *
-     * <p>After the message is applied, a session that is streaming again ends the episode and its
-     * recovery time is recorded. The backlog sample is taken afterwards, so the join point that
-     * just ended an episode cannot immediately start another one.</p>
+     * <p>After the message is applied, the unit goes through the sampler shared by every receive
+     * path. The sampler ends an open episode first and samples the backlog afterwards, so the join
+     * point that just ended an episode cannot immediately start another one.</p>
      */
     private void onDecodeTask(@NonNull ClientMediaReceiver receiver,
                               @NonNull ServerMessage message, long arrivalNs, int generation,
@@ -965,28 +972,59 @@ public final class ScreenShareClient {
         mMetrics.record(PipelineMetrics.Window.QUEUE_WAIT, queueWaitNs);
         receiver.onServerMessage(message, arrivalNs);
 
-        if (mCatchUpPolicy.isCatchingUp()
-                && receiver.getSession().getState() == ClientState.STREAMING) {
-            finishCatchUp(nowNs);
-        }
+        sampleCatchUp(receiver, nowNs, queueWaitNs);
+    }
 
-        final CatchUpPolicy.Decision decision = mCatchUpPolicy.onSample(nowNs,
-            mDecodeExecutor.getQueue().size(), queueWaitNs);
-        if (decision == CatchUpPolicy.Decision.START_CATCH_UP) {
+    /**
+     * Samples one decoded unit through the shared sampler and acts on the result.
+     *
+     * <p>Both receive paths call this after applying a unit, so the gRPC stream and a dedicated
+     * media channel share one episode state and one set of metrics. The episode start is read
+     * before the sample: a unit can be the join point of the current episode and the first sample
+     * of the next one at the same time, and the recovery time must use the start of the episode
+     * that ended.</p>
+     */
+    private void sampleCatchUp(@NonNull ClientMediaReceiver receiver, long nowNs,
+                               long queueWaitNs) {
+        final long episodeStartedNs = mCatchUpSampler.isCatchingUp()
+            ? mCatchUpSampler.getEpisodeStartedNs()
+            : Long.MIN_VALUE;
+        final CatchUpSampler.Result result = mCatchUpSampler.onDecoded(nowNs,
+            mDecodeExecutor.getQueue().size(), queueWaitNs,
+            receiver.getSession().getState() == ClientState.STREAMING);
+        handleCatchUpResult(receiver, result, episodeStartedNs, nowNs);
+    }
+
+    /**
+     * Applies one sampler result: finish the episode that ended, then start or report the next
+     * one. Keeping this in one place is what makes both receive paths behave identically.
+     */
+    private void handleCatchUpResult(@NonNull ClientMediaReceiver receiver,
+                                     @NonNull CatchUpSampler.Result result,
+                                     long episodeStartedNs, long nowNs) {
+        if (result.finishedEpisode) {
+            finishCatchUp(episodeStartedNs, nowNs);
+        }
+        if (result.decision == CatchUpPolicy.Decision.START_CATCH_UP) {
             startCatchUp(receiver, nowNs);
-        } else if (decision == CatchUpPolicy.Decision.CONVERGENCE_FAILED) {
+        } else if (result.decision == CatchUpPolicy.Decision.CONVERGENCE_FAILED) {
             reportConvergenceFailure();
         }
     }
 
     /**
      * Records the join point that ended the current catch-up.
+     *
+     * <p>{@code episodeStartedNs} was read while the episode was still open; the sentinel means no
+     * start was visible, so no recovery time is recorded.</p>
      */
-    private void finishCatchUp(long nowNs) {
-        mCatchUpPolicy.onJoinPoint(nowNs);
-        mMetrics.record(PipelineMetrics.Window.CATCH_UP_LATENCY, nowNs - mCatchUpStartedNs);
+    private void finishCatchUp(long episodeStartedNs, long nowNs) {
+        if (episodeStartedNs == Long.MIN_VALUE) {
+            return;
+        }
+        mMetrics.record(PipelineMetrics.Window.CATCH_UP_LATENCY, nowNs - episodeStartedNs);
         Log.i(mTag, String.format("finishCatchUp: recovered in %d ms",
-            (nowNs - mCatchUpStartedNs) / 1_000_000L));
+            (nowNs - episodeStartedNs) / 1_000_000L));
     }
 
     /**
@@ -999,19 +1037,29 @@ public final class ScreenShareClient {
      */
     private void startCatchUp(@NonNull ClientMediaReceiver receiver, long nowNs) {
         mCatchUpGeneration.incrementAndGet();
-        mCatchUpStartedNs = nowNs;
         mMetrics.increment(PipelineMetrics.Counter.CATCH_UP_EPISODES);
         mMetrics.setGauge(PipelineMetrics.Gauge.CATCH_UP_REASON,
-            mCatchUpPolicy.getLastReason() == CatchUpPolicy.Reason.QUEUE_DEPTH
-                ? PipelineMetrics.CATCH_UP_REASON_QUEUE_DEPTH
-                : PipelineMetrics.CATCH_UP_REASON_QUEUE_WAIT);
+            catchUpReason(mCatchUpSampler.getLastReason()));
 
         receiver.getSession().onCatchUp();
         requestKeyFrameThrottledFromMediaPath();
         Log.i(mTag, String.format(
             "startCatchUp: dropped the decode backlog, reason = %s, depth = %d, attempts = %d",
-            mCatchUpPolicy.getLastReason(), mDecodeExecutor.getQueue().size(),
-            mCatchUpPolicy.getConsecutiveCatchUps()));
+            mCatchUpSampler.getLastReason(), mDecodeExecutor.getQueue().size(),
+            mCatchUpSampler.getConsecutiveCatchUps()));
+    }
+
+    /**
+     * Maps a sampler reason to the gauge value; external loss has its own value.
+     */
+    private static long catchUpReason(@NonNull CatchUpPolicy.Reason reason) {
+        if (reason == CatchUpPolicy.Reason.QUEUE_DEPTH) {
+            return PipelineMetrics.CATCH_UP_REASON_QUEUE_DEPTH;
+        }
+        if (reason == CatchUpPolicy.Reason.EXTERNAL) {
+            return PipelineMetrics.CATCH_UP_REASON_EXTERNAL;
+        }
+        return PipelineMetrics.CATCH_UP_REASON_QUEUE_WAIT;
     }
 
     /**
@@ -1025,7 +1073,7 @@ public final class ScreenShareClient {
         mMetrics.increment(PipelineMetrics.Counter.CONVERGENCE_FAILURES);
         Log.w(mTag, String.format(
             "reportConvergenceFailure: %d catch-ups did not converge, holding off for %d ms",
-            mCatchUpPolicy.getConsecutiveCatchUps(),
+            mCatchUpSampler.getConsecutiveCatchUps(),
             CatchUpPolicy.HOLD_NANOS / 1_000_000L));
     }
 

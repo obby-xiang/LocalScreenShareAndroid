@@ -36,6 +36,12 @@ package com.obby.android.localscreenshare.core.client;
  * {@link #CATCH_UP_TIMEOUT_NANOS}, so a lost key-frame request cannot disable the mechanism for the
  * rest of the session.</p>
  *
+ * <p><b>External episodes.</b> {@link #onExternalCatchUp(long)} opens the same kind of episode for
+ * a fault that is not backlog, such as a lost whole access unit. It merges into an open episode
+ * without refreshing its start and never touches the consecutive count, the cooldown or the
+ * convergence timer, so a network fault cannot spend the hold budget that belongs to decoder
+ * deficits. It is ignored while the policy holds off after a convergence failure.</p>
+ *
  * <p>All thresholds are starting values <b>pending device calibration</b>: they are public so a
  * verification report can quote exactly what it measured against, and they are deliberately
  * conservative - a missed catch-up costs one more lagging second, a needless one costs a visible
@@ -140,7 +146,13 @@ public final class CatchUpPolicy {
         /**
          * The queue depth reached {@link #BACKLOG_QUEUE_DEPTH}.
          */
-        QUEUE_DEPTH
+        QUEUE_DEPTH,
+
+        /**
+         * The episode was opened by something other than backlog, such as a lost whole access
+         * unit. It never consumes the consecutive budget.
+         */
+        EXTERNAL
     }
 
     /**
@@ -264,6 +276,26 @@ public final class CatchUpPolicy {
         }
         state = State.IDLE;
         catchUpSinceNs = UNSET;
+    }
+
+    /**
+     * Opens an episode that was not caused by backlog, such as a lost whole access unit.
+     *
+     * <p>A no-op while an episode is already open: times are not refreshed, so one episode cannot
+     * be prolonged indefinitely by repeated loss. Never increments the consecutive count, never
+     * sets the cooldown and never starts the convergence timer, because a loss is a network fault
+     * rather than a decoder deficit and must not spend the hold budget of {@code DV-027}. The event
+     * is also ignored while attempts are held off, so a loss cannot cut that hold short.</p>
+     *
+     * @param nowNs monotonic time of the loss, in nanoseconds
+     */
+    public void onExternalCatchUp(long nowNs) {
+        if (state != State.IDLE) {
+            return;
+        }
+        state = State.CATCHING_UP;
+        catchUpSinceNs = nowNs;
+        lastReason = Reason.EXTERNAL;
     }
 
     /**

@@ -636,10 +636,15 @@ public final class MetricsFormatter {
         if (reason == 0L) {
             return;
         }
-        out.append(' ').append(CatchUpMetricNames.RX_CATCH_UP_REASON).append('=')
-                .append(reason == PipelineMetrics.CATCH_UP_REASON_QUEUE_DEPTH
-                        ? CatchUpMetricNames.REASON_QUEUE_DEPTH
-                        : CatchUpMetricNames.REASON_QUEUE_WAIT);
+        final String symbol;
+        if (reason == PipelineMetrics.CATCH_UP_REASON_QUEUE_DEPTH) {
+            symbol = CatchUpMetricNames.REASON_QUEUE_DEPTH;
+        } else if (reason == PipelineMetrics.CATCH_UP_REASON_EXTERNAL) {
+            symbol = CatchUpMetricNames.REASON_EXTERNAL;
+        } else {
+            symbol = CatchUpMetricNames.REASON_QUEUE_WAIT;
+        }
+        out.append(' ').append(CatchUpMetricNames.RX_CATCH_UP_REASON).append('=').append(symbol);
     }
 
     /**

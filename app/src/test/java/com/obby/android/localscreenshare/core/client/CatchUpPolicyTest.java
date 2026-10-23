@@ -221,6 +221,70 @@ public class CatchUpPolicyTest {
     }
 
     @Test
+    public void onExternalCatchUp_startsEpisode() {
+        CatchUpPolicy policy = new CatchUpPolicy();
+
+        policy.onExternalCatchUp(5_000_000_000L);
+
+        assertTrue(policy.isCatchingUp());
+        assertEquals(Reason.EXTERNAL, policy.getLastReason());
+        assertEquals(0, policy.getConsecutiveCatchUps());
+
+        policy.onJoinPoint(5_100_000_000L);
+
+        assertFalse(policy.isCatchingUp());
+    }
+
+    @Test
+    public void onExternalCatchUp_mergesWithoutDoubleCount() {
+        CatchUpPolicy policy = new CatchUpPolicy();
+        policy.onExternalCatchUp(1_000_000_000L);
+
+        policy.onExternalCatchUp(2_000_000_000L);
+
+        // The merge does not refresh the start: the episode still expires one timeout after 1 s.
+        assertEquals(Decision.NONE,
+                policy.onSample(3_900_000_000L, CLEAR_DEPTH, CLEAR_WAIT_NS));
+        assertTrue(policy.isCatchingUp());
+        assertEquals(Decision.NONE,
+                policy.onSample(4_000_000_000L, CLEAR_DEPTH, CLEAR_WAIT_NS));
+        assertFalse(policy.isCatchingUp());
+        assertEquals(0, policy.getConsecutiveCatchUps());
+    }
+
+    @Test
+    public void onExternalCatchUp_doesNotIncrementConsecutive() {
+        CatchUpPolicy policy = new CatchUpPolicy();
+        long triggerAtNs = triggerFirstEpisode(policy, CatchUpPolicy.BACKLOG_QUEUE_DEPTH,
+                CLEAR_WAIT_NS);
+        policy.onJoinPoint(triggerAtNs + STEP_NS);
+        assertEquals(1, policy.getConsecutiveCatchUps());
+
+        policy.onExternalCatchUp(triggerAtNs + 2L * STEP_NS);
+
+        assertEquals(1, policy.getConsecutiveCatchUps());
+        assertTrue(policy.isCatchingUp());
+        assertEquals(Reason.EXTERNAL, policy.getLastReason());
+    }
+
+    @Test
+    public void onExternalCatchUp_doesNotTriggerConvergenceHold() {
+        CatchUpPolicy policy = new CatchUpPolicy();
+        for (int i = 0; i < 20; i++) {
+            policy.onExternalCatchUp(i * STEP_NS);
+            policy.onJoinPoint(i * STEP_NS + 1L);
+        }
+
+        // External episodes neither consume the budget nor set the cooldown: a sustained backlog
+        // still starts a load episode normally.
+        assertEquals(Decision.START_CATCH_UP,
+                feedBacklog(policy, 3_000_000_000L, 5_000_000_000L,
+                        CatchUpPolicy.BACKLOG_QUEUE_DEPTH, CLEAR_WAIT_NS));
+        assertEquals(1, policy.getConsecutiveCatchUps());
+        assertEquals(Reason.QUEUE_DEPTH, policy.getLastReason());
+    }
+
+    @Test
     public void isSuperseded_dropsMediaButKeepsDescriptors() {
         assertFalse(CatchUpPolicy.isSuperseded(7, 7, false));
         assertTrue(CatchUpPolicy.isSuperseded(6, 7, false));

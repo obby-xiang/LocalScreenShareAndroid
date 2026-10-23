@@ -315,6 +315,17 @@ public class MetricsFormatterTest {
     }
 
     @Test
+    public void catchUpReason_externalIsPrintedAsExt() {
+        PipelineMetrics metrics = PipelineMetrics.create(new MutableNanoClock(), 16);
+        metrics.setGauge(PipelineMetrics.Gauge.CATCH_UP_REASON,
+                PipelineMetrics.CATCH_UP_REASON_EXTERNAL);
+
+        String line = MetricsFormatter.toLogLine(Role.CLIENT, metrics.snapshot(5000L));
+
+        assertTrue(line.contains(" rx.catchup.why=ext"));
+    }
+
+    @Test
     public void clientLine_printsTheAudioBlockAfterTheVideoFields() {
         PipelineMetrics metrics = PipelineMetrics.create(new MutableNanoClock(), 16);
         metrics.record(PipelineMetrics.Window.AV_OFFSET, 3_100_000L);

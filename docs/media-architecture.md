@@ -309,6 +309,7 @@ H.264 的 P 帧依赖前面的参考帧。丢弃一个中间 P 帧后，后续 P
 2. **丢弃窗口**：判定积压后作废队列中所有已到达的访问单元（不反序列化、不进解码器），flush 解码器并回到 `WAIT_IDR`，同时经既有 `requestKeyframe` 通道请求 IDR；恢复点只能是经 `H264CodecPolicy.isJoinPoint` 校验过的 IDR。
 3. **防抖与升级**：追赶有 5 s 冷却；连续 3 次仍不收敛就认为“解码能力低于码流”，记录 `rx.converge.fail` 并停 30 s（流畅优先，不反复重置画面），不自动下调服务端参数——那是单流扇出下影响所有观看者的降档决策（[DV-012](decision-board.md)）。
 4. **代价**：每次追赶换一次可见的短停顿或黑帧。能长期稳定的前提仍是码流与解码能力匹配；追赶只是把“无限滞后”收敛成“有界的滞后 + 偶尔重置”。
+5. **单一采样入口（2026-10-23，[TB-CLIENT-007](task-board.md#tb-client-007)）**：gRPC 路径、专用媒体通道（TCP/UDP）的 `onAccessUnit` 与丢片追赶共用同一个 `CatchUpSampler`；每解一条访问单元固定“先结束 episode、再采样”，因此同一帧既可作为上一 episode 的 join point，也可作为下一 episode 的起点。丢片（整片丢失）以**外部追赶**并入同一 episode 状态：计入 `rx.catchup` 与 `rx.catchup.lat`，`rx.catchup.why=ext`；它**不占**连续失败预算、不设 5 s 冷却、不启动收敛计时，也不会在 HOLD 期内提前结束 30 s 停手。已打开的 episode 被合并且**不刷新起点**，反复丢片无法把一次 episode 无限延长。理由：丢片是网络类故障，不应触发“解码赤字”的 HOLD 惩罚（[DV-027](decision-board.md) 的取舍尚未裁决）。代价：外部追赶打开期间积压采样不动作，真正的解码赤字最多晚一个 episode 超时窗口被发现；设备复验须同时看 `rx.catchup.why=ext` 的占比与 `rx.converge.fail`。阈值（1 s / 64 / 2 s / 5 s / 3 次 / 30 s）本轮一字未改。
 
 ## 6. 传输
 

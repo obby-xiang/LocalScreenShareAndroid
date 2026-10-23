@@ -406,8 +406,9 @@ public final class PipelineMetrics {
         CAP_TO_OUT_SUPPRESSED,
 
         /**
-         * Signal that started the latest catch-up; see {@link #CATCH_UP_REASON_QUEUE_WAIT} and
-         * {@link #CATCH_UP_REASON_QUEUE_DEPTH}. Zero before the first episode.
+         * Signal that started the latest catch-up; see {@link #CATCH_UP_REASON_QUEUE_WAIT},
+         * {@link #CATCH_UP_REASON_QUEUE_DEPTH} and {@link #CATCH_UP_REASON_EXTERNAL}. Zero before
+         * the first episode.
          */
         CATCH_UP_REASON,
 
@@ -433,6 +434,12 @@ public final class PipelineMetrics {
      * {@link Gauge#CATCH_UP_REASON} value: the decode queue reached its backlog depth.
      */
     public static final long CATCH_UP_REASON_QUEUE_DEPTH = 2L;
+
+    /**
+     * {@link Gauge#CATCH_UP_REASON} value: a lost whole access unit opened the episode, so the
+     * signal is a network fault rather than decode backlog.
+     */
+    public static final long CATCH_UP_REASON_EXTERNAL = 3L;
 
     private final boolean enabled;
 

@@ -13,6 +13,11 @@ package com.obby.android.localscreenshare.core.metrics;
  * queue was full and the newest message was rejected", while a catch-up discards what is already
  * queued on purpose. A log capture that conflates the two cannot tell congestion from a deliberate
  * skip.</p>
+ *
+ * <p>The counters cover three receive paths since {@code CatchUpSampler} became the single entry
+ * point: the gRPC stream, the dedicated media channel and a lost whole access unit on a datagram
+ * channel. The last one reports {@code rx.catchup.why=ext} and never spends the consecutive
+ * budget, so {@code rx.catchup} from this build cannot be compared directly with older builds.</p>
  */
 public final class CatchUpMetricNames {
 
@@ -51,6 +56,11 @@ public final class CatchUpMetricNames {
      * The latest catch-up was started because the decode queue reached its backlog depth.
      */
     public static final String REASON_QUEUE_DEPTH = "qDepth";
+
+    /**
+     * The latest catch-up was opened by a lost whole access unit instead of decode backlog.
+     */
+    public static final String REASON_EXTERNAL = "ext";
 
     private CatchUpMetricNames() {
     }
