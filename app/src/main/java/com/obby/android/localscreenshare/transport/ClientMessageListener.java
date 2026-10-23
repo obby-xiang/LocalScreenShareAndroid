@@ -1,5 +1,6 @@
 package com.obby.android.localscreenshare.transport;
 
+import com.obby.android.localscreenshare.core.model.StreamFeedback;
 import com.obby.android.localscreenshare.grpc.screenstream.Hello;
 import com.obby.android.localscreenshare.grpc.screenstream.MediaChannelEvent;
 import com.obby.android.localscreenshare.grpc.screenstream.Ping;
@@ -49,5 +50,17 @@ public interface ClientMessageListener {
      * @param event answer carrying the channel id, its outcome and a short reason
      */
     default void onMediaChannelEvent(MediaChannelEvent event) {
+    }
+
+    /**
+     * A client reported its decode-queue backlog.
+     *
+     * <p>The default implementation ignores the report, which is what a listener written before
+     * backpressure existed does: an old server keeps sending at its configured bitrate, and the
+     * viewer keeps catching up on its own. A report is only ever sent by an attached client.</p>
+     *
+     * @param feedback peaks of the client's last reporting window; never null
+     */
+    default void onFeedback(StreamFeedback feedback) {
     }
 }

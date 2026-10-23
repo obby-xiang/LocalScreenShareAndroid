@@ -376,7 +376,28 @@ public final class PipelineMetrics {
          * still arriving. Also a subset of {@link #ACCESS_UNITS_INCOMPLETE}, so the total stays the
          * loss reading while the reason tells which defect produced it.</p>
          */
-        ACCESS_UNITS_SUPERSEDED
+        ACCESS_UNITS_SUPERSEDED,
+
+        /**
+         * Bitrate actions the backpressure coordinator applied successfully.
+         */
+        BACKPRESSURE_APPLIED,
+
+        /**
+         * Reports the backpressure coordinator did not act on: multiple clients, another codec, the
+         * master switch, an unknown descriptor, an external write or an encoder failure.
+         */
+        BACKPRESSURE_SKIPPED,
+
+        /**
+         * Backlog reports the viewer sent.
+         */
+        FEEDBACK_SENT,
+
+        /**
+         * Backlog reports the viewer discarded because it was not connected or had stopped.
+         */
+        FEEDBACK_SKIPPED
     }
 
     /**
@@ -446,7 +467,13 @@ public final class PipelineMetrics {
          * {@code MINIMAL}, and zero while the headroom has never been sampled. Zero is never
          * printed, so a log line without the key means "not sampled" rather than "not throttled".
          */
-        THERMAL_TIER
+        THERMAL_TIER,
+
+        /**
+         * Target bitrate in force after the last successful backpressure action, in bits per
+         * second. Zero means no action has succeeded yet; the value is not printed until then.
+         */
+        BACKPRESSURE_TARGET_BITRATE
     }
 
     /**

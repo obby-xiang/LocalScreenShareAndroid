@@ -17,6 +17,7 @@ import com.obby.android.localscreenshare.core.model.ClientSessionKey;
 import com.obby.android.localscreenshare.core.model.ClientState;
 import com.obby.android.localscreenshare.core.model.EncodedAccessUnit;
 import com.obby.android.localscreenshare.core.model.StreamDescriptor;
+import com.obby.android.localscreenshare.core.model.StreamFeedback;
 import com.obby.android.localscreenshare.core.net.MediaChannelListener;
 import com.obby.android.localscreenshare.core.net.MediaChannelLog;
 import com.obby.android.localscreenshare.core.net.MediaChannelOffer;
@@ -108,6 +109,10 @@ import lombok.experimental.Accessors;
 public final class ScreenShareClient {
     private static final long UPDATE_CLIENT_STATS_INTERVAL_MS = 3000L;
 
+    // Reporting window of the backlog feedback. It starts when the decode path first sees queueing
+    // or a catch-up; there is no periodic timer while the viewer is healthy and no report is due.
+    private static final long FEEDBACK_WINDOW_MS = 3000L;
+
     // Cadence of the round-trip probe. One probe per second is under 40 bytes per second and far
     // below any congestion-visible load.
     private static final long PING_INTERVAL_MS = 1000L;
@@ -151,6 +156,24 @@ public final class ScreenShareClient {
     // decoded. Written on the decode thread, read on the transport thread.
     @NonNull
     private final AtomicInteger mCatchUpGeneration = new AtomicInteger();
+
+    // Backlog of the current reporting window; written on the decode thread, sampled on the main
+    // thread. The peaks are the only state the report carries.
+    @NonNull
+    private final BacklogFeedback mBacklogFeedback = new BacklogFeedback();
+
+    // One feedback timer at most. It is armed only when the decode path saw activity, so an idle
+    // viewer schedules nothing.
+    @NonNull
+    private final AtomicBoolean mFeedbackScheduled = new AtomicBoolean();
+
+    // Set on the transport callback once the server answered anything; a report asked for before
+    // that is skipped, because the stream may already be gone.
+    private volatile boolean mStreamConnected;
+
+    // Timer body of one report; armed from the decode path, runs on the main thread.
+    @NonNull
+    private final Runnable mFeedbackRunnable = this::sendFeedback;
 
     // Accounts a whole-unit loss as an external episode on the decode thread. The loss moment is
     // captured at submission, and the session gate decides whether any accounting happens at all.
@@ -593,6 +616,7 @@ public final class ScreenShareClient {
                         return;
                     }
                     mIsConnected = true;
+                    mStreamConnected = true;
                     mMainHandler.post(() -> {
                         if (!mIsStopped) {
                             observer.onConnected();
@@ -856,8 +880,11 @@ public final class ScreenShareClient {
                         final long nowNs = mMetrics.nowNs();
                         final long queueWaitNs = nowNs - arrivalNs;
                         mMetrics.record(PipelineMetrics.Window.QUEUE_WAIT, queueWaitNs);
+                        mBacklogFeedback.onQueueDepth(mDecodeExecutor.getQueue().size());
+                        mBacklogFeedback.onQueueWait(queueWaitNs);
                         receiver.onAccessUnit(accessUnit, arrivalNs);
                         sampleCatchUp(receiver, nowNs, queueWaitNs);
+                        scheduleFeedbackIfNeeded();
                     });
                 } catch (RejectedExecutionException e) {
                     // The unit was dropped after it arrived, so the reference chain has a gap.
@@ -884,6 +911,8 @@ public final class ScreenShareClient {
                 try {
                     mExternalCatchUpRecorder.submit(mDecodeExecutor, receiver.getSession(),
                         () -> mIsStopped);
+                    mBacklogFeedback.onCatchUp();
+                    scheduleFeedbackIfNeeded();
                 } catch (RejectedExecutionException e) {
                     Log.w(mTag, "media channel: decode queue full, dropping the catch-up");
                 }
@@ -913,6 +942,59 @@ public final class ScreenShareClient {
      */
     private void requestKeyFrameThrottledFromMediaPath() {
         mMainHandler.post(this::requestKeyFrameThrottled);
+    }
+
+    /**
+     * Arms the one report timer when the window saw queueing or a catch-up.
+     *
+     * <p>Only a {@code compareAndSet} arms a timer, so a burst of decoded tasks on the decode thread
+     * cannot post more than one report per window. A healthy window leaves the flag untouched and
+     * posts nothing: an idle viewer has no backpressure timer at all.</p>
+     */
+    private void scheduleFeedbackIfNeeded() {
+        if (mIsStopped || !mBacklogFeedback.hasActivity()) {
+            return;
+        }
+        if (mFeedbackScheduled.compareAndSet(false, true)) {
+            mMainHandler.postDelayed(mFeedbackRunnable, FEEDBACK_WINDOW_MS);
+        }
+    }
+
+    /**
+     * Sends one backlog report and decides whether the series continues.
+     *
+     * <p>The report is sampled and the window reset before the connection check, so a report that
+     * cannot be sent does not leak its peaks into the next window. A skipped report is counted in
+     * {@code fb.skip}; a sent one in {@code fb.sent}. The series continues only while the report
+     * that was just sent still carried queueing or a catch-up, so the server sees a final clear
+     * report and the viewer then drops the timer.</p>
+     */
+    private void sendFeedback() {
+        final StreamFeedback feedback = mBacklogFeedback.sampleAndReset();
+        if (mIsStopped || mRequestObserver == null || !mStreamConnected) {
+            mMetrics.increment(PipelineMetrics.Counter.FEEDBACK_SKIPPED);
+            mFeedbackScheduled.set(false);
+            return;
+        }
+        try {
+            mRequestObserver.onNext(ClientMessage.newBuilder()
+                .setFeedback(ScreenStreamProtoMapper.toProtoFeedback(feedback))
+                .build());
+            mMetrics.increment(PipelineMetrics.Counter.FEEDBACK_SENT);
+        } catch (RuntimeException e) {
+            // The stream died between the check and the write; the reconnect path owns the failure.
+            mMetrics.increment(PipelineMetrics.Counter.FEEDBACK_SKIPPED);
+            Log.w(mTag, "sendFeedback: write failed, " + e.getMessage());
+            mFeedbackScheduled.set(false);
+            return;
+        }
+        if (!mIsStopped
+            && (feedback.getQueueDepthPeak() > 0 || feedback.getCatchUpEvents() > 0)) {
+            // Keep the flag set: this post is the continuation of the same series.
+            mMainHandler.postDelayed(mFeedbackRunnable, FEEDBACK_WINDOW_MS);
+        } else {
+            mFeedbackScheduled.set(false);
+        }
     }
 
     /**
@@ -969,9 +1051,12 @@ public final class ScreenShareClient {
         final long nowNs = mMetrics.nowNs();
         final long queueWaitNs = nowNs - arrivalNs;
         mMetrics.record(PipelineMetrics.Window.QUEUE_WAIT, queueWaitNs);
+        mBacklogFeedback.onQueueDepth(mDecodeExecutor.getQueue().size());
+        mBacklogFeedback.onQueueWait(queueWaitNs);
         receiver.onServerMessage(message, arrivalNs);
 
         sampleCatchUp(receiver, nowNs, queueWaitNs);
+        scheduleFeedbackIfNeeded();
     }
 
     /**
@@ -1038,6 +1123,7 @@ public final class ScreenShareClient {
     private void startCatchUp(@NonNull ClientMediaReceiver receiver, long nowNs) {
         mCatchUpGeneration.incrementAndGet();
         mMetrics.increment(PipelineMetrics.Counter.CATCH_UP_EPISODES);
+        mBacklogFeedback.onCatchUp();
         mMetrics.setGauge(PipelineMetrics.Gauge.CATCH_UP_REASON,
             catchUpReason(mCatchUpSampler.getLastReason()));
 
@@ -1101,6 +1187,9 @@ public final class ScreenShareClient {
             return;
         }
         mIsStopped = true;
+        mStreamConnected = false;
+        mFeedbackScheduled.set(false);
+        mMainHandler.removeCallbacks(mFeedbackRunnable);
         mMainHandler.removeCallbacks(mPingRunnable);
         mClientProfile = null;
         mClientStats = null;

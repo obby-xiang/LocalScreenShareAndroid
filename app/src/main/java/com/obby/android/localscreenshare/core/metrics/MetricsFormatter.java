@@ -503,6 +503,12 @@ public final class MetricsFormatter {
                 PipelineMetrics.Gauge.THERMAL_HEADROOM_PERMILLE);
         appendCounters(out, snapshot, ServerMetricNames.THERMAL_TIER, null,
                 PipelineMetrics.Gauge.THERMAL_TIER);
+        appendCounters(out, snapshot, ServerMetricNames.BP_APPLY,
+                PipelineMetrics.Counter.BACKPRESSURE_APPLIED, null);
+        appendCounters(out, snapshot, ServerMetricNames.BP_SKIP,
+                PipelineMetrics.Counter.BACKPRESSURE_SKIPPED, null);
+        appendCounters(out, snapshot, ServerMetricNames.BP_BITRATE, null,
+                PipelineMetrics.Gauge.BACKPRESSURE_TARGET_BITRATE);
     }
 
     /**
@@ -543,6 +549,10 @@ public final class MetricsFormatter {
                 PipelineMetrics.Counter.CATCH_UP_SHEDS, null);
         appendCounters(out, snapshot, CatchUpMetricNames.RX_CONVERGE_FAIL,
                 PipelineMetrics.Counter.CONVERGENCE_FAILURES, null);
+        appendCounters(out, snapshot, FeedbackMetricNames.FB_SENT,
+                PipelineMetrics.Counter.FEEDBACK_SENT, null);
+        appendCounters(out, snapshot, FeedbackMetricNames.FB_SKIP,
+                PipelineMetrics.Counter.FEEDBACK_SKIPPED, null);
         appendCatchUpReason(out, snapshot);
         appendRttFields(out, snapshot);
         appendAudioFields(out, snapshot);

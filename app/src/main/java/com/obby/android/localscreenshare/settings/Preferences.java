@@ -190,6 +190,11 @@ public final class Preferences {
      */
     public static final String KEY_THERMAL_THROTTLE = "thermal_throttle";
 
+    /**
+     * Hidden single-client bitrate backpressure switch; see {@link #isBackpressureEnabled()}.
+     */
+    public static final String KEY_BACKPRESSURE = "backpressure";
+
     private static final String KEY_AUDIO_CHANNELS = "audio_channels";
 
     private static final String KEY_AUDIO_BITRATE = "audio_bitrate";
@@ -469,6 +474,25 @@ public final class Preferences {
      */
     public void setThermalThrottleEnabled(final boolean isEnabled) {
         mPreferences.edit().putBoolean(KEY_THERMAL_THROTTLE, isEnabled).commit();
+    }
+
+    /**
+     * Whether the server may lower the bitrate from viewer backlog reports; defaults to true.
+     *
+     * <p>Hidden on purpose, like the plaintext override: the switch exists for device verification
+     * and for rolling back to the old fixed-bitrate behaviour, and it has no user-facing entry. The
+     * coordinator reads it before every apply pass, so flipping it takes effect on the next report
+     * without restarting the stream.</p>
+     */
+    public boolean isBackpressureEnabled() {
+        return mPreferences.getBoolean(KEY_BACKPRESSURE, true);
+    }
+
+    /**
+     * Persists the backpressure switch; a running stream picks it up on its next report.
+     */
+    public void setBackpressureEnabled(final boolean isEnabled) {
+        mPreferences.edit().putBoolean(KEY_BACKPRESSURE, isEnabled).commit();
     }
 
     /**

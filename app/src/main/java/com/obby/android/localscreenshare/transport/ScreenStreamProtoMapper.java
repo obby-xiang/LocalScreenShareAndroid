@@ -9,6 +9,7 @@ import com.obby.android.localscreenshare.core.model.CodecConfigPart;
 import com.obby.android.localscreenshare.core.model.EncodedAccessUnit;
 import com.obby.android.localscreenshare.core.model.JoinInfo;
 import com.obby.android.localscreenshare.core.model.StreamDescriptor;
+import com.obby.android.localscreenshare.core.model.StreamFeedback;
 import com.obby.android.localscreenshare.core.model.StreamKey;
 import com.obby.android.localscreenshare.core.stream.ClientCapabilities;
 import com.obby.android.localscreenshare.core.stream.CodecCapability;
@@ -391,10 +392,47 @@ public final class ScreenStreamProtoMapper {
             case MEDIA_CHANNEL_EVENT:
                 listener.onMediaChannelEvent(message.getMediaChannelEvent());
                 break;
+            case FEEDBACK:
+                listener.onFeedback(toStreamFeedback(message.getFeedback()));
+                break;
             case PAYLOAD_NOT_SET:
             default:
                 throw new IllegalArgumentException("client message has no recognized payload");
         }
+    }
+
+    /**
+     * Maps a backlog report to its wire form.
+     *
+     * @param feedback the report; must not be null
+     * @throws IllegalArgumentException if {@code feedback} is null
+     */
+    public static com.obby.android.localscreenshare.grpc.screenstream.StreamFeedback
+            toProtoFeedback(StreamFeedback feedback) {
+        if (feedback == null) {
+            throw new IllegalArgumentException("feedback must not be null");
+        }
+        return com.obby.android.localscreenshare.grpc.screenstream.StreamFeedback.newBuilder()
+                .setQueueDepthPeak(feedback.getQueueDepthPeak())
+                .setCatchUpEvents(feedback.getCatchUpEvents())
+                .setQueueWaitPeakMs(feedback.getQueueWaitPeakMs())
+                .setClientUptimeMs(feedback.getClientUptimeMs())
+                .build();
+    }
+
+    /**
+     * Rebuilds a backlog report from its wire form.
+     *
+     * @param feedback the received proto report; must not be null
+     * @throws IllegalArgumentException if {@code feedback} is null or carries a negative value
+     */
+    public static StreamFeedback toStreamFeedback(
+            com.obby.android.localscreenshare.grpc.screenstream.StreamFeedback feedback) {
+        if (feedback == null) {
+            throw new IllegalArgumentException("feedback must not be null");
+        }
+        return new StreamFeedback(feedback.getQueueDepthPeak(), feedback.getCatchUpEvents(),
+                feedback.getQueueWaitPeakMs(), feedback.getClientUptimeMs());
     }
 
     private static com.obby.android.localscreenshare.grpc.screenstream.ConfigPart toProtoConfigPart(

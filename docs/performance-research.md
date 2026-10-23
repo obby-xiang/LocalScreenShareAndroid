@@ -105,7 +105,7 @@
 | 1 | **客户端解码器低延迟参数**：`KEY_LOW_LATENCY=1`、`KEY_OPERATING_RATE=fps`、`KEY_PRIORITY=0`（**部分落地**，2026-10-23：只做 `KEY_LOW_LATENCY` 与 `KEY_PRIORITY`，**未含 `KEY_OPERATING_RATE`**——解码侧目标帧率需要新的描述符契约，会与内容帧率提示重复定义；收益未实测） | 延迟与抖动直接下降；不增加功耗 | S |
 | 2 | **SurfaceView 取代 TextureView**（若浮层可控） | 官方口径最多省 30% 观看端功耗，帧时序更准 | M |
 | 3 | **收紧追赶阈值 + 自适应队列**：队列 2 帧或 100–150 ms 就丢最旧；持续 500 ms 超阈值才 drop-to-IDR | 卡顿与延迟爬升显著减少 | M |
-| 4 | **背压回传编码端**：客户端上报队列深度/迟到帧比例 → 服务端降 fps 或 `PARAMETER_KEY_VIDEO_BITRATE` | 防延迟爬升，比事后追赶更平滑 | M |
+| 4 | **背压回传编码端**：客户端上报队列深度/迟到帧比例 → 服务端降 fps 或 `PARAMETER_KEY_VIDEO_BITRATE`（**部分落地**，2026-10-24：控制面 `StreamFeedback` 事件驱动回传，服务端仅单客户端 + H.264 运行时调码率，多客户端只观测；阈值与步进待设备校准，收益未实测） | 防延迟爬升，比事后追赶更平滑 | M |
 | 5 | **显示刷新率/帧率匹配**：`Surface.setFrameRate(fps)`，刷新率非整数倍时选 `Display.Mode`（**部分落地**，2026-10-24：仅 `Surface.setFrameRate` 提示——描述符下发 `frame_rate`，API 30 两参、API 31+ `ONLY_IF_SEAMLESS`；**未含** `Display.Mode` 切换，收益未实测） | 消除 3:2 pulldown 抖动；面板降刷新省电 | S–M |
 | 6 | **热余量预测降档**：`getThermalHeadroom(10)` ≥0.7 / ≥0.85 两级，早于 SEVERE（**代码已落地**，2026-10-23：预测与状态取严格档、≤1 Hz、会话级 arm/disarm、`thermalHeadroom` / `thermalTier` 指标；0.70/0.85 与 0.60/0.78 **待设备校准**，收益未实测） | 避免“撞墙式”突然掉帧 | S |
 | 7 | **编码器运行时参数**：`PARAMETER_KEY_REQUEST_SYNC_FRAME`、`PARAMETER_KEY_VIDEO_BITRATE`、`KEY_OPERATING_RATE` | IDR/码率调整不重建编码器 | S |

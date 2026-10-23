@@ -209,6 +209,55 @@ public class ScreenStreamProtoMapperTest {
     }
 
     @Test
+    public void feedbackRoundTrip() {
+        com.obby.android.localscreenshare.core.model.StreamFeedback source =
+                new com.obby.android.localscreenshare.core.model.StreamFeedback(5, 2, 420, 9_000L);
+
+        com.obby.android.localscreenshare.grpc.screenstream.StreamFeedback wire =
+                ScreenStreamProtoMapper.toProtoFeedback(source);
+        com.obby.android.localscreenshare.core.model.StreamFeedback rebuilt =
+                ScreenStreamProtoMapper.toStreamFeedback(wire);
+
+        assertEquals(5, wire.getQueueDepthPeak());
+        assertEquals(5, rebuilt.getQueueDepthPeak());
+        assertEquals(2, rebuilt.getCatchUpEvents());
+        assertEquals(420, rebuilt.getQueueWaitPeakMs());
+        assertEquals(9_000L, rebuilt.getClientUptimeMs());
+    }
+
+    @Test
+    public void feedbackDefaultsAreZero() {
+        com.obby.android.localscreenshare.core.model.StreamFeedback rebuilt =
+                ScreenStreamProtoMapper.toStreamFeedback(
+                        com.obby.android.localscreenshare.grpc.screenstream.StreamFeedback
+                                .getDefaultInstance());
+
+        assertEquals(0, rebuilt.getQueueDepthPeak());
+        assertEquals(0, rebuilt.getCatchUpEvents());
+        assertEquals(0, rebuilt.getQueueWaitPeakMs());
+        assertEquals(0L, rebuilt.getClientUptimeMs());
+    }
+
+    @Test
+    public void feedbackIsDispatchedToListener() {
+        RecordingListener listener = new RecordingListener();
+
+        ScreenStreamProtoMapper.dispatchClientMessage(ClientMessage.newBuilder()
+                .setFeedback(com.obby.android.localscreenshare.grpc.screenstream.StreamFeedback
+                        .newBuilder()
+                        .setQueueDepthPeak(6)
+                        .setCatchUpEvents(1)
+                        .setQueueWaitPeakMs(300)
+                        .setClientUptimeMs(42_000L)
+                        .build())
+                .build(), listener);
+
+        assertTrue(listener.feedbackSeen);
+        assertEquals(6, listener.feedbackDepth);
+        assertEquals(1, listener.feedbackCatchUps);
+    }
+
+    @Test
     public void dispatchRoutesMediaChannelEvent() {
         RecordingListener listener = new RecordingListener();
 
@@ -336,6 +385,17 @@ public class ScreenStreamProtoMapperTest {
         int pingSeq;
         boolean mediaEventSeen;
         MediaChannelEventType mediaEventType;
+        boolean feedbackSeen;
+        int feedbackDepth;
+        int feedbackCatchUps;
+
+        @Override
+        public void onFeedback(
+                com.obby.android.localscreenshare.core.model.StreamFeedback feedback) {
+            feedbackSeen = true;
+            feedbackDepth = feedback.getQueueDepthPeak();
+            feedbackCatchUps = feedback.getCatchUpEvents();
+        }
 
         @Override
         public void onHello(Hello hello) {

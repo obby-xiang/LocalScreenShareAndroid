@@ -22,7 +22,24 @@ message ClientMessage {
     // Answer to one media channel offer. A server that never offered anything ignores it, and a
     // client that never heard of the field simply never sends it.
     MediaChannelEvent media_channel_event = 5;
+    // Viewer-side queue backlog. Only an attached client sends it, only while it has something to
+    // report, and a server that does not know the field ignores the message entirely.
+    StreamFeedback feedback = 6;
   }
+}
+
+// One backlog report of a viewer. The values are peaks since the previous report; a report is sent
+// only after queueing or a catch-up happened, so a healthy idle viewer produces no traffic and no
+// timer on either side.
+message StreamFeedback {
+  // Highest decode-queue depth sampled when a task left the queue.
+  int32 queue_depth_peak = 1;
+  // Catch-up episodes started since the previous report.
+  int32 catch_up_events = 2;
+  // Longest time an access unit spent between arrival and decode start, in milliseconds.
+  int32 queue_wait_peak_ms = 3;
+  // Viewer uptime when the report was sampled; diagnostics only, never used for a decision.
+  int64 client_uptime_ms = 4;
 }
 
 message Hello {

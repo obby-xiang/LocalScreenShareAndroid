@@ -369,6 +369,35 @@ public class MetricsFormatterTest {
     }
 
     @Test
+    public void bpKeys_printWhenMeasured() {
+        PipelineMetrics metrics = PipelineMetrics.create(new MutableNanoClock(), 16);
+        metrics.increment(PipelineMetrics.Counter.BACKPRESSURE_APPLIED);
+        metrics.increment(PipelineMetrics.Counter.BACKPRESSURE_APPLIED);
+        metrics.increment(PipelineMetrics.Counter.BACKPRESSURE_SKIPPED);
+        metrics.setGauge(PipelineMetrics.Gauge.BACKPRESSURE_TARGET_BITRATE, 3_000_000L);
+
+        String line = MetricsFormatter.toLogLine(Role.SERVER, metrics.snapshot(5000L));
+
+        assertTrue(line.contains(" bp.apply=2"));
+        assertTrue(line.contains(" bp.skip=1"));
+        assertTrue(line.contains(" bp.bitrate=3000000"));
+    }
+
+    @Test
+    public void fbKeys_omittedWhenZero() {
+        PipelineMetrics metrics = PipelineMetrics.create(new MutableNanoClock(), 16);
+
+        String line = MetricsFormatter.toLogLine(Role.CLIENT, metrics.snapshot(5000L));
+        assertFalse(line.contains("fb.sent"));
+        assertFalse(line.contains("fb.skip"));
+
+        metrics.increment(PipelineMetrics.Counter.FEEDBACK_SENT);
+        line = MetricsFormatter.toLogLine(Role.CLIENT, metrics.snapshot(5000L));
+        assertTrue(line.contains(" fb.sent=1"));
+        assertFalse(line.contains("fb.skip"));
+    }
+
+    @Test
     public void clientLine_printsTheAudioBlockAfterTheVideoFields() {
         PipelineMetrics metrics = PipelineMetrics.create(new MutableNanoClock(), 16);
         metrics.record(PipelineMetrics.Window.AV_OFFSET, 3_100_000L);

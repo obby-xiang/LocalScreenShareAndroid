@@ -9,6 +9,7 @@ import com.obby.android.localscreenshare.core.audio.AudioSendSession;
 import com.obby.android.localscreenshare.core.audio.AudioTransport;
 import com.obby.android.localscreenshare.core.audio.AudioCodecIds;
 import com.obby.android.localscreenshare.core.model.ClientSessionKey;
+import com.obby.android.localscreenshare.core.model.StreamFeedback;
 import com.obby.android.localscreenshare.core.net.MediaChannelLog;
 import com.obby.android.localscreenshare.core.net.MediaTransportKind;
 import com.obby.android.localscreenshare.core.stream.ClientCapabilities;
@@ -216,6 +217,12 @@ public final class StreamCallHandler {
     // Channel currently carrying media, or null while the call is on its carrier.
     private MediaTransport activeMediaTransport;
 
+    // Backpressure sink of the call; NONE when the caller installed none.
+    private final FeedbackSink feedbackSink;
+
+    // Encoder seam handed to the sink with every report; built once per call.
+    private final BitrateTarget bitrateTarget;
+
     /**
      * Creates a handler for one client that reports no events to a listener.
      *
@@ -420,6 +427,43 @@ public final class StreamCallHandler {
                              AuthorizationGate authorizationGate, ApprovalTarget approvalTarget,
                              MediaChannelNegotiator mediaNegotiator,
                              MediaChannelRegistry mediaRegistry) {
+        this(hub, runtime, transport, listener, remoteAddress, pongTarget, peerCertificate,
+                audioHub, audioTransport, authorizationGate, approvalTarget, mediaNegotiator,
+                mediaRegistry, null);
+    }
+
+    /**
+     * Creates a handler that also reports its viewer's backlog to a backpressure sink.
+     *
+     * <p>The sink is a narrow interface, so the handler cannot reach the coordinator's executor or
+     * state. A null sink means "no backpressure" and is treated exactly like
+     * {@link BackpressureCoordinator#NONE}; the call keeps working when the server was never given a
+     * metric scope.</p>
+     *
+     * @param hub              stream hub the client joins; required
+     * @param runtime          active stream runtime; required
+     * @param transport        transport owned by this call; required
+     * @param listener         receiver of call events; required
+     * @param remoteAddress    address the call arrived on, or null when unknown
+     * @param pongTarget       echo target for round-trip probes; required
+     * @param peerCertificate  identity proven by the handshake, or null when unverified
+     * @param audioHub         audio fan-out of the session, or null when the call carries no audio
+     * @param audioTransport   audio transport of the call, or null when the call carries no audio
+     * @param authorizationGate approval gate, or null when this call is not gated
+     * @param approvalTarget   output for the waiting notice, or null when it cannot be sent
+     * @param mediaNegotiator  media channel negotiation of this call, or null when it stays on the
+     *                         control-plane carrier
+     * @param mediaRegistry    registry of outstanding offers, or null when no media listener runs
+     * @param feedbackSink     backpressure sink, or null when the call does not report its backlog
+     * @throws IllegalArgumentException if any required argument is null
+     */
+    public StreamCallHandler(StreamHub hub, StreamRuntime runtime, MediaTransport transport,
+                             StreamCallListener listener, InetSocketAddress remoteAddress,
+                             PongTarget pongTarget, TlsCertificate peerCertificate,
+                             AudioHub audioHub, AudioTransport audioTransport,
+                             AuthorizationGate authorizationGate, ApprovalTarget approvalTarget,
+                             MediaChannelNegotiator mediaNegotiator,
+                             MediaChannelRegistry mediaRegistry, FeedbackSink feedbackSink) {
         if (hub == null) {
             throw new IllegalArgumentException("hub must not be null");
         }
@@ -448,6 +492,8 @@ public final class StreamCallHandler {
         this.approvalTarget = approvalTarget;
         this.mediaNegotiator = mediaNegotiator;
         this.mediaRegistry = mediaRegistry;
+        this.feedbackSink = feedbackSink == null ? BackpressureCoordinator.NONE : feedbackSink;
+        this.bitrateTarget = new RuntimeBitrateTarget(hub, runtime);
         this.log = mediaNegotiator == null ? MediaChannelLog.NONE : mediaNegotiator.getLog();
         this.mediaRecovery = new StreamMediaRecovery(transport, runtime::requestJoinPoint,
                 this::onMediaChannelFallback);
@@ -466,6 +512,10 @@ public final class StreamCallHandler {
         }
         if (message.getPayloadCase() == ClientMessage.PayloadCase.PING) {
             pongTarget.sendPong(message.getPing().getSeq(), message.getPing().getClientUptimeMs());
+            return;
+        }
+        if (message.getPayloadCase() == ClientMessage.PayloadCase.FEEDBACK) {
+            onFeedbackMessage(message.getFeedback());
             return;
         }
         synchronized (this) {
@@ -490,6 +540,32 @@ public final class StreamCallHandler {
                     break;
             }
         }
+    }
+
+    /**
+     * Gates one backlog report under the handler monitor, then offers it outside.
+     *
+     * <p>Only an attached, open call may report: a report that arrives before the join describes a
+     * client the hub does not have, and a report after {@link #close()} could still reach a runtime
+     * that is being torn down. The proto-to-model copy is pure and stays inside the monitor with the
+     * gate, so a report can never race a detach; the offer itself is outside, because the sink
+     * schedules work and must never extend the time the monitor is held.</p>
+     */
+    private void onFeedbackMessage(
+            com.obby.android.localscreenshare.grpc.screenstream.StreamFeedback feedback) {
+        final StreamFeedback report;
+        synchronized (this) {
+            if (closed || !attached) {
+                return;
+            }
+            try {
+                report = ScreenStreamProtoMapper.toStreamFeedback(feedback);
+            } catch (IllegalArgumentException e) {
+                // A negative peak is a malformed peer; there is no report to act on.
+                return;
+            }
+        }
+        feedbackSink.offer(report, bitrateTarget);
     }
 
     /**

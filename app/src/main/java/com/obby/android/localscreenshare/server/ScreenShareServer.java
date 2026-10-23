@@ -422,6 +422,11 @@ public final class ScreenShareServer {
     @NonNull
     private PipelineMetrics mMetrics = PipelineMetrics.NONE;
 
+    // Backpressure coordinator of the session; created by setMetrics(), never in the constructor,
+    // because a field initializer would capture PipelineMetrics.NONE and silently drop bp.*.
+    @Nullable
+    private BackpressureCoordinator mBackpressureCoordinator;
+
     // True when the gRPC port is served over TLS; advertised as the discovery secure flag.
     private volatile boolean mTransportSecure = true;
 
@@ -733,6 +738,13 @@ public final class ScreenShareServer {
      * Binds the session's metric scope, so transport-level counters reach the same line as the
      * encoder and the send sessions.
      *
+     * <p>This is also the only place that creates the backpressure coordinator, and it captures the
+     * very instance passed in. Creating it in the constructor would bind the field initializer's
+     * {@link PipelineMetrics#NONE} and drop every {@code bp.*} key while a JVM test that injects a
+     * real scope would still pass. The coordinator's executor is lazy, so this call binds nothing
+     * until the first viewer report arrives. A later call closes the previous coordinator first, so
+     * no two coordinators ever write the same stream.</p>
+     *
      * @param metrics scope of this session; required
      * @throws IllegalArgumentException if {@code metrics} is null
      */
@@ -741,6 +753,12 @@ public final class ScreenShareServer {
             throw new IllegalArgumentException("metrics must not be null");
         }
         mMetrics = metrics;
+        final BackpressureCoordinator previous = mBackpressureCoordinator;
+        if (previous != null) {
+            previous.close();
+        }
+        mBackpressureCoordinator = BackpressureCoordinator.create(metrics, TimeSource.MONOTONIC,
+                () -> Preferences.get().isBackpressureEnabled());
     }
 
     // Builds and binds the gRPC server. TLS material is loaded here, never in a field initializer:
@@ -1059,6 +1077,11 @@ public final class ScreenShareServer {
             }
         }
         mStreamCallHandlers.clear();
+        final BackpressureCoordinator backpressure = mBackpressureCoordinator;
+        mBackpressureCoordinator = null;
+        if (backpressure != null) {
+            backpressure.close();
+        }
         if (mReverseRegisterClient != null) {
             mReverseRegisterClient.cancelAll();
             mReverseRegisterClient = null;
@@ -1413,7 +1436,7 @@ public final class ScreenShareServer {
             final StreamCallHandler handler = new StreamCallHandler(mStreamHub, mStreamRuntime,
                     transport, mStreamCallListener, remoteAddress, transport::sendPong, peer,
                     mAudioHub, transport, mAuthorizationGate, transport::sendApprovalPending,
-                    mediaNegotiator, mMediaChannelRegistry);
+                    mediaNegotiator, mMediaChannelRegistry, mBackpressureCoordinator);
             mStreamCallHandlers.add(handler);
             final Thread drain = new Thread(() -> drainLoop(handler, responseObserver),
                     "lss-stream-drain-" + handler.hashCode());

@@ -117,6 +117,7 @@
 | ID | 状态 | 优先级 | 标题 | 创建 | 完成 | 关联 |
 | --- | --- | --- | --- | --- | --- | --- |
 | TB-ENG-016 | 📋 待办 | 🟠 P1 | 性能候选实施批次（用户 2026-10-23 批准五项：解码低延迟参数、刷新率匹配、热余量预测降档、追赶采样覆盖修复（原「阈值收紧」已改写，阈值不动）、背压回传；`SurfaceView` 另立评估，不在本批） | 2026-10-23 | — | [性能优化调研](performance-research.md) |
+| TB-ENG-015 | 🔶 部分完成 | 🟠 P1 | 单客户端观看积压回传码率背压（`StreamFeedback` 事件驱动上报；仅单客户端 + H.264 降/升码率；多客户端与非 H.264 只观测；阈值待设备校准） | 2026-10-24 | — | [决策 DB-MULTI-007](decision-board.md#db-multi-007) |
 | TB-MEDIA-006 | 🔶 部分完成 | 🟠 P1 | 客户端解码器低延迟参数（`KEY_LOW_LATENCY` + `KEY_PRIORITY`，API 30+ 请求、三级回退、`dec.lowLat` 三态；**未含** `KEY_OPERATING_RATE`；代码完成，设备验证与收益实测未做） | 2026-10-23 | — | [TB-ENG-016](#tb-eng-016) |
 | TB-CLIENT-007 | 🔶 部分完成 | 🟠 P1 | 追赶采样覆盖修复（`CatchUpSampler` 统一 gRPC/媒体通道/丢片三条路径；丢片以外部追赶计入 `rx.catchup` 但不占连续预算；阈值未收紧、HOLD 语义未改；代码完成，设备复验未做） | 2026-10-23 | — | [TB-ENG-016](#tb-eng-016) |
 | TB-POWER-002 | 🔶 部分完成 | 🟠 P1 | 热余量预测降档（API 30 `getThermalHeadroom(10)`；预测与状态取严格档、≤1 Hz、会话级 arm/disarm、开关关闭立即恢复；`thermalHeadroom` / `thermalTier`；阈值待设备校准） | 2026-10-23 | — | [决策 DB-POWER-003](decision-board.md#db-power-003) |
@@ -238,11 +239,30 @@
   2. `TB-MEDIA-007` **显示刷新率/帧率匹配**：客户端呈现面 `Surface.setFrameRate(fps)`，刷新率非整数倍时再评估切 `Display.Mode`；消除 3:2 节奏抖动。**2026-10-24 部分落地**：描述符下发 `frame_rate` + 客户端 `Surface.setFrameRate` 提示（见 [TB-MEDIA-007](#tb-media-007)）；`Display.Mode` 切换仍未做。依据 §4.2 #5、§6 触发条件 4。
   3. `TB-POWER-002` **热余量预测降档**：`PowerManager.getThermalHeadroom(10)` ≥0.7 与 ≥0.85 两级，早于 `SEVERE` 的「撞墙式」掉帧。依据 §4.2 #6、§6 触发条件 3。
   4. `TB-CLIENT-007` **追赶采样覆盖修复 + 丢片并轨**（原登记为「收紧追赶阈值 + 自适应队列」，2026-10-23 按主裁决改写）：`CatchUpSampler` 统一 gRPC、专用媒体通道与丢片三条路径，丢片以外部追赶计入 `rx.catchup`/`rx.catchup.lat`（reason=`ext`）但**不占**连续失败预算、不设冷却、不启动收敛计时；`CatchUpPolicy` 的阈值与判定顺序一律不收紧，HOLD 语义与 [DV-027](decision-board.md) 状态不变。依据 §4.2 #3。
-  5. `TB-ENG-015` **背压回传编码端**：客户端上报队列深度与迟到帧比例 → 服务端降 fps 或 `PARAMETER_KEY_VIDEO_BITRATE`；在爬升前介入，比事后追赶平滑。依据 §4.2 #4。
+  5. `TB-ENG-015` **背压回传编码端**：客户端上报队列深度与迟到帧比例 → 服务端降 fps 或 `PARAMETER_KEY_VIDEO_BITRATE`；在爬升前介入，比事后追赶平滑。依据 §4.2 #4。**2026-10-24 部分落地**：走控制面 `StreamFeedback` + 单客户端 H.264 运行时码率（见 [TB-ENG-015](#tb-eng-015)、[DB-MULTI-007](decision-board.md#db-multi-007)）；多客户端只观测，阈值待设备校准。
 - **不实施 / 另行评估的边界**：`SurfaceView` 取代 `TextureView`（§4.2 #2）**不在本批**——它改双宿主视图结构与快照过渡，须单独评估后再定，也不得与上述五项合并成一次改动。§4.3 的八条「未做且不推荐」、§4.2 #7 之后的编码器运行时参数、指标补全、编码器异常恢复、UDP 上的 FEC/NACK 等项均不在本批范围。
 - **口径约束**：① 追赶采样口径变化（本轮为**采样覆盖修复 + 丢片并轨**，不是阈值收紧）会改 `rx.catchup*` / `rx.converge.fail` 的观察口径，落棒时必须写机制理由并同步决策板 `DV-021` 与 [DB-OBS-002](decision-board.md#db-obs-002)（判据改写先例见 N-r2-2）；② 热余量阈值、`setFrameRate` 参数与队列上限默认标 **待设备校准**，不得写成已验证；③ 背压回传只改服务端编码参数，不新建通道、不引入新依赖。
 - **完成判据**：五项各自落地并有 JVM 证据与设备点位，且分别写回自己的条目；五项全部写回后本批次总项转 ✅，在此之前保持 📋 待办。
 - **关联文档**：[性能优化调研](performance-research.md)、[TB-POWER-001](#tb-power-001)、[TB-CLIENT-005](#tb-client-005)、[TB-OBS-001](#tb-obs-001)
+
+</details>
+
+<a id="tb-eng-015"></a>
+<details><summary>TB-ENG-015 单客户端观看积压回传码率背压（🔶 部分完成 · 代码与 JVM 验证完成，设备与阈值校准未做）</summary>
+
+- **状态 / 优先级 / 创建 / 完成**：🔶 部分完成 / 🟠 P1 / 2026-10-24 / —
+- **来源**：[TB-ENG-016](#tb-eng-016) 第 5 项；[性能优化调研 §4.2 #4](performance-research.md) 与[性能候选设计 §4.5](superpowers/specs/2026-10-23-performance-candidates-design.md)。范围裁决：只走控制面、只调同一路单流的码率，不改 UDP 媒体协议、不做多客户端动作、不引入依赖。
+- **交付物**：
+  - 协议与模型：`ClientMessage.feedback = 6`、`StreamFeedback`；mapper 双向映射与 `ClientMessageListener.onFeedback`（默认空实现）。
+  - 客户端上报：`BacklogFeedback` 在两条解码路径的**出队点**采样深度与等待、追赶开始计数；`ScreenShareClient` 事件驱动排程（首次有积压才排 3 s、发送后仍有活动才续排、干净即停），`fb.sent` / `fb.skip`，`stop()` 清理回调与排程标志。
+  - 纯策略：`BackpressurePolicy`（8 / 400 ms / 任意追赶判拥塞；2 / 100 ms / 0 判清除；×75%、40% 下限、2 份 CLEAR、5 s 间隔；8 为早期预警、64 为追赶策略的不可恢复阈值）。
+  - 服务端执行：`BitrateTarget` / `RuntimeBitrateTarget` / `FeedbackSink` / `BackpressureCoordinator`；生产惰性单线程 `lss-backpressure`、测试注入 Executor、最新值胜出、`AtomicBoolean` 排程、异常吞掉且失败日志每 60 s 一条、`close()` 幂等有界；`NONE` 与关闭后 offer 空操作。
+  - 装配：`ScreenShareServer.setMetrics()` 内用同一个 `PipelineMetrics` 创建协调器，`stream()` 交给 handler，`stop()` 关停；handler 同步区内只做 attach 门控与 proto→模型拷贝，同步区外 offer。
+  - 指标与开关：`bp.apply` / `bp.skip` / `bp.bitrate`（服务端恰 20 键）、`fb.sent` / `fb.skip`（客户端域）、隐藏键 `backpressure`（默认开、`BooleanSupplier` 现读）。
+- **语义要点**：多客户端、非 H.264、总闸关闭只观测并记 `bp.skip`；已有覆盖时回上限并结束覆盖。外部写入（读回值 ≠ 上次应用值）清空覆盖、不回升、不重试。回升一步回上限。
+- **验证证据**：定向用例 `BackpressurePolicyTest`（13）、`BackpressureCoordinatorTest`（8）、`BacklogFeedbackTest`（6）、`StreamFeedbackTest`（4）、`RuntimeBitrateTargetTest`（3），以及 mapper +3、handler +3、formatter +2，共 **42 条**；双变体全量 **1875 tests / 188 classes、0 失败**；`lintDebug` 与 `lintRelease` 通过；`check_cjk` / `check_strings` / `check_docs` 通过；`./gradlew build :app:assembleDebugAndroidTest` 通过。
+- **未完成项**：阈值与步进全部**待设备校准**（`8 / 400 ms / 2 / 100 ms / 75% / 40% / 5 s`）；真实弱网收益与功耗影响未实测；多客户端只观测，不做任何多客户端动作。
+- **关联文档**：[媒体架构 §6.5](media-architecture.md)、[性能候选设计 §4.5 / §6.5](superpowers/specs/2026-10-23-performance-candidates-design.md)、[DB-MULTI-007](decision-board.md#db-multi-007)、[TB-ENG-016](#tb-eng-016)
 
 </details>
 

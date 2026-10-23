@@ -394,6 +394,67 @@ public class StreamCallHandlerTest {
         assertNull(handler.getFingerprint());
     }
 
+    @Test
+    public void onClientMessage_feedbackBeforeAttachIsIgnored() {
+        Fixture fixture = fixture(FakeCodec.DEFAULT_CODEC_ID);
+        RecordingFeedbackSink sink = new RecordingFeedbackSink();
+        StreamCallHandler handler = handlerWithFeedback(fixture, new FakeTransport(), sink);
+
+        handler.onClientMessage(feedbackMessage());
+
+        assertEquals(0, sink.offerCount);
+        assertNull(handler.getAttachedKey());
+    }
+
+    @Test
+    public void onClientMessage_feedbackAfterAttachReachesTheSink() {
+        Fixture fixture = fixture(FakeCodec.DEFAULT_CODEC_ID);
+        RecordingFeedbackSink sink = new RecordingFeedbackSink();
+        StreamCallHandler handler = handlerWithFeedback(fixture, new FakeTransport(), sink);
+
+        handler.onClientMessage(hello(FakeCodec.DEFAULT_CODEC_ID));
+        assertNotNull(handler.getAttachedKey());
+        handler.onClientMessage(feedbackMessage());
+
+        assertEquals(1, sink.offerCount);
+        assertNotNull(sink.lastTarget);
+        assertEquals(6, sink.lastFeedback.getQueueDepthPeak());
+        assertFalse(handler.isClosed());
+        assertNotNull(handler.getAttachedKey());
+    }
+
+    @Test
+    public void onClientMessage_feedbackAfterCloseIsDropped() {
+        Fixture fixture = fixture(FakeCodec.DEFAULT_CODEC_ID);
+        RecordingFeedbackSink sink = new RecordingFeedbackSink();
+        StreamCallHandler handler = handlerWithFeedback(fixture, new FakeTransport(), sink);
+
+        handler.onClientMessage(hello(FakeCodec.DEFAULT_CODEC_ID));
+        handler.close();
+        handler.onClientMessage(feedbackMessage());
+
+        assertEquals(0, sink.offerCount);
+    }
+
+    private static StreamCallHandler handlerWithFeedback(Fixture fixture, FakeTransport transport,
+                                                         FeedbackSink sink) {
+        return new StreamCallHandler(fixture.hub, fixture.runtime, transport,
+                StreamCallListener.NO_OP, null, PongTarget.NO_OP, null, null, null, null, null,
+                null, null, sink);
+    }
+
+    private static ClientMessage feedbackMessage() {
+        return ClientMessage.newBuilder()
+                .setFeedback(com.obby.android.localscreenshare.grpc.screenstream.StreamFeedback
+                        .newBuilder()
+                        .setQueueDepthPeak(6)
+                        .setCatchUpEvents(1)
+                        .setQueueWaitPeakMs(250)
+                        .setClientUptimeMs(10_000L)
+                        .build())
+                .build();
+    }
+
     private static TlsCertificate certificate() throws Exception {
         KeyPairGenerator generator = KeyPairGenerator.getInstance("EC");
         generator.initialize(new ECGenParameterSpec("secp256r1"));
@@ -453,6 +514,27 @@ public class StreamCallHandlerTest {
             rejectionKey = key;
             rejectionTransportId = transportId;
             rejectionReason = reason;
+        }
+    }
+
+    /**
+     * Records the feedback reports a handler offers.
+     */
+    private static final class RecordingFeedbackSink implements FeedbackSink {
+        int offerCount;
+        com.obby.android.localscreenshare.core.model.StreamFeedback lastFeedback;
+        BitrateTarget lastTarget;
+
+        @Override
+        public void offer(com.obby.android.localscreenshare.core.model.StreamFeedback feedback,
+                          BitrateTarget target) {
+            offerCount++;
+            lastFeedback = feedback;
+            lastTarget = target;
+        }
+
+        @Override
+        public void close() {
         }
     }
 

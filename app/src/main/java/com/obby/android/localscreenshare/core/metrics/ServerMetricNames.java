@@ -106,6 +106,25 @@ public final class ServerMetricNames {
      */
     public static final String THERMAL_TIER = "thermalTier";
 
+    /**
+     * Bitrate actions the backpressure coordinator applied successfully.
+     */
+    public static final String BP_APPLY = "bp.apply";
+
+    /**
+     * Backlog reports the coordinator did not act on.
+     *
+     * <p>The reasons are multiple clients, another codec, the master switch, an unknown descriptor
+     * and an encoder failure. A report that only waits for the five-second interval or for a second
+     * clear report is not a skip, because no decision was overridden.</p>
+     */
+    public static final String BP_SKIP = "bp.skip";
+
+    /**
+     * Target bitrate in force after the last successful backpressure action, in bits per second.
+     */
+    public static final String BP_BITRATE = "bp.bitrate";
+
     private ServerMetricNames() {
     }
 }
